@@ -821,7 +821,7 @@ uv run alembic upgrade head
 
 > 📖 **[See CRUD operations guide in our docs](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/database/crud/)**
 
-Inside `app/crud`, create a new `crud_entities.py` inheriting from `FastCRUD` for each new entity:
+Inside `app/crud`, create a new `crud_entity.py` inheriting from `FastCRUD` for each new entity:
 
 ```python
 from fastcrud import FastCRUD
@@ -1037,7 +1037,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.entity import EntityRead
 from app.core.db.database import async_get_db
-from app.crud.crud_entities import crud_entities
+from app.crud.crud_entity import crud_entity
 
 router = APIRouter(tags=["entities"])
 
@@ -1048,7 +1048,7 @@ async def read_entity(
     id: int, 
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
-    entity = await crud_entities.get(db=db, id=id)
+    entity = await crud_entity.get(db=db, id=id)
     
     if entity is None:  # Explicit None check
         raise NotFoundException("Entity not found")
@@ -1061,7 +1061,7 @@ async def read_entities(
     request: Request, 
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
-    entities = await crud_entities.get_multi(db=db, is_deleted=False)
+    entities = await crud_entity.get_multi(db=db, is_deleted=False)
     return entities
 ```
 
@@ -1141,7 +1141,7 @@ async def read_entities(
     page: int = 1, 
     items_per_page: int = 10
 ):
-    entities_data = await crud_entities.get_multi(
+    entities_data = await crud_entity.get_multi(
         db=db,
         offset=compute_offset(page, items_per_page),
         limit=items_per_page,
@@ -1173,7 +1173,7 @@ async def create_entity(
     current_user: Annotated[UserRead, Depends(get_current_user)]
 ):
     # Check if entity already exists
-    if await crud_entities.exists(db=db, name=entity_data.name) is True:
+    if await crud_entity.exists(db=db, name=entity_data.name) is True:
         raise DuplicateValueException("Entity with this name already exists")
     
     # Check user permissions
@@ -1181,7 +1181,7 @@ async def create_entity(
         raise ForbiddenException("User account is disabled")
     
     # Create the entity
-    entity = await crud_entities.create(db=db, object=entity_data)
+    entity = await crud_entity.create(db=db, object=entity_data)
     
     if entity is None:  # Explicit None check
         raise CustomException("Failed to create entity")
@@ -1195,7 +1195,7 @@ async def read_entity(
     id: int, 
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
-    entity = await crud_entities.get(db=db, id=id)
+    entity = await crud_entity.get(db=db, id=id)
     
     if entity is None:  # Explicit None check
         raise NotFoundException("Entity not found")
