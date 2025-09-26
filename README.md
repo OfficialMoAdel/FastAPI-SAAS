@@ -1028,42 +1028,56 @@ crud_user.get(db=db, username="myusername", schema_to_select=UserRead)
 
 > 📖 **[See API endpoints guide in our docs](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/api/endpoints/)**
 
-Inside `app/api/v1`, create a new `entities.py` file and create the desired routes
+Inside `app/api/v1`, create a new `entities.py` file and create the desired routes with proper dependency injection:
 
 ```python
-from typing import Annotated
-
-from fastapi import Depends
+from typing import Annotated, List
+from fastapi import Depends, Request, APIRouter
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.schemas.entity import EntityRead
 from app.core.db.database import async_get_db
+from app.crud.crud_entities import crud_entities
 
-...
-
-router = fastapi.APIRouter(tags=["entities"])
+router = APIRouter(tags=["entities"])
 
 
-@router.get("/entities/{id}", response_model=List[EntityRead])
-async def read_entities(request: Request, id: int, db: Annotated[AsyncSession, Depends(async_get_db)]):
+@router.get("/entities/{id}", response_model=EntityRead)
+async def read_entity(
+    request: Request, 
+    id: int, 
+    db: Annotated[AsyncSession, Depends(async_get_db)]
+):
     entity = await crud_entities.get(db=db, id=id)
-
+    
+    if entity is None:  # Explicit None check
+        raise NotFoundException("Entity not found")
+        
     return entity
 
 
-...
+@router.get("/entities", response_model=List[EntityRead])
+async def read_entities(
+    request: Request, 
+    db: Annotated[AsyncSession, Depends(async_get_db)]
+):
+    entities = await crud_entities.get_multi(db=db, is_deleted=False)
+    return entities
 ```
 
-Then in `app/api/v1/__init__.py` add the router such as:
+Then in `app/api/v1/__init__.py` add the router:
 
 ```python
 from fastapi import APIRouter
-from app.api.v1.entity import router as entity_router
+from app.api.v1.entities import router as entity_router
+from app.api.v1.users import router as user_router
+from app.api.v1.posts import router as post_router
 
-...
+router = APIRouter(prefix="/v1")
 
-router = APIRouter(prefix="/v1")  # this should be there already
-...
-router.include_router(entity_router)
+router.include_router(user_router)
+router.include_router(post_router)
+router.include_router(entity_router)  # Add your new router
 ```
 
 #### 5.7.1 Paginated Responses
@@ -1100,6 +1114,9 @@ With the `get_multi` method we get a python `dict` with full suport for paginati
 And in the endpoint, we can import from `fastcrud.paginated` the following functions and Pydantic Schema:
 
 ```python
+from typing import Annotated
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
 from fastcrud.paginated import (
     PaginatedListResponse,  # What you'll use as a response_model to validate
     paginated_response,  # Creates a paginated response based on the parameters
@@ -1119,13 +1136,16 @@ from app.schemas.entity import EntityRead
 
 @router.get("/entities", response_model=PaginatedListResponse[EntityRead])
 async def read_entities(
-    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
+    request: Request, 
+    db: Annotated[AsyncSession, Depends(async_get_db)], 
+    page: int = 1, 
+    items_per_page: int = 10
 ):
-    entities_data = await crud_entity.get_multi(
+    entities_data = await crud_entities.get_multi(
         db=db,
         offset=compute_offset(page, items_per_page),
         limit=items_per_page,
-        schema_to_select=UserRead,
+        schema_to_select=EntityRead,
         is_deleted=False,
     )
 
@@ -1139,15 +1159,48 @@ async def read_entities(
 To add exceptions you may just import from `app/core/exceptions/http_exceptions` and optionally add a detail:
 
 ```python
-from app.core.exceptions.http_exceptions import NotFoundException
+from app.core.exceptions.http_exceptions import (
+    NotFoundException,
+    ForbiddenException,
+    DuplicateValueException
+)
 
-# If you want to specify the detail, just add the message
-if not user:
-    raise NotFoundException("User not found")
+@router.post("/entities", response_model=EntityRead, status_code=201)
+async def create_entity(
+    request: Request,
+    entity_data: EntityCreate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    current_user: Annotated[UserRead, Depends(get_current_user)]
+):
+    # Check if entity already exists
+    if await crud_entities.exists(db=db, name=entity_data.name) is True:
+        raise DuplicateValueException("Entity with this name already exists")
+    
+    # Check user permissions
+    if current_user.is_active is False:  # Explicit boolean check
+        raise ForbiddenException("User account is disabled")
+    
+    # Create the entity
+    entity = await crud_entities.create(db=db, object=entity_data)
+    
+    if entity is None:  # Explicit None check
+        raise CustomException("Failed to create entity")
+        
+    return entity
 
-# Or you may just use the default message
-if not post:
-    raise NotFoundException()
+
+@router.get("/entities/{id}", response_model=EntityRead)
+async def read_entity(
+    request: Request, 
+    id: int, 
+    db: Annotated[AsyncSession, Depends(async_get_db)]
+):
+    entity = await crud_entities.get(db=db, id=id)
+    
+    if entity is None:  # Explicit None check
+        raise NotFoundException("Entity not found")
+        
+    return entity
 ```
 
 **The predefined possibilities in http_exceptions are the following:**
