@@ -321,8 +321,8 @@ Your new endpoints will be available at:
 
 Now that you understand basic endpoints:
 
-- **[Pagination](pagination.md)** - Add pagination to your endpoints
-- **[Database Schemas](../database/schemas.md)** - Create schemas for your data
-- **[CRUD Operations](../database/crud.md)** - Understand the CRUD layer
+- **[Pagination](pagination.md)** - Add pagination to your endpoints<br>
+- **[Exceptions](exceptions.md)** - Custom error handling and HTTP exceptions<br>
+- **[CRUD Operations](../database/crud.md)** - Understand the CRUD layer<br>
 
 The boilerplate provides everything you need - just follow these patterns! 
