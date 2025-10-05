@@ -30,10 +30,10 @@ async def create_post(post_data: PostCreate):
 
 ### Rate Limiting Components
 
-**Rate Limiter Class**: Singleton Redis client for checking limits
-**User Tiers**: Database-stored user subscription levels
-**Rate Limit Rules**: Path-specific limits per tier
-**Dependency Injection**: Automatic enforcement via FastAPI dependencies
+**Rate Limiter Class**: Singleton Redis client for checking limits<br>
+**User Tiers**: Database-stored user subscription levels<br>
+**Rate Limit Rules**: Path-specific limits per tier<br>
+**Dependency Injection**: Automatic enforcement via FastAPI dependencies<br>
 
 ### How It Works
 
