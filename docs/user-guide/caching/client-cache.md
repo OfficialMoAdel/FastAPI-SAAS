@@ -207,7 +207,8 @@ async def get_posts(
     response: Response,
     page: int = 1,
     per_page: int = 10,
-    category: str = None
+    category: str | None = None,
+    db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     """Conditional caching based on parameters."""
     
@@ -255,7 +256,8 @@ def generate_etag(data: Any) -> str:
 async def get_user(
     request: Request,
     response: Response,
-    user_id: int
+    user_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     """Endpoint with ETag support for efficient caching."""
     
@@ -289,7 +291,8 @@ Use Last-Modified headers for time-based cache validation:
 async def get_post(
     request: Request,
     response: Response,
-    post_id: int
+    post_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     """Endpoint with Last-Modified header support."""
     
@@ -343,13 +346,13 @@ async def serve_static(response: Response, file_path: str):
 ```python
 # Reference data (rarely changes)
 @router.get("/api/v1/countries")
-async def get_countries(response: Response, db: AsyncSession = Depends(async_get_db)):
+async def get_countries(response: Response, db: Annotated[AsyncSession, Depends(async_get_db)]):
     response.headers["Cache-Control"] = "public, max-age=86400"  # 24 hours
     return await crud_countries.get_all(db=db)
 
 # User-generated content (moderate changes)
 @router.get("/api/v1/posts")
-async def get_posts(response: Response, db: AsyncSession = Depends(async_get_db)):
+async def get_posts(response: Response, db: Annotated[AsyncSession, Depends(async_get_db)]):
     response.headers["Cache-Control"] = "public, max-age=1800"  # 30 minutes
     return await crud_posts.get_multi(db=db, is_deleted=False)
 
@@ -358,7 +361,7 @@ async def get_posts(response: Response, db: AsyncSession = Depends(async_get_db)
 async def get_notifications(
     response: Response, 
     current_user: dict = Depends(get_current_user),
-    db: AsyncSession = Depends(async_get_db)
+    db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     response.headers["Cache-Control"] = "private, max-age=300"  # 5 minutes
     response.headers["Vary"] = "Authorization"
@@ -444,12 +447,15 @@ async def update_post(
     response: Response,
     post_id: int,
     post_data: PostUpdate,
-    current_user: dict = Depends(get_current_user)
+    current_user: dict = Depends(get_current_user),
+    db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     """Update post and invalidate related caches."""
     
     # Update the post
     updated_post = await crud_posts.update(db=db, id=post_id, object=post_data)
+    if not updated_post:
+        raise HTTPException(status_code=404, detail="Post not found")
     
     # Set headers to indicate cache invalidation is needed
     response.headers["Cache-Control"] = "no-cache"
