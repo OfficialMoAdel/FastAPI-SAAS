@@ -458,8 +458,8 @@ async def test_duplicate_email(client: AsyncClient):
 ## What's Next
 
 Now that you understand error handling:
-- **[Versioning](versioning.md)** - Learn how to version your APIs
-- **[Database CRUD](../database/crud.md)** - Understand the database operations
+- **[Versioning](versioning.md)** - Learn how to version your APIs<br>
+- **[Database CRUD](../database/crud.md)** - Understand the database operations<br>
 - **[Authentication](../authentication/index.md)** - Add user authentication to your APIs
 
 Proper error handling makes your API much more user-friendly and easier to debug! 

@@ -21,14 +21,16 @@ The `@cache` decorator provides a simple interface for adding caching to any Fas
 ### Basic Usage
 
 ```python
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Request, Depends
+from sqlalchemy.orm import Session
 from app.core.utils.cache import cache
+from app.core.db.database import get_db
 
 router = APIRouter()
 
 @router.get("/posts/{post_id}")
 @cache(key_prefix="post_cache", expiration=3600)
-async def get_post(request: Request, post_id: int):
+async def get_post(request: Request, post_id: int, db: Session = Depends(get_db)):
     # This function's result will be cached for 1 hour
     post = await crud_posts.get(db=db, id=post_id)
     return post

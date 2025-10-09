@@ -50,7 +50,7 @@ async def get_user(
 ### 2. Get Multiple Items (with Pagination)
 
 ```python
-from fastcrud.paginated import PaginatedListResponse
+from fastcrud.paginated import PaginatedListResponse, paginated_response
 
 @router.get("/", response_model=PaginatedListResponse[UserRead])
 async def get_users(
@@ -66,10 +66,9 @@ async def get_users(
         return_as_model=True,
         return_total_count=True
     )
-    
     return paginated_response(
         crud_data=users,
-        page=page, 
+        page=page,
         items_per_page=items_per_page
     )
 ```
@@ -321,8 +320,8 @@ Your new endpoints will be available at:
 
 Now that you understand basic endpoints:
 
-- **[Pagination](pagination.md)** - Add pagination to your endpoints
-- **[Database Schemas](../database/schemas.md)** - Create schemas for your data
-- **[CRUD Operations](../database/crud.md)** - Understand the CRUD layer
+- **[Pagination](pagination.md)** - Add pagination to your endpoints<br>
+- **[Exceptions](exceptions.md)** - Custom error handling and HTTP exceptions<br>
+- **[CRUD Operations](../database/crud.md)** - Understand the CRUD layer<br>
 
 The boilerplate provides everything you need - just follow these patterns! 

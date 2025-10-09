@@ -30,10 +30,10 @@ async def create_post(post_data: PostCreate):
 
 ### Rate Limiting Components
 
-**Rate Limiter Class**: Singleton Redis client for checking limits
-**User Tiers**: Database-stored user subscription levels
-**Rate Limit Rules**: Path-specific limits per tier
-**Dependency Injection**: Automatic enforcement via FastAPI dependencies
+**Rate Limiter Class**: Singleton Redis client for checking limits<br>
+**User Tiers**: Database-stored user subscription levels<br>
+**Rate Limit Rules**: Path-specific limits per tier<br>
+**Dependency Injection**: Automatic enforcement via FastAPI dependencies<br>
 
 ### How It Works
 
@@ -109,6 +109,59 @@ async def protected_endpoint():
 # 2. Looks up rate limits for this path
 # 3. Checks Redis counter
 # 4. Allows or blocks the request
+```
+#### Example Dependency Implementation
+
+To make the rate limiting dependency functional, you must implement how user tiers and paths resolve to actual rate limits.
+Below is a complete example using Redis and the database to determine per-tier and per-path restrictions.
+
+```python
+async def rate_limiter_dependency(
+    request: Request,
+    db: AsyncSession = Depends(async_get_db),
+    user=Depends(get_current_user_optional),
+):
+    """
+    Enforces rate limits per user tier and API path.
+
+    - Identifies user (or defaults to IP-based anonymous rate limit)
+    - Finds tier-specific limit for the request path
+    - Checks Redis counter to determine if request should be allowed
+    """
+    path = sanitize_path(request.url.path)
+    user_id = getattr(user, "id", None) or request.client.host or "anonymous"
+
+    # Determine user tier (default to "free" or anonymous)
+    if user and getattr(user, "tier_id", None):
+        tier = await crud_tiers.get(db=db, id=user.tier_id)
+    else:
+        tier = await crud_tiers.get(db=db, name="free")
+
+    if not tier:
+        raise RateLimitException("Tier configuration not found")
+
+    # Find specific rate limit rule for this path + tier
+    rate_limit_rule = await crud_rate_limits.get_by_path_and_tier(
+        db=db, path=path, tier_id=tier.id
+    )
+
+    # Use default limits if no specific rule is found
+    limit = getattr(rate_limit_rule, "limit", 100)
+    period = getattr(rate_limit_rule, "period", 3600)
+
+    # Check rate limit in Redis
+    is_limited = await rate_limiter.is_rate_limited(
+        db=db,
+        user_id=user_id,
+        path=path,
+        limit=limit,
+        period=period,
+    )
+
+    if is_limited:
+        raise RateLimitException(
+            f"Rate limit exceeded for path '{path}'. Try again later."
+        )
 ```
 
 ### Redis-Based Counting
