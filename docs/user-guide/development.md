@@ -19,22 +19,34 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ..core.db.database import Base
 
 
+```
 class Category(Base):
     __tablename__ = "category"
 
     id: Mapped[int] = mapped_column(
-        "id", 
-        autoincrement=True, 
-        nullable=False, 
-        unique=True, 
-        primary_key=True, 
-        init=False
+        "id",
+        autoincrement=True,
+        nullable=False,
+        unique=True,
+        primary_key=True,
+        init=False,
     )
+
     name: Mapped[str] = mapped_column(String(50))
     description: Mapped[str | None] = mapped_column(String(255), default=None)
-    
-    # Relationships
-    posts: Mapped[list["Post"]] = relationship(back_populates="category")
+
+
+class Post(Base):
+    __tablename__ = "post"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    title: Mapped[str] = mapped_column(String(100))
+
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("category.id"),
+        index=True,
+        default=None
+    )
 ```
 
 #### 2. Create Pydantic Schemas
