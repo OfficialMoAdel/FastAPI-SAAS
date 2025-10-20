@@ -4,7 +4,7 @@ Join our vibrant Discord community to connect with other developers, get help, s
 
 ## 🚀 Discord Server
 
-**[Join our Discord community](https://discord.gg/jhhbkxBmhj)**
+**[Join our Discord community](https://discord.com/invite/TEmPs22gqB)**
 
 Welcome to the **Benav Labs** community! Our Discord server is the central hub where developers using our FastAPI boilerplate and other products can connect, collaborate, and grow together.
 
@@ -86,7 +86,7 @@ We actively encourage feedback and suggestions! The community provides multiple 
 
 ## 🔗 Quick Links
 
-- **Discord Server:** [discord.gg/jhhbkxBmhj](https://discord.gg/jhhbkxBmhj)
+- **Discord Server:** [discord.gg/TEmPs22gqB](https://discord.com/invite/TEmPs22gqB)
 - **FastroAI:** [benav.io/fastroai](https://benav.io/fastroai)
 - **Blog:** [fastro.ai/blog](https://fastro.ai/blog)
 - **Benav Labs:** [benav.io](https://benav.io)

@@ -45,9 +45,9 @@
 🧠 **DeepWiki Docs: [deepwiki.com/benavlabs/FastAPI-boilerplate](https://deepwiki.com/benavlabs/FastAPI-boilerplate)**
 
 > **⚠️ Documentation Status**
-> 
-> This is our first version of the documentation. While functional, we acknowledge it's rough around the edges - there's a huge amount to document and we needed to start somewhere! We built this foundation (with a lot of AI assistance) so we can improve upon it. 
-> 
+>
+> This is our first version of the documentation. While functional, we acknowledge it's rough around the edges - there's a huge amount to document and we needed to start somewhere! We built this foundation (with a lot of AI assistance) so we can improve upon it.
+>
 > Better documentation, examples, and guides are actively being developed. Contributions and feedback are greatly appreciated!
 
 This README provides a quick reference for LLMs and developers, but the full documentation contains detailed guides, examples, and best practices.
@@ -75,11 +75,11 @@ This README provides a quick reference for LLMs and developers, but the full doc
 
 ## 🚀 Join Our Community
 
-💬 **[Join our Discord community](https://discord.gg/jhhbkxBmhj)** - Connect with other developers using the FastAPI boilerplate!
+💬 **[Join our Discord community](https://discord.com/invite/TEmPs22gqB)** - Connect with other developers using the FastAPI boilerplate!
 
 Our Discord server features:
 - **🤝 Networking** - Connect with fellow developers and share experiences
-- **💡 Product Updates** - Stay updated with FastroAI and our other products  
+- **💡 Product Updates** - Stay updated with FastroAI and our other products
 - **📸 Showcase** - Share what you've built using our tools
 - **🗒️ Blog** - Latest blog posts and technical insights
 - **💬 General Discussion** - Open space for questions and discussions
@@ -290,7 +290,7 @@ CRUD_ADMIN_REDIS_SSL=false                 # default=false, use SSL for Redis co
 
 **Session Backend Options:**
 - **Memory** (default): Development-friendly, sessions reset on restart
-- **Redis** (production): High performance, scalable, persistent sessions  
+- **Redis** (production): High performance, scalable, persistent sessions
 - **Database**: Audit-friendly with admin visibility
 - **Hybrid**: Redis performance + database audit trail
 
@@ -1058,21 +1058,21 @@ router = APIRouter(tags=["entities"])
 
 @router.get("/entities/{id}", response_model=EntityRead)
 async def read_entity(
-    request: Request, 
-    id: int, 
+    request: Request,
+    id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     entity = await crud_entity.get(db=db, id=id)
-    
+
     if entity is None:  # Explicit None check
         raise NotFoundException("Entity not found")
-        
+
     return entity
 
 
 @router.get("/entities", response_model=List[EntityRead])
 async def read_entities(
-    request: Request, 
+    request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     entities = await crud_entity.get_multi(db=db, is_deleted=False)
@@ -1150,9 +1150,9 @@ from app.schemas.entity import EntityRead
 
 @router.get("/entities", response_model=PaginatedListResponse[EntityRead])
 async def read_entities(
-    request: Request, 
-    db: Annotated[AsyncSession, Depends(async_get_db)], 
-    page: int = 1, 
+    request: Request,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    page: int = 1,
     items_per_page: int = 10
 ):
     entities_data = await crud_entity.get_multi(
@@ -1189,31 +1189,31 @@ async def create_entity(
     # Check if entity already exists
     if await crud_entity.exists(db=db, name=entity_data.name) is True:
         raise DuplicateValueException("Entity with this name already exists")
-    
+
     # Check user permissions
     if current_user.is_active is False:  # Explicit boolean check
         raise ForbiddenException("User account is disabled")
-    
+
     # Create the entity
     entity = await crud_entity.create(db=db, object=entity_data)
-    
+
     if entity is None:  # Explicit None check
         raise CustomException("Failed to create entity")
-        
+
     return entity
 
 
 @router.get("/entities/{id}", response_model=EntityRead)
 async def read_entity(
-    request: Request, 
-    id: int, 
+    request: Request,
+    id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     entity = await crud_entity.get(db=db, id=id)
-    
+
     if entity is None:  # Explicit None check
         raise NotFoundException("Entity not found")
-        
+
     return entity
 ```
 
@@ -1711,7 +1711,7 @@ from your_app.schemas import YourCreateSchema, YourUpdateSchema
 
 def register_admin_views(admin: CRUDAdmin) -> None:
     # ... existing models ...
-    
+
     admin.add_view(
         model=YourModel,
         create_schema=YourCreateSchema,
@@ -2115,7 +2115,7 @@ touch tests/test_items.py
 Follow the structure in `tests/test_user.py` for examples. Our tests use:
 
 - **pytest** with **pytest-asyncio** for async support
-- **unittest.mock** for mocking dependencies  
+- **unittest.mock** for mocking dependencies
 - **AsyncMock** for async function mocking
 - **Faker** for generating test data
 
@@ -2133,9 +2133,9 @@ class TestWriteUser:
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
             mock_crud.exists = AsyncMock(return_value=False)
             mock_crud.create = AsyncMock(return_value=Mock(id=1))
-            
+
             result = await write_user(Mock(), sample_user_data, mock_db)
-            
+
             assert result.id == 1
             mock_crud.create.assert_called_once()
 ```
@@ -2186,15 +2186,15 @@ filterwarnings = [
 ### 7.4 Test Structure
 
 - **Unit Tests** (`test_*_unit.py`): Fast, isolated tests with mocked dependencies
-- **Fixtures** (`conftest.py`): Shared test fixtures and mock setups  
+- **Fixtures** (`conftest.py`): Shared test fixtures and mock setups
 - **Helpers** (`tests/helpers/`): Utilities for generating test data and mocks
 
 ### 7.5 Benefits of Our Approach
 
-✅ **Fast**: Tests run in ~0.04 seconds  
-✅ **Reliable**: No external dependencies required  
-✅ **Isolated**: Each test focuses on one piece of functionality  
-✅ **Maintainable**: Easy to understand and modify  
+✅ **Fast**: Tests run in ~0.04 seconds
+✅ **Reliable**: No external dependencies required
+✅ **Isolated**: Each test focuses on one piece of functionality
+✅ **Maintainable**: Easy to understand and modify
 ✅ **CI/CD Ready**: Run anywhere without infrastructure setup
 
 ## 8. Contributing
