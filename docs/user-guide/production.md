@@ -318,6 +318,13 @@ http {
             access_log off;
         }
 
+        # Ready check endpoint (no rate limiting)
+        location /ready {
+            proxy_pass http://fastapi_backend;
+            proxy_set_header Host $host;
+            access_log off;
+        }
+
         # Static files (if any)
         location /static/ {
             alias /code/static/;
@@ -552,49 +559,6 @@ class ProductionSettings(Settings):
 # Adjust rate limits for production
 DEFAULT_RATE_LIMIT_LIMIT = 100  # requests per period
 DEFAULT_RATE_LIMIT_PERIOD = 3600  # 1 hour
-```
-
-### Health Checks
-
-#### Application Health Check
-
-```python
-# src/app/api/v1/health.py
-from fastapi import APIRouter, Depends, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
-from ...core.db.database import async_get_db
-from ...core.utils.cache import redis_client
-
-router = APIRouter()
-
-@router.get("/health")
-async def health_check():
-    return {"status": "healthy", "timestamp": datetime.utcnow()}
-
-@router.get("/health/detailed")
-async def detailed_health_check(db: AsyncSession = Depends(async_get_db)):
-    health_status = {"status": "healthy", "services": {}}
-    
-    # Check database
-    try:
-        await db.execute("SELECT 1")
-        health_status["services"]["database"] = "healthy"
-    except Exception:
-        health_status["services"]["database"] = "unhealthy"
-        health_status["status"] = "unhealthy"
-    
-    # Check Redis
-    try:
-        await redis_client.ping()
-        health_status["services"]["redis"] = "healthy"
-    except Exception:
-        health_status["services"]["redis"] = "unhealthy"
-        health_status["status"] = "unhealthy"
-    
-    if health_status["status"] == "unhealthy":
-        raise HTTPException(status_code=503, detail=health_status)
-    
-    return health_status
 ```
 
 ### Deployment Process

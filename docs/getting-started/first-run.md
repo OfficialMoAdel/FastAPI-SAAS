@@ -38,8 +38,28 @@ curl http://localhost:8000/api/v1/health
 Expected response:
 ```json
 {
-  "status": "healthy",
-  "timestamp": "2024-01-01T12:00:00Z"
+  "status":"healthy",
+  "environment":"local",
+  "version":"0.1.0",
+  "timestamp":"2025-10-21T14:40:14+00:00"
+}
+```
+
+**Ready Check:**
+```bash
+curl http://localhost:8000/api/v1/ready
+```
+
+Expected response:
+```json
+{
+  "status":"healthy",
+  "environment":"local",
+  "version":"0.1.0",
+  "app":"healthy",
+  "database":"healthy",
+  "redis":"healthy",
+  "timestamp":"2025-10-21T14:40:47+00:00"
 }
 ```
 
