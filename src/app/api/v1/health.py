@@ -41,7 +41,6 @@ async def ready(redis: Annotated[Redis, Depends(async_get_redis)], db: Annotated
     redis_status = await check_redis_health(redis=redis)
     LOGGER.debug(f"Redis health check status: {redis_status}")
 
-    # Overall status
     overall_status = STATUS_HEALTHY if database_status and redis_status else STATUS_UNHEALTHY
     http_status = status.HTTP_200_OK if overall_status == STATUS_HEALTHY else status.HTTP_503_SERVICE_UNAVAILABLE
 
