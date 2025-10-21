@@ -1,15 +1,26 @@
 import uuid as uuid_pkg
-from uuid6 import uuid7
 from datetime import UTC, datetime
 from typing import Any
 
 from pydantic import BaseModel, Field, field_serializer
+from uuid6 import uuid7
 
 
 class HealthCheck(BaseModel):
-    name: str
+    status: str
+    environment: str
     version: str
-    description: str
+    timestamp: str
+
+
+class ReadyCheck(BaseModel):
+    status: str
+    environment: str
+    version: str
+    app: str
+    database: str
+    redis: str
+    timestamp: str
 
 
 # -------------- mixins --------------

@@ -1,7 +1,7 @@
 import functools
 import json
 import re
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from fastapi import Request
@@ -173,13 +173,13 @@ async def _delete_keys_by_pattern(pattern: str) -> None:
     """
     if client is None:
         return
-    
-    cursor = 0 
+
+    cursor = 0
     while True:
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
         if keys:
             await client.delete(*keys)
-        if cursor == 0: 
+        if cursor == 0:
             break
 
 
@@ -335,3 +335,12 @@ def cache(
         return inner
 
     return wrapper
+
+
+async def async_get_redis() -> AsyncGenerator[Redis, None]:
+    """Get a Redis client from the pool for each request."""
+    client = Redis(connection_pool=pool)
+    try:
+        yield client
+    finally:
+        await client.aclose()  # type: ignore
