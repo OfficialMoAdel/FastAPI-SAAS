@@ -526,21 +526,6 @@ if settings.ENABLE_ADVANCED_CACHING:
     pass
 ```
 
-### Health Checks
-
-Configure health check endpoints:
-
-```python
-@app.get("/health")
-async def health_check():
-    return {
-        "status": "healthy",
-        "database": await check_database_health(),
-        "redis": await check_redis_health(),
-        "version": settings.APP_VERSION
-    }
-```
-
 ## Configuration Validation
 
 ### Environment Validation

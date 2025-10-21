@@ -290,9 +290,10 @@ After installation, verify everything works:
 
 1. **API Documentation**: http://localhost:8000/docs
 2. **Health Check**: http://localhost:8000/api/v1/health
-3. **Database Connection**: Check logs for successful connection
-4. **Redis Connection**: Test caching functionality
-5. **Background Tasks**: Submit a test job
+3. **Ready Check**: http://localhost:8000/api/v1/ready
+4. **Database Connection**: Check logs for successful connection
+5. **Redis Connection**: Test caching functionality
+6. **Background Tasks**: Submit a test job
 
 ## Troubleshooting
 

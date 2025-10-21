@@ -104,6 +104,7 @@ Visit these URLs to confirm everything is working:
 - **API Documentation**: [http://localhost:8000/docs](http://localhost:8000/docs)
 - **Alternative Docs**: [http://localhost:8000/redoc](http://localhost:8000/redoc)
 - **Health Check**: [http://localhost:8000/api/v1/health](http://localhost:8000/api/v1/health)
+- **Ready Check**: [http://localhost:8000/api/v1/ready](http://localhost:8000/api/v1/ready)
 
 ## You're Ready!
 
@@ -126,7 +127,12 @@ Try these quick tests to see your API in action:
 curl http://localhost:8000/api/v1/health
 ```
 
-### 2. Create a User
+### 2. Ready Check
+```bash
+curl http://localhost:8000/api/v1/ready
+```
+
+### 3. Create a User
 ```bash
 curl -X POST "http://localhost:8000/api/v1/users" \
   -H "Content-Type: application/json" \
@@ -138,7 +144,7 @@ curl -X POST "http://localhost:8000/api/v1/users" \
   }'
 ```
 
-### 3. Login
+### 4. Login
 ```bash
 curl -X POST "http://localhost:8000/api/v1/login" \
   -H "Content-Type: application/x-www-form-urlencoded" \
