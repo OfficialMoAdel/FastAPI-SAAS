@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from pydantic import SecretStr
+from pydantic import SecretStr, computed_field
 from pydantic_settings import BaseSettings
 from starlette.config import Config
 
@@ -67,7 +67,8 @@ class FirstUserSettings(BaseSettings):
     ADMIN_PASSWORD: str = config("ADMIN_PASSWORD", default="!Ch4ng3Th1sP4ssW0rd!")
 
 
-class TestSettings(BaseSettings): ...
+class TestSettings(BaseSettings):
+    ...
 
 
 class RedisCacheSettings(BaseSettings):
@@ -127,6 +128,14 @@ class EnvironmentSettings(BaseSettings):
     ENVIRONMENT: EnvironmentOption = config("ENVIRONMENT", default=EnvironmentOption.LOCAL)
 
 
+class CORSSettings(BaseSettings):
+    CORS_ORIGINS_STR: str = config("CORS_ORIGINS", default="*")
+
+    @computed_field
+    def CORS_ORIGINS(self) -> list[str]:
+        return [origin.strip() for origin in self.CORS_ORIGINS_STR.split(",") if origin.strip()]
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -141,6 +150,7 @@ class Settings(
     DefaultRateLimitSettings,
     CRUDAdminSettings,
     EnvironmentSettings,
+    CORSSettings,
 ):
     pass
 

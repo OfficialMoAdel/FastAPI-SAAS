@@ -10,7 +10,7 @@ The main `Settings` class inherits from multiple specialized setting groups:
 # src/app/core/config.py
 class Settings(
     AppSettings,
-    PostgresSettings, 
+    PostgresSettings,
     CryptSettings,
     FirstUserSettings,
     RedisCacheSettings,
@@ -19,8 +19,10 @@ class Settings(
     RedisRateLimiterSettings,
     DefaultRateLimitSettings,
     EnvironmentSettings,
+    CORSSettings,
 ):
     pass
+
 
 # Single instance used throughout the app
 settings = Settings()
@@ -29,6 +31,7 @@ settings = Settings()
 ## Built-in Settings Groups
 
 ### Application Settings
+
 Basic app metadata and configuration:
 
 ```python
@@ -42,6 +45,7 @@ class AppSettings(BaseSettings):
 ```
 
 ### Database Settings
+
 PostgreSQL connection configuration:
 
 ```python
@@ -63,6 +67,7 @@ class PostgresSettings(BaseSettings):
 ```
 
 ### Security Settings
+
 JWT and authentication configuration:
 
 ```python
@@ -81,6 +86,7 @@ class CryptSettings(BaseSettings):
 ```
 
 ### Redis Settings
+
 Separate Redis instances for different services:
 
 ```python
@@ -88,9 +94,11 @@ class RedisCacheSettings(BaseSettings):
     REDIS_CACHE_HOST: str = "localhost"
     REDIS_CACHE_PORT: int = 6379
 
+
 class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_HOST: str = "localhost"
     REDIS_QUEUE_PORT: int = 6379
+
 
 class RedisRateLimiterSettings(BaseSettings):
     REDIS_RATE_LIMIT_HOST: str = "localhost"
@@ -98,6 +106,7 @@ class RedisRateLimiterSettings(BaseSettings):
 ```
 
 ### Rate Limiting Settings
+
 Default rate limiting configuration:
 
 ```python
@@ -107,6 +116,7 @@ class DefaultRateLimitSettings(BaseSettings):
 ```
 
 ### Admin User Settings
+
 First superuser account creation:
 
 ```python
@@ -145,6 +155,7 @@ class CustomSettings(BaseSettings):
         if v > 104857600:  # 100MB maximum
             raise ValueError("MAX_UPLOAD_SIZE cannot exceed 100MB")
         return v
+
 
 # Add to main Settings class
 class Settings(
@@ -194,12 +205,12 @@ class FeatureSettings(BaseSettings):
     ENABLE_CACHING: bool = True
     ENABLE_RATE_LIMITING: bool = True
     ENABLE_BACKGROUND_JOBS: bool = True
-    
+
     # Optional features
     ENABLE_ANALYTICS: bool = False
     ENABLE_EMAIL_NOTIFICATIONS: bool = False
     ENABLE_FILE_UPLOADS: bool = False
-    
+
     # Experimental features
     ENABLE_EXPERIMENTAL_API: bool = False
     ENABLE_BETA_FEATURES: bool = False
@@ -258,10 +269,10 @@ class SecuritySettings(BaseSettings):
                 raise ValueError("SSL_CERT_PATH required when HTTPS enabled")
             if not self.SSL_KEY_PATH:
                 raise ValueError("SSL_KEY_PATH required when HTTPS enabled")
-        
+
         if self.FORCE_SSL and not self.ENABLE_HTTPS:
             raise ValueError("Cannot force SSL without enabling HTTPS")
-        
+
         return self
 ```
 
@@ -279,10 +290,10 @@ class EnvironmentSettings(BaseSettings):
         if self.ENVIRONMENT == "production":
             if self.DEBUG:
                 raise ValueError("DEBUG must be False in production")
-        
+
         if self.ENVIRONMENT not in ["local", "staging", "production"]:
             raise ValueError("ENVIRONMENT must be local, staging, or production")
-        
+
         return self
 ```
 
@@ -295,10 +306,10 @@ Create computed values from other settings:
 ```python
 class StorageSettings(BaseSettings):
     STORAGE_TYPE: str = "local"  # local, s3, gcs
-    
+
     # Local storage
     LOCAL_STORAGE_PATH: str = "./uploads"
-    
+
     # S3 settings
     AWS_ACCESS_KEY_ID: str = ""
     AWS_SECRET_ACCESS_KEY: str = ""
@@ -326,7 +337,7 @@ class StorageSettings(BaseSettings):
                 "credentials": {
                     "access_key": self.AWS_ACCESS_KEY_ID,
                     "secret_key": self.AWS_SECRET_ACCESS_KEY,
-                }
+                },
             }
         return {}
 ```
@@ -346,19 +357,21 @@ class AuthSettings(BaseSettings):
     REFRESH_TOKEN_EXPIRE: int = 7200
     PASSWORD_MIN_LENGTH: int = 8
 
-# Notification service settings  
+
+# Notification service settings
 class NotificationSettings(BaseSettings):
     EMAIL_ENABLED: bool = False
     SMS_ENABLED: bool = False
     PUSH_ENABLED: bool = False
-    
+
     # Email settings
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587
-    
+
     # SMS settings (example with Twilio)
     TWILIO_ACCOUNT_SID: str = ""
     TWILIO_AUTH_TOKEN: str = ""
+
 
 # Main settings
 class Settings(
@@ -379,23 +392,27 @@ class BaseAppSettings(BaseSettings):
     APP_NAME: str = "FastAPI App"
     DEBUG: bool = False
 
+
 class DevelopmentSettings(BaseAppSettings):
     DEBUG: bool = True
     LOG_LEVEL: str = "DEBUG"
     DATABASE_ECHO: bool = True
+
 
 class ProductionSettings(BaseAppSettings):
     DEBUG: bool = False
     LOG_LEVEL: str = "WARNING"
     DATABASE_ECHO: bool = False
 
+
 def get_settings() -> BaseAppSettings:
     environment = os.getenv("ENVIRONMENT", "local")
-    
+
     if environment == "production":
         return ProductionSettings()
     else:
         return DevelopmentSettings()
+
 
 settings = get_settings()
 ```
@@ -414,7 +431,7 @@ class MinimalSettings(
     CryptSettings,
     FirstUserSettings,
     # Removed: RedisCacheSettings
-    # Removed: RedisQueueSettings  
+    # Removed: RedisQueueSettings
     # Removed: RedisRateLimiterSettings
     EnvironmentSettings,
 ):
@@ -431,6 +448,7 @@ class ServiceSettings(BaseSettings):
     ENABLE_CELERY: bool = True
     ENABLE_MONITORING: bool = False
 
+
 class ConditionalSettings(
     AppSettings,
     PostgresSettings,
@@ -440,14 +458,10 @@ class ConditionalSettings(
     # Add Redis settings only if enabled
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        
+
         if self.ENABLE_REDIS:
             # Dynamically add Redis settings
-            self.__class__ = type(
-                "ConditionalSettings",
-                (self.__class__, RedisCacheSettings),
-                {}
-            )
+            self.__class__ = type("ConditionalSettings", (self.__class__, RedisCacheSettings), {})
 ```
 
 ## Testing Settings
@@ -460,17 +474,18 @@ Create separate settings for testing:
 class TestSettings(BaseSettings):
     # Override database for testing
     POSTGRES_DB: str = "test_database"
-    
+
     # Disable external services
     ENABLE_REDIS: bool = False
     ENABLE_EMAIL: bool = False
-    
+
     # Speed up tests
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 5
-    
+
     # Test-specific settings
     TEST_USER_EMAIL: str = "test@example.com"
     TEST_USER_PASSWORD: str = "testpassword123"
+
 
 # Use in tests
 @pytest.fixture
@@ -485,25 +500,22 @@ Test your custom settings:
 ```python
 def test_custom_settings_validation():
     # Test valid configuration
-    settings = CustomSettings(
-        CUSTOM_API_KEY="test-key",
-        CUSTOM_TIMEOUT=60,
-        MAX_UPLOAD_SIZE=5242880  # 5MB
-    )
+    settings = CustomSettings(CUSTOM_API_KEY="test-key", CUSTOM_TIMEOUT=60, MAX_UPLOAD_SIZE=5242880)  # 5MB
     assert settings.CUSTOM_TIMEOUT == 60
 
     # Test validation error
     with pytest.raises(ValueError, match="MAX_UPLOAD_SIZE cannot exceed 100MB"):
         CustomSettings(MAX_UPLOAD_SIZE=209715200)  # 200MB
 
+
 def test_settings_computed_fields():
     settings = StorageSettings(
         STORAGE_TYPE="s3",
         AWS_ACCESS_KEY_ID="test-key",
         AWS_SECRET_ACCESS_KEY="test-secret",
-        AWS_BUCKET_NAME="test-bucket"
+        AWS_BUCKET_NAME="test-bucket",
     )
-    
+
     assert settings.STORAGE_ENABLED is True
     assert settings.STORAGE_CONFIG["bucket"] == "test-bucket"
 ```
@@ -511,27 +523,31 @@ def test_settings_computed_fields():
 ## Best Practices
 
 ### Organization
+
 - Group related settings in dedicated classes
 - Use descriptive names for settings groups
 - Keep validation logic close to the settings
 - Document complex validation rules
 
 ### Security
+
 - Validate sensitive settings like secret keys
 - Never set default values for secrets in production
 - Use computed fields to derive connection strings
 - Separate test and production configurations
 
 ### Performance
+
 - Use `@computed_field` for expensive calculations
 - Cache settings instances appropriately
 - Avoid complex validation in hot paths
 - Use model validators for cross-field validation
 
 ### Testing
+
 - Create separate test settings classes
 - Test all validation rules
 - Mock external service settings in tests
 - Use dependency injection for settings in tests
 
-The settings system provides type safety, validation, and organization for your application configuration. Start with the built-in settings and extend them as your application grows! 
+The settings system provides type safety, validation, and organization for your application configuration. Start with the built-in settings and extend them as your application grows!

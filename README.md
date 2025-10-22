@@ -36,7 +36,7 @@
   </a>
 </p>
 
----
+______________________________________________________________________
 
 ## 📖 Documentation
 
@@ -52,7 +52,7 @@
 
 This README provides a quick reference for LLMs and developers, but the full documentation contains detailed guides, examples, and best practices.
 
----
+______________________________________________________________________
 
 ## 0. About
 
@@ -78,6 +78,7 @@ This README provides a quick reference for LLMs and developers, but the full doc
 💬 **[Join our Discord community](https://discord.com/invite/TEmPs22gqB)** - Connect with other developers using the FastAPI boilerplate!
 
 Our Discord server features:
+
 - **🤝 Networking** - Connect with fellow developers and share experiences
 - **💡 Product Updates** - Stay updated with FastroAI and our other products
 - **📸 Showcase** - Share what you've built using our tools
@@ -140,7 +141,7 @@ Whether you're just getting started or building production applications, our com
    1. [Admin Panel](#513-admin-panel)
    1. [Running](#514-running)
    1. [Create Application](#515-create-application)
-   2. [Opting Out of Services](#516-opting-out-of-services)
+   1. [Opting Out of Services](#516-opting-out-of-services)
 1. [Running in Production](#6-running-in-production)
    1. [Uvicorn Workers with Gunicorn](#61-uvicorn-workers-with-gunicorn)
    1. [Running With NGINX](#62-running-with-nginx)
@@ -289,6 +290,7 @@ CRUD_ADMIN_REDIS_SSL=false                 # default=false, use SSL for Redis co
 ```
 
 **Session Backend Options:**
+
 - **Memory** (default): Development-friendly, sessions reset on restart
 - **Redis** (production): High performance, scalable, persistent sessions
 - **Database**: Audit-friendly with admin visibility
@@ -600,7 +602,7 @@ And to apply the migration
 uv run alembic upgrade head
 ```
 
-> [!NOTE]
+> \[!NOTE\]
 > If you do not have uv, you may run it without uv after running `pip install alembic`
 
 ## 5. Extending
@@ -1057,11 +1059,7 @@ router = APIRouter(tags=["entities"])
 
 
 @router.get("/entities/{id}", response_model=EntityRead)
-async def read_entity(
-    request: Request,
-    id: int,
-    db: Annotated[AsyncSession, Depends(async_get_db)]
-):
+async def read_entity(request: Request, id: int, db: Annotated[AsyncSession, Depends(async_get_db)]):
     entity = await crud_entity.get(db=db, id=id)
 
     if entity is None:  # Explicit None check
@@ -1071,10 +1069,7 @@ async def read_entity(
 
 
 @router.get("/entities", response_model=List[EntityRead])
-async def read_entities(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(async_get_db)]
-):
+async def read_entities(request: Request, db: Annotated[AsyncSession, Depends(async_get_db)]):
     entities = await crud_entity.get_multi(db=db, is_deleted=False)
     return entities
 ```
@@ -1150,10 +1145,7 @@ from app.schemas.entity import EntityRead
 
 @router.get("/entities", response_model=PaginatedListResponse[EntityRead])
 async def read_entities(
-    request: Request,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    items_per_page: int = 10
+    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
 ):
     entities_data = await crud_entity.get_multi(
         db=db,
@@ -1173,18 +1165,15 @@ async def read_entities(
 To add exceptions you may just import from `app/core/exceptions/http_exceptions` and optionally add a detail:
 
 ```python
-from app.core.exceptions.http_exceptions import (
-    NotFoundException,
-    ForbiddenException,
-    DuplicateValueException
-)
+from app.core.exceptions.http_exceptions import NotFoundException, ForbiddenException, DuplicateValueException
+
 
 @router.post("/entities", response_model=EntityRead, status_code=201)
 async def create_entity(
     request: Request,
     entity_data: EntityCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    current_user: Annotated[UserRead, Depends(get_current_user)]
+    current_user: Annotated[UserRead, Depends(get_current_user)],
 ):
     # Check if entity already exists
     if await crud_entity.exists(db=db, name=entity_data.name) is True:
@@ -1204,11 +1193,7 @@ async def create_entity(
 
 
 @router.get("/entities/{id}", response_model=EntityRead)
-async def read_entity(
-    request: Request,
-    id: int,
-    db: Annotated[AsyncSession, Depends(async_get_db)]
-):
+async def read_entity(request: Request, id: int, db: Annotated[AsyncSession, Depends(async_get_db)]):
     entity = await crud_entity.get(db=db, id=id)
 
     if entity is None:  # Explicit None check
@@ -1399,7 +1384,7 @@ For `client-side caching`, all you have to do is let the `Settings` class define
 
 Depending on the problem your API is solving, you might want to implement a job queue. A job queue allows you to run tasks in the background, and is usually aimed at functions that require longer run times and don't directly impact user response in your frontend. As a rule of thumb, if a task takes more than 2 seconds to run, can be executed asynchronously, and its result is not needed for the next step of the user's interaction, then it is a good candidate for the job queue.
 
-> [!TIP]
+> \[!TIP\]
 > Very common candidates for background functions are calls to and from LLM endpoints (e.g. OpenAI or Openrouter). This is because they span tens of seconds and often need to be further parsed and saved.
 
 #### Background task creation
@@ -1417,6 +1402,7 @@ Then add the function to the `WorkerSettings` class `functions` variable in `app
 ```python
 from .functions import sample_background_task
 from .your_module import sample_complex_background_task
+
 
 class WorkerSettings:
     functions = [sample_background_task, sample_complex_background_task]
@@ -1442,7 +1428,7 @@ async def get_task(task_id: str):
 
 And finally run the worker in parallel to your fastapi application.
 
-> [!IMPORTANT]
+> \[!IMPORTANT\]
 > For any change to the `sample_background_task` to be reflected in the worker, you need to restart the worker (e.g. the docker container).
 
 If you are using `docker compose`, the worker is already running.
@@ -1462,6 +1448,7 @@ To do this, you can add the database session to the `ctx` object in the `startup
 from arq.worker import Worker
 from ...core.db.database import async_get_db
 
+
 async def startup(ctx: Worker) -> None:
     ctx["db"] = await anext(async_get_db())
     logging.info("Worker Started")
@@ -1477,17 +1464,16 @@ This will allow you to have the async database session always available in any b
 ```python
 from arq.worker import Worker
 
+
 async def your_background_function(
     ctx: Worker,
     post_id: int,
-    ...
 ) -> Any:
     db = ctx["db"]
     post = crud_posts.get(db=db, schema_to_select=PostRead, id=post_id)
-    ...
 ```
 
-> [!WARNING]
+> \[!WARNING\]
 > When using database sessions, you will want to use Pydantic objects. However, these objects don't mingle well with the seralization required by ARQ tasks and will be retrieved as a dictionary.
 
 ### 5.11 Rate Limiting
@@ -1661,6 +1647,7 @@ This authentication setup in the provides a robust, secure, and user-friendly wa
 The boilerplate includes a powerful web-based admin interface built with [CRUDAdmin](https://github.com/benavlabs/crudadmin) that provides a comprehensive database management system.
 
 > **About CRUDAdmin**: CRUDAdmin is a modern admin interface generator for FastAPI applications. Learn more at:
+>
 > - **📚 Documentation**: [benavlabs.github.io/crudadmin](https://benavlabs.github.io/crudadmin/)
 > - **💻 GitHub**: [github.com/benavlabs/crudadmin](https://github.com/benavlabs/crudadmin)
 
@@ -1685,6 +1672,7 @@ http://localhost:8000/admin
 ```
 
 Use the admin credentials you defined in your `.env` file:
+
 - Username: `ADMIN_USERNAME`
 - Password: `ADMIN_PASSWORD`
 
@@ -1709,6 +1697,7 @@ To add new models to the admin panel, edit `src/app/admin/views.py`:
 from your_app.models import YourModel
 from your_app.schemas import YourCreateSchema, YourUpdateSchema
 
+
 def register_admin_views(admin: CRUDAdmin) -> None:
     # ... existing models ...
 
@@ -1716,7 +1705,7 @@ def register_admin_views(admin: CRUDAdmin) -> None:
         model=YourModel,
         create_schema=YourCreateSchema,
         update_schema=YourUpdateSchema,
-        allowed_actions={"view", "create", "update", "delete"}
+        allowed_actions={"view", "create", "update", "delete"},
     )
 ```
 
@@ -1731,7 +1720,7 @@ admin.add_view(
     create_schema=ArticleCreate,
     update_schema=ArticleUpdate,
     select_schema=ArticleSelect,  # Exclude problematic fields from read operations
-    allowed_actions={"view", "create", "update", "delete"}
+    allowed_actions={"view", "create", "update", "delete"},
 )
 
 # Password field handling
@@ -1740,7 +1729,7 @@ admin.add_view(
     create_schema=UserCreateWithPassword,
     update_schema=UserUpdateWithPassword,
     password_transformer=password_transformer,  # Handles password hashing
-    allowed_actions={"view", "create", "update"}
+    allowed_actions={"view", "create", "update"},
 )
 
 # Read-only models
@@ -1748,7 +1737,7 @@ admin.add_view(
     model=AuditLog,
     create_schema=AuditLogSchema,
     update_schema=AuditLogSchema,
-    allowed_actions={"view"}  # Only viewing allowed
+    allowed_actions={"view"},  # Only viewing allowed
 )
 ```
 
@@ -1758,9 +1747,9 @@ For production environments, consider using Redis for better performance:
 
 ```python
 # Enable Redis sessions in your environment
-CRUD_ADMIN_REDIS_ENABLED=true
-CRUD_ADMIN_REDIS_HOST=localhost
-CRUD_ADMIN_REDIS_PORT=6379
+CRUD_ADMIN_REDIS_ENABLED = true
+CRUD_ADMIN_REDIS_HOST = localhost
+CRUD_ADMIN_REDIS_PORT = 6379
 ```
 
 ### 5.14 Running
@@ -1783,6 +1772,7 @@ And for the worker:
 ```sh
 uv run arq src.app.core.worker.settings.WorkerSettings
 ```
+
 ### 5.15 Create Application
 
 If you want to stop tables from being created every time you run the api, you should disable this here:
@@ -1823,6 +1813,7 @@ env_path = os.path.join(current_file_dir, "..", "..", ".env")
 config = Config(env_path)
 ...
 
+
 class Settings(
     AppSettings,
     PostgresSettings,
@@ -1836,6 +1827,7 @@ class Settings(
     DefaultRateLimitSettings,
     CRUDAdminSettings,
     EnvironmentSettings,
+    CORSSettings,
 ):
     pass
 
@@ -1855,6 +1847,7 @@ class Settings(
     ClientSideCacheSettings,
     DefaultRateLimitSettings,
     EnvironmentSettings,
+    CORSSettings,
 ):
     pass
 ```
@@ -2125,6 +2118,7 @@ Example test structure:
 import pytest
 from unittest.mock import AsyncMock, patch
 from src.app.api.v1.users import write_user
+
 
 class TestWriteUser:
     @pytest.mark.asyncio
