@@ -1,13 +1,19 @@
 import os
 from enum import Enum
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings
 from starlette.config import Config
 
 current_file_dir = os.path.dirname(os.path.realpath(__file__))
 env_path = os.path.join(current_file_dir, "..", "..", ".env")
 config = Config(env_path)
+
+
+def str_setting_to_list(setting: str) -> list[str]:
+    if isinstance(setting, str):
+        return [item.strip() for item in setting.split(",") if item.strip()]
+    raise ValueError("Invalid string setting for list conversion.")
 
 
 class AppSettings(BaseSettings):
@@ -129,11 +135,9 @@ class EnvironmentSettings(BaseSettings):
 
 
 class CORSSettings(BaseSettings):
-    CORS_ORIGINS_STR: str = config("CORS_ORIGINS", default="*")
-
-    @computed_field
-    def CORS_ORIGINS(self) -> list[str]:
-        return [origin.strip() for origin in self.CORS_ORIGINS_STR.split(",") if origin.strip()]
+    CORS_ORIGINS: list[str] = config("CORS_ORIGINS", cast=str_setting_to_list, default="*")
+    CORS_METHODS: list[str] = config("CORS_METHODS", cast=str_setting_to_list, default="*")
+    CORS_HEADERS: list[str] = config("CORS_HEADERS", cast=str_setting_to_list, default="*")
 
 
 class Settings(

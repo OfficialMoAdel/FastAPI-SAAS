@@ -216,8 +216,8 @@ def create_application(
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
             allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+            allow_methods=settings.CORS_METHODS,
+            allow_headers=settings.CORS_HEADERS,
         )
 
     if isinstance(settings, EnvironmentSettings):

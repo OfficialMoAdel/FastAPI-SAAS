@@ -364,7 +364,7 @@ def create_access_token(data: dict, expires_delta: timedelta = None):
 
 ### CORS Configuration
 
-Configure Cross-Origin Resource Sharing in `src/app/main.py`:
+Customize Cross-Origin Resource Sharing in `src/app/core/setup.py`:
 
 ```python
 app.add_middleware(
