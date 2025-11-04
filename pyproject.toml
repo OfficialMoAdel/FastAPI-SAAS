@@ -105,6 +105,7 @@ filterwarnings = [
 
 [dependency-groups]
 dev = [
+    "pre-commit>=4.3.0",
     "pytest-asyncio>=1.0.0",
 ]
 
