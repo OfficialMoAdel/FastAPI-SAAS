@@ -28,21 +28,17 @@ Use the template on GitHub, create your repo, then:
 git clone https://github.com/<you>/<your-app>
 cd <your-app>
 
-# NOTE (added by me):
-# Running locally with Uvicorn.
-# The .env and docker-compose.yml files were taken from this Gist:
-# https://gist.github.com/igorbenav/48ad745120c3f77817e094f3a609111a
-# I kept the local Dockerfile since it uses 'uv' instead of Poetry
-# (the Gist version relies on Poetry).
+# Running locally with Uvicorn:
 
-# TODO: Decide where to put the example file, since it is currently
-# being copied from the Gist.
+# Copy Dockerfile and Docker Compose files:
+cp scripts/local_with_uvicorn/Dockerfile Dockerfile
+cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
 
 # Copy and create your environment file
-cp src/.env.example src/.env
-# Fill in the minimal environment variables as described in the docs
+cp scripts/local_with_uvicorn/env src/.env
+# If you want, modify in the minimal environment variables as described in the docs.
 
-# Run everything using Docker
+# Run everything using Docker:
 docker compose up
 
 # Open the API documentation
