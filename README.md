@@ -25,8 +25,8 @@ Use the template on GitHub, create your repo, then:
 
 ```bash
 # Clone your new repository
-git clone https://github.com/<you>/<your-app>
-cd <your-app>
+git clone https://github.com/<you>/FastAPI-boilerplate
+cd FastAPI-boilerplate
 
 # Running locally with Uvicorn:
 
