@@ -7,7 +7,7 @@ This guide shows you how to add pagination to your API endpoints using the boile
 Here's how to add basic pagination to any endpoint:
 
 ```python
-from fastcrud.paginated import PaginatedListResponse
+from fastcrud import PaginatedListResponse
 
 @router.get("/", response_model=PaginatedListResponse[UserRead])
 async def get_users(
