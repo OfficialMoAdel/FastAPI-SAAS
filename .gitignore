@@ -138,5 +138,11 @@ cython_debug/
 
 # Config files:
 src/.env
-docker-compose.yml
-Dockerfile
+
+# Ignore root files:
+/Dockerfile
+/docker-compose.yml
+
+# Don't ignore files inside of script folder:
+!scripts/*
+
