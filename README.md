@@ -28,6 +28,9 @@ Use the template on GitHub, create your repo, then:
 git clone https://github.com/<you>/FastAPI-boilerplate
 cd FastAPI-boilerplate
 
+# In the scripts/ folder, you can find scripts to run FastAPI-Boilerplate locally, with uvicorn workers, and in production with nginx.
+# NOTE: For now, only local scripts are updated.
+
 # Running locally with Uvicorn:
 
 # Copy Dockerfile and Docker Compose files:
@@ -92,6 +95,8 @@ Not a fit if you need a monorepo microservices scaffold - see the docs for point
 ## Configuration (minimal)
 
 Create `src/.env` and set **app**, **database**, **JWT**, and **environment** settings. See the docs for a copy-pasteable example and production guidance.
+
+[https://benavlabs.github.io/FastAPI-boilerplate/getting-started/configuration/](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/configuration/)
 
 * `ENVIRONMENT=local|staging|production` controls API docs exposure
 * Set `ADMIN_*` to enable the first admin user
