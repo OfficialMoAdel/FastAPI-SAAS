@@ -392,8 +392,8 @@ async def user_management_example(db: AsyncSession):
 Using FastCRUD's pagination utilities:
 
 ```python
-from fastcrud import compute_offset
-from fastcrud import paginated_response
+from fastcrud import compute_offset, paginated_response
+
 
 async def get_paginated_users(
     db: AsyncSession, 

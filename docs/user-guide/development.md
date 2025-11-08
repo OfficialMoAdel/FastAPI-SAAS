@@ -136,8 +136,7 @@ Create `src/app/api/v1/categories.py`:
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from fastcrud import PaginatedListResponse
-from fastcrud import compute_offset
+from fastcrud import PaginatedListResponse, compute_offset
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser, get_current_user

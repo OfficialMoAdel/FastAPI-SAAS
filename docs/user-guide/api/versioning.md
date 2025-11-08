@@ -132,7 +132,7 @@ async def create_user(user_data: UserCreate):
 ```python
 # src/app/api/v2/users.py
 from app.schemas.user import UserReadV2, UserCreateV2  # New schemas
-from fastcrud.paginated import PaginatedListResponse
+from fastcrud import PaginatedListResponse
 
 # Breaking change: Always return paginated response
 @router.get("/", response_model=PaginatedListResponse[UserReadV2])
