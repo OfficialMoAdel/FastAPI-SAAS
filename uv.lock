@@ -433,7 +433,7 @@ requires-dist = [
     { name = "crudadmin", specifier = ">=0.4.2" },
     { name = "faker", marker = "extra == 'dev'", specifier = ">=26.0.0" },
     { name = "fastapi", specifier = ">=0.109.1" },
-    { name = "fastcrud", specifier = ">=0.19.0" },
+    { name = "fastcrud", specifier = ">=0.19.1" },
     { name = "greenlet", specifier = ">=2.0.2" },
     { name = "gunicorn", specifier = ">=23.0.0" },
     { name = "httptools", specifier = ">=0.6.1" },
@@ -468,7 +468,7 @@ dev = [
 
 [[package]]
 name = "fastcrud"
-version = "0.19.0"
+version = "0.19.1"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "fastapi" },
@@ -476,9 +476,9 @@ dependencies = [
     { name = "sqlalchemy" },
     { name = "sqlalchemy-utils" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/37/38/7c908b08a126647a5e230810338350f5d92b76823ebe4f3e82b20a489518/fastcrud-0.19.0.tar.gz", hash = "sha256:6478a005be6cb39a26958ea1ecf478b953827dd6ecd884a8486d610c7d176355", size = 70345 }
+sdist = { url = "https://files.pythonhosted.org/packages/59/ed/e172ad15fb591874a533d7cc46e93785e870b30fd4b36487a0807fbb2cec/fastcrud-0.19.1.tar.gz", hash = "sha256:fb988b912b6dfc6fe0cfcfba658a6a064f9fbb8dd9d3c1d76fc4fe1c36ab525a", size = 70499 }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/1b/7c/42582f4eb5e54bf4a5e38bfc4cb1466be6c4229e3cc78616b7b135e572f7/fastcrud-0.19.0-py3-none-any.whl", hash = "sha256:67113cdf09617086b1857f388ca9c07375ae432f575e5a420536db813fb2df5a", size = 97529 },
+    { url = "https://files.pythonhosted.org/packages/3d/08/0e3ffd9ea3458dea16769e57ae035759bbd72a1b2c957102e36f792a9f40/fastcrud-0.19.1-py3-none-any.whl", hash = "sha256:0171b45e5ef8ca09cb48118a9b72e86f5d371c50bd85260e11c4e62fd180e1e3", size = 97638 },
 ]
 
 [[package]]

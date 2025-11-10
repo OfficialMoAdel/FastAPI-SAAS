@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastcrud import PaginatedListResponse, compute_offset, paginated_response
@@ -32,7 +32,7 @@ async def write_tier(
     if tier_read is None:
         raise NotFoundException("Created tier not found")
 
-    return cast(dict[str, Any], tier_read)
+    return tier_read
 
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
@@ -51,7 +51,7 @@ async def read_tier(request: Request, name: str, db: Annotated[AsyncSession, Dep
     if db_tier is None:
         raise NotFoundException("Tier not found")
 
-    return cast(dict[str, Any], db_tier)
+    return db_tier
 
 
 @router.patch("/tier/{name}", dependencies=[Depends(get_current_superuser)])
