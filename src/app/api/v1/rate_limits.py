@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastcrud import PaginatedListResponse, compute_offset, paginated_response
@@ -23,9 +23,6 @@ async def write_rate_limit(
     if not db_tier:
         raise NotFoundException("Tier not found")
 
-    db_tier = cast(dict[str, Any], db_tier)
-
-    db_tier = cast(dict[str, Any], db_tier)
     rate_limit_internal_dict = rate_limit.model_dump()
     rate_limit_internal_dict["tier_id"] = db_tier["id"]
 
@@ -43,7 +40,7 @@ async def write_rate_limit(
     if rate_limit_read is None:
         raise NotFoundException("Created rate limit not found")
 
-    return cast(dict[str, Any], rate_limit_read)
+    return rate_limit_read
 
 
 @router.get("/tier/{tier_name}/rate_limits", response_model=PaginatedListResponse[RateLimitRead])
@@ -57,8 +54,6 @@ async def read_rate_limits(
     db_tier = await crud_tiers.get(db=db, name=tier_name, schema_to_select=TierRead)
     if not db_tier:
         raise NotFoundException("Tier not found")
-
-    db_tier = cast(dict[str, Any], db_tier)
 
     rate_limits_data = await crud_rate_limits.get_multi(
         db=db,
@@ -79,13 +74,11 @@ async def read_rate_limit(
     if not db_tier:
         raise NotFoundException("Tier not found")
 
-    db_tier = cast(dict[str, Any], db_tier)
-
     db_rate_limit = await crud_rate_limits.get(db=db, tier_id=db_tier["id"], id=id, schema_to_select=RateLimitRead)
     if db_rate_limit is None:
         raise NotFoundException("Rate Limit not found")
 
-    return cast(dict[str, Any], db_rate_limit)
+    return db_rate_limit
 
 
 @router.patch("/tier/{tier_name}/rate_limit/{id}", dependencies=[Depends(get_current_superuser)])
@@ -99,8 +92,6 @@ async def patch_rate_limit(
     db_tier = await crud_tiers.get(db=db, name=tier_name, schema_to_select=TierRead)
     if not db_tier:
         raise NotFoundException("Tier not found")
-
-    db_tier = cast(dict[str, Any], db_tier)
 
     db_rate_limit = await crud_rate_limits.get(db=db, tier_id=db_tier["id"], id=id, schema_to_select=RateLimitRead)
     if db_rate_limit is None:
@@ -117,8 +108,6 @@ async def erase_rate_limit(
     db_tier = await crud_tiers.get(db=db, name=tier_name, schema_to_select=TierRead)
     if not db_tier:
         raise NotFoundException("Tier not found")
-
-    db_tier = cast(dict[str, Any], db_tier)
 
     db_rate_limit = await crud_rate_limits.get(db=db, tier_id=db_tier["id"], id=id, schema_to_select=RateLimitRead)
     if db_rate_limit is None:

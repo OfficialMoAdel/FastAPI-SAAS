@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastcrud import PaginatedListResponse, compute_offset, paginated_response
@@ -43,7 +43,7 @@ async def write_user(
     if user_read is None:
         raise NotFoundException("Created user not found")
 
-    return cast(dict[str, Any], user_read)
+    return user_read
 
 
 @router.get("/users", response_model=PaginatedListResponse[UserRead])
@@ -74,7 +74,7 @@ async def read_user(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    return cast(dict[str, Any], db_user)
+    return db_user
 
 
 @router.patch("/user/{username}")
@@ -151,7 +151,6 @@ async def read_user_rate_limits(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
     user_dict = dict(db_user)
     if db_user["tier_id"] is None:
         user_dict["tier_rate_limits"] = []
@@ -161,7 +160,6 @@ async def read_user_rate_limits(
     if db_tier is None:
         raise NotFoundException("Tier not found")
 
-    db_tier = cast(dict[str, Any], db_tier)
     db_rate_limits = await crud_rate_limits.get_multi(db=db, tier_id=db_tier["id"])
 
     user_dict["tier_rate_limits"] = db_rate_limits["data"]
@@ -177,7 +175,6 @@ async def read_user_tier(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
     if db_user["tier_id"] is None:
         return None
 
@@ -185,7 +182,6 @@ async def read_user_tier(
     if not db_tier:
         raise NotFoundException("Tier not found")
 
-    db_tier = cast(dict[str, Any], db_tier)
     user_dict = dict(db_user)
     tier_dict = dict(db_tier)
 
@@ -203,7 +199,6 @@ async def patch_user_tier(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
     db_tier = await crud_tiers.get(db=db, id=values.tier_id, schema_to_select=TierRead)
     if db_tier is None:
         raise NotFoundException("Tier not found")

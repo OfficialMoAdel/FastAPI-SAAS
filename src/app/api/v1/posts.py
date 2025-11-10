@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
 from fastcrud import PaginatedListResponse, compute_offset, paginated_response
@@ -28,8 +28,6 @@ async def write_post(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
-
     if current_user["id"] != db_user["id"]:
         raise ForbiddenException()
 
@@ -46,7 +44,7 @@ async def write_post(
     if post_read is None:
         raise NotFoundException("Created post not found")
 
-    return cast(dict[str, Any], post_read)
+    return post_read
 
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
@@ -66,7 +64,6 @@ async def read_posts(
     if not db_user:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
     posts_data = await crud_posts.get_multi(
         db=db,
         offset=compute_offset(page, items_per_page),
@@ -88,15 +85,13 @@ async def read_post(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
-
     db_post = await crud_posts.get(
         db=db, id=id, created_by_user_id=db_user["id"], is_deleted=False, schema_to_select=PostRead
     )
     if db_post is None:
         raise NotFoundException("Post not found")
 
-    return cast(dict[str, Any], db_post)
+    return db_post
 
 
 @router.patch("/{username}/post/{id}")
@@ -113,16 +108,12 @@ async def patch_post(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
-
     if current_user["id"] != db_user["id"]:
         raise ForbiddenException()
 
     db_post = await crud_posts.get(db=db, id=id, is_deleted=False, schema_to_select=PostRead)
     if db_post is None:
         raise NotFoundException("Post not found")
-
-    db_post = cast(dict[str, Any], db_post)
 
     await crud_posts.update(db=db, object=values, id=id)
     return {"message": "Post updated"}
@@ -141,16 +132,12 @@ async def erase_post(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
-
     if current_user["id"] != db_user["id"]:
         raise ForbiddenException()
 
     db_post = await crud_posts.get(db=db, id=id, is_deleted=False, schema_to_select=PostRead)
     if db_post is None:
         raise NotFoundException("Post not found")
-
-    db_post = cast(dict[str, Any], db_post)
 
     await crud_posts.delete(db=db, id=id)
 
@@ -166,13 +153,9 @@ async def erase_db_post(
     if db_user is None:
         raise NotFoundException("User not found")
 
-    db_user = cast(dict[str, Any], db_user)
-
     db_post = await crud_posts.get(db=db, id=id, is_deleted=False, schema_to_select=PostRead)
     if db_post is None:
         raise NotFoundException("Post not found")
-
-    db_post = cast(dict[str, Any], db_post)
 
     await crud_posts.db_delete(db=db, id=id)
     return {"message": "Post deleted from the database"}

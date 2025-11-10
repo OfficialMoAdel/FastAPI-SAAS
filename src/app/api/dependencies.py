@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -83,14 +83,14 @@ async def rate_limiter_dependency(
         user_id = user["id"]
         tier = await crud_tiers.get(db, id=user["tier_id"], schema_to_select=TierRead)
         if tier:
-            tier = cast(TierRead, tier)
-            rate_limit = await crud_rate_limits.get(db=db, tier_id=tier.id, path=path, schema_to_select=RateLimitRead)
+            rate_limit = await crud_rate_limits.get(
+                db=db, tier_id=tier["id"], path=path, schema_to_select=RateLimitRead
+            )
             if rate_limit:
-                rate_limit = cast(RateLimitRead, rate_limit)
-                limit, period = rate_limit.limit, rate_limit.period
+                limit, period = rate_limit["limit"], rate_limit["period"]
             else:
                 logger.warning(
-                    f"User {user_id} with tier '{tier.name}' has no specific rate limit for path '{path}'. \
+                    f"User {user_id} with tier '{tier['name']}' has no specific rate limit for path '{path}'. \
                         Applying default rate limit."
                 )
                 limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
