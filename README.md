@@ -122,18 +122,27 @@ More examples (superuser creation, tiers, rate limits, admin usage) - **docs**.
 
 ## Contributing
 
-Issues and PRs are welcome. Please read **CONTRIBUTING.md** and follow the style of existing modules (type hints, async/await, explicit None checks, and paginated responses).
+Read [contributing](CONTRIBUTING.md).
 
----
+## References
+
+This project was inspired by a few projects, it's based on them with things changed to the way I like (and pydantic, sqlalchemy updated)
+
+- [`Full Stack FastAPI and PostgreSQL`](https://github.com/tiangolo/full-stack-fastapi-postgresql) by @tiangolo himself
+- [`FastAPI Microservices`](https://github.com/Kludex/fastapi-microservices) by @kludex which heavily inspired this boilerplate
+- [`Async Web API with FastAPI + SQLAlchemy 2.0`](https://github.com/rhoboro/async-fastapi-sqlalchemy) for sqlalchemy 2.0 ORM examples
+- [`FastaAPI Rocket Boilerplate`](https://github.com/asacristani/fastapi-rocket-boilerplate/tree/main) for docker compose
 
 ## License
 
-MIT - see `LICENSE.md`.
+[`MIT`](LICENSE.md)
 
----
+## Contact
 
-<p align="center">
-  <a href="https://benav.io">
-    <img src="https://github.com/benavlabs/fastcrud/raw/main/docs/assets/benav_labs_banner.png" alt="Powered by Benav Labs - benav.io" width="420"/>
-  </a>
-</p>
+Benav Labs – [benav.io](https://benav.io)
+[github.com/benavlabs](https://github.com/benavlabs/)
+
+<hr>
+<a href="https://benav.io">
+  <img src="https://github.com/benavlabs/fastcrud/raw/main/docs/assets/benav_labs_banner.png" alt="Powered by Benav Labs - benav.io"/>
+</a>
