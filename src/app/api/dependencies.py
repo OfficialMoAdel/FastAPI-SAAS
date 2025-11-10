@@ -23,7 +23,7 @@ DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[AsyncSession, Depends(async_get_db)]
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
         raise UnauthorizedException("User not authenticated.")
@@ -34,10 +34,7 @@ async def get_current_user(
         user = await crud_users.get(db=db, username=token_data.username_or_email, is_deleted=False)
 
     if user:
-        if hasattr(user, 'model_dump'):
-            return user.model_dump()
-        else:
-            return user
+        return user
 
     raise UnauthorizedException("User not authenticated.")
 

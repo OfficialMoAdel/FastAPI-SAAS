@@ -31,7 +31,7 @@ async def get_users(db: Annotated[AsyncSession, Depends(async_get_db)]):
 async def create_user(
     user_data: UserCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)]
-):
+        ):
     return await crud_users.create(db=db, object=user_data)
 ```
 
@@ -50,7 +50,7 @@ async def get_profile(current_user: Annotated[dict, Depends(get_current_user)]):
 ### 📊 **Easy Pagination**
 Paginate any endpoint with one line:
 ```python
-from fastcrud.paginated import PaginatedListResponse
+from fastcrud import PaginatedListResponse
 
 @router.get("/", response_model=PaginatedListResponse[UserRead])
 async def get_users(page: int = 1, items_per_page: int = 10):

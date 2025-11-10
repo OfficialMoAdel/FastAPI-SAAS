@@ -1125,13 +1125,13 @@ With the `get_multi` method we get a python `dict` with full suport for paginati
 }
 ```
 
-And in the endpoint, we can import from `fastcrud.paginated` the following functions and Pydantic Schema:
+And in the endpoint, we can import from `fastcrud` the following functions and Pydantic Schema:
 
 ```python
 from typing import Annotated
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from fastcrud.paginated import (
+from fastcrud import (
     PaginatedListResponse,  # What you'll use as a response_model to validate
     paginated_response,  # Creates a paginated response based on the parameters
     compute_offset,  # Calculate the offset for pagination ((page - 1) * items_per_page)
