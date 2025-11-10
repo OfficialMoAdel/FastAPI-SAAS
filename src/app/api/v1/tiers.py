@@ -16,7 +16,7 @@ router = APIRouter(tags=["tiers"])
 @router.post("/tier", dependencies=[Depends(get_current_superuser)], status_code=201)
 async def write_tier(
     request: Request, tier: TierCreate, db: Annotated[AsyncSession, Depends(async_get_db)]
-) -> TierRead:
+) -> dict[str, Any]:
     tier_internal_dict = tier.model_dump()
     db_tier = await crud_tiers.exists(db=db, name=tier_internal_dict["name"])
     if db_tier:
@@ -25,11 +25,14 @@ async def write_tier(
     tier_internal = TierCreateInternal(**tier_internal_dict)
     created_tier = await crud_tiers.create(db=db, object=tier_internal)
 
-    tier_read = await crud_tiers.get(db=db, id=created_tier.id, schema_to_select=TierRead)
+    if created_tier is None:
+        raise NotFoundException("Failed to create tier")
+
+    tier_read = await crud_tiers.get(db=db, id=created_tier["id"], schema_to_select=TierRead)
     if tier_read is None:
         raise NotFoundException("Created tier not found")
 
-    return cast(TierRead, tier_read)
+    return cast(dict[str, Any], tier_read)
 
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
@@ -43,12 +46,12 @@ async def read_tiers(
 
 
 @router.get("/tier/{name}", response_model=TierRead)
-async def read_tier(request: Request, name: str, db: Annotated[AsyncSession, Depends(async_get_db)]) -> TierRead:
+async def read_tier(request: Request, name: str, db: Annotated[AsyncSession, Depends(async_get_db)]) -> dict[str, Any]:
     db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
     if db_tier is None:
         raise NotFoundException("Tier not found")
 
-    return cast(TierRead, db_tier)
+    return cast(dict[str, Any], db_tier)
 
 
 @router.patch("/tier/{name}", dependencies=[Depends(get_current_superuser)])

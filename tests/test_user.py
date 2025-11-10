@@ -20,15 +20,15 @@ class TestWriteUser:
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
             # Mock that email and username don't exist
             mock_crud.exists = AsyncMock(side_effect=[False, False])  # email, then username
-            mock_crud.create = AsyncMock(return_value=Mock(id=1))
-            mock_crud.get = AsyncMock(return_value=sample_user_read)
+            mock_crud.create = AsyncMock(return_value={"id": 1})
+            mock_crud.get = AsyncMock(return_value=sample_user_read.model_dump())
 
             with patch("src.app.api.v1.users.get_password_hash") as mock_hash:
                 mock_hash.return_value = "hashed_password"
 
                 result = await write_user(Mock(), user_create, mock_db)
 
-                assert result == sample_user_read
+                assert result == sample_user_read.model_dump()
                 mock_crud.exists.assert_any_call(db=mock_db, email=user_create.email)
                 mock_crud.exists.assert_any_call(db=mock_db, username=user_create.username)
                 mock_crud.create.assert_called_once()
@@ -67,11 +67,12 @@ class TestReadUser:
         username = "test_user"
 
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=sample_user_read)
+            user_dict = sample_user_read.model_dump()
+            mock_crud.get = AsyncMock(return_value=user_dict)
 
             result = await read_user(Mock(), username, mock_db)
 
-            assert result == sample_user_read
+            assert result == user_dict
             mock_crud.get.assert_called_once_with(
                 db=mock_db, username=username, is_deleted=False, schema_to_select=UserRead
             )
@@ -118,14 +119,13 @@ class TestPatchUser:
         """Test successful user update."""
         username = current_user_dict["username"]
         user_update = UserUpdate(name="New Name")
-        
-        
+
         user_dict = sample_user_read.model_dump()
         user_dict["username"] = username
 
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=user_dict)  
-            mock_crud.exists = AsyncMock(return_value=False)  
+            mock_crud.get = AsyncMock(return_value=user_dict)
+            mock_crud.exists = AsyncMock(return_value=False)
             mock_crud.update = AsyncMock(return_value=None)
 
             result = await patch_user(Mock(), user_update, username, current_user_dict, mock_db)
@@ -142,7 +142,7 @@ class TestPatchUser:
         user_dict["username"] = username
 
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=user_dict)  
+            mock_crud.get = AsyncMock(return_value=user_dict)
 
             with pytest.raises(ForbiddenException):
                 await patch_user(Mock(), user_update, username, current_user_dict, mock_db)
