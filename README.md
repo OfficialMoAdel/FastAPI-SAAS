@@ -61,10 +61,10 @@ docker compose up
 
 # Option 3: Production with NGINX
 
-# Copy Dockerfile, Docker Compose, and nginx config:
+# Copy Dockerfile and Docker Compose:
 cp scripts/production_with_nginx/Dockerfile Dockerfile
 cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
-cp default.conf default.conf  # nginx configuration (already in root)
+# Note: default.conf for nginx is already in the root directory
 
 # Copy and create your environment file
 cp scripts/production_with_nginx/.env.example src/.env
