@@ -29,9 +29,8 @@ git clone https://github.com/<you>/FastAPI-boilerplate
 cd FastAPI-boilerplate
 
 # In the scripts/ folder, you can find scripts to run FastAPI-Boilerplate locally, with uvicorn workers, and in production with nginx.
-# NOTE: For now, only local scripts are updated.
 
-# Running locally with Uvicorn:
+# Option 1: Running locally with Uvicorn
 
 # Copy Dockerfile and Docker Compose files:
 cp scripts/local_with_uvicorn/Dockerfile Dockerfile
@@ -39,13 +38,40 @@ cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
 
 # Copy and create your environment file
 cp scripts/local_with_uvicorn/env src/.env
-# If you want, modify in the minimal environment variables as described in the docs.
+# If you want, modify the minimal environment variables as described in the docs.
 
 # Run everything using Docker:
 docker compose up
 
 # Open the API documentation
 open http://127.0.0.1:8000/docs
+
+# Option 2: Running with Gunicorn managing Uvicorn workers
+
+# Copy Dockerfile and Docker Compose files:
+cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
+cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.yml
+
+# Copy and create your environment file
+cp scripts/gunicorn_managing_uvicorn_workers/env src/.env
+
+# Run everything using Docker:
+docker compose up
+
+# Option 3: Production with NGINX
+
+# Copy Dockerfile, Docker Compose, and nginx config:
+cp scripts/production_with_nginx/Dockerfile Dockerfile
+cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
+cp default.conf default.conf  # nginx configuration (already in root)
+
+# Copy and create your environment file
+cp scripts/production_with_nginx/env src/.env
+
+# Run everything using Docker:
+docker compose up
+
+# Access via http://localhost (nginx proxies to the app)
 ```
 
 > Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the docs.
