@@ -37,8 +37,8 @@ cp scripts/local_with_uvicorn/Dockerfile Dockerfile
 cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
 
 # Copy and create your environment file
-cp scripts/local_with_uvicorn/env src/.env
-# If you want, modify the minimal environment variables as described in the docs.
+cp scripts/local_with_uvicorn/.env.example src/.env
+# For local development, the example values work fine. Modify if needed.
 
 # Run everything using Docker:
 docker compose up
@@ -53,7 +53,8 @@ cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
 cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.yml
 
 # Copy and create your environment file
-cp scripts/gunicorn_managing_uvicorn_workers/env src/.env
+cp scripts/gunicorn_managing_uvicorn_workers/.env.example src/.env
+# Recommended: Change SECRET_KEY and passwords for staging/testing environments.
 
 # Run everything using Docker:
 docker compose up
@@ -66,7 +67,8 @@ cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
 cp default.conf default.conf  # nginx configuration (already in root)
 
 # Copy and create your environment file
-cp scripts/production_with_nginx/env src/.env
+cp scripts/production_with_nginx/.env.example src/.env
+# CRITICAL: You MUST change SECRET_KEY, all passwords, and sensitive values before deploying!
 
 # Run everything using Docker:
 docker compose up
