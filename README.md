@@ -30,8 +30,6 @@
 * 🧠 DeepWiki: [https://deepwiki.com/benavlabs/FastAPI-boilerplate](https://deepwiki.com/benavlabs/FastAPI-boilerplate)
 * 💬 Discord: [https://discord.com/invite/TEmPs22gqB](https://discord.com/invite/TEmPs22gqB)
 
----
-
 ## Features
 
 * ⚡️ Fully async FastAPI + SQLAlchemy 2.0
@@ -45,8 +43,6 @@
 * 🐳 One-command Docker Compose
 * 🚀 NGINX & Gunicorn recipes for prod
 
----
-
 ## When to use it
 
 * You want a pragmatic starter with auth, CRUD, jobs, caching and rate-limits.
@@ -54,8 +50,6 @@
 * You prefer **docs over boilerplate** in README - depth lives in the site.
 
 Not a fit if you need a monorepo microservices scaffold - see the docs for pointers.
-
----
 
 ## What's inside (high-level)
 
@@ -75,62 +69,65 @@ Not a fit if you need a monorepo microservices scaffold - see the docs for point
 Use the template on GitHub, create your repo, then:
 
 ```bash
-# Clone your new repository
 git clone https://github.com/<you>/FastAPI-boilerplate
 cd FastAPI-boilerplate
-
-# In the scripts/ folder, you can find scripts to run FastAPI-Boilerplate locally,
-# with uvicorn workers, and in production with nginx.
-
-# Option 1: Running locally with Uvicorn
-
-# Copy Dockerfile and Docker Compose files:
-cp scripts/local_with_uvicorn/Dockerfile Dockerfile
-cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
-
-# Copy and create your environment file
-cp scripts/local_with_uvicorn/.env.example src/.env
-# For local development, the example values work fine. Modify if needed.
-
-# Run everything using Docker:
-docker compose up
-
-# Open the API documentation
-open http://127.0.0.1:8000/docs
-
-# Option 2: Running with Gunicorn managing Uvicorn workers
-
-# Copy Dockerfile and Docker Compose files:
-cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
-cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.yml
-
-# Copy and create your environment file
-cp scripts/gunicorn_managing_uvicorn_workers/.env.example src/.env
-# Recommended: Change SECRET_KEY and passwords for staging/testing environments.
-
-# Run everything using Docker:
-docker compose up
-
-# Option 3: Production with NGINX
-
-# Copy Dockerfile and Docker Compose:
-cp scripts/production_with_nginx/Dockerfile Dockerfile
-cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
-# Note: default.conf for nginx is already in the root directory
-
-# Copy and create your environment file
-cp scripts/production_with_nginx/.env.example src/.env
-# CRITICAL: You MUST change SECRET_KEY, all passwords, and sensitive values before deploying!
-
-# Run everything using Docker:
-docker compose up
-
-# Access via http://localhost (nginx proxies to the app)
 ```
 
-> Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the docs.
+The `scripts/` folder contains ready-to-use configurations for different deployment scenarios. Pick your path:
 
----
+### Option 1: Local development with Uvicorn
+
+Best for: **Development and testing**
+
+```bash
+cp scripts/local_with_uvicorn/Dockerfile Dockerfile
+cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
+cp scripts/local_with_uvicorn/.env.example src/.env
+```
+
+For local development, the example environment values work fine. You can modify them later if needed.
+
+```bash
+docker compose up
+```
+
+Your API will be running at http://127.0.0.1:8000 with auto-reload enabled. Open http://127.0.0.1:8000/docs to see the interactive documentation.
+
+### Option 2: Staging with Gunicorn managing Uvicorn workers
+
+Best for: **Staging environments and load testing**
+
+```bash
+cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
+cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.yml
+cp scripts/gunicorn_managing_uvicorn_workers/.env.example src/.env
+```
+
+⚠️ **Recommended**: Change `SECRET_KEY` and passwords in the `.env` file for staging/testing environments.
+
+```bash
+docker compose up
+```
+
+### Option 3: Production with NGINX
+
+Best for: **Production deployments**
+
+```bash
+cp scripts/production_with_nginx/Dockerfile Dockerfile
+cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
+cp scripts/production_with_nginx/.env.example src/.env
+```
+
+🚨 **CRITICAL**: You MUST change `SECRET_KEY`, all passwords, and sensitive values in the `.env` file before deploying!
+
+```bash
+docker compose up
+```
+
+Access your application via http://localhost (NGINX proxies to the FastAPI app).
+
+> Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the docs.
 
 ## Configuration (minimal)
 
@@ -140,8 +137,6 @@ Create `src/.env` and set **app**, **database**, **JWT**, and **environment** se
 
 * `ENVIRONMENT=local|staging|production` controls API docs exposure
 * Set `ADMIN_*` to enable the first admin user
-
----
 
 ## Common tasks
 
@@ -157,8 +152,6 @@ curl -X POST 'http://127.0.0.1:8000/api/v1/tasks/task?message=hello'
 ```
 
 More examples (superuser creation, tiers, rate limits, admin usage) - **docs**.
-
----
 
 ## Contributing
 
