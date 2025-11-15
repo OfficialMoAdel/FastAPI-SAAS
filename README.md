@@ -10,6 +10,10 @@
 </p>
 
 <p align="center">
+📚 <a href="https://benavlabs.github.io/FastAPI-boilerplate/">Docs</a> · 🧠 <a href="https://deepwiki.com/benavlabs/FastAPI-boilerplate">DeepWiki</a> · 💬 <a href="https://discord.com/invite/TEmPs22gqB">Discord</a>
+</p>
+
+<p align="center">
   <a href="https://fastapi.tiangolo.com">
       <img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi" alt="FastAPI">
   </a>
@@ -24,12 +28,6 @@
   </a>
 </p>
 
-**Docs:**
-
-* 📚 [https://benavlabs.github.io/FastAPI-boilerplate/](https://benavlabs.github.io/FastAPI-boilerplate/)
-* 🧠 DeepWiki: [https://deepwiki.com/benavlabs/FastAPI-boilerplate](https://deepwiki.com/benavlabs/FastAPI-boilerplate)
-* 💬 Discord: [https://discord.com/invite/TEmPs22gqB](https://discord.com/invite/TEmPs22gqB)
-
 ## Features
 
 * ⚡️ Fully async FastAPI + SQLAlchemy 2.0
@@ -43,26 +41,30 @@
 * 🐳 One-command Docker Compose
 * 🚀 NGINX & Gunicorn recipes for prod
 
-## When to use it
+## Why and When to use it
 
-* You want a pragmatic starter with auth, CRUD, jobs, caching and rate-limits.
-* You value **sensible defaults** with the freedom to opt-out of modules.
-* You prefer **docs over boilerplate** in README - depth lives in the site.
+**Perfect if you want:**
 
-Not a fit if you need a monorepo microservices scaffold - see the docs for pointers.
+* A pragmatic starter with auth, CRUD, jobs, caching and rate-limits
+* **Sensible defaults** with the freedom to opt-out of modules
+* **Docs over boilerplate** in README - depth lives in the site
 
-## What's inside (high-level)
+> **Not a fit** if you need a monorepo microservices scaffold - [see the docs](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/project-structure/) for pointers.
 
-* **App**: FastAPI app factory, env-aware docs exposure
-* **Auth**: JWT access/refresh, logout via token blacklist
-* **DB**: Postgres + SQLAlchemy 2.0, Alembic migrations
-* **CRUD**: FastCRUD generics (get, get_multi, create, update, delete, joins)
-* **Caching**: decorator-based endpoints cache; client cache headers
-* **Queues**: ARQ worker (async jobs), Redis connection helpers
-* **Rate limits**: per-tier + per-path rules
-* **Admin**: CRUDAdmin views for common models (optional)
+**What you get:**
 
-> The full tree and deep dives are in **Project Structure**, **Database**, **CRUD Operations**, **API**, **Caching**, **Background Tasks**, **Rate Limiting**, and **Production** sections of the docs.
+* **App**: FastAPI app factory, [env-aware docs](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/development/) exposure
+* **Auth**: [JWT access/refresh](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/authentication/), logout via token blacklist
+* **DB**: Postgres + SQLAlchemy 2.0, [Alembic migrations](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/database/)
+* **CRUD**: [FastCRUD generics](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/database/crud/) (get, get_multi, create, update, delete, joins)
+* **Caching**: [decorator-based endpoints cache](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/caching/); client cache headers
+* **Queues**: [ARQ worker](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/background-tasks/) (async jobs), Redis connection helpers
+* **Rate limits**: [per-tier + per-path rules](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/rate-limiting/)
+* **Admin**: [CRUDAdmin views](https://benavlabs.github.io/FastAPI-boilerplate/user-guide/admin-panel/) for common models (optional)
+
+This is what we've been using in production apps. Several applications running in production started from this boilerplate as their foundation - from SaaS platforms to internal tools. It's proven, stable technology that works together reliably. Use this as the foundation for whatever you want to build on top.
+
+> **Building an AI SaaS?** Skip even more setup with [**FastroAI**](https://fastro.ai) - our production-ready template with AI integration, payments, and frontend included.
 
 ## TL;DR - Quickstart
 
@@ -77,7 +79,7 @@ The `scripts/` folder contains ready-to-use configurations for different deploym
 
 ### Option 1: Local development with Uvicorn
 
-Best for: **Development and testing**
+Best for: **Development and testing**. Simply run:
 
 ```bash
 cp scripts/local_with_uvicorn/Dockerfile Dockerfile
@@ -85,7 +87,7 @@ cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
 cp scripts/local_with_uvicorn/.env.example src/.env
 ```
 
-For local development, the example environment values work fine. You can modify them later if needed.
+For local development, the example environment values work fine. You can modify them later if needed. Then you just need to run:
 
 ```bash
 docker compose up
@@ -95,7 +97,7 @@ Your API will be running at http://127.0.0.1:8000 with auto-reload enabled. Open
 
 ### Option 2: Staging with Gunicorn managing Uvicorn workers
 
-Best for: **Staging environments and load testing**
+Best for: **Staging environments and load testing**. Run:
 
 ```bash
 cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
@@ -103,7 +105,10 @@ cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.y
 cp scripts/gunicorn_managing_uvicorn_workers/.env.example src/.env
 ```
 
-⚠️ **Recommended**: Change `SECRET_KEY` and passwords in the `.env` file for staging/testing environments.
+> [!WARNING]
+> Change `SECRET_KEY` and passwords in the `.env` file for staging/testing environments.
+
+And start with:
 
 ```bash
 docker compose up
@@ -111,7 +116,7 @@ docker compose up
 
 ### Option 3: Production with NGINX
 
-Best for: **Production deployments**
+Best for: **Production deployments**. Just run these commands:
 
 ```bash
 cp scripts/production_with_nginx/Dockerfile Dockerfile
@@ -119,7 +124,10 @@ cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
 cp scripts/production_with_nginx/.env.example src/.env
 ```
 
-🚨 **CRITICAL**: You MUST change `SECRET_KEY`, all passwords, and sensitive values in the `.env` file before deploying!
+> [!CAUTION]
+> You MUST change `SECRET_KEY`, all passwords, and sensitive values in the `.env` file before deploying!
+
+And then, to sart:
 
 ```bash
 docker compose up
@@ -127,11 +135,11 @@ docker compose up
 
 Access your application via http://localhost (NGINX proxies to the FastAPI app).
 
-> Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the docs.
+> Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the [docs](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/installation/).
 
 ## Configuration (minimal)
 
-Create `src/.env` and set **app**, **database**, **JWT**, and **environment** settings. See the docs for a copy-pasteable example and production guidance.
+Create `src/.env` and set **app**, **database**, **JWT**, and **environment** settings. See the [docs](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/configuration/) for a copy-pasteable example and production guidance.
 
 [https://benavlabs.github.io/FastAPI-boilerplate/getting-started/configuration/](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/configuration/)
 
@@ -151,7 +159,7 @@ cd src && uv run alembic revision --autogenerate && uv run alembic upgrade head
 curl -X POST 'http://127.0.0.1:8000/api/v1/tasks/task?message=hello'
 ```
 
-More examples (superuser creation, tiers, rate limits, admin usage) - **docs**.
+More examples (superuser creation, tiers, rate limits, admin usage) in the [docs](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/first-run/).
 
 ## Contributing
 
