@@ -1,6 +1,28 @@
-# Benav Labs FastAPI Boilerplate
+<h1 align="center"> Benav Labs FastAPI boilerplate</h1>
+<p align="center" markdown=1>
+  <i>**Batteries-included FastAPI starter** with Pydantic v2, SQLAlchemy 2.0, PostgreSQL, Redis, ARQ jobs, rate-limiting and a minimal admin. Production-ready defaults, optional modules, and clear docs.</i>
+</p>
 
-> **Batteries-included FastAPI starter** with Pydantic v2, SQLAlchemy 2.0, PostgreSQL, Redis, ARQ jobs, rate-limiting and a minimal admin. Production-ready defaults, optional modules, and clear docs.
+<p align="center">
+  <a href="https://benavlabs.github.io/FastAPI-boilerplate">
+    <img src="docs/assets/FastAPI-boilerplate.png" alt="Purple Rocket with FastAPI Logo as its window." width="25%" height="auto">
+  </a>
+</p>
+
+<p align="center">
+  <a href="https://fastapi.tiangolo.com">
+      <img src="https://img.shields.io/badge/FastAPI-005571?style=for-the-badge&logo=fastapi" alt="FastAPI">
+  </a>
+  <a href="https://www.postgresql.org">
+      <img src="https://img.shields.io/badge/PostgreSQL-316192?style=for-the-badge&logo=postgresql&logoColor=white" alt="PostgreSQL">
+  </a>
+  <a href="https://redis.io">
+      <img src="https://img.shields.io/badge/Redis-DC382D?logo=redis&logoColor=fff&style=for-the-badge" alt="Redis">
+  </a>
+  <a href="https://deepwiki.com/benavlabs/FastAPI-boilerplate">
+      <img src="https://img.shields.io/badge/DeepWiki-1F2937?style=for-the-badge&logoColor=white" alt="DeepWiki">
+  </a>
+</p>
 
 <p align="left">
   <a href="https://fastapi.tiangolo.com">FastAPI</a>
@@ -19,6 +41,44 @@
 
 ---
 
+## Features
+
+* ⚡️ Fully async FastAPI + SQLAlchemy 2.0
+* 🧱 Pydantic v2 models & validation
+* 🔐 JWT auth (access + refresh), cookies for refresh
+* 👮 Rate limiter + tiers (free/pro/etc.)
+* 🧰 FastCRUD for efficient CRUD & pagination
+* 🧑‍💼 **CRUDAdmin**: minimal admin panel (optional)
+* 🚦 ARQ background jobs (Redis)
+* 🧊 Redis caching (server + client-side headers)
+* 🐳 One-command Docker Compose
+* 🚀 NGINX & Gunicorn recipes for prod
+
+---
+
+## When to use it
+
+* You want a pragmatic starter with auth, CRUD, jobs, caching and rate-limits.
+* You value **sensible defaults** with the freedom to opt-out of modules.
+* You prefer **docs over boilerplate** in README - depth lives in the site.
+
+Not a fit if you need a monorepo microservices scaffold - see the docs for pointers.
+
+---
+
+## What's inside (high-level)
+
+* **App**: FastAPI app factory, env-aware docs exposure
+* **Auth**: JWT access/refresh, logout via token blacklist
+* **DB**: Postgres + SQLAlchemy 2.0, Alembic migrations
+* **CRUD**: FastCRUD generics (get, get_multi, create, update, delete, joins)
+* **Caching**: decorator-based endpoints cache; client cache headers
+* **Queues**: ARQ worker (async jobs), Redis connection helpers
+* **Rate limits**: per-tier + per-path rules
+* **Admin**: CRUDAdmin views for common models (optional)
+
+> The full tree and deep dives are in **Project Structure**, **Database**, **CRUD Operations**, **API**, **Caching**, **Background Tasks**, **Rate Limiting**, and **Production** sections of the docs.
+
 ## TL;DR - Quickstart
 
 Use the template on GitHub, create your repo, then:
@@ -28,7 +88,8 @@ Use the template on GitHub, create your repo, then:
 git clone https://github.com/<you>/FastAPI-boilerplate
 cd FastAPI-boilerplate
 
-# In the scripts/ folder, you can find scripts to run FastAPI-Boilerplate locally, with uvicorn workers, and in production with nginx.
+# In the scripts/ folder, you can find scripts to run FastAPI-Boilerplate locally,
+# with uvicorn workers, and in production with nginx.
 
 # Option 1: Running locally with Uvicorn
 
@@ -80,46 +141,6 @@ docker compose up
 
 ---
 
-## Features
-
-* ⚡️ Fully async FastAPI + SQLAlchemy 2.0
-* 🧱 Pydantic v2 models & validation
-* 🔐 JWT auth (access + refresh), cookies for refresh
-* 👮 Rate limiter + tiers (free/pro/etc.)
-* 🧰 FastCRUD for efficient CRUD & pagination
-* 🧑‍💼 **CRUDAdmin**: minimal admin panel (optional)
-* 🚦 ARQ background jobs (Redis)
-* 🧊 Redis caching (server + client-side headers)
-* 🐳 One-command Docker Compose
-* 🚀 NGINX & Gunicorn recipes for prod
-
----
-
-## When to use it
-
-* You want a pragmatic starter with auth, CRUD, jobs, caching and rate-limits.
-* You value **sensible defaults** with the freedom to opt-out of modules.
-* You prefer **docs over boilerplate** in README - depth lives in the site.
-
-Not a fit if you need a monorepo microservices scaffold - see the docs for pointers.
-
----
-
-## What's inside (high-level)
-
-* **App**: FastAPI app factory, env-aware docs exposure
-* **Auth**: JWT access/refresh, logout via token blacklist
-* **DB**: Postgres + SQLAlchemy 2.0, Alembic migrations
-* **CRUD**: FastCRUD generics (get, get_multi, create, update, delete, joins)
-* **Caching**: decorator-based endpoints cache; client cache headers
-* **Queues**: ARQ worker (async jobs), Redis connection helpers
-* **Rate limits**: per-tier + per-path rules
-* **Admin**: CRUDAdmin views for common models (optional)
-
-> The full tree and deep dives are in **Project Structure**, **Database**, **CRUD Operations**, **API**, **Caching**, **Background Tasks**, **Rate Limiting**, and **Production** sections of the docs.
-
----
-
 ## Configuration (minimal)
 
 Create `src/.env` and set **app**, **database**, **JWT**, and **environment** settings. See the docs for a copy-pasteable example and production guidance.
@@ -167,8 +188,7 @@ This project was inspired by a few projects, it's based on them with things chan
 
 ## Contact
 
-Benav Labs – [benav.io](https://benav.io)
-[github.com/benavlabs](https://github.com/benavlabs/)
+Benav Labs – [benav.io](https://benav.io), [discord server](https://discord.com/invite/TEmPs22gqB)
 
 <hr>
 <a href="https://benav.io">
