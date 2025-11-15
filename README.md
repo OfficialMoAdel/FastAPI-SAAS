@@ -1,6 +1,6 @@
 <h1 align="center"> Benav Labs FastAPI boilerplate</h1>
 <p align="center" markdown=1>
-  <i>**Batteries-included FastAPI starter** with Pydantic v2, SQLAlchemy 2.0, PostgreSQL, Redis, ARQ jobs, rate-limiting and a minimal admin. Production-ready defaults, optional modules, and clear docs.</i>
+  <i><b>Batteries-included FastAPI starter</b> with production-ready defaults, optional modules, and clear docs.</i>
 </p>
 
 <p align="center">
@@ -22,15 +22,6 @@
   <a href="https://deepwiki.com/benavlabs/FastAPI-boilerplate">
       <img src="https://img.shields.io/badge/DeepWiki-1F2937?style=for-the-badge&logoColor=white" alt="DeepWiki">
   </a>
-</p>
-
-<p align="left">
-  <a href="https://fastapi.tiangolo.com">FastAPI</a>
-  <a href="https://docs.pydantic.dev">Pydantic v2</a>
-  <a href="https://docs.sqlalchemy.org/en/20/">SQLAlchemy 2.0</a>
-  <a href="https://www.postgresql.org">PostgreSQL</a>
-  <a href="https://redis.io">Redis</a>
-  <a href="https://arq-docs.helpmanual.io">ARQ</a>
 </p>
 
 **Docs:**
