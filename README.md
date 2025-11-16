@@ -75,65 +75,98 @@ git clone https://github.com/<you>/FastAPI-boilerplate
 cd FastAPI-boilerplate
 ```
 
-The `scripts/` folder contains ready-to-use configurations for different deployment scenarios. Pick your path:
+**Quick setup:** Run the interactive setup script to choose your deployment configuration:
+
+```bash
+./setup.py
+```
+
+Or directly specify the deployment type: `./setup.py local`, `./setup.py staging`, or `./setup.py production`.
+
+The script copies the right files for your deployment scenario. Here's what each option sets up:
 
 ### Option 1: Local development with Uvicorn
 
-Best for: **Development and testing**. Simply run:
+Best for: **Development and testing**
 
-```bash
-cp scripts/local_with_uvicorn/Dockerfile Dockerfile
-cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml
-cp scripts/local_with_uvicorn/.env.example src/.env
-```
+**Copies:**
 
-For local development, the example environment values work fine. You can modify them later if needed. Then you just need to run:
+- `scripts/local_with_uvicorn/Dockerfile` → `Dockerfile`
+- `scripts/local_with_uvicorn/docker-compose.yml` → `docker-compose.yml`
+- `scripts/local_with_uvicorn/.env.example` → `src/.env`
 
-```bash
-docker compose up
-```
+Sets up Uvicorn with auto-reload enabled. The example environment values work fine for development.
 
-Your API will be running at http://127.0.0.1:8000 with auto-reload enabled. Open http://127.0.0.1:8000/docs to see the interactive documentation.
+**Manual setup:** `./setup.py local` or copy the files above manually.
 
 ### Option 2: Staging with Gunicorn managing Uvicorn workers
 
-Best for: **Staging environments and load testing**. Run:
+Best for: **Staging environments and load testing**
 
-```bash
-cp scripts/gunicorn_managing_uvicorn_workers/Dockerfile Dockerfile
-cp scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml docker-compose.yml
-cp scripts/gunicorn_managing_uvicorn_workers/.env.example src/.env
-```
+**Copies:**
+
+- `scripts/gunicorn_managing_uvicorn_workers/Dockerfile` → `Dockerfile`
+- `scripts/gunicorn_managing_uvicorn_workers/docker-compose.yml` → `docker-compose.yml`
+- `scripts/gunicorn_managing_uvicorn_workers/.env.example` → `src/.env`
+
+Sets up Gunicorn managing multiple Uvicorn workers for production-like performance testing.
 
 > [!WARNING]
-> Change `SECRET_KEY` and passwords in the `.env` file for staging/testing environments.
+> Change `SECRET_KEY` and passwords in the `.env` file for staging environments.
 
-And start with:
-
-```bash
-docker compose up
-```
+**Manual setup:** `./setup.py staging` or copy the files above manually.
 
 ### Option 3: Production with NGINX
 
-Best for: **Production deployments**. Just run these commands:
+Best for: **Production deployments**
 
-```bash
-cp scripts/production_with_nginx/Dockerfile Dockerfile
-cp scripts/production_with_nginx/docker-compose.yml docker-compose.yml
-cp scripts/production_with_nginx/.env.example src/.env
-```
+**Copies:**
+
+- `scripts/production_with_nginx/Dockerfile` → `Dockerfile`
+- `scripts/production_with_nginx/docker-compose.yml` → `docker-compose.yml`
+- `scripts/production_with_nginx/.env.example` → `src/.env`
+
+Sets up NGINX as reverse proxy with Gunicorn + Uvicorn workers for production.
 
 > [!CAUTION]
 > You MUST change `SECRET_KEY`, all passwords, and sensitive values in the `.env` file before deploying!
 
-And then, to sart:
+**Manual setup:** `./setup.py production` or copy the files above manually.
+
+---
+
+**Start your application:**
 
 ```bash
 docker compose up
 ```
 
-Access your application via http://localhost (NGINX proxies to the FastAPI app).
+**Access your app:**
+- **Local**: http://127.0.0.1:8000 (auto-reload enabled) → [API docs](http://127.0.0.1:8000/docs)
+- **Staging**: http://127.0.0.1:8000 (production-like performance)
+- **Production**: http://localhost (NGINX reverse proxy)
+
+### Next steps
+
+**Create your first admin user:**
+```bash
+docker compose run --rm create_superuser
+```
+
+**Run database migrations** (if you add models):
+```bash
+cd src && uv run alembic revision --autogenerate && uv run alembic upgrade head
+```
+
+**Test background jobs:**
+```bash
+curl -X POST 'http://127.0.0.1:8000/api/v1/tasks/task?message=hello'
+```
+
+**Or run locally without Docker:**
+```bash
+uv sync && uv run uvicorn src.app.main:app --reload
+```
 
 > Full setup (from-scratch, .env examples, PostgreSQL & Redis, gunicorn, nginx) lives in the [docs](https://benavlabs.github.io/FastAPI-boilerplate/getting-started/installation/).
 

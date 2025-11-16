@@ -31,18 +31,34 @@ Install these tools on your system:
    cd fastapi-boilerplate
    ```
 
-1. **Set up environment**:
+1. **Quick setup** (recommended):
 
    ```bash
-   cp src/.env.example src/.env
-   # Edit src/.env with your configuration
+   # Interactive setup - choose your deployment type
+   ./setup.py
+   
+   # Or specify directly: ./setup.py local, ./setup.py staging, ./setup.py production
    ```
+
+   This automatically copies the correct `Dockerfile`, `docker-compose.yml`, and `.env` files for your chosen deployment scenario.
 
 1. **Start services**:
 
    ```bash
    docker compose up -d
    ```
+
+#### Manual Setup Alternative
+
+If you prefer to set up manually:
+
+```bash
+# Copy configuration files for local development
+cp scripts/local_with_uvicorn/Dockerfile Dockerfile
+cp scripts/local_with_uvicorn/docker-compose.yml docker-compose.yml  
+cp scripts/local_with_uvicorn/.env.example src/.env
+# Edit src/.env with your configuration if needed
+```
 
 1. **Verify installation**:
 
