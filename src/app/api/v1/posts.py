@@ -35,16 +35,12 @@ async def write_post(
     post_internal_dict["created_by_user_id"] = db_user["id"]
 
     post_internal = PostCreateInternal(**post_internal_dict)
-    created_post = await crud_posts.create(db=db, object=post_internal)
+    created_post = await crud_posts.create(db=db, object=post_internal, schema_to_select=PostRead)
 
     if created_post is None:
         raise NotFoundException("Failed to create post")
 
-    post_read = await crud_posts.get(db=db, id=created_post["id"], schema_to_select=PostRead)
-    if post_read is None:
-        raise NotFoundException("Created post not found")
-
-    return post_read
+    return created_post
 
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
