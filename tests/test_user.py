@@ -20,8 +20,7 @@ class TestWriteUser:
         with patch("src.app.api.v1.users.crud_users") as mock_crud:
             # Mock that email and username don't exist
             mock_crud.exists = AsyncMock(side_effect=[False, False])  # email, then username
-            mock_crud.create = AsyncMock(return_value={"id": 1})
-            mock_crud.get = AsyncMock(return_value=sample_user_read.model_dump())
+            mock_crud.create = AsyncMock(return_value=sample_user_read.model_dump())
 
             with patch("src.app.api.v1.users.get_password_hash") as mock_hash:
                 mock_hash.return_value = "hashed_password"
