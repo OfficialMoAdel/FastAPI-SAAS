@@ -5,27 +5,28 @@ FastAPI Boilerplate Setup Script
 Automates copying the correct configuration files for different deployment scenarios.
 """
 
-import sys
 import shutil
+import sys
 from pathlib import Path
 
 DEPLOYMENTS = {
     "local": {
         "name": "Local development with Uvicorn",
         "description": "Auto-reload enabled, development-friendly",
-        "path": "scripts/local_with_uvicorn"
+        "path": "scripts/local_with_uvicorn",
     },
     "staging": {
         "name": "Staging with Gunicorn managing Uvicorn workers",
         "description": "Production-like setup for testing",
-        "path": "scripts/gunicorn_managing_uvicorn_workers"
+        "path": "scripts/gunicorn_managing_uvicorn_workers",
     },
     "production": {
         "name": "Production with NGINX",
         "description": "Full production setup with reverse proxy",
-        "path": "scripts/production_with_nginx"
-    }
+        "path": "scripts/production_with_nginx",
+    },
 }
+
 
 def show_help():
     """Display help information"""
@@ -43,6 +44,7 @@ def show_help():
     print("  python setup.py local       # Set up for local development")
     print("  python setup.py staging     # Set up for staging environment")
     print("  python setup.py production  # Set up for production deployment")
+
 
 def copy_files(deployment_type: str):
     """Copy configuration files for the specified deployment type"""
@@ -66,7 +68,7 @@ def copy_files(deployment_type: str):
     files_to_copy = [
         ("Dockerfile", "Dockerfile"),
         ("docker-compose.yml", "docker-compose.yml"),
-        (".env.example", "src/.env")
+        (".env.example", "src/.env"),
     ]
 
     success = True
@@ -111,6 +113,7 @@ def copy_files(deployment_type: str):
 
     return False
 
+
 def interactive_setup():
     """Interactive setup when no arguments provided"""
     print("FastAPI Boilerplate Setup")
@@ -147,6 +150,7 @@ def interactive_setup():
             print("\n\n👋 Setup cancelled.")
             return None
 
+
 def main():
     """Main entry point"""
     if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help", "help"]:
@@ -167,6 +171,7 @@ def main():
 
     if not success:
         sys.exit(1)
+
 
 if __name__ == "__main__":
     main()
