@@ -31,16 +31,14 @@ async def write_rate_limit(
         raise DuplicateValueException("Rate Limit Name not available")
 
     rate_limit_internal = RateLimitCreateInternal(**rate_limit_internal_dict)
-    created_rate_limit = await crud_rate_limits.create(db=db, object=rate_limit_internal)
+    created_rate_limit = await crud_rate_limits.create(
+        db=db, object=rate_limit_internal, schema_to_select=RateLimitRead
+    )
 
     if created_rate_limit is None:
         raise NotFoundException("Failed to create rate limit")
 
-    rate_limit_read = await crud_rate_limits.get(db=db, id=created_rate_limit["id"], schema_to_select=RateLimitRead)
-    if rate_limit_read is None:
-        raise NotFoundException("Created rate limit not found")
-
-    return rate_limit_read
+    return created_rate_limit
 
 
 @router.get("/tier/{tier_name}/rate_limits", response_model=PaginatedListResponse[RateLimitRead])

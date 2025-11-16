@@ -34,16 +34,12 @@ async def write_user(
     del user_internal_dict["password"]
 
     user_internal = UserCreateInternal(**user_internal_dict)
-    created_user = await crud_users.create(db=db, object=user_internal)
+    created_user = await crud_users.create(db=db, object=user_internal, schema_to_select=UserRead)
 
     if created_user is None:
         raise NotFoundException("Failed to create user")
 
-    user_read = await crud_users.get(db=db, id=created_user["id"], schema_to_select=UserRead)
-    if user_read is None:
-        raise NotFoundException("Created user not found")
-
-    return user_read
+    return created_user
 
 
 @router.get("/users", response_model=PaginatedListResponse[UserRead])
