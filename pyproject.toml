@@ -1,8 +1,8 @@
 [project]
 name = "fastapi-boilerplate"
 version = "0.1.0"
-description = "A fully Async FastAPI boilerplate using SQLAlchemy and Pydantic 2"
-authors = [{ name = "Igor Magalhaes", email = "igor.magalhaes.r@gmail.com" }]
+description = "Batteries-included FastAPI starter with production-ready defaults, optional modules, and clear docs."
+authors = [{ name = "Benav Labs", email = "contact@benav.io" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11, <4"
@@ -28,7 +28,7 @@ dependencies = [
     "arq>=0.25.0",
     "bcrypt>=4.1.1",
     "psycopg2-binary>=2.9.9",
-    "fastcrud>=0.19.1",
+    "fastcrud>=0.19.2",
     "crudadmin>=0.4.2",
     "gunicorn>=23.0.0",
     "ruff>=0.11.13",
