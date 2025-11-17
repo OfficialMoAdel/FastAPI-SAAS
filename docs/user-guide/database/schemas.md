@@ -402,7 +402,7 @@ users = await crud_users.get_multi(
 For pagination with page numbers, use `PaginatedListResponse`:
 
 ```python
-from fastcrud.paginated import PaginatedListResponse
+from fastcrud import PaginatedListResponse
 
 # In API endpoint - ONLY for paginated list responses
 @router.get("/users/", response_model=PaginatedListResponse[UserRead])

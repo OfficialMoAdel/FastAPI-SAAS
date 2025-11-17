@@ -1,4 +1,4 @@
-from typing import Annotated, Any, cast
+from typing import Annotated, Any
 
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -23,7 +23,7 @@ DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
 
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[AsyncSession, Depends(async_get_db)]
-) -> dict[str, Any] | None:
+) -> dict[str, Any]:
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
         raise UnauthorizedException("User not authenticated.")
@@ -34,10 +34,7 @@ async def get_current_user(
         user = await crud_users.get(db=db, username=token_data.username_or_email, is_deleted=False)
 
     if user:
-        if hasattr(user, 'model_dump'):
-            return user.model_dump()
-        else:
-            return user
+        return user
 
     raise UnauthorizedException("User not authenticated.")
 
@@ -86,14 +83,14 @@ async def rate_limiter_dependency(
         user_id = user["id"]
         tier = await crud_tiers.get(db, id=user["tier_id"], schema_to_select=TierRead)
         if tier:
-            tier = cast(TierRead, tier)
-            rate_limit = await crud_rate_limits.get(db=db, tier_id=tier.id, path=path, schema_to_select=RateLimitRead)
+            rate_limit = await crud_rate_limits.get(
+                db=db, tier_id=tier["id"], path=path, schema_to_select=RateLimitRead
+            )
             if rate_limit:
-                rate_limit = cast(RateLimitRead, rate_limit)
-                limit, period = rate_limit.limit, rate_limit.period
+                limit, period = rate_limit["limit"], rate_limit["period"]
             else:
                 logger.warning(
-                    f"User {user_id} with tier '{tier.name}' has no specific rate limit for path '{path}'. \
+                    f"User {user_id} with tier '{tier['name']}' has no specific rate limit for path '{path}'. \
                         Applying default rate limit."
                 )
                 limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD

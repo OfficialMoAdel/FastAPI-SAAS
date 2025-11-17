@@ -83,4 +83,4 @@ Ready to dive in? Here are recommended learning paths:
 3. Set up [Background Task Processing](background-tasks/index.md)
 4. Review the [Production Guide](production.md) for deployment considerations
 
-Choose your path based on your needs and experience level. Each section builds upon previous concepts while remaining self-contained for reference use. 
+Choose your path based on your needs and experience level. Each section builds upon previous concepts while remaining self-contained for reference use.

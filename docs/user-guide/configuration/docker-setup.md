@@ -2,6 +2,22 @@
 
 Learn how to configure and run the FastAPI Boilerplate using Docker Compose. The project includes a complete containerized setup with PostgreSQL, Redis, background workers, and optional services.
 
+## Quick Start
+
+The fastest way to get started is with the setup script:
+
+```bash
+./setup.py
+```
+
+This script helps you choose between three deployment configurations:
+
+- **Local development** (`./setup.py local`) - Uvicorn with auto-reload
+- **Staging** (`./setup.py staging`) - Gunicorn with workers  
+- **Production** (`./setup.py production`) - NGINX + Gunicorn
+
+Each option copies the appropriate `Dockerfile`, `docker-compose.yml`, and `.env.example` files from the `scripts/` folder.
+
 ## Docker Compose Architecture
 
 The boilerplate includes these core services:

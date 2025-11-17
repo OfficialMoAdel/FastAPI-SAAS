@@ -50,7 +50,7 @@ async def get_user(
 ### 2. Get Multiple Items (with Pagination)
 
 ```python
-from fastcrud.paginated import PaginatedListResponse, paginated_response
+from fastcrud import PaginatedListResponse, paginated_response
 
 @router.get("/", response_model=PaginatedListResponse[UserRead])
 async def get_users(
