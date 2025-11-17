@@ -8,6 +8,7 @@ import redis.asyncio as redis
 from arq import create_pool
 from arq.connections import RedisSettings
 from fastapi import APIRouter, Depends, FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
@@ -18,6 +19,7 @@ from ..models import *  # noqa: F403
 from .config import (
     AppSettings,
     ClientSideCacheSettings,
+    CORSSettings,
     DatabaseSettings,
     EnvironmentOption,
     EnvironmentSettings,
@@ -80,6 +82,7 @@ def lifespan_factory(
         | RedisCacheSettings
         | AppSettings
         | ClientSideCacheSettings
+        | CORSSettings
         | RedisQueueSettings
         | RedisRateLimiterSettings
         | EnvironmentSettings
@@ -135,6 +138,7 @@ def create_application(
         | RedisCacheSettings
         | AppSettings
         | ClientSideCacheSettings
+        | CORSSettings
         | RedisQueueSettings
         | RedisRateLimiterSettings
         | EnvironmentSettings
@@ -161,6 +165,7 @@ def create_application(
         - DatabaseSettings: Adds event handlers for initializing database tables during startup.
         - RedisCacheSettings: Sets up event handlers for creating and closing a Redis cache pool.
         - ClientSideCacheSettings: Integrates middleware for client-side caching.
+        - CORSSettings: Integrates CORS middleware with specified origins.
         - RedisQueueSettings: Sets up event handlers for creating and closing a Redis queue pool.
         - RedisRateLimiterSettings: Sets up event handlers for creating and closing a Redis rate limiter pool.
         - EnvironmentSettings: Conditionally sets documentation URLs and integrates custom routes for API documentation
@@ -205,6 +210,15 @@ def create_application(
 
     if isinstance(settings, ClientSideCacheSettings):
         application.add_middleware(ClientCacheMiddleware, max_age=settings.CLIENT_CACHE_MAX_AGE)
+
+    if isinstance(settings, CORSSettings):
+        application.add_middleware(
+            CORSMiddleware,
+            allow_origins=settings.CORS_ORIGINS,
+            allow_credentials=True,
+            allow_methods=settings.CORS_METHODS,
+            allow_headers=settings.CORS_HEADERS,
+        )
 
     if isinstance(settings, EnvironmentSettings):
         if settings.ENVIRONMENT != EnvironmentOption.PRODUCTION:

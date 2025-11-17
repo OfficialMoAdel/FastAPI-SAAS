@@ -115,6 +115,25 @@ DEFAULT_RATE_LIMIT_LIMIT=10      # Default: 10 requests
 DEFAULT_RATE_LIMIT_PERIOD=3600   # Default: 3600 seconds (1 hour)
 ```
 
+### CORS Configuration
+
+Configure Cross-Origin Resource Sharing for your frontend:
+
+```env
+# CORS Settings
+CORS_ORIGINS="*"                         # Comma-separated origins (use specific domains in production)
+CORS_METHODS="*"                         # Comma-separated HTTP methods or "*" for all
+CORS_HEADERS="*"                         # Comma-separated headers or "*" for all
+```
+
+!!! warning "CORS in Production"
+    Never use `"*"` for CORS_ORIGINS in production. Specify exact domains:
+    ```env
+    CORS_ORIGINS="https://yourapp.com,https://www.yourapp.com"
+    CORS_METHODS="GET,POST,PUT,DELETE,PATCH"
+    CORS_HEADERS="Authorization,Content-Type"
+    ```
+
 ### First Tier
 
 ```env

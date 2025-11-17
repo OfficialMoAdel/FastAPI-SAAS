@@ -38,6 +38,7 @@
 * 🧑‍💼 **CRUDAdmin**: minimal admin panel (optional)
 * 🚦 ARQ background jobs (Redis)
 * 🧊 Redis caching (server + client-side headers)
+* 🌐 Configurable CORS middleware for frontend integration
 * 🐳 One-command Docker Compose
 * 🚀 NGINX & Gunicorn recipes for prod
 

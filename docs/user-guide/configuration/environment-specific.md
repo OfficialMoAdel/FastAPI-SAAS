@@ -7,7 +7,7 @@ Learn how to configure your FastAPI application for different environments (deve
 The boilerplate supports three environment types:
 
 - **`local`** - Development environment with full debugging
-- **`staging`** - Pre-production testing environment  
+- **`staging`** - Pre-production testing environment
 - **`production`** - Production environment with security hardening
 
 Set the environment type with:
@@ -38,7 +38,7 @@ POSTGRES_SERVER="localhost"
 POSTGRES_PORT=5432
 POSTGRES_DB="myapp_dev"
 
-# ------------- crypt -------------
+# ------------- security -------------
 SECRET_KEY="dev-secret-key-not-for-production-use"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=60  # Longer for development
@@ -77,15 +77,6 @@ DATABASE_ECHO=true  # Log all SQL queries
 ```python
 # Development-specific features
 if settings.ENVIRONMENT == "local":
-    # Enable detailed error pages
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["*"],  # Allow all origins in development
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
-    
     # Enable API documentation
     app.openapi_url = "/openapi.json"
     app.docs_url = "/docs"
@@ -152,11 +143,13 @@ POSTGRES_SERVER="staging-db.example.com"
 POSTGRES_PORT=5432
 POSTGRES_DB="myapp_staging"
 
-# ------------- crypt -------------
+# ------------- security -------------
 SECRET_KEY="staging-secret-key-different-from-production"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=7
+CORS_ORIGINS="https://staging.example.com"
+CORS_METHODS="GET,POST,PUT,DELETE"
 
 # ------------- redis -------------
 REDIS_CACHE_HOST="staging-redis.example.com"
@@ -191,15 +184,6 @@ DATABASE_ECHO=false
 ```python
 # Staging-specific features
 if settings.ENVIRONMENT == "staging":
-    # Restricted CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["https://staging.example.com"],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["*"],
-    )
-    
     # API docs available to superusers only
     @app.get("/docs", include_in_schema=False)
     async def custom_swagger_ui(current_user: User = Depends(get_current_superuser)):
@@ -270,11 +254,14 @@ POSTGRES_SERVER="prod-db.example.com"
 POSTGRES_PORT=5433  # Custom port for security
 POSTGRES_DB="myapp_production"
 
-# ------------- crypt -------------
+# ------------- security -------------
 SECRET_KEY="ultra-secure-production-key-generated-with-openssl-rand-hex-32"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=15  # Shorter for security
 REFRESH_TOKEN_EXPIRE_DAYS=3     # Shorter for security
+CORS_ORIGINS="https://example.com,https://www.example.com"
+CORS_METHODS="GET,POST,PUT,DELETE"
+CORS_HEADERS="Authorization,Content-Type"
 
 # ------------- redis -------------
 REDIS_CACHE_HOST="prod-redis.example.com"
@@ -309,20 +296,11 @@ DATABASE_ECHO=false
 ```python
 # Production-specific features
 if settings.ENVIRONMENT == "production":
-    # Strict CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=["https://example.com", "https://www.example.com"],
-        allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE"],
-        allow_headers=["Authorization", "Content-Type"],
-    )
-    
     # Disable API documentation
     app.openapi_url = None
     app.docs_url = None
     app.redoc_url = None
-    
+
     # Add security headers
     @app.middleware("http")
     async def add_security_headers(request: Request, call_next):
@@ -423,16 +401,17 @@ class Settings(BaseSettings):
     @property
     def IS_DEVELOPMENT(self) -> bool:
         return self.ENVIRONMENT == "local"
-    
+
     @computed_field
     @property
     def IS_PRODUCTION(self) -> bool:
         return self.ENVIRONMENT == "production"
-    
+
     @computed_field
     @property
     def IS_STAGING(self) -> bool:
         return self.ENVIRONMENT == "staging"
+
 
 # Use in application
 if settings.IS_DEVELOPMENT:
@@ -457,12 +436,12 @@ def validate_environment_config(self) -> "Settings":
             raise ValueError("SECRET_KEY must be at least 32 characters in production")
         if "dev" in self.SECRET_KEY.lower():
             raise ValueError("Production SECRET_KEY cannot contain 'dev'")
-    
+
     if self.ENVIRONMENT == "local":
         # Development warnings
         if not self.DEBUG:
             logger.warning("DEBUG is False in development environment")
-    
+
     return self
 ```
 
@@ -492,21 +471,22 @@ import asyncio
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 
+
 async def validate_configuration():
     """Validate configuration for current environment."""
     print(f"Validating configuration for {settings.ENVIRONMENT} environment...")
-    
+
     # Basic settings validation
     assert settings.APP_NAME, "APP_NAME is required"
     assert settings.SECRET_KEY, "SECRET_KEY is required"
     assert len(settings.SECRET_KEY) >= 32, "SECRET_KEY must be at least 32 characters"
-    
+
     # Environment-specific validation
     if settings.ENVIRONMENT == "production":
         assert not settings.DEBUG, "DEBUG must be False in production"
         assert "dev" not in settings.SECRET_KEY.lower(), "Production SECRET_KEY invalid"
         assert settings.POSTGRES_PORT != 5432, "Use custom PostgreSQL port in production"
-    
+
     # Test database connection
     try:
         db = await anext(async_get_db())
@@ -515,9 +495,10 @@ async def validate_configuration():
     except Exception as e:
         print(f"✗ Database connection failed: {e}")
         return False
-    
+
     print("✓ Configuration validation passed")
     return True
+
 
 if __name__ == "__main__":
     asyncio.run(validate_configuration())
@@ -585,7 +566,7 @@ SECURITY_CONFIGS = {
         "enable_cors_origins": ["https://example.com"],
         "enable_docs": False,
         "log_level": "WARNING",
-    }
+    },
 }
 
 config = SECURITY_CONFIGS[settings.ENVIRONMENT]
@@ -628,7 +609,7 @@ LOGGING_CONFIG = {
         "handlers": ["console"],
     },
     "staging": {
-        "level": "INFO", 
+        "level": "INFO",
         "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         "handlers": ["console", "file"],
     },
@@ -636,7 +617,7 @@ LOGGING_CONFIG = {
         "level": "WARNING",
         "format": "%(asctime)s - %(name)s - %(levelname)s - %(funcName)s:%(lineno)d - %(message)s",
         "handlers": ["file", "syslog"],
-    }
+    },
 }
 ```
 
@@ -650,21 +631,24 @@ async def health_check():
         "environment": settings.ENVIRONMENT,
         "version": settings.APP_VERSION,
     }
-    
+
     # Add detailed info in non-production
     if not settings.IS_PRODUCTION:
-        health_info.update({
-            "database": await check_database_health(),
-            "redis": await check_redis_health(),
-            "worker_queue": await check_worker_health(),
-        })
-    
+        health_info.update(
+            {
+                "database": await check_database_health(),
+                "redis": await check_redis_health(),
+                "worker_queue": await check_worker_health(),
+            }
+        )
+
     return health_info
 ```
 
 ## Best Practices
 
 ### Security
+
 - Use different secret keys for each environment
 - Disable debug mode in staging and production
 - Use custom ports in production
@@ -672,21 +656,24 @@ async def health_check():
 - Remove API documentation in production
 
 ### Performance
+
 - Configure appropriate resource limits per environment
 - Use caching in staging and production
 - Set shorter token expiration in production
 - Use connection pooling in production
 
 ### Configuration
+
 - Keep environment files in version control (except production)
 - Use validation to prevent misconfiguration
 - Document all environment-specific settings
 - Test configuration changes in staging first
 
 ### Monitoring
+
 - Use appropriate log levels per environment
 - Monitor different metrics in each environment
 - Set up alerts for production only
 - Use health checks for all environments
 
-Environment-specific configuration ensures your application runs securely and efficiently in each deployment stage. Start with development settings and progressively harden for production! 
+Environment-specific configuration ensures your application runs securely and efficiently in each deployment stage. Start with development settings and progressively harden for production!

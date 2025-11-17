@@ -10,6 +10,12 @@ env_path = os.path.join(current_file_dir, "..", "..", ".env")
 config = Config(env_path)
 
 
+def str_setting_to_list(setting: str) -> list[str]:
+    if isinstance(setting, str):
+        return [item.strip() for item in setting.split(",") if item.strip()]
+    raise ValueError("Invalid string setting for list conversion.")
+
+
 class AppSettings(BaseSettings):
     APP_NAME: str = config("APP_NAME", default="FastAPI app")
     APP_DESCRIPTION: str | None = config("APP_DESCRIPTION", default=None)
@@ -67,7 +73,8 @@ class FirstUserSettings(BaseSettings):
     ADMIN_PASSWORD: str = config("ADMIN_PASSWORD", default="!Ch4ng3Th1sP4ssW0rd!")
 
 
-class TestSettings(BaseSettings): ...
+class TestSettings(BaseSettings):
+    ...
 
 
 class RedisCacheSettings(BaseSettings):
@@ -127,6 +134,12 @@ class EnvironmentSettings(BaseSettings):
     ENVIRONMENT: EnvironmentOption = config("ENVIRONMENT", default=EnvironmentOption.LOCAL)
 
 
+class CORSSettings(BaseSettings):
+    CORS_ORIGINS: list[str] = config("CORS_ORIGINS", cast=str_setting_to_list, default="*")
+    CORS_METHODS: list[str] = config("CORS_METHODS", cast=str_setting_to_list, default="*")
+    CORS_HEADERS: list[str] = config("CORS_HEADERS", cast=str_setting_to_list, default="*")
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -141,6 +154,7 @@ class Settings(
     DefaultRateLimitSettings,
     CRUDAdminSettings,
     EnvironmentSettings,
+    CORSSettings,
 ):
     pass
 
