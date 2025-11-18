@@ -47,7 +47,7 @@ class MySQLSettings(DatabaseSettings):
     MYSQL_ASYNC_PREFIX: str = "mysql+aiomysql://"
     MYSQL_URL: str | None = None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def MYSQL_URI(self) -> str:
         credentials = f"{self.MYSQL_USER}:{self.MYSQL_PASSWORD}"
@@ -65,7 +65,7 @@ class PostgresSettings(DatabaseSettings):
     POSTGRES_ASYNC_PREFIX: str = "postgresql+asyncpg://"
     POSTGRES_URL: str | None = None
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def POSTGRES_URI(self) -> str:
         credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
@@ -88,7 +88,7 @@ class RedisCacheSettings(BaseSettings):
     REDIS_CACHE_HOST: str = "localhost"
     REDIS_CACHE_PORT: int = 6379
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def REDIS_CACHE_URL(self) -> str:
         return f"redis://{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
@@ -107,7 +107,7 @@ class RedisRateLimiterSettings(BaseSettings):
     REDIS_RATE_LIMIT_HOST: str = "localhost"
     REDIS_RATE_LIMIT_PORT: int = 6379
 
-    @computed_field
+    @computed_field  # type: ignore[prop-decorator]
     @property
     def REDIS_RATE_LIMIT_URL(self) -> str:
         return f"redis://{self.REDIS_RATE_LIMIT_HOST}:{self.REDIS_RATE_LIMIT_PORT}"
