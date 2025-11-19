@@ -148,8 +148,8 @@ SECRET_KEY="staging-secret-key-different-from-production"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=30
 REFRESH_TOKEN_EXPIRE_DAYS=7
-CORS_ORIGINS="https://staging.example.com"
-CORS_METHODS="GET,POST,PUT,DELETE"
+CORS_ORIGINS=["https://staging.example.com"]
+CORS_METHODS=["GET","POST","PUT","DELETE"]
 
 # ------------- redis -------------
 REDIS_CACHE_HOST="staging-redis.example.com"
@@ -259,9 +259,9 @@ SECRET_KEY="ultra-secure-production-key-generated-with-openssl-rand-hex-32"
 ALGORITHM="HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES=15  # Shorter for security
 REFRESH_TOKEN_EXPIRE_DAYS=3     # Shorter for security
-CORS_ORIGINS="https://example.com,https://www.example.com"
-CORS_METHODS="GET,POST,PUT,DELETE"
-CORS_HEADERS="Authorization,Content-Type"
+CORS_ORIGINS=["https://example.com","https://www.example.com"]
+CORS_METHODS=["GET","POST","PUT","DELETE"]
+CORS_HEADERS=["Authorization","Content-Type"]
 
 # ------------- redis -------------
 REDIS_CACHE_HOST="prod-redis.example.com"

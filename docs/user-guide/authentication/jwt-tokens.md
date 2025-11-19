@@ -518,7 +518,7 @@ REFRESH_TOKEN_EXPIRE_DAYS=7
 
 # Security Headers
 SECURE_COOKIES=true
-CORS_ORIGINS="http://localhost:3000,https://yourapp.com"
+CORS_ORIGINS=["http://localhost:3000","https://yourapp.com"]
 ```
 
 ### Security Configuration

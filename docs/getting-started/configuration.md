@@ -17,7 +17,7 @@ Open `src/.env` and set these required values:
 ### Application Settings
 
 ```env
-# App Settings  
+# App Settings
 APP_NAME="Your app name here"
 APP_DESCRIPTION="Your app description here"
 APP_VERSION="0.1"
@@ -49,9 +49,10 @@ PGADMIN_LISTEN_PORT=80
 ```
 
 **To connect to database in PGAdmin:**
+
 1. Login with `PGADMIN_DEFAULT_EMAIL` and `PGADMIN_DEFAULT_PASSWORD`
-2. Click "Add Server"
-3. Use these connection settings:
+1. Click "Add Server"
+1. Use these connection settings:
    - **Hostname/address**: `db` (if using containers) or `localhost`
    - **Port**: Value from `POSTGRES_PORT`
    - **Database**: `postgres` (leave as default)
@@ -96,7 +97,7 @@ REDIS_CACHE_PORT=6379
 CLIENT_CACHE_MAX_AGE=30          # Default: 30 seconds
 
 # Redis Job Queue
-REDIS_QUEUE_HOST="localhost"     # Use "redis" for Docker Compose  
+REDIS_QUEUE_HOST="localhost"     # Use "redis" for Docker Compose
 REDIS_QUEUE_PORT=6379
 
 # Redis Rate Limiting
@@ -105,7 +106,7 @@ REDIS_RATE_LIMIT_PORT=6379
 ```
 
 !!! warning "Redis in Production"
-    You may use the same Redis instance for caching and queues while developing, but use separate containers in production.
+You may use the same Redis instance for caching and queues while developing, but use separate containers in production.
 
 ### Rate Limiting Defaults
 
@@ -121,18 +122,14 @@ Configure Cross-Origin Resource Sharing for your frontend:
 
 ```env
 # CORS Settings
-CORS_ORIGINS="*"                         # Comma-separated origins (use specific domains in production)
-CORS_METHODS="*"                         # Comma-separated HTTP methods or "*" for all
-CORS_HEADERS="*"                         # Comma-separated headers or "*" for all
+CORS_ORIGINS=["*"]                         # Comma-separated origins (use specific domains in production)
+CORS_METHODS=["*"]                         # Comma-separated HTTP methods or "*" for all
+CORS_HEADERS=["*"]                         # Comma-separated headers or "*" for all
 ```
 
 !!! warning "CORS in Production"
-    Never use `"*"` for CORS_ORIGINS in production. Specify exact domains:
-    ```env
-    CORS_ORIGINS="https://yourapp.com,https://www.yourapp.com"
-    CORS_METHODS="GET,POST,PUT,DELETE,PATCH"
-    CORS_HEADERS="Authorization,Content-Type"
-    ```
+Never use `"*"` for CORS_ORIGINS in production. Specify exact domains:
+`env     CORS_ORIGINS=["https://yourapp.com","https://www.yourapp.com"]     CORS_METHODS=["GET","POST","PUT","DELETE","PATCH"]     CORS_HEADERS=["Authorization","Content-Type"]     `
 
 ### First Tier
 
@@ -170,7 +167,7 @@ REDIS_RATE_LIMIT_HOST="redis"
 The boilerplate includes Redis for caching, job queues, and rate limiting. If running locally without Docker, either:
 
 1. **Install Redis** and keep the default settings
-2. **Disable Redis services** (see [User Guide - Configuration](../user-guide/configuration/index.md) for details)
+1. **Disable Redis services** (see [User Guide - Configuration](../user-guide/configuration/index.md) for details)
 
 ## That's It!
 
@@ -179,4 +176,4 @@ With these basic settings configured, you can start the application:
 - **Docker Compose**: `docker compose up`
 - **Manual**: `uv run uvicorn src.app.main:app --reload`
 
-For detailed configuration options, advanced settings, and production deployment, see the [User Guide - Configuration](../user-guide/configuration/index.md). 
+For detailed configuration options, advanced settings, and production deployment, see the [User Guide - Configuration](../user-guide/configuration/index.md).
