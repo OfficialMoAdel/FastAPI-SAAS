@@ -1,14 +1,8 @@
 import os
 from enum import Enum
 
-from pydantic import SecretStr, computed_field, field_validator
+from pydantic import SecretStr, computed_field
 from pydantic_settings import BaseSettings, SettingsConfigDict
-
-
-def str_to_list(value: str) -> list[str]:
-    if isinstance(value, str):
-        return [item.strip() for item in value.split(",") if item.strip()]
-    raise ValueError("Invalid string setting for list conversion.")
 
 
 class AppSettings(BaseSettings):
@@ -150,11 +144,9 @@ class EnvironmentSettings(BaseSettings):
 
 
 class CORSSettings(BaseSettings):
-    CORS_ORIGINS: list[str] | str = "*"
-    CORS_METHODS: list[str] | str = "*"
-    CORS_HEADERS: list[str] | str = "*"
-
-    _normalize_to_list = field_validator("CORS_ORIGINS", "CORS_METHODS", "CORS_HEADERS", mode="before")(str_to_list)
+    CORS_ORIGINS: list[str] = ["*"]
+    CORS_METHODS: list[str] = ["*"]
+    CORS_HEADERS: list[str] = ["*"]
 
 
 class Settings(

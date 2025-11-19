@@ -178,33 +178,33 @@ Cross-Origin Resource Sharing (CORS) settings for frontend integration:
 
 ```env
 # ------------- CORS -------------
-CORS_ORIGINS="*"
-CORS_METHODS="*"
-CORS_HEADERS="*"
+CORS_ORIGINS=["*"]
+CORS_METHODS=["*"]
+CORS_HEADERS=["*"]
 ```
 
 **Variables Explained:**
 
-- `CORS_ORIGINS`: Comma-separated list of allowed origins (e.g., `"https://app.com,https://www.app.com"`)
-- `CORS_METHODS`: Comma-separated list of allowed HTTP methods (e.g., `"GET,POST,PUT,DELETE"`)
-- `CORS_HEADERS`: Comma-separated list of allowed headers (e.g., `"Authorization,Content-Type"`)
+- `CORS_ORIGINS`: Comma-separated list of allowed origins (e.g., `["https://app.com","https://www.app.com"]`)
+- `CORS_METHODS`: Comma-separated list of allowed HTTP methods (e.g., `["GET","POST","PUT","DELETE"]`)
+- `CORS_HEADERS`: Comma-separated list of allowed headers (e.g., `["Authorization","Content-Type"]`)
 
 **Environment-Specific Values:**
 
 ```env
 # Development - Allow all origins
-CORS_ORIGINS="*"
-CORS_METHODS="*"
-CORS_HEADERS="*"
+CORS_ORIGINS=["*"]
+CORS_METHODS=["*"]
+CORS_HEADERS=["*"]
 
 # Production - Specific domains only
-CORS_ORIGINS="https://yourapp.com,https://www.yourapp.com"
-CORS_METHODS="GET,POST,PUT,DELETE,PATCH"
-CORS_HEADERS="Authorization,Content-Type,X-Requested-With"
+CORS_ORIGINS=["https://yourapp.com","https://www.yourapp.com"]
+CORS_METHODS=["GET","POST","PUT","DELETE","PATCH"]
+CORS_HEADERS=["Authorization","Content-Type","X-Requested-With"]
 ```
 
 !!! danger "Security Warning"
-    Never use wildcard (`*`) for `CORS_ORIGINS` in production environments. Always specify exact allowed domains to prevent unauthorized cross-origin requests.
+Never use wildcard (`*`) for `CORS_ORIGINS` in production environments. Always specify exact allowed domains to prevent unauthorized cross-origin requests.
 
 ### User Tiers
 
