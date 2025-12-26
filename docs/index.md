@@ -9,9 +9,7 @@
 </p>
 
 !!! warning "Documentation Status"
-    This is our first version of the documentation. While functional, we acknowledge it's rough around the edges - there's a huge amount to document and we needed to start somewhere! We built this foundation (with a lot of AI assistance) so we can improve upon it. 
-    
-    Better documentation, examples, and guides are actively being developed. Contributions and feedback are greatly appreciated!
+This is our first version of the documentation. While functional, we acknowledge it's rough around the edges - there's a huge amount to document and we needed to start somewhere! We built this foundation (with a lot of AI assistance) so we can improve upon it.
 
 <p align="center">
   <a href="https://fastapi.tiangolo.com">
@@ -51,6 +49,7 @@ This boilerplate leverages cutting-edge Python technologies:
 ## Key Features
 
 ### Performance & Scalability
+
 - Fully async architecture
 - Pydantic V2 for ultra-fast data validation
 - SQLAlchemy 2.0 with efficient query patterns
@@ -58,6 +57,7 @@ This boilerplate leverages cutting-edge Python technologies:
 - Horizontal scaling with NGINX load balancing
 
 ### Security & Authentication
+
 - JWT-based authentication with refresh tokens
 - Cookie-based secure token storage
 - Role-based access control with user tiers
@@ -65,6 +65,7 @@ This boilerplate leverages cutting-edge Python technologies:
 - Production-ready security configurations
 
 ### Developer Experience
+
 - Comprehensive CRUD operations with [FastCRUD](https://github.com/igorbenav/fastcrud)
 - Automatic API documentation
 - Database migrations with Alembic
@@ -73,6 +74,7 @@ This boilerplate leverages cutting-edge Python technologies:
 - Docker Compose for easy development
 
 ### Production Ready
+
 - Environment-based configuration
 - Structured logging
 - Health checks and monitoring
@@ -95,15 +97,28 @@ docker compose up
 
 That's it! Your API will be available at `http://localhost:8000/docs`
 
+**Current Application Status:**
+The application is currently running with the following endpoints available:
+
+- **Health Check**: `GET /api/v1/health` - Returns application health status
+- **Ready Check**: `GET /api/v1/ready` - Returns application readiness status
+- **Authentication**: JWT-based auth with login, refresh, and logout endpoints
+- **User Management**: CRUD operations for users and user profiles
+- **Posts**: Create, read, update, and delete posts
+- **Background Tasks**: Queue and manage background jobs
+- **Rate Limiting**: Tier-based rate limiting configuration
+
 **[Continue with the Getting Started Guide →](getting-started/index.md)**
 
 ## Documentation Structure
 
 ### For New Users
+
 - **[Getting Started](getting-started/index.md)** - Quick setup and first steps
 - **[User Guide](user-guide/index.md)** - Comprehensive feature documentation
 
 ### For Developers
+
 - **[Development](user-guide/development.md)** - Extending and customizing the boilerplate
 - **[Testing](user-guide/testing.md)** - Testing strategies and best practices
 - **[Production](user-guide/production.md)** - Production deployment guides

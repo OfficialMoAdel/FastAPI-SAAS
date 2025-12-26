@@ -52,7 +52,10 @@ async def close_redis_cache_pool() -> None:
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
-    queue.pool = await create_pool(RedisSettings(host=settings.REDIS_QUEUE_HOST, port=settings.REDIS_QUEUE_PORT))
+    redis_settings = RedisSettings(host=settings.REDIS_QUEUE_HOST, port=settings.REDIS_QUEUE_PORT)
+    if settings.REDIS_QUEUE_PASSWORD:
+        redis_settings.password = settings.REDIS_QUEUE_PASSWORD
+    queue.pool = await create_pool(redis_settings)
 
 
 async def close_redis_queue_pool() -> None:
