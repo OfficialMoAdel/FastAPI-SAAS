@@ -101,13 +101,13 @@ def lifespan_factory(
         await set_threadpool_tokens()
 
         try:
-            if isinstance(settings, RedisCacheSettings):
+            if isinstance(settings, RedisCacheSettings) and settings.REDIS_CACHE_ENABLED:
                 await create_redis_cache_pool()
 
-            if isinstance(settings, RedisQueueSettings):
+            if isinstance(settings, RedisQueueSettings) and settings.REDIS_QUEUE_ENABLED:
                 await create_redis_queue_pool()
 
-            if isinstance(settings, RedisRateLimiterSettings):
+            if isinstance(settings, RedisRateLimiterSettings) and settings.REDIS_RATE_LIMIT_ENABLED:
                 await create_redis_rate_limit_pool()
 
             if create_tables_on_start:
