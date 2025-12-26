@@ -8,10 +8,10 @@ from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
 from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
 from ...core.utils.cache import cache
-from ...crud.crud_posts import crud_posts
-from ...crud.crud_users import crud_users
-from ...schemas.post import PostCreate, PostCreateInternal, PostRead, PostUpdate
-from ...schemas.user import UserRead
+from ...modules.users.crud import crud_users
+from .crud import crud_posts
+from ...modules.users.schemas import UserRead
+from .schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
 router = APIRouter(tags=["posts"])
 

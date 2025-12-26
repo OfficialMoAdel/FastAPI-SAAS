@@ -9,16 +9,13 @@ from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitExcep
 from ..core.logger import logging
 from ..core.security import TokenType, oauth2_scheme, verify_token
 from ..core.utils.rate_limit import rate_limiter
-from ..crud.crud_rate_limit import crud_rate_limits
-from ..crud.crud_tier import crud_tiers
-from ..crud.crud_users import crud_users
-from ..schemas.rate_limit import RateLimitRead, sanitize_path
-from ..schemas.tier import TierRead
+from ..modules.rate_limits.crud import crud_rate_limits
+from ..modules.tiers.crud import crud_tiers
+from ..modules.users.crud import crud_users
+from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
+from ..modules.tiers.schemas import TierRead
 
 logger = logging.getLogger(__name__)
-
-DEFAULT_LIMIT = settings.DEFAULT_RATE_LIMIT_LIMIT
-DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
 
 
 async def get_current_user(
@@ -77,6 +74,9 @@ async def rate_limiter_dependency(
 ) -> None:
     if hasattr(request.app.state, "initialization_complete"):
         await request.app.state.initialization_complete.wait()
+
+    DEFAULT_LIMIT = settings.DEFAULT_RATE_LIMIT_LIMIT
+    DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
 
     path = sanitize_path(request.url.path)
     if user:
