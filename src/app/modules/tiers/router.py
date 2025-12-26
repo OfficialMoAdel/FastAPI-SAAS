@@ -1,14 +1,15 @@
+"""Tier API router - HTTP handlers delegating to service layer."""
+
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from fastcrud import PaginatedListResponse, compute_offset, paginated_response
+from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser
 from ...core.db.database import async_get_db
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
-from .crud import crud_tiers
-from .schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
+from .schemas import TierCreate, TierRead, TierUpdate
+from .service import tier_service
 
 router = APIRouter(tags=["tiers"])
 
@@ -17,56 +18,33 @@ router = APIRouter(tags=["tiers"])
 async def write_tier(
     request: Request, tier: TierCreate, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, Any]:
-    tier_internal_dict = tier.model_dump()
-    db_tier = await crud_tiers.exists(db=db, name=tier_internal_dict["name"])
-    if db_tier:
-        raise DuplicateValueException("Tier Name not available")
-
-    tier_internal = TierCreateInternal(**tier_internal_dict)
-    created_tier = await crud_tiers.create(db=db, object=tier_internal, schema_to_select=TierRead)
-
-    if created_tier is None:
-        raise NotFoundException("Failed to create tier")
-
-    return created_tier
+    """Create a new tier (superuser only)."""
+    return await tier_service.create_tier(tier, db)
 
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
 async def read_tiers(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
 ) -> dict:
-    tiers_data = await crud_tiers.get_multi(db=db, offset=compute_offset(page, items_per_page), limit=items_per_page)
-
-    response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
-    return response
+    """Get paginated list of tiers."""
+    return await tier_service.get_tiers(db, page, items_per_page)
 
 
 @router.get("/tier/{name}", response_model=TierRead)
 async def read_tier(request: Request, name: str, db: Annotated[AsyncSession, Depends(async_get_db)]) -> dict[str, Any]:
-    db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
-    if db_tier is None:
-        raise NotFoundException("Tier not found")
-
-    return db_tier
+    """Get tier by name."""
+    return await tier_service.get_tier(name, db)
 
 
 @router.patch("/tier/{name}", dependencies=[Depends(get_current_superuser)])
 async def patch_tier(
     request: Request, name: str, values: TierUpdate, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, str]:
-    db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
-    if db_tier is None:
-        raise NotFoundException("Tier not found")
-
-    await crud_tiers.update(db=db, object=values, name=name)
-    return {"message": "Tier updated"}
+    """Update a tier (superuser only)."""
+    return await tier_service.update_tier(name, values, db)
 
 
 @router.delete("/tier/{name}", dependencies=[Depends(get_current_superuser)])
 async def erase_tier(request: Request, name: str, db: Annotated[AsyncSession, Depends(async_get_db)]) -> dict[str, str]:
-    db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
-    if db_tier is None:
-        raise NotFoundException("Tier not found")
-
-    await crud_tiers.delete(db=db, name=name)
-    return {"message": "Tier deleted"}
+    """Delete a tier (superuser only)."""
+    return await tier_service.delete_tier(name, db)
