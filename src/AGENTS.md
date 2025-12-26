@@ -1,0 +1,308 @@
+# FastAPI SaaS Source Root - Agent Guidance
+
+## Package Identity
+Source code root containing FastAPI application, database migrations, and utility scripts for the complete SaaS platform.
+
+## Setup & Run
+```bash
+# Install dependencies from source root
+uv sync
+
+# Run application from source root
+uv run uvicorn src.app.main:app --reload
+
+# Run database migrations from source root
+uv run alembic upgrade head
+
+# Run setup scripts from source root
+uv run python src/scripts/create_first_superuser.py
+
+# Test entire codebase
+uv run pytest
+
+# Type check entire codebase
+uv run mypy src/
+
+# Lint entire codebase
+uv run ruff check src/
+```
+
+## Patterns & Conventions
+
+### Project Structure
+✅ DO: Follow clear separation of concerns
+```
+src/
+├── app/           # Main FastAPI application
+├── migrations/     # Database migration files
+├── scripts/        # Setup and utility scripts
+└── __init__.py    # Package initialization
+```
+
+### Script Organization
+✅ DO: Use async patterns for all database scripts
+```python
+# src/scripts/create_first_superuser.py (lines 18-30)
+async def create_first_user(session: AsyncSession) -> None:
+    try:
+        name = settings.ADMIN_NAME
+        email = settings.ADMIN_EMAIL
+        username = settings.ADMIN_USERNAME
+        hashed_password = get_password_hash(settings.ADMIN_PASSWORD)
+        
+        # Database operations using async patterns
+        query = select(User).filter_by(email=email)
+        result = await session.execute(query)
+        user = result.scalar_one_or_none()
+```
+
+### Migration Management
+✅ DO: Keep migrations organized and versioned
+```python
+# migrations/env.py (lines 1-50)
+from asyncio import run
+from sqlalchemy.ext.asyncio import AsyncSession
+
+def run_migrations_online() -> None:
+    """Run migrations in 'online' mode."""
+    connectable = async_engine
+    
+    async def do_run_migrations(connection):
+        context.configure(connection=connection, target_metadata=target_metadata)
+        with context.begin_transaction():
+            context.run_migrations()
+    
+    run(do_run_migrations(connectable))
+```
+
+### Package Initialization
+✅ DO: Use proper package structure
+```python
+# src/__init__.py (minimal)
+# src/app/__init__.py (minimal)
+# All other __init__.py files properly structured
+```
+
+### Absolute Import Pattern
+✅ DO: Use absolute imports from project root
+```python
+# From scripts, use absolute imports
+from src.app.core.config import settings
+from src.app.core.db.database import AsyncSession
+from src.app.modules.users.models import User
+```
+
+❌ DON'T: Use relative imports from scripts or main files
+
+### Database Connection Management
+✅ DO: Use proper session management
+```python
+# src/scripts/create_first_superuser.py (lines 72-73)
+async def main():
+    async with local_session() as session:
+        await create_first_user(session)
+```
+
+### Configuration Hierarchy
+✅ DO: Use environment-based configuration
+```python
+# All config via Pydantic Settings
+from src.app.core.config import settings
+
+# Environment files:
+# .env.local - Local development secrets
+# .env - Versioned environment variables
+```
+
+## Touch Points / Key Files
+
+### Application Entry Points
+- Main App: `src/app/main.py` - FastAPI application factory
+- App Init: `src/app/__init__.py` - Application package initialization
+
+### Database Management
+- Migrations: `migrations/` - Alembic migration files and configuration
+- Migration Env: `migrations/env.py` - Migration environment setup
+- Migration Script: `migrations/script.py.mako` - Migration file template
+
+### Setup Scripts
+- Superuser: `src/scripts/create_first_superuser.py` - Create initial admin user
+- Tier Setup: `src/scripts/create_first_tier.py` - Create initial subscription tiers
+
+### Configuration
+- Project Config: `pyproject.toml` - Python project configuration
+- Alembic Config: `alembic.ini` - Database migration configuration
+- Environment: `.env.local` - Local development secrets
+
+### Package Structure
+- Source Init: `src/__init__.py` - Source package initialization
+- App Package: `src/app/` - Main application package with its own AGENTS.md
+
+## JIT Index Hints
+
+### Project Structure Searches
+```bash
+# Find all Python files in source
+find src/ -name "*.py" -type f
+
+# List main directories
+ls src/ src/app/ src/app/modules/ src/app/core/
+
+# Find setup scripts
+find src/scripts/ -name "*.py" -type f
+
+# Find migration files
+find migrations/ -name "*.py" -type f
+```
+
+### Import Pattern Searches
+```bash
+# Find absolute imports
+rg -n "from src\." src/scripts/ src/app/
+
+# Find configuration usage
+rg -n "from.*config import.*settings" src/
+
+# Find database connections
+rg -n "local_session\|async_engine" src/
+```
+
+### Migration Searches
+```bash
+# Find migration commands
+rg -n "alembic.*upgrade|alembic.*downgrade" migrations/
+
+# Find database operations in scripts
+rg -n "select\|insert\|update\|delete" src/scripts/
+
+# Find async functions
+rg -n "async def.*:" src/scripts/
+```
+
+## Common Gotchas
+
+### Database Scripts
+✅ DO: Use proper async session management
+```python
+async with local_session() as session:
+    await create_first_user(session)
+```
+
+❌ DON'T: Use sync database operations in scripts
+
+### Import Paths
+✅ DO: Use absolute imports from project root
+```python
+from src.app.core.config import settings
+```
+
+❌ DON'T: Use relative imports from scripts
+```python
+# Wrong in scripts
+from ..app.core.config import settings
+```
+
+### Environment Configuration
+✅ DO: Use `.env.local` for local secrets
+❌ DON'T: Commit secrets to version control
+
+### Package Structure
+✅ DO: Keep all `__init__.py` files minimal
+❌ DON'T: Put import logic in `__init__.py` files
+
+### Migration Safety
+✅ DO: Test migrations before applying to production
+```bash
+# Generate migration
+uv run alembic revision --autogenerate -m "Description"
+
+# Review SQL before applying
+uv run alembic upgrade head --sql
+
+# Apply migration
+uv run alembic upgrade head
+```
+
+## Pre-PR Checks
+
+### Full Stack Testing
+```bash
+# Install dependencies
+uv sync
+
+# Type check entire codebase
+uv run mypy src/
+
+# Lint entire codebase
+uv run ruff check src/
+
+# Run all tests
+uv run pytest
+
+# Test migrations
+uv run alembic upgrade head
+
+# Test application startup
+uv run python -c "from src.app.main import app; print('App started successfully')"
+```
+
+### Script Testing
+```bash
+# Test setup scripts
+uv run python src/scripts/create_first_superuser.py
+
+# Test script dependencies
+uv run python -c "
+from src.app.core.config import settings
+from src.app.core.db.database import local_session
+print('Script dependencies loaded successfully')
+"
+```
+
+### Database Validation
+```bash
+# Check database connection
+uv run python -c "
+import asyncio
+from src.app.core.db.database import async_engine
+
+async def test_connection():
+    async with async_engine.begin() as conn:
+        result = await conn.execute('SELECT 1')
+        print('Database connection successful')
+
+asyncio.run(test_connection())
+"
+
+# Check migration status
+uv run alembic current
+```
+
+### Configuration Validation
+```bash
+# Test all configuration
+uv run python -c "
+from src.app.core.config import settings
+from src.app.main import app
+print('✅ Configuration loaded successfully')
+print(f'✅ Project: {settings.PROJECT_NAME}')
+print(f'✅ Environment: {settings.ENVIRONMENT}')
+print(f'✅ Database: {settings.POSTGRES_SERVER}')
+"
+
+# Test admin configuration
+uv run python -c "
+from src.app.admin.initialize import create_admin_interface
+admin = create_admin_interface()
+print(f'✅ Admin interface: {\"enabled\" if admin else \"disabled\"}')
+"
+```
+
+### Development Workflow
+```bash
+# Complete development setup sequence
+uv sync                                    # Install dependencies
+uv run alembic upgrade head                   # Run migrations
+uv run python src/scripts/create_first_superuser.py  # Create admin
+uv run uvicorn src.app.main:app --reload      # Start development server
+```
