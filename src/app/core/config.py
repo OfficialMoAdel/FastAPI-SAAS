@@ -52,7 +52,7 @@ class MySQLSettings(DatabaseSettings):
 class PostgresSettings(DatabaseSettings):
     POSTGRES_USER: str = "postgres"
     POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_SERVER: str = "localhost"
+    POSTGRES_SERVER: str = "192.168.121.147"
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
     POSTGRES_SYNC_PREFIX: str = "postgresql://"
@@ -79,9 +79,10 @@ class TestSettings(BaseSettings):
 
 
 class RedisCacheSettings(BaseSettings):
-    REDIS_CACHE_ENABLED: bool = False
-    REDIS_CACHE_HOST: str = "localhost"
+    REDIS_CACHE_ENABLED: bool = True
+    REDIS_CACHE_HOST: str = "192.168.121.147"
     REDIS_CACHE_PORT: int = 6379
+    REDIS_CACHE_PASSWORD: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -94,15 +95,17 @@ class ClientSideCacheSettings(BaseSettings):
 
 
 class RedisQueueSettings(BaseSettings):
-    REDIS_QUEUE_ENABLED: bool = False
-    REDIS_QUEUE_HOST: str = "localhost"
+    REDIS_QUEUE_ENABLED: bool = True
+    REDIS_QUEUE_HOST: str = "192.168.121.147"
     REDIS_QUEUE_PORT: int = 6379
+    REDIS_QUEUE_PASSWORD: str | None = None
 
 
 class RedisRateLimiterSettings(BaseSettings):
-    REDIS_RATE_LIMIT_ENABLED: bool = False
-    REDIS_RATE_LIMIT_HOST: str = "localhost"
+    REDIS_RATE_LIMIT_ENABLED: bool = True
+    REDIS_RATE_LIMIT_HOST: str = "192.168.121.147"
     REDIS_RATE_LIMIT_PORT: int = 6379
+    REDIS_RATE_LIMIT_PASSWORD: str | None = None
 
     @computed_field  # type: ignore[prop-decorator]
     @property
@@ -128,11 +131,11 @@ class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_TRACK_EVENTS: bool = True
     CRUD_ADMIN_TRACK_SESSIONS: bool = True
 
-    CRUD_ADMIN_REDIS_ENABLED: bool = False
-    CRUD_ADMIN_REDIS_HOST: str = "localhost"
+    CRUD_ADMIN_REDIS_ENABLED: bool = True
+    CRUD_ADMIN_REDIS_HOST: str = "192.168.121.147"
     CRUD_ADMIN_REDIS_PORT: int = 6379
     CRUD_ADMIN_REDIS_DB: int = 0
-    CRUD_ADMIN_REDIS_PASSWORD: str | None = "None"
+    CRUD_ADMIN_REDIS_PASSWORD: str | None = None
     CRUD_ADMIN_REDIS_SSL: bool = False
 
 
