@@ -5,7 +5,7 @@ from sqlalchemy import UUID, DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
-from ..core.db.database import Base
+from ...core.db.database import Base
 
 
 class Post(Base):
