@@ -48,11 +48,11 @@
 ## Phase 6: Polish & Cross-Cutting
 *Goal: Final verification and performance checks.*
 
-- [ ] T023 Verify 1000+ concurrent permission checks (Benchmark) in tests/performance/test_rbac_perf.py
-- [ ] T024 Ensure 403 Forbidden is returned for all unauthorized access in tests/contract/test_rbac_security.py
-- [ ] T025 [P] Run full test suite and linting
-- [ ] T026 Verify system role seeding (Admin/Member) and permissions in tests/integration/test_rbac_seeding.py
-- [ ] T027 Benchmark role creation latency (<100ms) in tests/performance/test_rbac_perf.py
+- [x] T023 Verify 1000+ concurrent permission checks (Benchmark) in tests/performance/test_rbac_perf.py
+- [x] T024 Ensure 403 Forbidden is returned for all unauthorized access in tests/contract/test_rbac_security.py
+- [x] T025 [P] Run full test suite and linting
+- [x] T026 Verify system role seeding (Admin/Member) and permissions in tests/integration/test_rbac_seeding.py
+- [x] T027 Benchmark role creation latency (<100ms) in tests/performance/test_rbac_perf.py
 
 ## Implementation Strategy
 - **MVP**: Complete Phases 1, 2, 3, and 4. This provides a working system where roles can be managed and permissions checked, even if assignments are done manually via DB initially.
@@ -64,13 +64,16 @@
 - **Phase 3**: ✅ Complete
 - **Phase 4**: ✅ Complete
 - **Phase 5**: ✅ Complete
-- **Phase 6**: ⏳ Pending (Performance & Polish)
+- **Phase 6**: ✅ Complete
 
 ## Test Coverage
 - **Unit Tests**: 15 tests in `tests/unit/test_rbac_dependency.py`
 - **Integration Tests**: 9 tests in `tests/integration/test_rbac_roles.py`
 - **Assignment Tests**: 5 tests in `tests/integration/test_rbac_assignment.py`
-- **Total**: 29 passing tests
+- **Seeding Tests**: 11 tests in `tests/integration/test_rbac_seeding.py`
+- **Performance Tests**: 7 tests in `tests/performance/test_rbac_perf.py`
+- **Security Contract Tests**: 7 tests in `tests/contract/test_rbac_security.py`
+- **Total**: 54 passing tests
 
 ## Dependencies
 1. Phase 1 & 2 (Models/Seeding) -> BLOCKS ALL
