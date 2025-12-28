@@ -1,0 +1,160 @@
+"""Tenant validation middleware for multi-tenant request handling.
+
+This middleware:
+- Validates X-Tenant-ID header on all requests except whitelisted paths
+- Looks up tenant in database and validates it's active
+- Sets tenant context for downstream request processing
+- Clears context in finally block to prevent leakage
+"""
+
+import logging
+from typing import TYPE_CHECKING
+
+from fastapi import FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
+from sqlalchemy import select
+from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+
+from src.app.core.db.database import local_session
+from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
+from src.app.modules.tenants.models import Tenant
+
+if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+logger = logging.getLogger(__name__)
+
+TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
+    [
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+        "/api/v1/health",
+        "/api/v1/ready",
+    ]
+)
+
+TENANT_EXEMPT_PREFIXES: tuple[str, ...] = ("/api/v1/tenants",)
+
+TENANT_HEADER = "X-Tenant-ID"
+
+
+def is_path_exempt(path: str) -> bool:
+    """Check if the request path is exempt from tenant validation.
+
+    Args:
+        path: The request path to check.
+
+    Returns:
+        True if the path is exempt, False otherwise.
+    """
+    if path in TENANT_EXEMPT_PATHS:
+        return True
+    for prefix in TENANT_EXEMPT_PREFIXES:
+        if path.startswith(prefix):
+            return True
+    return False
+
+
+class TenantMiddleware(BaseHTTPMiddleware):
+    """Middleware to validate X-Tenant-ID header and set tenant context.
+
+    Validates tenant header on all non-exempt requests:
+    - Missing header: 400 Bad Request
+    - Invalid/inactive tenant: 403 Forbidden
+    - Valid tenant: Sets context and proceeds
+    """
+
+    def __init__(self, app: FastAPI) -> None:
+        super().__init__(app)
+
+    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
+        """Process the request and validate tenant header.
+
+        Args:
+            request: The incoming request.
+            call_next: The next middleware or route handler.
+
+        Returns:
+            The response object.
+        """
+        path = request.url.path
+
+        if is_path_exempt(path):
+            return await call_next(request)
+
+        try:
+            tenant_slug = request.headers.get(TENANT_HEADER)
+
+            if not tenant_slug or not tenant_slug.strip():
+                logger.warning(
+                    "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": f"Missing required header: {TENANT_HEADER}"},
+                )
+
+            tenant_slug = tenant_slug.strip()
+
+            tenant = await self._get_tenant_by_slug(tenant_slug)
+
+            if tenant is None:
+                logger.warning(
+                    "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
+                    tenant_slug,
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Access denied"},
+                )
+
+            if not tenant.is_active:
+                logger.warning(
+                    "Tenant resolution failed: inactive_tenant | slug=%s | "
+                    "tenant_id=%s | path=%s | method=%s | client=%s",
+                    tenant_slug,
+                    tenant.id,
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Tenant inactive. Contact support."},
+                )
+
+            set_tenant_context(tenant)
+            logger.debug(
+                "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s",
+                tenant_slug,
+                tenant.id,
+                path,
+            )
+
+            response = await call_next(request)
+            return response
+
+        finally:
+            clear_tenant_context()
+
+    async def _get_tenant_by_slug(self, slug: str) -> Tenant | None:
+        """Look up tenant by slug in the database.
+
+        Args:
+            slug: The tenant slug to look up.
+
+        Returns:
+            The tenant if found, None otherwise.
+        """
+        async with local_session() as session:
+            session: AsyncSession
+            stmt = select(Tenant).where(Tenant.slug == slug)
+            result = await session.execute(stmt)
+            return result.scalar_one_or_none()

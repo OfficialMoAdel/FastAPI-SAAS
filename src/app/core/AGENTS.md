@@ -135,6 +135,54 @@ async def cache_get(key: str) -> Optional[Any]:
     return None
 ```
 
+### Multi-Tenancy Patterns
+✅ DO: Use ContextVar for async-safe tenant context
+```python
+# src/app/core/tenancy/context.py
+from contextvars import ContextVar
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from src.app.modules.tenants.models import Tenant
+
+_current_tenant: ContextVar["Tenant | None"] = ContextVar("current_tenant", default=None)
+
+def get_tenant_context() -> "Tenant | None":
+    return _current_tenant.get()
+
+def set_tenant_context(tenant: "Tenant | None") -> None:
+    _current_tenant.set(tenant)
+
+def clear_tenant_context() -> None:
+    _current_tenant.set(None)  # Call in finally block
+```
+
+✅ DO: Clear tenant context in middleware finally block
+```python
+# src/app/middleware/tenant.py
+async def dispatch(self, request, call_next):
+    try:
+        # ... validate and set tenant context
+        set_tenant_context(tenant)
+        response = await call_next(request)
+        return response
+    finally:
+        clear_tenant_context()  # Prevents context leakage
+```
+
+✅ DO: Use dependency for tenant access in routes
+```python
+# src/app/api/dependencies.py
+def get_current_tenant() -> Tenant:
+    tenant = get_tenant_context()
+    if tenant is None:
+        raise HTTPException(status_code=500, detail="Tenant context not available")
+    return tenant
+```
+
+❌ DON'T: Access tenant context without middleware setup
+❌ DON'T: Forget to clear context in finally block
+
 ## Touch Points / Key Files
 
 ### Configuration
@@ -162,6 +210,11 @@ async def cache_get(key: str) -> Optional[Any]:
 ### Exceptions
 - HTTP Exceptions: `src/app/core/exceptions/http_exceptions.py` - Custom HTTP exceptions
 - Cache Exceptions: `src/app/core/exceptions/cache_exceptions.py` - Cache-related exceptions
+
+### Multi-Tenancy
+- Tenant Context: `src/app/core/tenancy/context.py` - ContextVar for async-safe tenant isolation
+- Tenant Middleware: `src/app/middleware/tenant.py` - X-Tenant-ID header validation
+- Tenant Dependency: `src/app/api/dependencies.py` - `get_current_tenant()` dependency
 
 ## JIT Index Hints
 

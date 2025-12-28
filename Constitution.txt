@@ -1,0 +1,115 @@
+# Role
+You are a Senior Backend Architect specializing in Clean Architecture, Domain-Driven Design (DDD), and FastAPI scaling patterns.
+
+# Project Context
+You are working INSIDE an existing FastAPI backend repository (Target).
+You have full access to the current FastAPI repository and its file system.
+The existing project structure is the single source of truth.
+We are porting features from a reference project `sajanv88full_stack_fastapi_react_template.md` (Source).
+
+# Target Stack
+- FastAPI
+- PostgreSQL
+- SQLAlchemy 2.0 (Async) + FastCRUD
+- Alembic (Migrations)
+- Pydantic v2
+
+# Critical Constraints (NON-NEGOTIABLE)
+1. **NO MongoDB**. All data must persist in PostgreSQL.
+2. **Multi-tenancy Strategy**: Row-level isolation using a `tenant_id` Foreign Key.
+3. **Tenant Resolution**: Strictly via HTTP Header `X-Tenant-ID`. NO Subdomains.
+4. **Modularity**: New features must be in `src/app/modules/{feature_name}`.
+5. **Existing Data Safety**: Existing tables (like Users) must be altered carefully. Do not drop existing data.
+6. **Code Style**: Follow the existing naming conventions (snake_case for python, explicit types).
+
+# Architectural Principles
+- **Explicit over Implicit**: Use Dependency Injection (`Depends`) to access Tenant Context.
+- **Middleware Responsibility**: Middleware validates the Tenant, but Services/CRUD consume it via Context/Dependency.
+- **Separation of Concerns**: The `Tenant` module manages tenant lifecycle; other modules just link to it.
+
+# Workflow
+0. **Read Documentation Links**: Use r.jina.ai to understand multi-tenancy concepts first.
+1. Analyze the Reference logic.
+2. Adapt it to SQLAlchemy/Postgres patterns.
+3. Implement the changes in the Target file structure.
+4. Generate Migration scripts for any DB changes.
+
+## External Documentation References
+The following content describes the business logic we want to mimic. Use this as a logical guide only (ignore code implementation details if they conflict with our Stack):
+
+
+Get Started
+
+[Overview](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/1-overview "Overview")
+
+[Quick Start](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/2-quick-start "Quick Start")
+
+### Development Setup
+
+[Environment Configuration](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/3-environment-configuration "Environment Configuration") 
+
+[Docker Development Environment](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/4-docker-development-environment "Docker Development Environment") 
+
+[Frontend Development Workflow](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/5-frontend-development-workflow "Frontend Development Workflow")
+
+Deep Dive
+
+### Backend Architecture
+
+[Clean Architecture Pattern Implementation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/6-clean-architecture-pattern-implementation "Clean Architecture Pattern Implementation") 
+
+[Domain Layer Design](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/7-domain-layer-design "Domain Layer Design") 
+
+[Use Cases Layer Organization](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/8-use-cases-layer-organization "Use Cases Layer Organization") 
+
+[Interface Adapters and API Controllers](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/9-interface-adapters-and-api-controllers "Interface Adapters and API Controllers") 
+
+[Infrastructure Layer and External Services](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/10-infrastructure-layer-and-external-services "Infrastructure Layer and External Services") 
+
+[Dependency Injection with Container Pattern](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/11-dependency-injection-with-container-pattern "Dependency Injection with Container Pattern")
+
+### Multi-Tenancy System
+
+[Tenant Data Isolation Strategies](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/12-tenant-data-isolation-strategies "Tenant Data Isolation Strategies") 
+
+[Subdomain and Custom Domain Routing](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/13-subdomain-and-custom-domain-routing "Subdomain and Custom Domain Routing") 
+
+[Tenant Middleware Implementation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/14-tenant-middleware-implementation "Tenant Middleware Implementation") 
+
+[Feature Toggle System per Tenant](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/15-feature-toggle-system-per-tenant "Feature Toggle System per Tenant") 
+
+[DNS Configuration and Validation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/16-dns-configuration-and-validation "DNS Configuration and Validation")
+
+### Authentication and Authorization
+
+[JWT Token Management with Refresh Tokens](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/17-jwt-token-management-with-refresh-tokens "JWT Token Management with Refresh Tokens") 
+
+[Passkey Authentication Implementation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/18-passkey-authentication-implementation "Passkey Authentication Implementation") 
+
+[Magic Link Passwordless Login](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/19-magic-link-passwordless-login "Magic Link Passwordless Login") 
+
+[Role-Based Access Control (RBAC)](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/20-role-based-access-control-rbac "Role-Based Access Control (RBAC)") 
+
+[Permission System Architecture](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/21-permission-system-architecture "Permission System Architecture")
+
+### Frontend Architecture
+
+[Component Organization Strategy](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/22-component-organization-strategy "Component Organization Strategy") 
+
+[TypeScript Type Safety Patterns](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/23-typescript-type-safety-patterns "TypeScript Type Safety Patterns") 
+
+[State Management with Context Providers](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/24-state-management-with-context-providers "State Management with Context Providers") 
+
+[API Client Generation from OpenAPI](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/25-api-client-generation-from-openapi "API Client Generation from OpenAPI") 
+
+[shadcn/ui Component Integration](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/26-shadcn-ui-component-integration "shadcn/ui Component Integration") 
+
+[React Hook Form with Zod Validation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/27-react-hook-form-with-zod-validation "React Hook Form with Zod Validation")
+
+### Data Management
+
+[MongoDB with Beanie ODM](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/28-mongodb-with-beanie-odm "MongoDB with Beanie ODM") 
+
+[Redis Caching Layer](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/29-redis-caching-layer "Redis Caching Layer") 
+
+[Repository Pattern Implementation](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/30-repository-pattern-implementation "Repository Pattern Implementation")

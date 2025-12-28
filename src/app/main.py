@@ -7,6 +7,7 @@ from .admin.initialize import create_admin_interface
 from .api import router
 from .core.config import settings
 from .core.setup import create_application, lifespan_factory
+from .middleware.tenant import TenantMiddleware
 
 admin = create_admin_interface()
 
@@ -28,6 +29,9 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = create_application(router=router, settings=settings, lifespan=lifespan_with_admin)
+
+# Add tenant middleware for multi-tenancy support
+app.add_middleware(TenantMiddleware)
 
 # Mount admin interface if enabled
 if admin:

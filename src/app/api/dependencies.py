@@ -8,12 +8,14 @@ from ..core.db.database import async_get_db
 from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
 from ..core.logger import logging
 from ..core.security import TokenType, oauth2_scheme, verify_token
+from ..core.tenancy.context import get_tenant_context
 from ..core.utils.rate_limit import rate_limiter
 from ..modules.rate_limits.crud import crud_rate_limits
-from ..modules.tiers.crud import crud_tiers
-from ..modules.users.crud import crud_users
 from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
+from ..modules.tenants.models import Tenant
+from ..modules.tiers.crud import crud_tiers
 from ..modules.tiers.schemas import TierRead
+from ..modules.users.crud import crud_users
 
 logger = logging.getLogger(__name__)
 
@@ -67,6 +69,28 @@ async def get_current_superuser(current_user: Annotated[dict, Depends(get_curren
         raise ForbiddenException("You do not have enough privileges.")
 
     return current_user
+
+
+def get_current_tenant() -> Tenant:
+    """Get the current tenant from context.
+
+    This dependency retrieves the tenant that was set by TenantMiddleware.
+    Should only be used on endpoints that require tenant context (non-whitelisted).
+
+    Returns:
+        The current tenant.
+
+    Raises:
+        HTTPException: 500 if tenant context is not set (middleware misconfiguration).
+    """
+    tenant = get_tenant_context()
+    if tenant is None:
+        logger.error("Tenant context is None - TenantMiddleware may not be configured correctly")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error: tenant context not available",
+        )
+    return tenant
 
 
 async def rate_limiter_dependency(

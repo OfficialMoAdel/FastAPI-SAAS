@@ -1,9 +1,40 @@
+# 🧠 Project Memory & Task Tracking (Beads)
+
+This project uses **Beads (`bd`)** for persistent task tracking. Do NOT use temporary markdown lists or plans in your context window.
+
+## 🛠️ Your Workflow Rules:
+
+1.  **Start of Session:**
+
+    - ALWAYS run `bd ready` first to see what tasks are unblocked and ready for you.
+    - Run `bd list --status in_progress` to resume unfinished work.
+
+2.  **During Work:**
+
+    - If you find a bug: `bd create "Bug description" -t bug`
+    - If you discover a new sub-task: `bd create "Task name" -p <priority>` and link it using `bd dep add`.
+    - Update progress: `bd update <id> --status in_progress`.
+
+3.  **End of Session (CRITICAL):**
+    - Never leave without syncing.
+    - Close finished tasks: `bd close <id> --reason "Implemented X"`.
+    - Ensure all new findings are recorded in `bd`.
+
+## ⚡ Quick Commands Reference:
+
+- `bd ready` -> What should I do now?
+- `bd create "Title" -d "Details"` -> Add new task.
+- `bd list` -> See all tasks.
+- `bd show <id>` -> See details of a task.
+
 # FastAPI SaaS Boilerplate - Agent Guidance
 
 ## Project Snapshot
+
 FastAPI SaaS boilerplate with modular architecture, async/await patterns, and comprehensive auth/rate limiting. Uses SQLAlchemy 2.0 + Pydantic v2 + Redis + PostgreSQL. Sub-modules have their own AGENTS.md files.
 
 ## Root Setup Commands
+
 ```bash
 # Install dependencies
 uv sync
@@ -25,6 +56,7 @@ uv run alembic upgrade head
 ```
 
 ## Universal Conventions
+
 - **Code Style**: ruff for formatting, mypy for strict type checking
 - **Async/Await**: All endpoints and database operations must be async
 - **Imports**: Use `src.app.` absolute imports, never relative imports
@@ -33,6 +65,7 @@ uv run alembic upgrade head
 - **PR Requirements**: Must pass type check, lint, and tests
 
 ## Security & Secrets
+
 - Never commit tokens or API keys
 - Use `.env.local` for local development secrets
 - All secrets via environment variables with `SECRET_` prefix
@@ -42,6 +75,7 @@ uv run alembic upgrade head
 ## JIT Index - Directory Map
 
 ### Package Structure
+
 - Core modules: `src/app/modules/` → [see src/app/modules/AGENTS.md](src/app/modules/AGENTS.md)
 - Infrastructure: `src/app/core/` → [see src/app/core/AGENTS.md](src/app/core/AGENTS.md)
 - API layer: `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
@@ -49,6 +83,7 @@ uv run alembic upgrade head
 - Database migrations: `migrations/` → [see migrations/AGENTS.md](migrations/AGENTS.md)
 
 ### Quick Find Commands
+
 - Find a module: `find src/app/modules -name "*.py" | head -20`
 - Search for a function: `rg -n "def " src/app/modules/`
 - Find API routes: `rg -n "router\.(get|post|put|delete)" src/app/modules/`
@@ -57,12 +92,14 @@ uv run alembic upgrade head
 - Find tests: `find tests -name "*.py"`
 
 ### Module Pattern Commands
+
 - List all modules: `ls src/app/modules/`
 - Find module structure: `tree src/app/modules/{module_name}`
 - Search module services: `rg -n "class.*Service" src/app/modules/`
 - Find CRUD operations: `rg -n "FastCRUD" src/app/modules/`
 
 ## Definition of Done
+
 - [ ] Code passes `uv run mypy src/` (no type errors)
 - [ ] Code passes `uv run ruff check` (no lint errors)
 - [ ] All tests pass: `uv run pytest`
@@ -72,6 +109,7 @@ uv run alembic upgrade head
 - [ ] Pydantic schemas validate all input/output
 
 ## Core Dependencies
+
 - FastAPI: Web framework
 - SQLAlchemy 2.0: Async ORM
 - Pydantic v2: Data validation
@@ -82,6 +120,7 @@ uv run alembic upgrade head
 - CRUDAdmin: Admin panel
 
 ## Development Workflow
+
 1. Create feature branch from `main`
 2. Implement module following existing patterns
 3. Add tests with pytest
@@ -93,6 +132,7 @@ uv run alembic upgrade head
 ## Coding Standards & Rules (STRICT)
 
 ### Key Principles
+
 - **Write concise, technical responses** with accurate Python examples.
 - **Use Service Classes** for module business logic (Service Layer). Prefer functions only for small pure utilities.
 - **Prefer iteration and modularization** over code duplication.
@@ -101,6 +141,7 @@ uv run alembic upgrade head
 - **Pattern:** Use the Receive an Object, Return an Object (RORO) pattern where applicable.
 
 ### Python & FastAPI
+
 - Use `def` for pure synchronous functions and `async def` for asynchronous operations.
 - **Type Hints:** Use type hints for ALL function signatures.
 - **Validation:** Prefer Pydantic V2 models over raw dictionaries.
@@ -108,18 +149,21 @@ uv run alembic upgrade head
 - **Syntax:** Use concise, one-line syntax for simple conditional statements (e.g., `if condition: do_something()`).
 
 ### Error Handling
+
 - **Early Returns:** Handle errors and edge cases at the beginning of functions to avoid nesting.
 - **Guard Clauses:** Use guard clauses to handle preconditions early.
 - **Exceptions:** Use `HTTPException` for expected errors; implement custom error factories for consistency.
 - **Logging:** Implement proper error logging.
 
 ### Dependencies & Stack
+
 - **Framework:** FastAPI
 - **Validation:** Pydantic V2
 - **Database:** SQLAlchemy 2.0 (Async) + asyncpg
 - **Caching:** Redis
 
 ### FastAPI-Specific Guidelines
+
 - **Routes:** Use declarative route definitions with clear return type annotations.
 - **Lifespan:** Minimize `app.on_event`; prefer lifespan context managers.
 - **Middleware:** Use middleware for logging, error monitoring, and performance optimization.
@@ -127,6 +171,68 @@ uv run alembic upgrade head
 - **Pydantic:** Use `BaseModel` for consistent input/output validation.
 
 ### Performance Optimization
+
 - Minimize blocking I/O operations.
 - Implement caching for static and frequently accessed data (Redis).
 - Use lazy loading techniques for large datasets.
+
+### 🚫 RESTRICTIONS (CRITICAL)
+
+- **NO DOCKER EXECUTION:** Do NOT run, build, or compose Docker containers.
+- **Docker Config Only:** You may EDIT `Dockerfile` or `docker-compose.yml`, but NEVER execute commands like `docker run`, `docker-compose up`, or `docker build`.
+- **Local Dev:** Assume the user runs the app locally via `uvicorn` or `python`, NOT inside Docker during development.
+
+## Landing the Plane (Session Completion)
+
+**When ending a work session**, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
+
+**MANDATORY WORKFLOW:**
+
+1. **File issues for remaining work** - Create issues for anything that needs follow-up
+2. **Run quality gates** (if code changed) - Tests, linters, builds
+3. **Update issue status** - Run `bd close <id>` for finished work and `bd update <id> --status in_progress` for ongoing items.
+4. **PUSH TO REMOTE** - This is MANDATORY:
+   ```bash
+   git pull --rebase
+   bd sync
+   git push
+   git status  # MUST show "up to date with origin"
+   ```
+5. **Clean up** - Clear stashes, prune remote branches
+6. **Verify** - All changes committed AND pushed
+7. **Hand off** - Provide context for next session
+
+**CRITICAL RULES:**
+
+- Work is NOT complete until `git push` succeeds
+- NEVER stop before pushing - that leaves work stranded locally
+- NEVER say "ready to push when you are" - YOU must push
+- If push fails, resolve and retry until it succeeds
+
+## 📚 Required Skills & Best Practices
+
+You are expected to apply the expert skills located in the `.opencode/skill/` directory (or wherever you placed them).
+
+### 1. Database Design (PostgreSQL) 🗄️
+
+_Ref: `.opencode/skill/postgresql/` folder_
+
+- **Primary Keys:** Use `BIGINT GENERATED ALWAYS AS IDENTITY` or `UUIDv7`.
+- **Timestamps:** ALWAYS use `TIMESTAMPTZ`.
+- **JSONB:** Use `JSONB` for flexible settings.
+- **RLS:** Enable **Row-Level Security** on the `tenants` table.
+
+### 2. Async Patterns (FastAPI) ⚡
+
+_Ref: `.opencode/skill/async-python-patterns/` folder_
+
+- **Non-blocking:** All I/O MUST be `async/await`.
+- **Concurrency:** Use `asyncio.gather()` for aggregating data.
+- **HTTP Client:** Use `aiohttp` or `httpx` (async).
+
+### 3. Testing Strategy 🧪
+
+_Ref: `.opencode/skill/python-testing-patterns/` folder_
+
+- **Fixtures:** Use `conftest.py` for shared async fixtures.
+- **Isolation:** Tests must be independent.

@@ -1,22 +1,31 @@
 import uuid as uuid_pkg
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String
+from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from ...core.db.database import Base
 
+if TYPE_CHECKING:
+    from src.app.modules.tenants.models import Tenant
+
 
 class User(Base):
     __tablename__ = "user"
+    __table_args__ = (
+        UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
+    )
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
 
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False, init=False)
+
     name: Mapped[str] = mapped_column(String(30))
     username: Mapped[str] = mapped_column(String(20), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(50), unique=True, index=True)
+    email: Mapped[str] = mapped_column(String(50), index=True)  # Uniqueness now per-tenant via constraint
     hashed_password: Mapped[str] = mapped_column(String)
 
     profile_image_url: Mapped[str] = mapped_column(String, default="https://profileimageurl.com")
@@ -28,3 +37,6 @@ class User(Base):
     is_superuser: Mapped[bool] = mapped_column(default=False)
 
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False)
