@@ -8,16 +8,26 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from ...core.db.database import Base
+# Avoid circular import by using string reference for secondary if needed,
+# or import inside TYPE_CHECKING if only needed for type,
+# but for secondary argument we usually need the table object or string.
+# Since user_roles is a Table object in another module, we might want to use string "user_roles"
+# provided that module is loaded.
+# However, to be safe and explicit, let's try to import the module if it doesn't cause cycle.
+# rbac.models does NOT import users.models at runtime. So we can import it here?
+# Let's try to avoid top-level import if possible to be super safe, or just use string.
+# SQLAlchemy resolves string references from the Base.metadata.
+# As long as rbac.models is imported somewhere in the app (e.g. main.py or alembic), it works.
+# But for development, explicit is better.
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
+    from src.app.modules.rbac.models import Role
 
 
 class User(Base):
     __tablename__ = "user"
-    __table_args__ = (
-        UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
-    )
+    __table_args__ = (UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),)
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
 
@@ -40,3 +50,11 @@ class User(Base):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False)
+    roles: Mapped[list["Role"]] = relationship(
+        secondary="user_roles",
+        back_populates="users",
+        init=False,
+        viewonly=True,  # Avoid modifying roles via user.roles directly if strict RBAC service is preferred, but standard usage allows it.
+        # However, Specify.md says "RoleAssignmentService" assigns roles.
+        # Let's keep it writable for flexibility unless restricted.
+    )

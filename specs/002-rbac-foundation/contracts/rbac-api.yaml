@@ -1,0 +1,106 @@
+openapi: 3.0.0
+info:
+  title: RBAC API
+  version: 1.0.0
+paths:
+  /roles:
+    get:
+      summary: List Roles
+      tags: [Roles]
+      parameters:
+        - name: X-Tenant-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        200:
+          description: List of roles for the tenant
+    post:
+      summary: Create Role
+      tags: [Roles]
+      parameters:
+        - name: X-Tenant-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleCreate'
+      responses:
+        201:
+          description: Role created
+  
+  /roles/{id}:
+    patch:
+      summary: Update Role
+      tags: [Roles]
+      parameters:
+        - name: X-Tenant-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RoleUpdate'
+      responses:
+        200:
+          description: Role updated
+    delete:
+      summary: Delete Role
+      tags: [Roles]
+      parameters:
+        - name: X-Tenant-ID
+          in: header
+          required: true
+          schema:
+            type: string
+      responses:
+        204:
+          description: Role deleted
+
+  /roles/{id}/permissions:
+    put:
+      summary: Update Role Permissions
+      tags: [Roles]
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RolePermissionsUpdate'
+      responses:
+        200:
+          description: Permissions updated
+
+components:
+  schemas:
+    RoleCreate:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    RoleUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+    RolePermissionsUpdate:
+      type: object
+      required: [permissions]
+      properties:
+        permissions:
+          type: array
+          items:
+            type: string
+            description: Permission slug
