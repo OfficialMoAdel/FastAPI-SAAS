@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_tenant
@@ -50,6 +50,11 @@ async def get_role(
 ) -> RoleOut:
     """Get a specific role by ID."""
     role = await service.get_role(role_id)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role with id {role_id} not found",
+        )
     return RoleOut.model_validate(role)
 
 
@@ -80,6 +85,11 @@ async def update_role(
 ) -> RoleOut:
     """Update an existing role. System roles cannot be modified."""
     role = await service.update_role(role_id, role_in)
+    if role is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Role with id {role_id} not found",
+        )
     return RoleOut.model_validate(role)
 
 

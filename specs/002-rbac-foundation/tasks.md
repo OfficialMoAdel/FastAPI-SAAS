@@ -23,27 +23,27 @@
 ## Phase 3: User Story 3 - Permission-Based Access Control (P1)
 *Goal: Core security mechanism. Implemented early to protect US1 endpoints.*
 
-- [ ] T010 [US3] Implement full requires_permission logic with Redis caching in src/app/core/rbac/dependencies.py
-- [ ] T011 [US3] Create unit tests for permission checker isolation in tests/unit/test_rbac_dependency.py
-- [ ] T012 [P] [US3] Implement Redis cache key generation utility in src/app/core/rbac/utils.py
+- [x] T010 [US3] Implement full requires_permission logic with Redis caching in src/app/core/rbac/dependencies.py
+- [x] T011 [US3] Create unit tests for permission checker isolation in tests/unit/test_rbac_dependency.py
+- [x] T012 [P] [US3] Implement Redis cache key generation utility in src/app/core/rbac/utils.py
 
 ## Phase 4: User Story 1 - Tenant Admin Role Management (P1)
 *Goal: Allow admins to manage custom roles.*
 
-- [ ] T013 [P] [US1] Define RoleCreate, RoleUpdate, RoleOut schemas in src/app/modules/rbac/schemas.py
-- [ ] T014 [US1] Implement RoleService (create, update, delete, list) with system role protection in src/app/modules/rbac/service.py
-- [ ] T015 [US1] Implement Role CRUD endpoints protected by requires_permission in src/app/modules/rbac/router.py
-- [ ] T016 [US1] Register RBAC router in src/app/main.py (or api router)
-- [ ] T017 [US1] Create integration tests for Role CRUD (success and failure cases) in tests/integration/test_rbac_roles.py
+- [x] T013 [P] [US1] Define RoleCreate, RoleUpdate, RoleOut schemas in src/app/modules/rbac/schemas.py
+- [x] T014 [US1] Implement RoleService (create, update, delete, list) with system role protection in src/app/modules/rbac/service.py
+- [x] T015 [US1] Implement Role CRUD endpoints protected by requires_permission in src/app/modules/rbac/router.py
+- [x] T016 [US1] Register RBAC router in src/app/main.py (or api router)
+- [x] T017 [US1] Create integration tests for Role CRUD (success and failure cases) in tests/integration/test_rbac_roles.py
 
 ## Phase 5: User Story 2 - Assigning Roles to Users (P2)
 *Goal: Assign roles to users and ensure immediate effect.*
 
-- [ ] T018 [P] [US2] Add UserRoleAssignment schema in src/app/modules/rbac/schemas.py
-- [ ] T019 [US2] Implement assign_role_to_user and remove_role_from_user in src/app/modules/rbac/service.py
-- [ ] T020 [US2] Implement cache invalidation logic (Event-Driven) in service methods in src/app/modules/rbac/service.py
-- [ ] T021 [US2] Add role assignment endpoints to src/app/modules/rbac/router.py
-- [ ] T022 [US2] Create integration tests for cross-tenant assignment rejection in tests/integration/test_rbac_assignment.py
+- [x] T018 [P] [US2] Add UserRoleAssignment schema in src/app/modules/rbac/schemas.py
+- [x] T019 [US2] Implement assign_role_to_user and remove_role_from_user in src/app/modules/rbac/service.py
+- [x] T020 [US2] Implement cache invalidation logic (Event-Driven) in service methods in src/app/modules/rbac/service.py
+- [x] T021 [US2] Add role assignment endpoints to src/app/modules/rbac/router.py
+- [x] T022 [US2] Create integration tests for cross-tenant assignment rejection in tests/integration/test_rbac_assignment.py
 
 ## Phase 6: Polish & Cross-Cutting
 *Goal: Final verification and performance checks.*
@@ -57,6 +57,20 @@
 ## Implementation Strategy
 - **MVP**: Complete Phases 1, 2, 3, and 4. This provides a working system where roles can be managed and permissions checked, even if assignments are done manually via DB initially.
 - **Incremental**: US3 (Checking) is built before US1 (Management) because US1 needs the protection mechanism.
+
+## Progress Summary
+- **Phase 1**: ✅ Complete
+- **Phase 2**: ✅ Complete
+- **Phase 3**: ✅ Complete
+- **Phase 4**: ✅ Complete
+- **Phase 5**: ✅ Complete
+- **Phase 6**: ⏳ Pending (Performance & Polish)
+
+## Test Coverage
+- **Unit Tests**: 15 tests in `tests/unit/test_rbac_dependency.py`
+- **Integration Tests**: 9 tests in `tests/integration/test_rbac_roles.py`
+- **Assignment Tests**: 5 tests in `tests/integration/test_rbac_assignment.py`
+- **Total**: 29 passing tests
 
 ## Dependencies
 1. Phase 1 & 2 (Models/Seeding) -> BLOCKS ALL

@@ -190,7 +190,7 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
 
 def _get_current_tenant_id() -> int:
     """Get current tenant ID from middleware context."""
-    from ...middleware.tenant import get_tenant_context
+    from ..tenancy.context import get_tenant_context
 
     tenant_context = get_tenant_context()
     if tenant_context is None:
