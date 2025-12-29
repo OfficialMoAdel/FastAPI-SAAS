@@ -11,6 +11,8 @@ This guide covers all aspects of working with the FastAPI Boilerplate:
 - **[Configuration](configuration/index.md)** - Configure your application for different environments
 
 ### Core Components
+- **[Core Services](core-services.md)** - Learn about Audit Logging, Notifications, Webhooks, Feature Flags, and Event Bus
+- **[Feature Flags Frontend](feature-flags-frontend.md)** - Guide for integrating feature flags into your frontend application
 
 ### Database Operations
 - **[Database Overview](database/index.md)** - Understand the data layer architecture

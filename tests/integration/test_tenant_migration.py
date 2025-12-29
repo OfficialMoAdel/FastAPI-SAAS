@@ -32,6 +32,24 @@ async def db_session():
     await engine.dispose()
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def seed_default_tenant(db_session: AsyncSession):
+    """Seed default tenant to simulate migration."""
+    # Check if exists
+    result = await db_session.execute(select(Tenant).where(Tenant.slug == "host"))
+    if result.scalar_one_or_none():
+        return
+
+    # Insert default tenant
+    default_tenant = Tenant(
+        name="System",
+        slug="host",
+        is_active=True,
+        feature_flags={},
+    )
+    db_session.add(default_tenant)
+    await db_session.commit()
+
 @pytest.mark.asyncio
 class TestTenantMigration:
     """Integration tests for tenant migration."""

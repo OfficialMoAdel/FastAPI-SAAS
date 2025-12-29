@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Optional
 
 from src.app.core.config import settings
-from src.app.core.db.session import async_session_maker
+from src.app.core.db.database import local_session
 from src.app.email_provider import EmailMessage, EmailProvider, SMTPProvider
 from src.app.modules.notifications.models import Notification, NotificationStatus
 
@@ -17,7 +17,7 @@ class EmailService:
 
     def __init__(self):
         """Initialize email service."""
-        self._session_maker = async_session_maker
+        self._session_maker = local_session
         self._provider: Optional[EmailProvider] = None
 
     def _get_provider(self) -> EmailProvider:

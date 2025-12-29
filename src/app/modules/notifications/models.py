@@ -68,7 +68,7 @@ class Notification(Base, UUIDMixin):
     )
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

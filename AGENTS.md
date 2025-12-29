@@ -78,9 +78,23 @@ uv run alembic upgrade head
 
 - Core modules: `src/app/modules/` → [see src/app/modules/AGENTS.md](src/app/modules/AGENTS.md)
 - Infrastructure: `src/app/core/` → [see src/app/core/AGENTS.md](src/app/core/AGENTS.md)
+  - Security: `src/app/core/security/` → [see src/app/core/security/AGENTS.md](src/app/core/security/AGENTS.md)
+  - Database: `src/app/core/db/` → [see src/app/core/db/AGENTS.md](src/app/core/db/AGENTS.md)
 - API layer: `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
+- Middleware: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md)
 - Database migrations: `migrations/` → [see migrations/AGENTS.md](migrations/AGENTS.md)
+
+### Module Documentation
+
+Core modules have dedicated AGENTS.md files:
+
+| Module | Location | Purpose |
+|--------|----------|---------|
+| Feature Flags | `src/app/modules/feature_flags/AGENTS.md` | Toggle management |
+| Webhooks | `src/app/modules/webhooks/AGENTS.md` | Event delivery |
+| Audit Logs | `src/app/modules/audit_logs/AGENTS.md` | Immutable logging |
+| Notifications | `src/app/modules/notifications/AGENTS.md` | Email delivery |
 
 ### Quick Find Commands
 

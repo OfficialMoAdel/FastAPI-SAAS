@@ -225,6 +225,7 @@ As a **developer**, I need a central event bus that allows modules to publish an
 8. **Default Features**: New tenants start with all core features enabled and optional features disabled unless specified otherwise during tenant creation
 9. **Event Retention**: Events processed through the event bus are ephemeral (not persisted beyond audit logging) unless explicitly stored by subscribers
 10. **Multi-Tenancy**: All events, audit logs, notifications, and webhooks are tenant-scoped to prevent cross-tenant data leakage
+11. **Async Semantics**: "Fire-and-forget" means the calling function returns immediately without waiting for or guaranteeing persistence (e.g., audit log writes don't block the HTTP response). "Async via ARQ" means the operation is queued with eventual delivery guarantee and retry logic (e.g., email notifications, webhook deliveries).
 
 ## Dependencies
 

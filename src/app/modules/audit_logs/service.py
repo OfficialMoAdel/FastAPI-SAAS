@@ -30,11 +30,11 @@ class AuditLogService:
 
     async def create_log(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         action: str,
         entity_type: Optional[str] = None,
         entity_id: Optional[UUID] = None,
-        user_id: Optional[UUID] = None,
+        user_id: Optional[int] = None,
         details: Optional[dict[str, Any]] = None,
         ip_address: Optional[str] = None,
         user_agent: Optional[str] = None,
@@ -42,11 +42,11 @@ class AuditLogService:
         """Create an audit log entry.
 
         Args:
-            tenant_id: Tenant ID
+            tenant_id: Tenant ID (integer FK)
             action: Action performed (e.g., "user.created", "post.updated")
             entity_type: Type of entity affected (e.g., "user", "post")
             entity_id: ID of the affected entity
-            user_id: ID of user who performed the action
+            user_id: ID of user who performed the action (integer FK)
             details: Additional context as JSON
             ip_address: IP address of the request
             user_agent: User agent string
@@ -56,10 +56,10 @@ class AuditLogService:
         """
         log_entry = AuditLog(
             tenant_id=tenant_id,
+            user_id=user_id,
             action=action,
             entity_type=entity_type,
             entity_id=entity_id,
-            user_id=user_id,
             details=details or {},
             ip_address=ip_address,
             user_agent=user_agent,

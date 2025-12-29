@@ -22,6 +22,7 @@ from ...core.db.database import Base
 # But for development, explicit is better.
 
 if TYPE_CHECKING:
+    from src.app.modules.notifications.models import Notification
     from src.app.modules.rbac.models import Role
     from src.app.modules.tenants.models import Tenant
 
@@ -55,7 +56,7 @@ class User(Base):
         secondary="user_roles",
         back_populates="users",
         init=False,
-        viewonly=True,  # Avoid modifying roles via user.roles directly if strict RBAC service is preferred, but standard usage allows it.
-        # However, Specify.md says "RoleAssignmentService" assigns roles.
-        # Let's keep it writable for flexibility unless restricted.
+        viewonly=True,
     )
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
+

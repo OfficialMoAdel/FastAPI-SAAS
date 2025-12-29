@@ -7,11 +7,21 @@ Tests the core tenant context functionality:
 """
 
 import asyncio
+from unittest.mock import MagicMock
 
 import pytest
 
 from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
-from src.app.modules.tenants.models import Tenant
+
+
+def create_mock_tenant(name: str, slug: str, is_active: bool = True) -> MagicMock:
+    """Create a mock tenant object for testing."""
+    tenant = MagicMock()
+    tenant.name = name
+    tenant.slug = slug
+    tenant.is_active = is_active
+    tenant.id = 1
+    return tenant
 
 
 class TestTenantContext:
@@ -26,7 +36,7 @@ class TestTenantContext:
     def test_set_and_get_tenant_context(self) -> None:
         """Test setting and getting tenant context."""
         clear_tenant_context()
-        mock_tenant = Tenant(name="Test Tenant", slug="test-tenant", is_active=True)
+        mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
 
         set_tenant_context(mock_tenant)
         result = get_tenant_context()
@@ -39,7 +49,7 @@ class TestTenantContext:
 
     def test_clear_tenant_context(self) -> None:
         """Test clearing tenant context."""
-        mock_tenant = Tenant(name="Test Tenant", slug="test-tenant", is_active=True)
+        mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
         set_tenant_context(mock_tenant)
 
         clear_tenant_context()
@@ -54,14 +64,14 @@ class TestTenantContext:
         results: dict[str, str | None] = {}
 
         async def task_a() -> None:
-            tenant_a = Tenant(name="Tenant A", slug="tenant-a", is_active=True)
+            tenant_a = create_mock_tenant("Tenant A", "tenant-a")
             set_tenant_context(tenant_a)
             await asyncio.sleep(0.01)
             ctx = get_tenant_context()
             results["task_a"] = ctx.slug if ctx else None
 
         async def task_b() -> None:
-            tenant_b = Tenant(name="Tenant B", slug="tenant-b", is_active=True)
+            tenant_b = create_mock_tenant("Tenant B", "tenant-b")
             set_tenant_context(tenant_b)
             await asyncio.sleep(0.01)
             ctx = get_tenant_context()
@@ -76,7 +86,7 @@ class TestTenantContext:
 
     def test_set_tenant_context_with_none(self) -> None:
         """Test setting tenant context to None explicitly."""
-        mock_tenant = Tenant(name="Test Tenant", slug="test-tenant", is_active=True)
+        mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
         set_tenant_context(mock_tenant)
 
         set_tenant_context(None)

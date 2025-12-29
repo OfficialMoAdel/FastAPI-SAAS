@@ -84,12 +84,12 @@ class EventBus:
         handlers = self._handlers.get(event_name, [])
 
         if not handlers:
-            logger.debug("Event published no handlers", event=event_name)
+            logger.debug("Event published no handlers", event_name=event_name)
             return
 
         logger.info(
             "Event published",
-            event=event_name,
+            event_name=event_name,
             priority=priority,
             handler_count=len(handlers),
         )
@@ -119,13 +119,13 @@ class EventBus:
                 await handler(data)
                 logger.debug(
                     "Event handler success",
-                    event=event_name,
+                    event_name=event_name,
                     handler=handler.__name__,
                 )
             except Exception as e:
                 logger.error(
                     "Event handler failed",
-                    event=event_name,
+                    event_name=event_name,
                     handler=handler.__name__,
                     error=str(e),
                     exc_info=True,
@@ -150,7 +150,7 @@ class EventBus:
         if not self._arq_queue:
             logger.warning(
                 "Event handler ARQ not configured",
-                event=event_name,
+                event_name=event_name,
                 message="ARQ queue not set, falling back to sync execution",
             )
             await self._publish_sync(event_name, data, handlers)
@@ -169,14 +169,14 @@ class EventBus:
                 )
                 logger.debug(
                     "Event handler queued",
-                    event=event_name,
+                    event_name=event_name,
                     handler=handler.__name__,
                     priority=priority,
                 )
             except Exception as e:
                 logger.error(
                     "Event handler queue failed",
-                    event=event_name,
+                    event_name=event_name,
                     handler=handler.__name__,
                     error=str(e),
                     exc_info=True,
@@ -225,13 +225,13 @@ async def process_event_handler(
 
         logger.info(
             "ARQ event handler success",
-            event=event_name,
+            event_name=event_name,
             handler=f"{handler_module}.{handler_name}",
         )
     except Exception as e:
         logger.error(
             "ARQ event handler failed",
-            event=event_name,
+            event_name=event_name,
             handler=f"{handler_module}.{handler_name}",
             error=str(e),
             exc_info=True,

@@ -37,7 +37,7 @@ class AuditLog(Base):
 
     # Primary Key (with init=False since it's DB-generated)
     id: Mapped[UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True, default=uuid7, server_default=text("gen_random_uuid()"), init=False
+        PgUUID(as_uuid=True), primary_key=True, insert_default=uuid7, server_default=text("gen_random_uuid()"), init=False
     )
 
     # Foreign Keys (required fields without defaults)
@@ -49,7 +49,7 @@ class AuditLog(Base):
     )
     user_id: Mapped[Optional[int]] = mapped_column(
         Integer,
-        ForeignKey("users.id", ondelete="SET NULL"),
+        ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )
@@ -84,28 +84,28 @@ class AuditLog(Base):
         comment="Client user agent string",
     )
 
-    # Relationships (nullable, must come before fields with defaults)
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
-        "Tenant",
-        back_populates="audit_logs",
-    )
-    user: Mapped[Optional["User"]] = relationship(  # type: ignore  # noqa: F821
-        "User",
-        back_populates="audit_logs",
-    )
-
-    # Flexible Payload (with default - must come after relationships)
+    # Flexible Payload (with default - must come after FK fields)
     details: Mapped[dict] = mapped_column(
         JSONB,
         nullable=False,
-        default=dict,
+        default_factory=dict,
         server_default="{}",
         comment="Flexible JSON payload with action-specific details",
     )
 
     # Timestamp (with init=False, must come after fields with defaults)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime, default=datetime.now(UTC), server_default=text("current_timestamp(0)"), init=False
+        DateTime,
+        insert_default=lambda: datetime.now(UTC),
+        server_default=text("current_timestamp(0)"),
+        init=False,
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+        "Tenant",
+        back_populates="audit_logs",
+        init=False,
     )
 
     # Composite Indexes for Performance

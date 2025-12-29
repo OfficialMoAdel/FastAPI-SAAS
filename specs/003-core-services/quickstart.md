@@ -91,12 +91,12 @@ from src.app.core.events import event_bus
 @event_bus.subscribe("user.created", priority="CRITICAL")
 async def log_user_creation(data: dict):
     """This runs immediately when event is published."""
-    await audit_service.log_action(
+    await audit_log_service.create_log(
         action="user.created",
-        tenant_id=UUID(data["tenant_id"]),
-        user_id=UUID(data["created_by"]),
+        tenant_id=data["tenant_id"],
+        user_id=data["created_by"],
         entity_type="user",
-        entity_id=UUID(data["user_id"]),
+        entity_id=data["user_id"],
         details={"email": data["email"]}
     )
 
@@ -177,7 +177,7 @@ register_user_events()
 Use the `@audit_action` decorator to automatically log actions:
 
 ```python
-from src.app.core.audit import audit_action
+from src.app.modules.audit_logs.service import audit_action
 from src.app.api.dependencies import get_current_user, get_current_tenant
 
 @router.post("/posts", response_model=PostResponse)
@@ -206,10 +206,10 @@ async def create_post(
 For complex scenarios, use the service directly:
 
 ```python
-from src.app.modules.audit.service import AuditService
+from src.app.modules.audit_logs.service import AuditLogService
 from src.app.api.dependencies import get_request_context
 
-audit_service = AuditService()
+audit_log_service = AuditLogService(db)
 
 @router.patch("/posts/{post_id}")
 async def update_post(
@@ -227,8 +227,7 @@ async def update_post(
     updated_post = await post_service.update(db, post_id, data)
     
     # Log with before/after details
-    await audit_service.log_action(
-        db=db,
+    await audit_log_service.create_log(
         action="post.updated",
         tenant_id=tenant.id,
         user_id=current_user.id,
@@ -255,37 +254,33 @@ async def update_post(
 ### Querying Audit Logs
 
 ```python
-from src.app.modules.audit.service import AuditService
+from src.app.modules.audit_logs.service import AuditLogService
 
-audit_service = AuditService()
+audit_log_service = AuditLogService(db)
 
 # Example 1: Get all logs for a tenant
-logs = await audit_service.get_logs(
-    db=db,
+logs = await audit_log_service.get_logs(
     tenant_id=tenant.id,
     limit=50,
     offset=0
 )
 
 # Example 2: Filter by user
-user_logs = await audit_service.get_logs(
-    db=db,
+user_logs = await audit_log_service.get_logs(
     tenant_id=tenant.id,
     user_id=user.id,
     limit=100
 )
 
 # Example 3: Filter by action
-creation_logs = await audit_service.get_logs(
-    db=db,
+creation_logs = await audit_log_service.get_logs(
     tenant_id=tenant.id,
     action="post.created",
     start_date=datetime.utcnow() - timedelta(days=7)
 )
 
 # Example 4: Filter by entity
-entity_history = await audit_service.get_logs(
-    db=db,
+entity_history = await audit_log_service.get_logs(
     tenant_id=tenant.id,
     entity_type="post",
     entity_id=post_id
@@ -334,11 +329,10 @@ details = {
 ```python
 from src.app.modules.notifications.service import NotificationService
 
-notification_service = NotificationService()
+notification_service = NotificationService(db)
 
 # Example 1: Send welcome email
 await notification_service.send_email(
-    db=db,
     tenant_id=tenant.id,
     template_name="welcome",
     to_email=user.email,
@@ -350,7 +344,6 @@ await notification_service.send_email(
 
 # Example 2: Send password reset email
 await notification_service.send_email(
-    db=db,
     tenant_id=tenant.id,
     template_name="password_reset",
     to_email=user.email,
@@ -363,7 +356,6 @@ await notification_service.send_email(
 
 # Example 3: Send custom notification
 await notification_service.send_email(
-    db=db,
     tenant_id=tenant.id,
     template_name="post_published",
     to_email=author.email,
@@ -425,7 +417,6 @@ async def create_template_override(
     Falls back to default if not overridden.
     """
     override = await notification_service.create_template_override(
-        db=db,
         tenant_id=tenant.id,
         template_name=data.template_name,
         subject_override=data.subject,
@@ -459,7 +450,6 @@ override_data = {
 ```python
 # Get notification history
 notifications = await notification_service.get_notifications(
-    db=db,
     tenant_id=tenant.id,
     limit=20
 )
@@ -491,7 +481,6 @@ async def create_webhook_endpoint(
     Allow tenant to subscribe to events.
     """
     endpoint = await webhook_service.create_endpoint(
-        db=db,
         tenant_id=tenant.id,
         url=data.url,  # e.g., https://customer.com/api/webhooks
         event_type=data.event_type,  # e.g., "user.created"
@@ -531,7 +520,6 @@ async def publish_post(
     
     # Trigger webhooks for all subscribed endpoints
     await webhook_service.trigger_event(
-        db=db,
         tenant_id=tenant.id,
         event_type="post.published",
         payload={
@@ -625,7 +613,6 @@ async def get_webhook_deliveries(
 ):
     """Get delivery history for webhooks."""
     deliveries = await webhook_service.get_deliveries(
-        db=db,
         tenant_id=tenant.id,
         endpoint_id=endpoint_id,
         status=status,  # pending, delivered, failed
@@ -736,8 +723,7 @@ async def update_feature_flags(
     await db.commit()
     
     # Audit the change
-    await audit_service.log_action(
-        db=db,
+    await audit_log_service.create_log(
         action="tenant.feature_flags_updated",
         tenant_id=tenant_id,
         user_id=current_user.id,

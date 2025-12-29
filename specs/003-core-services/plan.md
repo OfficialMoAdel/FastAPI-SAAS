@@ -27,7 +27,7 @@ Implement foundational SaaS infrastructure services for multi-tenant FastAPI pla
 - Audit logs: <10ms write latency (fire-and-forget)
 - Webhooks: 5 retries over 1 hour with exponential backoff
 - Email delivery: Async via ARQ with retry on SMTP failures
-- Feature flag checks: <1ms (in-memory JSONB lookup)
+- Feature flag checks: <5ms (in-memory JSONB lookup, per NFR-005)
 
 **Constraints**:
 - Multi-tenancy: ALL tables MUST have `tenant_id` FK for row-level isolation
@@ -35,6 +35,7 @@ Implement foundational SaaS infrastructure services for multi-tenant FastAPI pla
 - Async-first: All I/O operations must use async/await
 - Immutability: Audit logs cannot be modified or deleted after creation
 - Event priority: Critical events (audit) sync, normal events (webhooks/emails) queued
+- Event priority queue sizes: CRITICAL=1000 (guaranteed), NORMAL=5000 (delayed under load), LOW=10000 (may drop under extreme load)
 
 **Scale/Scope**:
 - Support 1000+ tenants per instance
@@ -396,7 +397,7 @@ tests/
 2. ✅ Tenants can configure webhook endpoints via UI
 3. ✅ Emails sent async with 95% delivery within 1 minute
 4. ✅ Webhooks retry 5x over 1 hour before failing
-5. ✅ Feature flags checked in <1ms (no DB query)
+5. ✅ Feature flags checked in <5ms (cached lookup per NFR-005)
 6. ✅ All tables have tenant_id for isolation
 7. ✅ API endpoints documented in OpenAPI specs
 8. ✅ Tests cover happy path + edge cases (>80% coverage)

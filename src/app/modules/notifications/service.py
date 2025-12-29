@@ -15,6 +15,7 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.events import EventPriority, event_bus
+from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification
 
 logger = get_logger(__name__)
@@ -127,6 +128,17 @@ class NotificationService:
         Returns:
             Notification record
         """
+        # Rate limiting check (T105)
+        # 100 emails/minute per tenant
+        if await rate_limiter.check_rate_limit(f"notif:min:{tenant_id}", 100, 60):
+            logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
+            raise ValueError("Rate limit exceeded: 100 emails per minute")
+
+        # 1000 emails/hour per tenant
+        if await rate_limiter.check_rate_limit(f"notif:hour:{tenant_id}", 1000, 3600):
+            logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
+            raise ValueError("Rate limit exceeded: 1000 emails per hour")
+
         # Render template
         subject, html_content = await self.render_template(tenant_id, template_name, context)
 

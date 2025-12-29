@@ -19,8 +19,30 @@ DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
 sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI)
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
+from src.app.core.db.database import Base
+# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
+from src.app.modules.users.models import User
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.rbac.models import Role, Permission, UserRole, RolePermission
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.notifications.models import Notification, EmailTemplateOverride
+from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.posts.models import Post
+from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import RateLimit
 
 fake = Faker()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def setup_db():
+    """Ensure fresh database schema for tests."""
+    Base.metadata.drop_all(bind=sync_engine)
+    Base.metadata.create_all(bind=sync_engine)
+    yield
+    # Optional: drop after tests
+    # Base.metadata.drop_all(bind=sync_engine)
 
 
 @pytest.fixture(scope="session")
@@ -100,3 +122,31 @@ def current_user_dict():
         "name": fake.name(),
         "is_superuser": False,
     }
+
+
+@pytest.fixture
+def tenant(db):
+    """Create and return a sample tenant."""
+    from src.app.modules.tenants.models import Tenant
+    
+    # Check if tenant already exists to avoid UniqueViolation
+    existing = db.query(Tenant).filter(Tenant.slug == "test-tenant-integration").first()
+    if existing:
+        return existing
+
+    tenant_data = {
+        "name": "Test Tenant Integration",
+        "slug": "test-tenant-integration",
+        "is_active": True,
+    }
+    tenant = Tenant(**tenant_data)
+    db.add(tenant)
+    db.commit()
+    db.refresh(tenant)
+    return tenant
+
+
+@pytest.fixture
+def auth_headers(tenant):
+    """Authentication headers for tenant context."""
+    return {"X-Tenant-ID": tenant.slug}

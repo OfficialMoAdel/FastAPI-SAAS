@@ -7,6 +7,7 @@ Tests the middleware behavior for X-Tenant-ID header:
 """
 
 import pytest
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
@@ -63,12 +64,23 @@ class TestTenantMiddlewareContract:
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_invalid_tenant_returns_403(self, client: TestClient) -> None:
+    def test_invalid_tenant_returns_403(self, test_app: FastAPI) -> None:
         """Test that invalid tenant slug returns 403 Forbidden."""
-        response = client.get("/api/v1/protected", headers={"X-Tenant-ID": "nonexistent-tenant"})
+        # Mock the database lookup to return None (no tenant found)
+        with patch("src.app.middleware.tenant.local_session") as mock_local_session:
+            mock_session = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = None
+            mock_session.execute = AsyncMock(return_value=mock_result)
+            
+            # local_session() returns a context manager that yields the session
+            mock_local_session.return_value.__aenter__.return_value = mock_session
+            
+            client = TestClient(test_app)
+            response = client.get("/api/v1/protected", headers={"X-Tenant-ID": "nonexistent-tenant"})
 
-        assert response.status_code == status.HTTP_403_FORBIDDEN
-        assert "Access denied" in response.json().get("detail", "")
+            assert response.status_code == status.HTTP_403_FORBIDDEN
+            assert "Access denied" in response.json().get("detail", "")
 
     def test_valid_tenant_returns_200(self, client: TestClient) -> None:
         """Test that valid tenant slug allows request to proceed.

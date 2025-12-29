@@ -1,6 +1,7 @@
 """Webhook models for event subscriptions and delivery tracking."""
 
 import enum
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import Optional
 
@@ -17,6 +18,7 @@ from sqlalchemy import (
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -163,8 +165,15 @@ class WebhookDelivery(Base, UUIDMixin):
     __tablename__ = "webhook_deliveries"
 
     # Foreign Keys
-    webhook_endpoint_id: Mapped[int] = mapped_column(
+    webhook_endpoint_id: Mapped["uuid_pkg.UUID"] = mapped_column(
+        PgUUID(as_uuid=True),
         ForeignKey("webhook_endpoints.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -245,6 +254,11 @@ class WebhookDelivery(Base, UUIDMixin):
     webhook_endpoint: Mapped["WebhookEndpoint"] = relationship(
         "WebhookEndpoint",
         back_populates="deliveries",
+        init=False,
+    )
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+        "Tenant",
+        back_populates="webhook_deliveries",
         init=False,
     )
 

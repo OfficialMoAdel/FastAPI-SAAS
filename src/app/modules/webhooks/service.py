@@ -59,7 +59,6 @@ class WebhookService:
 
         logger.info(f"Created webhook endpoint for tenant {tenant_id}: {event_type} -> {url}")
         return endpoint
-
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
         """Get all active webhook endpoints for a tenant and event type."""
         stmt = select(WebhookEndpoint).where(
@@ -86,30 +85,38 @@ class WebhookService:
 
         deliveries = []
         for endpoint in endpoints:
-            # Generate signature
-            signature = self._generate_signature(payload, endpoint.secret or "")
-
-            # Create delivery record
-            delivery = WebhookDelivery(
-                webhook_endpoint_id=endpoint.id,
-                event_type=event_type,
-                payload=payload,
-                signature=signature,
-                status=WebhookDeliveryStatus.PENDING,
-                attempt_count=0,
-            )
-
-            self.db.add(delivery)
+            delivery = await self.trigger_endpoint(endpoint, event_type, payload)
             deliveries.append(delivery)
-
-        await self.db.commit()
-
-        # Enqueue delivery tasks (will be implemented with ARQ)
-        for delivery in deliveries:
-            await self._enqueue_delivery(delivery.id)
 
         logger.info(f"Triggered {len(deliveries)} webhooks for event {event_type} in tenant {tenant_id}")
         return deliveries
+
+    async def trigger_endpoint(
+        self,
+        endpoint: WebhookEndpoint,
+        event_type: str,
+        payload: dict[str, Any],
+    ) -> WebhookDelivery:
+        """Trigger a specific webhook endpoint (e.g., for testing)."""
+        signature = self._generate_signature(payload, endpoint.secret or "")
+
+        delivery = WebhookDelivery(
+            webhook_endpoint_id=endpoint.id,
+            event_type=event_type,
+            payload=payload,
+            signature=signature,
+            status=WebhookDeliveryStatus.PENDING,
+            attempt_count=0,
+        )
+
+        self.db.add(delivery)
+        await self.db.commit()
+        await self.db.refresh(delivery)
+
+        await self._enqueue_delivery(delivery.id)
+
+        logger.info(f"Triggered webhook delivery {delivery.id} for endpoint {endpoint.id}")
+        return delivery
 
     def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
         """Generate HMAC-SHA256 signature for webhook payload."""
@@ -209,6 +216,22 @@ class WebhookService:
         """
         expected_signature = self._generate_signature(payload, secret)
         return hmac.compare_digest(signature, expected_signature)
+
+    async def retry_delivery(self, delivery_id: UUID) -> WebhookDelivery:
+        """Retry a failed delivery."""
+        delivery = await self.db.get(WebhookDelivery, delivery_id)
+        if not delivery:
+            raise ValueError(f"Delivery {delivery_id} not found")
+
+        delivery.status = WebhookDeliveryStatus.PENDING
+        delivery.attempt_count = 0
+        delivery.next_retry_at = None
+
+        await self.db.commit()
+        await self.db.refresh(delivery)
+
+        await self._enqueue_delivery(delivery.id)
+        return delivery
 
     async def get_delivery_history(
         self,

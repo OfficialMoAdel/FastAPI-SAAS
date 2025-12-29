@@ -20,13 +20,14 @@ from src.app.modules.webhooks.schemas import (
     WebhookEndpointListResponse,
     WebhookEndpointResponse,
     WebhookEndpointUpdate,
+    WebhookTestRequest,
 )
 from src.app.modules.webhooks.service import WebhookService
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
-@router.get("/endpoints", response_model=WebhookEndpointListResponse)
+@router.get("/", response_model=WebhookEndpointListResponse)
 async def list_webhook_endpoints(
     is_active: Optional[bool] = Query(None, description="Filter by active status"),
     event_type: Optional[str] = Query(None, description="Filter by event type"),
@@ -65,7 +66,7 @@ async def list_webhook_endpoints(
     )
 
 
-@router.post("/endpoints", response_model=WebhookEndpointResponse, status_code=201)
+@router.post("/", response_model=WebhookEndpointResponse, status_code=201)
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
     db: AsyncSession = Depends(async_get_db),
@@ -90,7 +91,7 @@ async def create_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.get("/endpoints/{endpoint_id}", response_model=WebhookEndpointResponse)
+@router.get("/{endpoint_id}", response_model=WebhookEndpointResponse)
 async def get_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -111,7 +112,7 @@ async def get_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.patch("/endpoints/{endpoint_id}", response_model=WebhookEndpointResponse)
+@router.patch("/{endpoint_id}", response_model=WebhookEndpointResponse)
 async def update_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookEndpointUpdate,
@@ -141,7 +142,7 @@ async def update_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.delete("/endpoints/{endpoint_id}", status_code=204)
+@router.delete("/{endpoint_id}", status_code=204)
 async def delete_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -278,4 +279,45 @@ async def retry_webhook_delivery(
     await service.retry_delivery(delivery.id)
 
     await db.refresh(delivery)
+    return WebhookDeliveryResponse.model_validate(delivery)
+
+
+@router.post("/{endpoint_id}/test", response_model=WebhookDeliveryResponse)
+async def test_webhook_endpoint(
+    endpoint_id: UUID,
+    request: WebhookTestRequest,
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> WebhookDeliveryResponse:
+    """
+    Test a webhook endpoint by sending a simulated event.
+    
+    This simulated event is recorded as a regular delivery attempt.
+    """
+    # Rate limiting for test endpoint (T106)
+    # 10 tests/minute per tenant
+    from src.app.core.utils.rate_limit import rate_limiter
+
+    if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", 10, 60):
+        # We use standard HTTPException here to match project style
+        raise HTTPException(status_code=429, detail="Rate limit exceeded: 10 tests per minute")
+
+    query = select(WebhookEndpoint).where(
+        WebhookEndpoint.id == endpoint_id,
+        WebhookEndpoint.tenant_id == current_tenant.id,
+    )
+    result = await db.execute(query)
+    endpoint = result.scalar_one_or_none()
+
+    if not endpoint:
+        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+
+    service = WebhookService(db)
+    delivery = await service.trigger_endpoint(
+        endpoint=endpoint,
+        event_type=request.event_type,
+        payload=request.payload,
+    )
+
     return WebhookDeliveryResponse.model_validate(delivery)

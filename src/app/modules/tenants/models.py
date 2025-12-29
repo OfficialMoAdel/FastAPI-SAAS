@@ -8,7 +8,11 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ...core.db.database import Base
 
 if TYPE_CHECKING:
+    from src.app.modules.audit_logs.models import AuditLog
+    from src.app.modules.feature_flags.models import FeatureFlagOverride
+    from src.app.modules.notifications.models import EmailTemplateOverride, Notification
     from src.app.modules.users.models import User
+    from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
 
 
 class Tenant(Base):
@@ -32,3 +36,9 @@ class Tenant(Base):
 
     # Relationships
     users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False)
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="tenant", init=False)
+    email_template_overrides: Mapped[list["EmailTemplateOverride"]] = relationship(back_populates="tenant", init=False)
+    webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(back_populates="tenant", init=False)
+    webhook_deliveries: Mapped[list["WebhookDelivery"]] = relationship(back_populates="tenant", init=False)
+    feature_flag_overrides: Mapped[list["FeatureFlagOverride"]] = relationship(back_populates="tenant", init=False)
+    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False)
