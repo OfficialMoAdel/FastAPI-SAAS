@@ -1,0 +1,19 @@
+{% extends "emails/base.html" %}
+
+{% block body %}
+<p>Hello {{ user_name }},</p>
+
+<p>Your account email address has been successfully changed from {{ old_email }} to {{ new_email }}.</p>
+
+<p>Please note:</p>
+<ul>
+    <li>All notifications will now be sent to your new email address</li>
+    <li>You can use this new email address to log in to your account</li>
+    <li>Your old email address has been removed from our system</li>
+</ul>
+
+<p>If you did not make this change, please contact our support team immediately.</p>
+
+<p>Best regards,<br>
+The {{ app_name }} Team</p>
+{% endblock %}

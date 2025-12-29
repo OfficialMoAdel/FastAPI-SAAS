@@ -5,10 +5,10 @@ Supports priority-based event handling:
 - NORMAL/LOW: Asynchronous via ARQ queue (emails, webhooks)
 """
 
-import asyncio
 from collections import defaultdict
+from collections.abc import Callable, Coroutine
 from enum import Enum
-from typing import Any, Callable, Coroutine
+from typing import Any
 
 from structlog import get_logger
 
@@ -18,9 +18,9 @@ logger = get_logger(__name__)
 class EventPriority(str, Enum):
     """Event priority levels."""
 
-    CRITICAL = "CRITICAL"  # Sync execution, no retry
-    NORMAL = "NORMAL"  # Async via ARQ, with retry
-    LOW = "LOW"  # Async via ARQ, with retry, lower priority
+    CRITICAL = "CRITICAL"
+    NORMAL = "NORMAL"
+    LOW = "LOW"
 
 
 class EventBus:
@@ -28,8 +28,8 @@ class EventBus:
 
     def __init__(self) -> None:
         """Initialize event bus with handler registry."""
-        self._handlers: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
-        self._arq_queue: Any = None  # Will be set during app startup
+        self._handlers = defaultdict(list)
+        self._arq_queue = None
 
     def set_arq_queue(self, queue: Any) -> None:
         """Set ARQ queue for async event processing.
@@ -43,7 +43,7 @@ class EventBus:
         """Decorator to subscribe a handler to an event.
 
         Args:
-            event_name: Name of the event to subscribe to
+            event_name: Name of event to subscribe to
 
         Returns:
             Decorator function
@@ -56,7 +56,7 @@ class EventBus:
 
         def decorator(func: Callable[..., Coroutine[Any, Any, None]]) -> Callable[..., Coroutine[Any, Any, None]]:
             self._handlers[event_name].append(func)
-            logger.info("event_handler_registered", event=event_name, handler=func.__name__)
+            logger.info("Event handler registered", event_name=event_name, handler=func.__name__)
             return func
 
         return decorator
@@ -70,7 +70,7 @@ class EventBus:
         """Publish an event to all registered handlers.
 
         Args:
-            event_name: Name of the event
+            event_name: Name of event
             data: Event payload data
             priority: Event priority (CRITICAL=sync, NORMAL/LOW=async)
 
@@ -84,11 +84,11 @@ class EventBus:
         handlers = self._handlers.get(event_name, [])
 
         if not handlers:
-            logger.debug("event_published_no_handlers", event=event_name)
+            logger.debug("Event published no handlers", event=event_name)
             return
 
         logger.info(
-            "event_published",
+            "Event published",
             event=event_name,
             priority=priority,
             handler_count=len(handlers),
@@ -110,7 +110,7 @@ class EventBus:
         """Execute handlers synchronously (for critical events).
 
         Args:
-            event_name: Name of the event
+            event_name: Name of event
             data: Event payload
             handlers: List of handler functions
         """
@@ -118,13 +118,13 @@ class EventBus:
             try:
                 await handler(data)
                 logger.debug(
-                    "event_handler_success",
+                    "Event handler success",
                     event=event_name,
                     handler=handler.__name__,
                 )
             except Exception as e:
                 logger.error(
-                    "event_handler_failed",
+                    "Event handler failed",
                     event=event_name,
                     handler=handler.__name__,
                     error=str(e),
@@ -142,14 +142,14 @@ class EventBus:
         """Queue handlers for async execution via ARQ.
 
         Args:
-            event_name: Name of the event
+            event_name: Name of event
             data: Event payload
             handlers: List of handler functions
             priority: Event priority for queue scheduling
         """
         if not self._arq_queue:
             logger.warning(
-                "event_handler_arq_not_configured",
+                "Event handler ARQ not configured",
                 event=event_name,
                 message="ARQ queue not set, falling back to sync execution",
             )
@@ -168,14 +168,14 @@ class EventBus:
                     _queue_name="default" if priority == EventPriority.NORMAL else "low_priority",
                 )
                 logger.debug(
-                    "event_handler_queued",
+                    "Event handler queued",
                     event=event_name,
                     handler=handler.__name__,
                     priority=priority,
                 )
             except Exception as e:
                 logger.error(
-                    "event_handler_queue_failed",
+                    "Event handler queue failed",
                     event=event_name,
                     handler=handler.__name__,
                     error=str(e),
@@ -186,7 +186,7 @@ class EventBus:
         """Get all handlers registered for an event.
 
         Args:
-            event_name: Name of the event
+            event_name: Name of event
 
         Returns:
             List of handler functions
@@ -210,13 +210,13 @@ async def process_event_handler(
 
     Args:
         ctx: ARQ context
-        event_name: Name of the event
-        handler_module: Module containing the handler
-        handler_name: Name of the handler function
+        event_name: Name of event
+        handler_module: Module containing handler
+        handler_name: Name of handler function
         data: Event payload
     """
     try:
-        # Dynamically import and execute the handler
+        # Dynamically import and execute handler
         import importlib
 
         module = importlib.import_module(handler_module)
@@ -224,13 +224,13 @@ async def process_event_handler(
         await handler(data)
 
         logger.info(
-            "arq_event_handler_success",
+            "ARQ event handler success",
             event=event_name,
             handler=f"{handler_module}.{handler_name}",
         )
     except Exception as e:
         logger.error(
-            "arq_event_handler_failed",
+            "ARQ event handler failed",
             event=event_name,
             handler=f"{handler_module}.{handler_name}",
             error=str(e),

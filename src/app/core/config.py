@@ -138,6 +138,26 @@ class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_REDIS_SSL: bool = False
 
 
+class EmailSettings(BaseSettings):
+    EMAIL_FROM_NAME: str = "FastAPI SaaS"
+    EMAIL_FROM_ADDRESS: str = "noreply@fastapi.local"
+    EMAIL_REPLY_TO: str | None = None
+    SMTP_HOST: str = "smtp.gmail.com"
+    SMTP_PORT: int = 587
+    SMTP_USER: str | None = None
+    SMTP_PASSWORD: str | None = None
+    SMTP_USE_TLS: bool = True
+    EMAIL_TEMPLATES_DIR: str = "src/app/templates"
+
+
+class WebhookSettings(BaseSettings):
+    WEBHOOK_MAX_RETRIES: int = 3
+    WEBHOOK_RETRY_DELAY_SECONDS: int = 300
+    WEBHOOK_TIMEOUT_SECONDS: int = 10
+    WEBHOOK_SIGNATURE_HEADER: str = "X-Webhook-Signature"
+    WEBHOOK_SIGNATURE_ALGORITHM: str = "sha256"
+
+
 class EnvironmentOption(str, Enum):
     LOCAL = "local"
     STAGING = "staging"
@@ -167,6 +187,8 @@ class Settings(
     RedisRateLimiterSettings,
     DefaultRateLimitSettings,
     CRUDAdminSettings,
+    EmailSettings,
+    WebhookSettings,
     EnvironmentSettings,
     CORSSettings,
 ):

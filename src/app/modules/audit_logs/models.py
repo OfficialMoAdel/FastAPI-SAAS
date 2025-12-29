@@ -1,18 +1,19 @@
 """Audit log model for tracking system actions and changes."""
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 from uuid import UUID
 
-from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import INET, JSONB
+from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from uuid6 import uuid7
 
 from src.app.core.db.database import Base
-from src.app.core.db.models import TimestampMixin, UUIDMixin
 
 
-class AuditLog(Base, UUIDMixin, TimestampMixin):
+class AuditLog(Base):
     """
     Audit log for tracking all system actions.
 
@@ -25,17 +26,21 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
         user_id: Reference to user who performed action (nullable)
         action: Action type (e.g., 'user.created', 'post.updated')
         entity_type: Type of entity affected (e.g., 'user', 'post')
-        entity_id: UUID of the affected entity
+        entity_id: UUID of affected entity
         details: Flexible JSONB payload with action-specific data
         ip_address: Client IP address
         user_agent: Client user agent string
         created_at: Timestamp when action occurred (auto-set)
-        updated_at: Not used (inherited from TimestampMixin)
     """
 
     __tablename__ = "audit_logs"
 
-    # Foreign Keys
+    # Primary Key (with init=False since it's DB-generated)
+    id: Mapped[UUID] = mapped_column(
+        PgUUID(as_uuid=True), primary_key=True, default=uuid7, server_default=text("gen_random_uuid()"), init=False
+    )
+
+    # Foreign Keys (required fields without defaults)
     tenant_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("tenants.id", ondelete="CASCADE"),
@@ -49,7 +54,7 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
         index=True,
     )
 
-    # Action Information
+    # Action Information (required fields)
     action: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
@@ -64,19 +69,10 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
     )
     entity_id: Mapped[Optional[UUID]] = mapped_column(
         nullable=True,
-        comment="UUID of the affected entity",
+        comment="UUID of affected entity",
     )
 
-    # Flexible Payload
-    details: Mapped[dict] = mapped_column(
-        JSONB,
-        nullable=False,
-        default=dict,
-        server_default="{}",
-        comment="Flexible JSON payload with action-specific details",
-    )
-
-    # Request Context
+    # Request Context (nullable fields)
     ip_address: Mapped[Optional[str]] = mapped_column(
         INET,
         nullable=True,
@@ -88,7 +84,7 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
         comment="Client user agent string",
     )
 
-    # Relationships
+    # Relationships (nullable, must come before fields with defaults)
     tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
         "Tenant",
         back_populates="audit_logs",
@@ -96,6 +92,20 @@ class AuditLog(Base, UUIDMixin, TimestampMixin):
     user: Mapped[Optional["User"]] = relationship(  # type: ignore  # noqa: F821
         "User",
         back_populates="audit_logs",
+    )
+
+    # Flexible Payload (with default - must come after relationships)
+    details: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        default=dict,
+        server_default="{}",
+        comment="Flexible JSON payload with action-specific details",
+    )
+
+    # Timestamp (with init=False, must come after fields with defaults)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime, default=datetime.now(UTC), server_default=text("current_timestamp(0)"), init=False
     )
 
     # Composite Indexes for Performance

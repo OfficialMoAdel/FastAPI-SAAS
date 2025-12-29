@@ -1,7 +1,7 @@
 """Webhook models for event subscriptions and delivery tracking."""
 
 import enum
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy import (
@@ -14,12 +14,13 @@ from sqlalchemy import (
     SmallInteger,
     String,
     Text,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.core.db.models import TimestampMixin, UUIDMixin
+from src.app.core.db.models import UUIDMixin
 
 
 class WebhookDeliveryStatus(str, enum.Enum):
@@ -30,7 +31,7 @@ class WebhookDeliveryStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class WebhookEndpoint(Base, UUIDMixin, TimestampMixin):
+class WebhookEndpoint(Base, UUIDMixin):
     """
     Webhook endpoint configuration for tenant event subscriptions.
 
@@ -84,15 +85,32 @@ class WebhookEndpoint(Base, UUIDMixin, TimestampMixin):
         comment="Whether endpoint is currently active",
     )
 
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(UTC),
+        server_default=text("current_timestamp(0)"),
+        init=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(UTC),
+        server_default=text("current_timestamp(0)"),
+        onupdate=datetime.now(UTC),
+        init=False,
+    )
+
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
         "Tenant",
         back_populates="webhook_endpoints",
+        init=False,
     )
     deliveries: Mapped[list["WebhookDelivery"]] = relationship(
         "WebhookDelivery",
         back_populates="webhook_endpoint",
         cascade="all, delete-orphan",
+        init=False,
     )
 
     # Composite Indexes for Performance
@@ -120,7 +138,7 @@ class WebhookEndpoint(Base, UUIDMixin, TimestampMixin):
         )
 
 
-class WebhookDelivery(Base, UUIDMixin, TimestampMixin):
+class WebhookDelivery(Base, UUIDMixin):
     """
     Webhook delivery attempt tracking.
 
@@ -189,11 +207,13 @@ class WebhookDelivery(Base, UUIDMixin, TimestampMixin):
     response_status: Mapped[Optional[int]] = mapped_column(
         SmallInteger,
         nullable=True,
+        init=False,
         comment="HTTP response status code",
     )
     response_body: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,
+        init=False,
         comment="HTTP response body (truncated to 10KB)",
     )
 
@@ -202,13 +222,30 @@ class WebhookDelivery(Base, UUIDMixin, TimestampMixin):
         DateTime(timezone=True),
         nullable=True,
         index=True,
+        init=False,
         comment="Timestamp for next retry attempt",
+    )
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(UTC),
+        server_default=text("current_timestamp(0)"),
+        init=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.now(UTC),
+        server_default=text("current_timestamp(0)"),
+        onupdate=datetime.now(UTC),
+        init=False,
     )
 
     # Relationships
     webhook_endpoint: Mapped["WebhookEndpoint"] = relationship(
         "WebhookEndpoint",
         back_populates="deliveries",
+        init=False,
     )
 
     # Composite Indexes for Performance

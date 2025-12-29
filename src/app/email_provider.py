@@ -1,0 +1,152 @@
+"""Email provider interface."""
+
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
+from typing import Optional
+
+
+@dataclass
+class EmailAttachment:
+    """Email attachment dataclass."""
+
+    filename: str
+    content: bytes
+    content_type: str = "application/octet-stream"
+
+
+@dataclass
+class EmailMessage:
+    """Email message dataclass."""
+
+    to_email: str
+    subject: str
+    html_content: str
+    from_name: Optional[str] = None
+    from_email: Optional[str] = None
+    text_content: Optional[str] = None
+    reply_to: Optional[str] = None
+    attachments: Optional[list[EmailAttachment]] = None
+
+
+class EmailProvider(ABC):
+    """Abstract email provider interface."""
+
+    @abstractmethod
+    async def send_email(self, message: EmailMessage) -> bool:
+        """
+        Send email message.
+
+        Args:
+            message: Email message to send
+
+        Returns:
+            True if sent successfully
+        """
+        pass
+
+    @abstractmethod
+    async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:
+        """
+        Send multiple email messages.
+
+        Args:
+            messages: List of email messages
+
+        Returns:
+            Dictionary with success/failure counts
+        """
+        pass
+
+
+class SMTPProvider(EmailProvider):
+    """SMTP email provider implementation."""
+
+    def __init__(
+        self,
+        host: str,
+        port: int,
+        username: str,
+        password: str,
+        use_tls: bool = True,
+        from_email: Optional[str] = None,
+        from_name: Optional[str] = None,
+    ):
+        """Initialize SMTP provider."""
+        self.host = host
+        self.port = port
+        self.username = username
+        self.password = password
+        self.use_tls = use_tls
+        self.from_email = from_email
+        self.from_name = from_name
+
+    async def send_email(self, message: EmailMessage) -> bool:
+        """Send email via SMTP."""
+        import smtplib
+        from email.mime.multipart import MIMEMultipart
+        from email.mime.text import MIMEText
+        from email.utils import formataddr
+
+        try:
+            # Prepare message
+            msg = MIMEMultipart("alternative")
+
+            from_email = message.from_email or self.from_email
+            from_name = message.from_name or self.from_name
+
+            msg["From"] = formataddr((from_name, from_email))
+            msg["To"] = message.to_email
+            msg["Subject"] = message.subject
+
+            if message.reply_to:
+                msg["Reply-To"] = message.reply_to
+
+            # Attach HTML content
+            html_part = MIMEText(message.html_content, "html")
+            msg.attach(html_part)
+
+            # Attach plain text content if provided
+            if message.text_content:
+                text_part = MIMEText(message.text_content, "plain")
+                msg.attach(text_part)
+
+            # Attach attachments if provided
+            if message.attachments:
+                for attachment in message.attachments:
+                    from email import encoders
+                    from email.mime.base import MIMEBase
+
+                    part = MIMEBase(attachment.content_type.split("/")[0], attachment.content_type.split("/")[1])
+                    part.set_payload(attachment.content)
+                    encoders.encode_base64(part)
+                    part.add_header("Content-Disposition", f"attachment; filename={attachment.filename}")
+                    msg.attach(part)
+
+            # Send via SMTP
+            with smtplib.SMTP(self.host, self.port) as server:
+                if self.use_tls:
+                    server.starttls()
+
+                server.login(self.username, self.password)
+                server.send_message(msg)
+
+            return True
+
+        except Exception as e:
+            import logging
+
+            logging.error(f"Failed to send email: {e}")
+            return False
+
+    async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:
+        """Send multiple emails via SMTP."""
+        success = 0
+        failed = 0
+
+        for message in messages:
+            if await self.send_email(message):
+                success += 1
+            else:
+                failed += 1
+
+        return {"success": success, "failed": failed}

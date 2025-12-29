@@ -1,9 +1,10 @@
 """Audit logging service for tracking system actions."""
 
 import asyncio
+from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 from uuid import UUID
 
 from sqlalchemy import select

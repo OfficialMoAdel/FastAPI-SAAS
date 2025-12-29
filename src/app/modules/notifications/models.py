@@ -1,7 +1,7 @@
 """Notification models for email delivery tracking and template management."""
 
 import enum
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Optional
 
 from sqlalchemy import (
@@ -17,7 +17,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.core.db.models import TimestampMixin, UUIDMixin
+from src.app.core.db.models import UUIDMixin
 
 
 class NotificationStatus(str, enum.Enum):
@@ -28,7 +28,7 @@ class NotificationStatus(str, enum.Enum):
     FAILED = "failed"
 
 
-class Notification(Base, UUIDMixin, TimestampMixin):
+class Notification(Base, UUIDMixin):
     """
     Notification record for tracking email deliveries.
 
@@ -50,6 +50,14 @@ class Notification(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "notifications"
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), nullable=False, init=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, init=False
+    )
 
     # Foreign Keys
     tenant_id: Mapped[int] = mapped_column(
@@ -94,11 +102,13 @@ class Notification(Base, UUIDMixin, TimestampMixin):
     sent_at: Mapped[Optional[datetime]] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+        init=False,
         comment="Timestamp when email was successfully sent",
     )
     error_message: Mapped[Optional[str]] = mapped_column(
         Text,
         nullable=True,
+        init=False,
         comment="Error details if delivery failed",
     )
 
@@ -106,10 +116,12 @@ class Notification(Base, UUIDMixin, TimestampMixin):
     tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
         "Tenant",
         back_populates="notifications",
+        init=False,
     )
     user: Mapped[Optional["User"]] = relationship(  # type: ignore  # noqa: F821
         "User",
         back_populates="notifications",
+        init=False,
     )
 
     # Composite Indexes for Performance
@@ -140,7 +152,7 @@ class Notification(Base, UUIDMixin, TimestampMixin):
         )
 
 
-class EmailTemplateOverride(Base, UUIDMixin, TimestampMixin):
+class EmailTemplateOverride(Base, UUIDMixin):
     """
     Tenant-specific email template overrides.
 
@@ -158,6 +170,14 @@ class EmailTemplateOverride(Base, UUIDMixin, TimestampMixin):
     """
 
     __tablename__ = "email_template_overrides"
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), nullable=False, init=False
+    )
+    updated_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, init=False
+    )
 
     # Foreign Keys
     tenant_id: Mapped[int] = mapped_column(
@@ -188,6 +208,7 @@ class EmailTemplateOverride(Base, UUIDMixin, TimestampMixin):
     tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
         "Tenant",
         back_populates="email_template_overrides",
+        init=False,
     )
 
     # Constraints

@@ -9,19 +9,18 @@ Handles:
 
 import logging
 from datetime import datetime, timedelta
+from email.message import EmailMessage
 from typing import Any
 from uuid import UUID
 
 import aiosmtplib
-from email.message import EmailMessage
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_sessionmaker
 from src.app.modules.notifications.models import Notification, NotificationStatus
-from src.app.modules.webhooks.models import WebhookDelivery, DeliveryStatus
+from src.app.modules.webhooks.models import DeliveryStatus, WebhookDelivery
 from src.app.modules.webhooks.service import WebhookService
 
 logger = logging.getLogger(__name__)

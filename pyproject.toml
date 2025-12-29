@@ -32,6 +32,7 @@ dependencies = [
     "gunicorn>=23.0.0",
     "ruff>=0.11.13",
     "mypy>=1.16.0",
+    "jinja2>=3.1.0",
 ]
 
 [project.optional-dependencies]
@@ -104,8 +105,10 @@ filterwarnings = [
 
 [dependency-groups]
 dev = [
+    "faker>=37.3.0",
     "pre-commit>=4.3.0",
     "pytest-asyncio>=1.0.0",
+    "structlog>=25.5.0",
 ]
 
 [tool.mypy]
