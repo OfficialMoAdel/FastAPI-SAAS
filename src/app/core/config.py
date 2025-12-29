@@ -15,7 +15,7 @@ class AppSettings(BaseSettings):
 
 
 class CryptSettings(BaseSettings):
-    SECRET_KEY: SecretStr = SecretStr("secret-key")
+    SECRET_KEY: SecretStr  # REQUIRED: Must be set via environment variable
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -35,7 +35,7 @@ class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
     MYSQL_PASSWORD: str = "password"
     MYSQL_SERVER: str = "localhost"
-    MYSQL_PORT: int = 5432
+    MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
     MYSQL_SYNC_PREFIX: str = "mysql://"
     MYSQL_ASYNC_PREFIX: str = "mysql+aiomysql://"
@@ -71,11 +71,10 @@ class FirstUserSettings(BaseSettings):
     ADMIN_NAME: str = "admin"
     ADMIN_EMAIL: str = "admin@admin.com"
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "!Ch4ng3Th1sP4ssW0rd!"
+    ADMIN_PASSWORD: str  # REQUIRED: Must be set via environment variable
 
 
-class TestSettings(BaseSettings):
-    ...
+class TestSettings(BaseSettings): ...
 
 
 class RedisCacheSettings(BaseSettings):
@@ -150,8 +149,8 @@ class EnvironmentSettings(BaseSettings):
 
 
 class CORSSettings(BaseSettings):
-    CORS_ORIGINS: list[str] = ["*"]
-    CORS_METHODS: list[str] = ["*"]
+    CORS_ORIGINS: list[str] = ["http://localhost:3000"]  # SECURITY: Restrict to specific origins
+    CORS_METHODS: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
     CORS_HEADERS: list[str] = ["*"]
 
 

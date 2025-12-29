@@ -22,9 +22,7 @@ class TestWriteUser:
             mock_crud.exists = AsyncMock(side_effect=[False, False])  # email, then username
             mock_crud.create = AsyncMock(return_value=sample_user_read.model_dump())
 
-            with patch("src.app.api.v1.users.get_password_hash") as mock_hash:
-                mock_hash.return_value = "hashed_password"
-
+            with patch("src.app.api.v1.users.get_password_hash", return_value="hashed_password"):
                 result = await write_user(Mock(), user_create, mock_db)
 
                 assert result == sample_user_read.model_dump()

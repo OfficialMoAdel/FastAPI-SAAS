@@ -1,3 +1,5 @@
+import asyncio
+
 from sqlalchemy.orm import Session
 from uuid6 import uuid7  # 126
 
@@ -7,11 +9,14 @@ from tests.conftest import fake
 
 
 def create_user(db: Session, is_super_user: bool = False) -> models.User:
+    # get_password_hash is now async, so we need to run it in event loop
+    hashed_password = asyncio.run(get_password_hash(fake.password()))
+
     _user = models.User(
         name=fake.name(),
         username=fake.user_name(),
         email=fake.email(),
-        hashed_password=get_password_hash(fake.password()),
+        hashed_password=hashed_password,
         profile_image_url=fake.image_url(),
         uuid=uuid7,
         is_superuser=is_super_user,

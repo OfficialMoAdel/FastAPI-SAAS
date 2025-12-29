@@ -257,7 +257,8 @@ class PostService:
         NotFoundException
             If user or post not found
         """
-        db_user = await self._get_user_or_404(username, db)
+        # Validate user exists (raises NotFoundException if not found)
+        await self._get_user_or_404(username, db)
 
         db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:

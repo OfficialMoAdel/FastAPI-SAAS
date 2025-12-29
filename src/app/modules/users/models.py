@@ -8,6 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from ...core.db.database import Base
+
 # Avoid circular import by using string reference for secondary if needed,
 # or import inside TYPE_CHECKING if only needed for type,
 # but for secondary argument we usually need the table object or string.
@@ -21,8 +22,8 @@ from ...core.db.database import Base
 # But for development, explicit is better.
 
 if TYPE_CHECKING:
-    from src.app.modules.tenants.models import Tenant
     from src.app.modules.rbac.models import Role
+    from src.app.modules.tenants.models import Tenant
 
 
 class User(Base):

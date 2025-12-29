@@ -1,3 +1,4 @@
+import asyncio
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal
@@ -27,13 +28,15 @@ class TokenType(str, Enum):
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
-    correct_password: bool = bcrypt.checkpw(plain_password.encode(), hashed_password.encode())
+    """Verify password asynchronously without blocking the event loop."""
+    correct_password: bool = await asyncio.to_thread(bcrypt.checkpw, plain_password.encode(), hashed_password.encode())
     return correct_password
 
 
-def get_password_hash(password: str) -> str:
-    hashed_password: str = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    return hashed_password
+async def get_password_hash(password: str) -> str:
+    """Hash password asynchronously without blocking the event loop."""
+    hashed_password: bytes = await asyncio.to_thread(bcrypt.hashpw, password.encode(), bcrypt.gensalt())
+    return hashed_password.decode()
 
 
 async def authenticate_user(username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | Literal[False]:

@@ -218,9 +218,7 @@ class UserService:
         await blacklist_token(token=token, db=db)
         return {"message": "User deleted from the database"}
 
-    async def update_user_tier(
-        self, username: str, values: UserTierUpdate, db: AsyncSession
-    ) -> dict[str, str]:
+    async def update_user_tier(self, username: str, values: UserTierUpdate, db: AsyncSession) -> dict[str, str]:
         """Update user's tier (superuser only).
 
         Parameters

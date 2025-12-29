@@ -1,13 +1,13 @@
 from typing import Annotated
 
 from fastapi import Depends
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_user, get_current_tenant
+from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.modules.rbac.models import Role, Permission, role_permissions, user_roles
+from src.app.modules.rbac.models import Permission, Role, role_permissions, user_roles
 from src.app.modules.tenants.models import Tenant
 
 

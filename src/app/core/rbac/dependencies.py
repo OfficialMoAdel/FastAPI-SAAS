@@ -65,8 +65,13 @@ async def get_cached_permissions(
             cached = redis_client.get(cache_key)
             if cached:
                 return set(json.loads(cached))
-        except Exception:
-            pass
+        except Exception as e:
+            # Log cache read failure but continue to DB query
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"Failed to read permissions from cache for user {user_id}, tenant {tenant_id}: {e}"
+            )
 
     # Query from database
     permissions = await get_user_permissions(user_id, tenant_id, db)
@@ -76,8 +81,13 @@ async def get_cached_permissions(
         try:
             redis_client.set(cache_key, json.dumps(list(permissions)))
             redis_client.expire(cache_key, PERMISSIONS_CACHE_TTL)
-        except Exception:
-            pass
+        except Exception as e:
+            # Log cache write failure but continue successfully (permissions already retrieved)
+            import logging
+
+            logging.getLogger(__name__).warning(
+                f"Failed to cache permissions for user {user_id}, tenant {tenant_id}: {e}"
+            )
 
     return permissions
 
@@ -141,8 +151,13 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> Non
     cache_key = get_user_permissions_cache_key(user_id, tenant_id)
     try:
         redis_client.delete(cache_key)
-    except Exception:
-        pass
+    except Exception as e:
+        # Log cache invalidation failure
+        import logging
+
+        logging.getLogger(__name__).warning(
+            f"Failed to invalidate permissions cache for user {user_id}, tenant {tenant_id}: {e}"
+        )
 
 
 # Private helpers
