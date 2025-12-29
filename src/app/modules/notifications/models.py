@@ -1,0 +1,207 @@
+"""Notification models for email delivery tracking and template management."""
+
+import enum
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import (
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    String,
+    Text,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from src.app.core.db.database import Base
+from src.app.core.db.models import TimestampMixin, UUIDMixin
+
+
+class NotificationStatus(str, enum.Enum):
+    """Status of notification delivery."""
+
+    PENDING = "pending"
+    SENT = "sent"
+    FAILED = "failed"
+
+
+class Notification(Base, UUIDMixin, TimestampMixin):
+    """
+    Notification record for tracking email deliveries.
+
+    Tracks all email notifications sent through the system with
+    delivery status, error messages, and retry information.
+
+    Attributes:
+        id: Unique UUID identifier
+        tenant_id: Reference to tenant (multi-tenancy isolation)
+        user_id: Reference to recipient user
+        template_name: Name of email template used
+        to_email: Recipient email address
+        subject: Email subject line
+        status: Delivery status (pending/sent/failed)
+        sent_at: Timestamp when email was successfully sent
+        error_message: Error details if delivery failed
+        created_at: Timestamp when notification was created
+        updated_at: Timestamp when status last changed
+    """
+
+    __tablename__ = "notifications"
+
+    # Foreign Keys
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    user_id: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    # Email Information
+    template_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment="Template name (e.g., 'welcome', 'password_reset')",
+    )
+    to_email: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="Recipient email address",
+    )
+    subject: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="Email subject line",
+    )
+
+    # Delivery Status
+    status: Mapped[NotificationStatus] = mapped_column(
+        Enum(NotificationStatus, native_enum=False, length=20),
+        nullable=False,
+        default=NotificationStatus.PENDING,
+        index=True,
+        comment="Current delivery status",
+    )
+    sent_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        comment="Timestamp when email was successfully sent",
+    )
+    error_message: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="Error details if delivery failed",
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+        "Tenant",
+        back_populates="notifications",
+    )
+    user: Mapped[Optional["User"]] = relationship(  # type: ignore  # noqa: F821
+        "User",
+        back_populates="notifications",
+    )
+
+    # Composite Indexes for Performance
+    __table_args__ = (
+        # Query by tenant and status
+        Index("idx_notification_tenant_status", "tenant_id", "status"),
+        # Query by tenant and creation time
+        Index(
+            "idx_notification_tenant_created",
+            "tenant_id",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
+        # Query failed notifications for retry
+        Index(
+            "idx_notification_status_created",
+            "status",
+            "created_at",
+            postgresql_where="status = 'failed'",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        """String representation of notification."""
+        return (
+            f"<Notification(id={self.id}, template='{self.template_name}', "
+            f"to='{self.to_email}', status={self.status.value})>"
+        )
+
+
+class EmailTemplateOverride(Base, UUIDMixin, TimestampMixin):
+    """
+    Tenant-specific email template overrides.
+
+    Allows tenants to customize default email templates with
+    their own subject lines and HTML content.
+
+    Attributes:
+        id: Unique UUID identifier
+        tenant_id: Reference to tenant (multi-tenancy isolation)
+        template_name: Name of template to override
+        subject_override: Custom subject line (optional)
+        content: Custom HTML template content
+        created_at: Timestamp when override was created
+        updated_at: Timestamp when override was last modified
+    """
+
+    __tablename__ = "email_template_overrides"
+
+    # Foreign Keys
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Template Information
+    template_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        comment="Template name to override",
+    )
+    subject_override: Mapped[Optional[str]] = mapped_column(
+        String(255),
+        nullable=True,
+        comment="Custom subject line (null = use default)",
+    )
+    content: Mapped[str] = mapped_column(
+        Text,
+        nullable=False,
+        comment="Custom HTML template content (Jinja2)",
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+        "Tenant",
+        back_populates="email_template_overrides",
+    )
+
+    # Constraints
+    __table_args__ = (
+        # One override per template per tenant
+        UniqueConstraint(
+            "tenant_id",
+            "template_name",
+            name="uq_email_template_tenant",
+        ),
+        # Index for template lookups
+        Index("idx_email_template_tenant_name", "tenant_id", "template_name"),
+    )
+
+    def __repr__(self) -> str:
+        """String representation of email template override."""
+        return f"<EmailTemplateOverride(id={self.id}, template='{self.template_name}', tenant_id={self.tenant_id})>"

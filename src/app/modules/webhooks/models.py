@@ -1,0 +1,242 @@
+"""Webhook models for event subscriptions and delivery tracking."""
+
+import enum
+from datetime import datetime
+from typing import Optional
+
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    Enum,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+)
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from src.app.core.db.database import Base
+from src.app.core.db.models import TimestampMixin, UUIDMixin
+
+
+class WebhookDeliveryStatus(str, enum.Enum):
+    """Status of webhook delivery attempt."""
+
+    PENDING = "pending"
+    DELIVERED = "delivered"
+    FAILED = "failed"
+
+
+class WebhookEndpoint(Base, UUIDMixin, TimestampMixin):
+    """
+    Webhook endpoint configuration for tenant event subscriptions.
+
+    Allows tenants to subscribe to system events and receive
+    HTTP callbacks with event data.
+
+    Attributes:
+        id: Unique UUID identifier
+        tenant_id: Reference to tenant (multi-tenancy isolation)
+        url: Target URL for webhook deliveries
+        secret: HMAC secret for signature generation (hashed)
+        event_type: Event type to subscribe to (e.g., 'user.created')
+        is_active: Whether endpoint is currently active
+        created_at: Timestamp when endpoint was created
+        updated_at: Timestamp when endpoint was last modified
+    """
+
+    __tablename__ = "webhook_endpoints"
+
+    # Foreign Keys
+    tenant_id: Mapped[int] = mapped_column(
+        Integer,
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Endpoint Configuration
+    url: Mapped[str] = mapped_column(
+        String(2048),
+        nullable=False,
+        comment="Target URL for webhook deliveries",
+    )
+    secret: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="HMAC secret for signature generation (store hashed)",
+    )
+    event_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment="Event type pattern (e.g., 'user.*', 'user.created')",
+    )
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+        server_default="true",
+        index=True,
+        comment="Whether endpoint is currently active",
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+        "Tenant",
+        back_populates="webhook_endpoints",
+    )
+    deliveries: Mapped[list["WebhookDelivery"]] = relationship(
+        "WebhookDelivery",
+        back_populates="webhook_endpoint",
+        cascade="all, delete-orphan",
+    )
+
+    # Composite Indexes for Performance
+    __table_args__ = (
+        # Query active endpoints by tenant and event type
+        Index(
+            "idx_webhook_endpoint_tenant_event",
+            "tenant_id",
+            "event_type",
+            "is_active",
+        ),
+        # Query active endpoints
+        Index(
+            "idx_webhook_endpoint_active",
+            "is_active",
+            postgresql_where="is_active = true",
+        ),
+    )
+
+    def __repr__(self) -> str:
+        """String representation of webhook endpoint."""
+        return (
+            f"<WebhookEndpoint(id={self.id}, url='{self.url}', "
+            f"event_type='{self.event_type}', active={self.is_active})>"
+        )
+
+
+class WebhookDelivery(Base, UUIDMixin, TimestampMixin):
+    """
+    Webhook delivery attempt tracking.
+
+    Tracks individual webhook delivery attempts with payload,
+    response status, retry information, and delivery status.
+
+    Attributes:
+        id: Unique UUID identifier
+        webhook_endpoint_id: Reference to webhook endpoint
+        event_type: Event type that triggered delivery
+        payload: Event data payload (JSONB)
+        signature: HMAC signature for payload verification
+        status: Delivery status (pending/delivered/failed)
+        attempt_count: Number of delivery attempts made
+        response_status: HTTP response status code
+        response_body: HTTP response body (truncated)
+        next_retry_at: Timestamp for next retry attempt
+        created_at: Timestamp when delivery was created
+        updated_at: Timestamp when delivery was last attempted
+    """
+
+    __tablename__ = "webhook_deliveries"
+
+    # Foreign Keys
+    webhook_endpoint_id: Mapped[int] = mapped_column(
+        ForeignKey("webhook_endpoints.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Event Information
+    event_type: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+        index=True,
+        comment="Event type that triggered delivery",
+    )
+    payload: Mapped[dict] = mapped_column(
+        JSONB,
+        nullable=False,
+        comment="Event data payload",
+    )
+    signature: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        comment="HMAC-SHA256 signature for verification",
+    )
+
+    # Delivery Status
+    status: Mapped[WebhookDeliveryStatus] = mapped_column(
+        Enum(WebhookDeliveryStatus, native_enum=False, length=20),
+        nullable=False,
+        default=WebhookDeliveryStatus.PENDING,
+        index=True,
+        comment="Current delivery status",
+    )
+    attempt_count: Mapped[int] = mapped_column(
+        SmallInteger,
+        nullable=False,
+        default=0,
+        server_default="0",
+        comment="Number of delivery attempts made",
+    )
+
+    # Response Information
+    response_status: Mapped[Optional[int]] = mapped_column(
+        SmallInteger,
+        nullable=True,
+        comment="HTTP response status code",
+    )
+    response_body: Mapped[Optional[str]] = mapped_column(
+        Text,
+        nullable=True,
+        comment="HTTP response body (truncated to 10KB)",
+    )
+
+    # Retry Information
+    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        index=True,
+        comment="Timestamp for next retry attempt",
+    )
+
+    # Relationships
+    webhook_endpoint: Mapped["WebhookEndpoint"] = relationship(
+        "WebhookEndpoint",
+        back_populates="deliveries",
+    )
+
+    # Composite Indexes for Performance
+    __table_args__ = (
+        # Query pending deliveries ready for retry
+        Index(
+            "idx_webhook_delivery_retry",
+            "status",
+            "next_retry_at",
+            postgresql_where="status = 'pending' AND next_retry_at IS NOT NULL",
+        ),
+        # Query deliveries by endpoint and status
+        Index(
+            "idx_webhook_delivery_endpoint_status",
+            "webhook_endpoint_id",
+            "status",
+        ),
+        # Query deliveries by time (for cleanup/archival)
+        Index(
+            "idx_webhook_delivery_created",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
+    )
+
+    def __repr__(self) -> str:
+        """String representation of webhook delivery."""
+        return (
+            f"<WebhookDelivery(id={self.id}, event_type='{self.event_type}', "
+            f"status={self.status.value}, attempts={self.attempt_count})>"
+        )
