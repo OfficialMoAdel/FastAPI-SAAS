@@ -1,10 +1,9 @@
-from typing import Optional
 
 from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db.models import FeatureFlag, FeatureFlagOverride
-from app.modules.feature_flags.schemas import (
+from ...core.db.models import FeatureFlag, FeatureFlagOverride
+from .schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
     FeatureFlagUpdate,
@@ -16,7 +15,7 @@ class FeatureFlagsService:
         self.crud = FastCRUD(FeatureFlag)
         self.override_crud = FastCRUD(FeatureFlagOverride)
 
-    async def get_flag(self, db: AsyncSession, name: str, tenant_id: int) -> Optional[FeatureFlag]:
+    async def get_flag(self, db: AsyncSession, name: str, tenant_id: int) -> FeatureFlag | None:
         return await self.crud.get(db, name=name, tenant_id=tenant_id)
 
     async def create_flag(self, db: AsyncSession, flag: FeatureFlagCreate, tenant_id: int) -> FeatureFlag:
@@ -30,7 +29,7 @@ class FeatureFlagsService:
         name: str,
         flag: FeatureFlagUpdate,
         tenant_id: int,
-    ) -> Optional[FeatureFlag]:
+    ) -> FeatureFlag | None:
         return await self.crud.update(
             db,
             name=name,
@@ -46,7 +45,7 @@ class FeatureFlagsService:
 
     async def get_override(
         self, db: AsyncSession, flag_name: str, user_id: int, tenant_id: int
-    ) -> Optional[FeatureFlagOverride]:
+    ) -> FeatureFlagOverride | None:
         return await self.override_crud.get(db, flag_name=flag_name, user_id=user_id, tenant_id=tenant_id)
 
     async def create_override(
@@ -63,7 +62,7 @@ class FeatureFlagsService:
         return await self.override_crud.delete(db, flag_name=flag_name, user_id=user_id, tenant_id=tenant_id)
 
     async def is_feature_enabled(
-        self, db: AsyncSession, flag_name: str, user_id: Optional[int], tenant_id: int
+        self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: int
     ) -> bool:
         flag = await self.get_flag(db, flag_name, tenant_id)
         if not flag:

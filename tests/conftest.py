@@ -1,6 +1,6 @@
 from collections.abc import Callable, Generator
 from typing import Any
-from unittest.mock import AsyncMock, Mock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from faker import Faker
@@ -20,17 +20,9 @@ sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI)
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
 from src.app.core.db.database import Base
-# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
-from src.app.modules.users.models import User
 from src.app.modules.tenants.models import Tenant
-from src.app.modules.rbac.models import Role, Permission, UserRole, RolePermission
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.notifications.models import Notification, EmailTemplateOverride
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
-from src.app.modules.posts.models import Post
-from src.app.modules.tiers.models import Tier
-from src.app.modules.rate_limits.models import RateLimit
+
+# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 
 fake = Faker()
 
@@ -70,14 +62,70 @@ def mock_db():
     return Mock(spec=AsyncSession)
 
 
-@pytest.fixture
+class FakeRedis:
+    def __init__(self):
+        self.store = {}
+
+    async def get(self, key):
+        if not key: return None
+        return self.store.get(key)
+
+    async def set(self, key, value, ex=None, px=None, **kwargs):
+        self.store[key] = value
+        return True
+
+    async def delete(self, *keys):
+        count = 0
+        for k in keys:
+            if k in self.store:
+                del self.store[k]
+                count += 1
+        return count
+
+    async def incr(self, key):
+        val = int(self.store.get(key, 0)) + 1
+        self.store[key] = str(val)
+        return val
+
+    async def expire(self, key, seconds):
+        return bool(key in self.store)
+
+    async def ttl(self, key):
+        return 60 if key in self.store else -2
+
+    async def pttl(self, key):
+        return 60000 if key in self.store else -2
+
+    async def scan(self, cursor=0, match=None, count=None):
+        import fnmatch
+        if cursor != 0:
+            return 0, []
+        keys = list(self.store.keys())
+        if match:
+            keys = fnmatch.filter(keys, match)
+        return 0, keys
+
+    async def close(self):
+        pass
+
+    async def enqueue_job(self, function, *args, **kwargs):
+        return Mock(job_id="job_mock_123")
+
+@pytest.fixture(autouse=True)
 def mock_redis():
-    """Mock Redis connection for unit tests."""
-    mock_redis = Mock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.set = AsyncMock(return_value=True)
-    mock_redis.delete = AsyncMock(return_value=True)
-    return mock_redis
+    """Mock Redis client globally with in-memory state."""
+    fake_redis = FakeRedis()
+
+    with patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()), \
+         patch("src.app.core.setup.create_redis_queue_pool", new=AsyncMock()), \
+         patch("src.app.core.setup.create_redis_rate_limit_pool", new=AsyncMock()), \
+         patch("src.app.core.setup.close_redis_cache_pool", new=AsyncMock()), \
+         patch("src.app.core.setup.close_redis_queue_pool", new=AsyncMock()), \
+         patch("src.app.core.setup.close_redis_rate_limit_pool", new=AsyncMock()), \
+         patch("src.app.core.utils.cache.client", new=fake_redis), \
+         patch("src.app.core.utils.rate_limit.rate_limiter.client", new=fake_redis), \
+         patch("src.app.core.utils.queue.pool", new=fake_redis):
+        yield fake_redis
 
 
 @pytest.fixture
@@ -127,8 +175,7 @@ def current_user_dict():
 @pytest.fixture
 def tenant(db):
     """Create and return a sample tenant."""
-    from src.app.modules.tenants.models import Tenant
-    
+
     # Check if tenant already exists to avoid UniqueViolation
     existing = db.query(Tenant).filter(Tenant.slug == "test-tenant-integration").first()
     if existing:

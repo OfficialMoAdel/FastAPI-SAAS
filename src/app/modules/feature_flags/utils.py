@@ -6,8 +6,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.utils.cache import client as redis_client
-from src.app.modules.tenants.models import Tenant
+from ...core.utils.cache import client as redis_client
+from ...modules.tenants.models import Tenant
 
 CACHE_TTL = 300  # 5 minutes
 
@@ -15,18 +15,18 @@ CACHE_TTL = 300  # 5 minutes
 async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
     """
     Check if a feature flag is enabled for a tenant.
-    
+
     Args:
         db: Database session
         tenant_id: Tenant UUID
         feature_name: Name of the feature flag
         default: Default value if flag is not set
-        
+
     Returns:
         bool: True if feature is enabled, False otherwise
     """
     cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
-    
+
     # Try cache first
     if redis_client:
         try:
@@ -42,7 +42,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
     # Fallback to DB
     result = await db.get(Tenant, tenant_id)
     enabled = default
-    
+
     if result and result.feature_flags:
         enabled = result.feature_flags.get(feature_name, default)
 
@@ -52,23 +52,23 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
             await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
         except Exception:
             pass
-            
+
     return enabled
 
 
 async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]:
     """
     Get all feature flags for a tenant.
-    
+
     Args:
         db: Database session
         tenant_id: Tenant UUID
-        
+
     Returns:
         dict: All feature flags for the tenant
     """
     cache_key = f"tenant:{tenant_id}:features"
-    
+
     # Try cache first
     if redis_client:
         try:
@@ -81,30 +81,30 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
     # Fallback to DB
     result = await db.get(Tenant, tenant_id)
     flags = {}
-    
+
     if result and result.feature_flags:
         flags = result.feature_flags
-        
+
     # Update cache
     if redis_client:
         try:
             await redis_client.setex(cache_key, CACHE_TTL, json.dumps(flags))
         except Exception:
             pass
-            
+
     return flags
 
 
 async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: str, enabled: bool) -> Tenant:
     """
     Update a single feature flag for a tenant.
-    
+
     Args:
         db: Database session
         tenant_id: Tenant UUID
         feature_name: Name of the feature flag
         enabled: Whether to enable or disable the feature
-        
+
     Returns:
         Tenant: Updated tenant object
     """
@@ -143,12 +143,12 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
 async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: dict[str, bool]) -> Tenant:
     """
     Update multiple feature flags at once.
-    
+
     Args:
         db: Database session
         tenant_id: Tenant UUID
         flags: Dictionary of feature flags to update
-        
+
     Returns:
         Tenant: Updated tenant object
     """
@@ -176,7 +176,7 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
         try:
             # Delete all features key
             await redis_client.delete(f"tenant:{tenant_id}:features")
-            
+
             # Delete individual keys for updated flags
             keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags.keys()]
             if keys_to_delete:

@@ -1,5 +1,4 @@
-from src.app.core.db.tenant_crud import TenantAwareCRUD
-
+from ...core.db.tenant_crud import TenantAwareCRUD
 from .models import Post
 from .schemas import PostCreateInternal, PostDelete, PostRead, PostUpdate, PostUpdateInternal
 

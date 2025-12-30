@@ -1,12 +1,12 @@
 """Unit tests for user API endpoints."""
 
-from unittest.mock import AsyncMock, Mock, patch, MagicMock
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
-from src.app.modules.users.router import erase_user, patch_user, read_user, read_users, write_user
 from src.app.core.exceptions.http_exceptions import DuplicateValueException, ForbiddenException, NotFoundException
-from src.app.schemas.user import UserCreate, UserRead, UserUpdate
+from src.app.modules.users.router import erase_user, patch_user, read_user, read_users, write_user
+from src.app.schemas.user import UserCreate, UserUpdate
 
 
 class TestWriteUser:

@@ -18,8 +18,8 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.security.encryption import decrypt_data, encrypt_data
-from src.app.modules.webhooks.models import (
+from ...core.security.encryption import decrypt_data, encrypt_data
+from .models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,
@@ -48,7 +48,7 @@ class WebhookService:
         """Create a new webhook endpoint."""
         # Encrypt the secret if provided
         encrypted_secret = encrypt_data(secret) if secret else None
-        
+
         endpoint = WebhookEndpoint(
             tenant_id=tenant_id,
             url=url,
@@ -142,7 +142,7 @@ class WebhookService:
 
     async def _enqueue_delivery(self, delivery_id: UUID) -> None:
         """Enqueue webhook delivery task."""
-        from src.app.core.utils.queue import pool
+        from ...core.utils.queue import pool
 
         if pool:
             await pool.enqueue_job("deliver_webhook_task", delivery_id)

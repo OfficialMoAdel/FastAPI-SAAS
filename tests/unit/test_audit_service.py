@@ -7,9 +7,10 @@ Tests cover:
 - Pagination
 """
 
-from datetime import datetime, UTC
-from uuid import uuid4
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
+
 import pytest
 
 from src.app.modules.audit_logs.service import AuditLogService
@@ -193,8 +194,9 @@ class TestAuditActionDecorator:
     @pytest.mark.asyncio
     async def test_decorator_creates_audit_event(self) -> None:
         """Test that @audit_action decorator fires audit events."""
+        from unittest.mock import AsyncMock
+
         from src.app.modules.audit_logs.service import audit_action
-        from unittest.mock import AsyncMock, patch
 
         @audit_action("test.action", "test")
         async def sample_function(tenant_id: int, user_id: int):

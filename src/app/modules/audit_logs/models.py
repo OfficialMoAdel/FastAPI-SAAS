@@ -1,7 +1,6 @@
 """Audit log model for tracking system actions and changes."""
 
 from datetime import UTC, datetime
-from typing import Optional
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
@@ -10,7 +9,7 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from src.app.core.db.database import Base
+from ...core.db.database import Base
 
 
 class AuditLog(Base):
@@ -37,7 +36,11 @@ class AuditLog(Base):
 
     # Primary Key (with init=False since it's DB-generated)
     id: Mapped[UUID] = mapped_column(
-        PgUUID(as_uuid=True), primary_key=True, insert_default=uuid7, server_default=text("gen_random_uuid()"), init=False
+        PgUUID(as_uuid=True),
+        primary_key=True,
+        insert_default=uuid7,
+        server_default=text("gen_random_uuid()"),
+        init=False,
     )
 
     # Foreign Keys (required fields without defaults)
@@ -47,7 +50,7 @@ class AuditLog(Base):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[Optional[int]] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
@@ -61,24 +64,24 @@ class AuditLog(Base):
         index=True,
         comment="Action type in format 'entity.verb' (e.g., 'user.created')",
     )
-    entity_type: Mapped[Optional[str]] = mapped_column(
+    entity_type: Mapped[str | None] = mapped_column(
         String(50),
         nullable=True,
         index=True,
         comment="Type of entity affected",
     )
-    entity_id: Mapped[Optional[UUID]] = mapped_column(
+    entity_id: Mapped[UUID | None] = mapped_column(
         nullable=True,
         comment="UUID of affected entity",
     )
 
     # Request Context (nullable fields)
-    ip_address: Mapped[Optional[str]] = mapped_column(
+    ip_address: Mapped[str | None] = mapped_column(
         INET,
         nullable=True,
         comment="Client IP address",
     )
-    user_agent: Mapped[Optional[str]] = mapped_column(
+    user_agent: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         comment="Client user agent string",

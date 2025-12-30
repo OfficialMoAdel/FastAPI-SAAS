@@ -62,7 +62,7 @@ async def get_cached_permissions(
     # Try to get from cache
     if redis_client is not None:
         try:
-            cached = redis_client.get(cache_key)
+            cached = await redis_client.get(cache_key)
             if cached:
                 return set(json.loads(cached))
         except Exception as e:
@@ -79,8 +79,8 @@ async def get_cached_permissions(
     # Cache the result
     if redis_client is not None:
         try:
-            redis_client.set(cache_key, json.dumps(list(permissions)))
-            redis_client.expire(cache_key, PERMISSIONS_CACHE_TTL)
+            await redis_client.set(cache_key, json.dumps(list(permissions)))
+            await redis_client.expire(cache_key, PERMISSIONS_CACHE_TTL)
         except Exception as e:
             # Log cache write failure but continue successfully (permissions already retrieved)
             import logging
@@ -150,7 +150,7 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> Non
 
     cache_key = get_user_permissions_cache_key(user_id, tenant_id)
     try:
-        redis_client.delete(cache_key)
+        await redis_client.delete(cache_key)
     except Exception as e:
         # Log cache invalidation failure
         import logging

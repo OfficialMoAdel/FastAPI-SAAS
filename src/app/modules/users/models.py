@@ -47,6 +47,7 @@ class User(Base):
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
     is_superuser: Mapped[bool] = mapped_column(default=False)
+    is_email_verified: Mapped[bool] = mapped_column(default=False)
 
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
 
@@ -59,4 +60,6 @@ class User(Base):
         viewonly=True,
     )
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
+    # Note: api_keys relationship is defined in APIKey model using back_populates="user"
+
 

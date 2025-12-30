@@ -7,16 +7,13 @@ Tests cover:
 - Error handling for unauthorized access
 """
 
-import pytest
-from datetime import datetime, UTC
+from datetime import UTC, datetime
 from uuid import uuid4
-from unittest.mock import AsyncMock, patch, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
-from httpx import AsyncClient, ASGITransport
 
 from src.app.main import app
-from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import AuditLogResponse
 
 
@@ -32,7 +29,7 @@ class TestAuditLogAPIEndpoints:
     def tenant(self, db):
         """Create and return a sample tenant."""
         from src.app.modules.tenants.models import Tenant
-        
+
         tenant_data = {
             "name": "Test Tenant",
             "slug": "test-tenant-audit",
@@ -53,9 +50,10 @@ class TestAuditLogAPIEndpoints:
     @pytest.fixture
     def sample_user_id(self, db, tenant):
         """Create and return a sample user UUID."""
-        from src.app.modules.users.models import User
         from uuid import uuid4
-        
+
+        from src.app.modules.users.models import User
+
         uid = uuid4().hex[:8]
         user_data = {
             "email": f"u-{uid}@test.com",
@@ -63,9 +61,9 @@ class TestAuditLogAPIEndpoints:
             "name": "Test User",
             "hashed_password": "hashed_password",
             "is_active": True,
+            "tenant_id": tenant.id,
         }
         user = User(**user_data)
-        user.tenant_id = tenant.id
         db.add(user)
         db.commit()
         db.refresh(user)

@@ -12,8 +12,8 @@ logger = logging.getLogger(__name__)
 
 class RateLimiter:
     _instance: Optional["RateLimiter"] = None
-    pool: Optional[ConnectionPool] = None
-    client: Optional[Redis] = None
+    pool: ConnectionPool | None = None
+    client: Redis | None = None
 
     def __new__(cls) -> "RateLimiter":
         if cls._instance is None:
@@ -63,8 +63,12 @@ class RateLimiter:
 
         except Exception as e:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
-            # In case of Redis error, we allow the request by default
-            return False, 0
+            # Use configurable fail-open/fail-closed behavior
+            from ...core.config import settings
+            if settings.RATE_LIMIT_FAIL_OPEN:
+                return False, 0  # Allow request (fail-open)
+            else:
+                return True, limit + 1  # Block request (fail-closed)
 
         return False, current_count
 

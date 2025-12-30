@@ -4,10 +4,10 @@ Validates that audit logs are properly isolated per tenant
 and cannot be accessed across tenant boundaries.
 """
 
-import pytest
-from datetime import datetime, UTC
+from datetime import datetime
 from uuid import uuid4
-from unittest.mock import MagicMock
+
+import pytest
 
 from src.app.modules.audit_logs.models import AuditLog
 

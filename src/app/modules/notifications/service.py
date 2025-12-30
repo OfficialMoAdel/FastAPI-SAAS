@@ -5,7 +5,7 @@ from datetime import datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from jinja2 import Environment, FileSystemLoader, Template
@@ -13,10 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.config import settings
-from src.app.core.events import EventPriority, event_bus
-from src.app.core.utils.rate_limit import rate_limiter
-from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+from ...core.config import settings
+from ...core.events import EventPriority, event_bus
+from ...core.utils.rate_limit import rate_limiter
+from .models import EmailTemplateOverride, Notification
 
 logger = get_logger(__name__)
 
@@ -112,7 +112,7 @@ class NotificationService:
         to_email: str,
         template_name: str,
         context: dict[str, Any],
-        user_id: Optional[UUID] = None,
+        user_id: UUID | None = None,
     ) -> Notification:
         """Send an email notification.
 
@@ -204,8 +204,8 @@ class NotificationService:
     async def get_notifications(
         self,
         tenant_id: UUID,
-        user_id: Optional[UUID] = None,
-        status: Optional[str] = None,
+        user_id: UUID | None = None,
+        status: str | None = None,
         limit: int = 50,
         offset: int = 0,
     ) -> list[Notification]:
@@ -251,7 +251,7 @@ async def send_email_task(
         subject: Email subject
         html_content: HTML body content
     """
-    from src.app.core.db.database import async_get_db
+    from ...core.db.database import async_get_db
 
     async for db in async_get_db():
         try:

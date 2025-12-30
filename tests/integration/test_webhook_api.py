@@ -7,17 +7,15 @@ Tests cover:
 - Delivery history retrieval
 """
 
-import pytest
-from datetime import datetime, UTC
 from uuid import uuid4
-from unittest.mock import AsyncMock, patch, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
-from src.app.main import app
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery, WebhookDeliveryStatus
 from src.app.api.dependencies import get_current_user
+from src.app.main import app
 from src.app.modules.users.models import User
+
 
 @pytest.fixture(autouse=True)
 def mock_current_user():
@@ -27,7 +25,8 @@ def mock_current_user():
         name="Test User",
         username="testuser",
         hashed_password="mock_password_hash",
-        is_superuser=False
+        is_superuser=False,
+        tenant_id=1
     )
     mock_user.id = 1
     mock_user.tenant_id = 1

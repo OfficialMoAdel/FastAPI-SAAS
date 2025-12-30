@@ -4,21 +4,23 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
-from src.app.modules.feature_flags.schemas import (
+from ...api.dependencies import get_current_tenant, get_current_user
+from ...core.db.database import async_get_db
+from ...core.rbac.dependencies import requires_permission
+from ...core.rbac.permissions import Permission
+from ...modules.tenants.models import Tenant
+from ...modules.users.models import User
+from .schemas import (
     FeatureFlagBulkUpdateRequest,
     FeatureFlagCheckResponse,
     FeatureFlagsResponse,
     FeatureFlagUpdateRequest,
 )
-from src.app.modules.feature_flags.utils import (
+from .utils import (
     bulk_update_feature_flags,
     get_feature_flags,
     is_feature_enabled,
 )
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/feature-flags", tags=["Feature Flags"])
 
@@ -62,7 +64,11 @@ async def check_feature_flag(
     )
 
 
-@router.patch("/{flag_name}", response_model=FeatureFlagCheckResponse)
+@router.patch(
+    "/{flag_name}",
+    response_model=FeatureFlagCheckResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_MANAGE))],
+)
 async def update_feature_flag(
     flag_name: str,
     request: FeatureFlagUpdateRequest,
@@ -75,12 +81,8 @@ async def update_feature_flag(
 
     Value can be boolean, string, number, or any JSON-serializable type.
 
-    NOTE: This endpoint should be protected with admin-only permissions
-    in production. Feature flags are typically managed by admins.
+    Requires FEATURE_FLAGS_MANAGE permission.
     """
-    # TODO: Add RBAC check for admin permission
-    # from src.app.modules.rbac.dependencies import require_permission
-    # require_permission("feature_flags.manage")
 
     # Get current tenant
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
@@ -106,7 +108,11 @@ async def update_feature_flag(
     )
 
 
-@router.delete("/{flag_name}", status_code=204)
+@router.delete(
+    "/{flag_name}",
+    status_code=204,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_MANAGE))],
+)
 async def delete_feature_flag(
     flag_name: str,
     db: AsyncSession = Depends(async_get_db),
@@ -116,9 +122,8 @@ async def delete_feature_flag(
     """
     Remove a feature flag from the tenant configuration.
 
-    NOTE: This endpoint should be protected with admin-only permissions.
+    Requires FEATURE_FLAGS_MANAGE permission.
     """
-    # TODO: Add RBAC check for admin permission
 
     # Get current tenant
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
@@ -137,7 +142,11 @@ async def delete_feature_flag(
     await db.commit()
 
 
-@router.put("/bulk", response_model=FeatureFlagsResponse)
+@router.put(
+    "/bulk",
+    response_model=FeatureFlagsResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_MANAGE))],
+)
 async def bulk_update_flags(
     request: FeatureFlagBulkUpdateRequest,
     db: AsyncSession = Depends(async_get_db),
@@ -146,8 +155,9 @@ async def bulk_update_flags(
 ) -> FeatureFlagsResponse:
     """
     Bulk update feature flags for the current tenant.
+
+    Requires FEATURE_FLAGS_MANAGE permission.
     """
-    # TODO: Add RBAC check for admin permission
 
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
     await bulk_update_feature_flags(db, tenant_id, request.feature_flags)

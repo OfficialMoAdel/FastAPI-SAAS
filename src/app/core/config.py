@@ -19,7 +19,10 @@ class CryptSettings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
-    ENCRYPTION_KEY: SecretStr | None = None  # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
+    # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
+    ENCRYPTION_KEY: SecretStr | None = None
+    # SECURITY: Set unique salt per deployment for key derivation
+    ENCRYPTION_SALT: SecretStr | None = None
 
 
 class DatabaseSettings(BaseSettings):
@@ -116,6 +119,9 @@ class RedisRateLimiterSettings(BaseSettings):
 class DefaultRateLimitSettings(BaseSettings):
     DEFAULT_RATE_LIMIT_LIMIT: int = 10
     DEFAULT_RATE_LIMIT_PERIOD: int = 3600
+    # If True, allow requests when Redis is unavailable (fail-open)
+    # If False, block requests when Redis is unavailable (fail-closed, more secure)
+    RATE_LIMIT_FAIL_OPEN: bool = True
 
 
 class CRUDAdminSettings(BaseSettings):

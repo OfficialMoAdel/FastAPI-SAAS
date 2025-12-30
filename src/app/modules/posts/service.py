@@ -7,8 +7,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
 from ...core.tenancy.context import get_tenant_context
-from ...modules.users.crud import crud_users
-from ...modules.users.schemas import UserRead
 from .crud import crud_posts
 from .schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
@@ -17,16 +15,18 @@ class PostService:
     """Service class for post-related business logic."""
 
     async def _get_user_or_404(self, username: str, db: AsyncSession) -> dict[str, Any]:
-        """Get user by username or raise NotFoundException."""
-        db_user = await crud_users.get(db=db, username=username, is_deleted=False, schema_to_select=UserRead)
-        if db_user is None:
-            raise NotFoundException("User not found")
-        return db_user
+        """Get user by username or raise NotFoundException.
+
+        Uses UserService for cross-module access instead of direct CRUD import.
+        """
+        from ...modules.users.service import user_service
+        return await user_service.get_user(username, db)
 
     async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
         """Check if current user owns the resource."""
         if current_user_id != target_user_id:
             raise ForbiddenException()
+
 
     async def create_post(
         self,
@@ -65,7 +65,7 @@ class PostService:
 
         post_dict = post.model_dump()
         post_dict["created_by_user_id"] = db_user["id"]
-        
+
         # Inject tenant_id from context
         tenant = get_tenant_context()
         if tenant is not None:

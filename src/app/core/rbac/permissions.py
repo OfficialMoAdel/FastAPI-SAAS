@@ -12,3 +12,7 @@ class Permission(str, Enum):
 
     # Role Assignment (US2)
     ROLES_ASSIGN = "roles:assign"
+
+    # Feature Flags Management
+    FEATURE_FLAGS_MANAGE = "feature_flags:manage"
+

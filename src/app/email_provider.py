@@ -2,7 +2,6 @@
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
-from typing import Optional
 
 from pydantic import SecretStr
 
@@ -23,11 +22,11 @@ class EmailMessage:
     to_email: str
     subject: str
     html_content: str
-    from_name: Optional[str] = None
-    from_email: Optional[str] = None
-    text_content: Optional[str] = None
-    reply_to: Optional[str] = None
-    attachments: Optional[list[EmailAttachment]] = None
+    from_name: str | None = None
+    from_email: str | None = None
+    text_content: str | None = None
+    reply_to: str | None = None
+    attachments: list[EmailAttachment] | None = None
 
 
 class EmailProvider(ABC):
@@ -70,8 +69,8 @@ class SMTPProvider(EmailProvider):
         username: str,
         password: SecretStr,
         use_tls: bool = True,
-        from_email: Optional[str] = None,
-        from_name: Optional[str] = None,
+        from_email: str | None = None,
+        from_name: str | None = None,
     ):
         """Initialize SMTP provider."""
         self.host = host

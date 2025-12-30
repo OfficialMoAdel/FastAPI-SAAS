@@ -54,7 +54,7 @@ class UserService:
         user_dict = user.model_dump()
         user_dict["hashed_password"] = await get_password_hash(password=user_dict["password"])
         del user_dict["password"]
-        
+
         # Inject tenant_id from context
         tenant = get_tenant_context()
         if tenant is not None:
@@ -246,20 +246,101 @@ class UserService:
         NotFoundException
             If user or tier not found
         """
-        from ...modules.tiers.crud import crud_tiers
-        from ...modules.tiers.schemas import TierRead
+        # Use lazy import to avoid circular dependencies while maintaining module boundaries
+        from ...modules.tiers.service import tier_service
 
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if db_user is None:
             raise NotFoundException("User not found")
 
-        db_tier = await crud_tiers.get(db=db, id=values.tier_id, schema_to_select=TierRead)
-        if db_tier is None:
+        # Validate tier exists by using service layer instead of direct crud access
+        try:
+            await tier_service.get_tier_by_id(values.tier_id, db)
+        except NotFoundException:
             raise NotFoundException("Tier not found")
 
         await crud_users.update(db=db, object=values.model_dump(), username=username)
         return {"message": f"User {db_user['name']} Tier updated"}
 
+    async def get_user_with_rate_limits(self, username: str, db: AsyncSession) -> dict[str, Any]:
+        """Get user with their tier's rate limits.
+
+        Parameters
+        ----------
+        username : str
+            Username to look up
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, Any]
+            User data with tier_rate_limits
+
+        Raises
+        ------
+        NotFoundException
+            If user or tier not found
+        """
+        from ...modules.rate_limits.service import rate_limit_service
+        from ...modules.tiers.service import tier_service
+
+        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+        if db_user is None:
+            raise NotFoundException("User not found")
+
+        user_dict = dict(db_user)
+        if db_user["tier_id"] is None:
+            user_dict["tier_rate_limits"] = []
+            return user_dict
+
+        # Use service layer to get tier and rate limits
+        db_tier = await tier_service.get_tier_by_id(db_user["tier_id"], db)
+        rate_limits_response = await rate_limit_service.get_rate_limits_by_tier_id(db_tier["id"], db)
+
+        user_dict["tier_rate_limits"] = rate_limits_response["data"]
+        return user_dict
+
+    async def get_user_with_tier(self, username: str, db: AsyncSession) -> dict[str, Any] | None:
+        """Get user with tier information merged.
+
+        Parameters
+        ----------
+        username : str
+            Username to look up
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, Any] | None
+            User data with tier info prefixed, or None if no tier
+
+        Raises
+        ------
+        NotFoundException
+            If user or tier not found
+        """
+        from ...modules.tiers.service import tier_service
+
+        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+        if db_user is None:
+            raise NotFoundException("User not found")
+
+        if db_user["tier_id"] is None:
+            return None
+
+        db_tier = await tier_service.get_tier_by_id(db_user["tier_id"], db)
+
+        user_dict = dict(db_user)
+        tier_dict = dict(db_tier)
+
+        for key, value in tier_dict.items():
+            user_dict[f"tier_{key}"] = value
+
+        return user_dict
+
 
 # Singleton instance for import convenience
 user_service = UserService()
+

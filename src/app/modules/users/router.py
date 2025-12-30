@@ -8,11 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
-from ...core.exceptions.http_exceptions import NotFoundException
 from ...core.security import oauth2_scheme
-from ...modules.rate_limits.crud import crud_rate_limits
-from ...modules.tiers.crud import crud_tiers
-from ...modules.tiers.schemas import TierRead
 from .crud import crud_users
 from .schemas import UserCreate, UserRead, UserTierUpdate, UserUpdate
 from .service import user_service
@@ -98,24 +94,7 @@ async def read_user_rate_limits(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, Any]:
     """Get user's rate limits based on their tier."""
-    db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
-    if db_user is None:
-        raise NotFoundException("User not found")
-
-    user_dict = dict(db_user)
-    if db_user["tier_id"] is None:
-        user_dict["tier_rate_limits"] = []
-        return user_dict
-
-    db_tier = await crud_tiers.get(db=db, id=db_user["tier_id"], schema_to_select=TierRead)
-    if db_tier is None:
-        raise NotFoundException("Tier not found")
-
-    db_rate_limits = await crud_rate_limits.get_multi(db=db, tier_id=db_tier["id"])
-
-    user_dict["tier_rate_limits"] = db_rate_limits["data"]
-
-    return user_dict
+    return await user_service.get_user_with_rate_limits(username, db)
 
 
 @router.get("/user/{username}/tier", dependencies=[Depends(get_current_user)])
@@ -123,24 +102,7 @@ async def read_user_tier(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict | None:
     """Get user's tier information (authenticated users only)."""
-    db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
-    if db_user is None:
-        raise NotFoundException("User not found")
-
-    if db_user["tier_id"] is None:
-        return None
-
-    db_tier = await crud_tiers.get(db=db, id=db_user["tier_id"], schema_to_select=TierRead)
-    if not db_tier:
-        raise NotFoundException("Tier not found")
-
-    user_dict = dict(db_user)
-    tier_dict = dict(db_tier)
-
-    for key, value in tier_dict.items():
-        user_dict[f"tier_{key}"] = value
-
-    return user_dict
+    return await user_service.get_user_with_tier(username, db)
 
 
 @router.patch("/user/{username}/tier", dependencies=[Depends(get_current_superuser)])
@@ -149,3 +111,4 @@ async def patch_user_tier(
 ) -> dict[str, str]:
     """Update user's tier (superuser only)."""
     return await user_service.update_user_tier(username, values, db)
+

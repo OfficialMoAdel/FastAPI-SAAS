@@ -1,11 +1,10 @@
-from typing import Optional
 
 from pydantic import BaseModel, ConfigDict
 
 
 class PermissionBase(BaseModel):
     slug: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class PermissionOut(PermissionBase):
@@ -15,7 +14,7 @@ class PermissionOut(PermissionBase):
 
 class RoleBase(BaseModel):
     name: str
-    description: Optional[str] = None
+    description: str | None = None
 
 
 class RoleCreate(RoleBase):

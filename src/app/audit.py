@@ -2,7 +2,6 @@
 
 import logging
 from datetime import datetime
-from typing import Optional
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
@@ -18,7 +17,7 @@ class EmailService:
     def __init__(self):
         """Initialize email service."""
         self._session_maker = local_session
-        self._provider: Optional[EmailProvider] = None
+        self._provider: EmailProvider | None = None
 
     def _get_provider(self) -> EmailProvider:
         """Get email provider instance."""
@@ -42,8 +41,8 @@ class EmailService:
         to_email: str,
         subject: str,
         html_content: str,
-        text_content: Optional[str] = None,
-        template_name: Optional[str] = None,
+        text_content: str | None = None,
+        template_name: str | None = None,
     ) -> bool:
         """
         Send email and log to database.
@@ -111,7 +110,7 @@ class EmailService:
         to_email: str,
         subject: str,
         status: NotificationStatus,
-        error_message: Optional[str] = None,
+        error_message: str | None = None,
     ):
         """Log notification to database."""
         async with self._session_maker() as session:

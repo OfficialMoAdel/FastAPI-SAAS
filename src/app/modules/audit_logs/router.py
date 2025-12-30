@@ -1,33 +1,32 @@
 """Audit Logs API Router."""
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.audit_logs.schemas import (
+from ...api.dependencies import get_current_tenant, get_current_user
+from ...core.db.database import async_get_db
+from ...modules.tenants.models import Tenant
+from ...modules.users.models import User
+from .models import AuditLog
+from .schemas import (
     AuditLogListResponse,
     AuditLogResponse,
 )
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
 
 @router.get("", response_model=AuditLogListResponse)
 async def list_audit_logs(
-    action: Optional[str] = Query(None, description="Filter by action"),
-    user_id: Optional[UUID] = Query(None, description="Filter by user ID"),
-    entity_type: Optional[str] = Query(None, description="Filter by entity type"),
-    start_date: Optional[datetime] = Query(None, description="Filter from date"),
-    end_date: Optional[datetime] = Query(None, description="Filter to date"),
+    action: str | None = Query(None, description="Filter by action"),
+    user_id: UUID | None = Query(None, description="Filter by user ID"),
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),

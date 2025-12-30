@@ -3,7 +3,6 @@
 import enum
 import uuid as uuid_pkg
 from datetime import UTC, datetime
-from typing import Optional
 
 from sqlalchemy import (
     Boolean,
@@ -21,8 +20,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.app.core.db.database import Base
-from src.app.core.db.models import UUIDMixin
+from ...core.db.database import Base
+from ...core.db.models import UUIDMixin
 
 
 class WebhookDeliveryStatus(str, enum.Enum):
@@ -213,13 +212,13 @@ class WebhookDelivery(Base, UUIDMixin):
     )
 
     # Response Information
-    response_status: Mapped[Optional[int]] = mapped_column(
+    response_status: Mapped[int | None] = mapped_column(
         SmallInteger,
         nullable=True,
         init=False,
         comment="HTTP response status code",
     )
-    response_body: Mapped[Optional[str]] = mapped_column(
+    response_body: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         init=False,
@@ -227,7 +226,7 @@ class WebhookDelivery(Base, UUIDMixin):
     )
 
     # Retry Information
-    next_retry_at: Mapped[Optional[datetime]] = mapped_column(
+    next_retry_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         index=True,

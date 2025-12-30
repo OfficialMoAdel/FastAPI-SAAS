@@ -99,16 +99,16 @@ class TestPerTenantEmailUniqueness:
             username="user-t1-shared",
             email=shared_email,
             hashed_password="hashed_password_1",
+            tenant_id=test_tenants["tenant1"].id,
         )
-        user1.tenant_id = test_tenants["tenant1"].id
 
         user2 = User(
             name="User Two",
             username="user-t2-shared",
             email=shared_email,
             hashed_password="hashed_password_2",
+            tenant_id=test_tenants["tenant2"].id,
         )
-        user2.tenant_id = test_tenants["tenant2"].id
 
         db_session.add(user1)
         db_session.add(user2)
@@ -135,8 +135,8 @@ class TestPerTenantEmailUniqueness:
             username="user-dup-1",
             email=duplicate_email,
             hashed_password="hashed_password_1",
+            tenant_id=test_tenants["tenant1"].id,
         )
-        user1.tenant_id = test_tenants["tenant1"].id
         db_session.add(user1)
         await db_session.commit()
 
@@ -145,8 +145,8 @@ class TestPerTenantEmailUniqueness:
             username="user-dup-2",
             email=duplicate_email,
             hashed_password="hashed_password_2",
+            tenant_id=test_tenants["tenant1"].id,
         )
-        user2.tenant_id = test_tenants["tenant1"].id  # Same tenant
         db_session.add(user2)
 
         with pytest.raises(IntegrityError):

@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 class AuditLogBase(BaseModel):
@@ -19,8 +19,8 @@ class AuditLogBase(BaseModel):
 class AuditLogCreate(AuditLogBase):
     """Schema for creating audit log."""
 
-    tenant_id: UUID
-    user_id: UUID | None = None
+    tenant_id: int
+    user_id: int | None = None
     ip_address: str | None = None
     user_agent: str | None = None
 
@@ -31,8 +31,8 @@ class AuditLogResponse(AuditLogBase):
     model_config = ConfigDict(from_attributes=True)
 
     id: UUID
-    tenant_id: UUID
-    user_id: UUID | None
+    tenant_id: int
+    user_id: int | None
     ip_address: str | None
     user_agent: str | None
     created_at: datetime
@@ -54,8 +54,36 @@ class AuditLogFilter(BaseModel):
     action: str | None = None
     entity_type: str | None = None
     entity_id: UUID | None = None
-    user_id: UUID | None = None
+    user_id: int | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
     page: int = Field(1, ge=1)
     page_size: int = Field(50, ge=1, le=100)
+
+
+class AuditLogEventData(BaseModel):
+    """Schema for validating audit log event queue data."""
+
+    tenant_id: str
+    user_id: str | None = None
+    action: str
+    entity_type: str | None = None
+    entity_id: str | None = None
+    details: dict[str, Any] = Field(default_factory=dict)
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+    @field_validator("tenant_id", "user_id", mode="before")
+    @classmethod
+    def validate_integer_ids(cls, v: Any) -> str | None:
+        if v is None:
+            return None
+        if isinstance(v, int):
+            return str(v)
+        if isinstance(v, str):
+            try:
+                int(v)
+                return v
+            except ValueError:
+                raise ValueError(f"Invalid integer ID format: {v}")
+        raise ValueError(f"ID must be int or str, got {type(v).__name__}")

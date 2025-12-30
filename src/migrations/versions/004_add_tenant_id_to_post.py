@@ -5,11 +5,11 @@ Revises: 003
 Create Date: 2025-12-30
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
-from alembic import op
 import sqlalchemy as sa
-
+from alembic import op
 
 # revision identifiers, used by Alembic.
 revision: str = '004_add_tenant_id_to_post'
@@ -30,14 +30,14 @@ def upgrade() -> None:
     """
     # Step 1: Add nullable tenant_id column
     op.add_column('post', sa.Column('tenant_id', sa.Integer(), nullable=True))
-    
+
     # Step 2: Create foreign key constraint
     op.create_foreign_key(
         'fk_post_tenant_id_tenants',
         'post', 'tenants',
         ['tenant_id'], ['id']
     )
-    
+
     # Step 3: Populate tenant_id from user's tenant for existing posts
     # This SQL updates all posts to have the tenant_id of their creator
     op.execute("""
@@ -49,10 +49,10 @@ def upgrade() -> None:
         )
         WHERE tenant_id IS NULL
     """)
-    
+
     # Step 4: Make tenant_id non-nullable after population
     op.alter_column('post', 'tenant_id', nullable=False)
-    
+
     # Step 5: Add index for efficient tenant queries
     op.create_index('ix_post_tenant_id', 'post', ['tenant_id'])
 

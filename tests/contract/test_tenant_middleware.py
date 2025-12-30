@@ -6,8 +6,9 @@ Tests the middleware behavior for X-Tenant-ID header:
 - 200 response for valid tenant slug
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
@@ -72,10 +73,10 @@ class TestTenantMiddlewareContract:
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = None
             mock_session.execute = AsyncMock(return_value=mock_result)
-            
+
             # local_session() returns a context manager that yields the session
             mock_local_session.return_value.__aenter__.return_value = mock_session
-            
+
             client = TestClient(test_app)
             response = client.get("/api/v1/protected", headers={"X-Tenant-ID": "nonexistent-tenant"})
 

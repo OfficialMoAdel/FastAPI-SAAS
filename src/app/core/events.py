@@ -24,12 +24,24 @@ class EventPriority(str, Enum):
 
 
 class EventBus:
-    """Central event bus for decoupled module communication."""
+    """Central event bus for decoupled module communication.
+
+    Features:
+    - Priority-based event handling (CRITICAL=sync, NORMAL/LOW=async)
+    - Dead-letter queue (DLQ) for failed events after max retries
+    - ARQ integration for background processing
+    """
+
+    # Maximum retry attempts before moving to DLQ
+    MAX_RETRIES = 3
+    # Retry delays in seconds: [60, 300, 900] = 1min, 5min, 15min
+    RETRY_DELAYS = [60, 300, 900]
 
     def __init__(self) -> None:
         """Initialize event bus with handler registry."""
         self._handlers = defaultdict(list)
         self._arq_queue = None
+        self._dlq: list[dict] = []  # In-memory DLQ (use Redis in production)
 
     def set_arq_queue(self, queue: Any) -> None:
         """Set ARQ queue for async event processing.
@@ -193,6 +205,73 @@ class EventBus:
         """
         return self._handlers.get(event_name, [])
 
+    def add_to_dlq(
+        self,
+        event_name: str,
+        handler_name: str,
+        data: dict[str, Any],
+        error: str,
+        attempt_count: int,
+    ) -> None:
+        """Add failed event to dead-letter queue.
+
+        Args:
+            event_name: Name of event
+            handler_name: Handler that failed
+            data: Event payload
+            error: Error message
+            attempt_count: Number of attempts made
+        """
+        from datetime import UTC, datetime
+
+        dlq_entry = {
+            "event_name": event_name,
+            "handler": handler_name,
+            "data": data,
+            "error": error,
+            "attempt_count": attempt_count,
+            "failed_at": datetime.now(UTC).isoformat(),
+        }
+        self._dlq.append(dlq_entry)
+        logger.warning(
+            "Event moved to DLQ",
+            event_name=event_name,
+            handler=handler_name,
+            attempt_count=attempt_count,
+            error=error,
+        )
+
+    def get_dlq_entries(self) -> list[dict]:
+        """Get all dead-letter queue entries.
+
+        Returns:
+            List of failed event entries
+        """
+        return self._dlq.copy()
+
+    def retry_dlq_entry(self, index: int) -> dict | None:
+        """Remove and return a DLQ entry for retry.
+
+        Args:
+            index: Index of entry to retry
+
+        Returns:
+            DLQ entry or None if not found
+        """
+        if 0 <= index < len(self._dlq):
+            return self._dlq.pop(index)
+        return None
+
+    def clear_dlq(self) -> int:
+        """Clear all DLQ entries.
+
+        Returns:
+            Number of entries cleared
+        """
+        count = len(self._dlq)
+        self._dlq.clear()
+        return count
+
 
 # Global event bus instance
 event_bus = EventBus()
@@ -209,12 +288,14 @@ async def process_event_handler(
     """ARQ worker function to execute event handlers asynchronously.
 
     Args:
-        ctx: ARQ context
+        ctx: ARQ context (includes job_try for retry count)
         event_name: Name of event
         handler_module: Module containing handler
         handler_name: Name of handler function
         data: Event payload
     """
+    job_try = ctx.get("job_try", 1)
+
     try:
         # Dynamically import and execute handler
         import importlib
@@ -229,11 +310,35 @@ async def process_event_handler(
             handler=f"{handler_module}.{handler_name}",
         )
     except Exception as e:
-        logger.error(
-            "ARQ event handler failed",
+        handler_full_name = f"{handler_module}.{handler_name}"
+
+        # Check if max retries exceeded
+        if job_try >= EventBus.MAX_RETRIES:
+            logger.error(
+                "ARQ event handler max retries exceeded - moving to DLQ",
+                event_name=event_name,
+                handler=handler_full_name,
+                attempt_count=job_try,
+                error=str(e),
+            )
+            # Add to dead-letter queue
+            event_bus.add_to_dlq(
+                event_name=event_name,
+                handler_name=handler_full_name,
+                data=data,
+                error=str(e),
+                attempt_count=job_try,
+            )
+            # Don't re-raise - event is now in DLQ
+            return
+
+        logger.warning(
+            "ARQ event handler failed - will retry",
             event_name=event_name,
-            handler=f"{handler_module}.{handler_name}",
+            handler=handler_full_name,
+            attempt=job_try,
+            max_attempts=EventBus.MAX_RETRIES,
             error=str(e),
-            exc_info=True,
         )
         raise  # Re-raise for ARQ retry logic
+

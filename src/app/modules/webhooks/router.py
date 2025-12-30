@@ -1,19 +1,18 @@
 """Webhooks API Router."""
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
-from src.app.modules.webhooks.schemas import (
+from ...api.dependencies import get_current_tenant, get_current_user
+from ...core.db.database import async_get_db
+from ...modules.tenants.models import Tenant
+from ...modules.users.models import User
+from .models import WebhookDelivery, WebhookEndpoint
+from .schemas import (
     WebhookDeliveryListResponse,
     WebhookDeliveryResponse,
     WebhookEndpointCreate,
@@ -22,15 +21,15 @@ from src.app.modules.webhooks.schemas import (
     WebhookEndpointUpdate,
     WebhookTestRequest,
 )
-from src.app.modules.webhooks.service import WebhookService
+from .service import WebhookService
 
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
 @router.get("/", response_model=WebhookEndpointListResponse)
 async def list_webhook_endpoints(
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
+    event_type: str | None = Query(None, description="Filter by event type"),
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),
@@ -166,11 +165,11 @@ async def delete_webhook_endpoint(
 
 @router.get("/deliveries", response_model=WebhookDeliveryListResponse)
 async def list_webhook_deliveries(
-    endpoint_id: Optional[UUID] = Query(None, description="Filter by endpoint ID"),
-    status: Optional[str] = Query(None, description="Filter by status"),
-    event_type: Optional[str] = Query(None, description="Filter by event type"),
-    start_date: Optional[datetime] = Query(None, description="Filter from date"),
-    end_date: Optional[datetime] = Query(None, description="Filter to date"),
+    endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
+    status: str | None = Query(None, description="Filter by status"),
+    event_type: str | None = Query(None, description="Filter by event type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),
@@ -292,12 +291,12 @@ async def test_webhook_endpoint(
 ) -> WebhookDeliveryResponse:
     """
     Test a webhook endpoint by sending a simulated event.
-    
+
     This simulated event is recorded as a regular delivery attempt.
     """
     # Rate limiting for test endpoint (T106)
     # 10 tests/minute per tenant
-    from src.app.core.utils.rate_limit import rate_limiter
+    from ...core.utils.rate_limit import rate_limiter
 
     if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", 10, 60):
         # We use standard HTTPException here to match project style

@@ -31,6 +31,50 @@ class LogoutResponse(BaseModel):
     message: str = "Logged out successfully"
 
 
+class PasswordChangeRequest(BaseModel):
+    """Password change request schema."""
+
+    current_password: str
+    new_password: str
+
+
+class PasswordResetRequest(BaseModel):
+    """Password reset request schema (forgot password)."""
+
+    email: str
+
+
+class PasswordResetConfirm(BaseModel):
+    """Password reset confirmation schema."""
+
+    token: str
+    new_password: str
+
+
+class PasswordResetResponse(BaseModel):
+    """Password reset response schema."""
+
+    message: str
+
+
+class EmailVerificationRequest(BaseModel):
+    """Schema for requesting email verification (resend)."""
+
+    email: str
+
+
+class EmailVerificationConfirm(BaseModel):
+    """Schema for confirming email verification."""
+
+    token: str
+
+
+class EmailVerificationResponse(BaseModel):
+    """Schema for email verification response."""
+
+    message: str
+
+
 # Re-export all token schemas for backward compatibility
 __all__ = [
     "Token",

@@ -2,14 +2,13 @@
 
 import uuid as uuid_pkg
 from datetime import UTC, datetime
-from typing import Optional
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from src.app.core.db.database import Base
+from ...core.db.database import Base
 
 
 class FeatureFlag(Base):
@@ -46,7 +45,7 @@ class FeatureFlag(Base):
         unique=True,
         comment="Unique flag identifier (e.g., 'dark_mode')",
     )
-    description: Mapped[Optional[str]] = mapped_column(
+    description: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         comment="Human-readable description of the flag",
@@ -89,7 +88,7 @@ class FeatureFlag(Base):
         nullable=False,
         init=False,
     )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         default=None,
         nullable=True,
@@ -161,7 +160,7 @@ class FeatureFlagOverride(Base):
         nullable=False,
         comment="Overridden value (can be any JSON type)",
     )
-    reason: Mapped[Optional[str]] = mapped_column(
+    reason: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         comment="Optional explanation for the override",
@@ -174,7 +173,7 @@ class FeatureFlagOverride(Base):
         nullable=False,
         init=False,
     )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         default=None,
         nullable=True,

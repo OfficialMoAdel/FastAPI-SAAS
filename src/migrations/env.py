@@ -23,7 +23,7 @@ if config.config_file_name is not None:
 
 # Note: We don't import app.models here because it causes duplicate table
 # registration errors due to circular imports and multiple import paths.
-# For autogenerate, models need to be imported. For simple migrations, 
+# For autogenerate, models need to be imported. For simple migrations,
 # the migration scripts themselves define the schema changes.
 target_metadata = Base.metadata
 

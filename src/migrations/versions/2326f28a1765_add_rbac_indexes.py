@@ -5,11 +5,10 @@ Revises: 004_add_tenant_id_to_post
 Create Date: 2025-12-30 14:47:46.784005
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '2326f28a1765'

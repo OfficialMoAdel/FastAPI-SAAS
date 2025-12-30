@@ -1,10 +1,12 @@
-import pytest
-from fastapi import FastAPI, Request
-from fastapi.testclient import TestClient
-from unittest.mock import patch, AsyncMock
+from unittest.mock import AsyncMock, patch
 
-from src.app.middleware.rate_limit import RateLimitMiddleware
+import pytest
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
 from src.app.core.config import settings
+from src.app.middleware.rate_limit import RateLimitMiddleware
+
 
 @pytest.fixture
 def client():
@@ -21,13 +23,13 @@ def client():
 def test_rate_limit_headers_allowed(mock_limiter, client):
     # Setup mock to return allowed (False) and a count of 5
     mock_limiter.check_rate_limit = AsyncMock(return_value=(False, 5))
-    
+
     response = client.get("/")
-    
+
     assert response.status_code == 200
     assert response.headers["X-RateLimit-Limit"] == str(settings.DEFAULT_RATE_LIMIT_LIMIT)
     assert response.headers["X-RateLimit-Period"] == str(settings.DEFAULT_RATE_LIMIT_PERIOD)
-    
+
     # Remaining should be Limit - Count (e.g. 10 - 5 = 5)
     # Assuming default limit is 10. Let's check config, but dynamic calculation is:
     expected_remaining = max(0, settings.DEFAULT_RATE_LIMIT_LIMIT - 5)
@@ -38,9 +40,9 @@ def test_rate_limit_headers_exceeded(mock_limiter, client):
     # Setup mock to return limited (True) and a count equal to limit + 1
     limit = settings.DEFAULT_RATE_LIMIT_LIMIT
     mock_limiter.check_rate_limit = AsyncMock(return_value=(True, limit + 1))
-    
+
     response = client.get("/")
-    
+
     assert response.status_code == 429
     assert response.text == "Too Many Requests"
     assert response.headers["X-RateLimit-Limit"] == str(limit)

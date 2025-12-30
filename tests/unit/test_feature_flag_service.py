@@ -6,9 +6,9 @@ Tests cover:
 - is_feature_enabled logic
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
-import sys
+
+import pytest
 
 
 # Patch FastCRUD before any imports
@@ -58,7 +58,7 @@ class TestFeatureFlagsIsEnabled:
 
         # Test the logic directly
         flag = await mock_crud.get(mock_db, name="nonexistent", tenant_id=1)
-        
+
         # If flag is None, is_feature_enabled should return False
         if not flag:
             result = False
@@ -80,7 +80,7 @@ class TestFeatureFlagsIsEnabled:
 
         # Test the logic
         flag = await mock_crud.get(mock_db, name="disabled", tenant_id=1)
-        
+
         if not flag:
             result = False
         elif not flag.is_enabled:
@@ -104,7 +104,7 @@ class TestFeatureFlagsIsEnabled:
 
         # Test the logic
         flag = await mock_crud.get(mock_db, name="enabled", tenant_id=1)
-        
+
         if not flag:
             result = False
         elif not flag.is_enabled:
@@ -133,7 +133,7 @@ class TestFeatureFlagsIsEnabled:
 
         # Get flag
         flag = await mock_crud.get(mock_db, name="feature", tenant_id=1)
-        
+
         if not flag or not flag.is_enabled:
             result = False
         elif user_id is None:
@@ -163,7 +163,7 @@ class TestFeatureFlagsIsEnabled:
 
         # Get flag
         flag = await mock_crud.get(mock_db, name="feature", tenant_id=1)
-        
+
         if not flag or not flag.is_enabled:
             result = False
         elif user_id is None:

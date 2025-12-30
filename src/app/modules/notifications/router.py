@@ -1,28 +1,27 @@
 """Notifications API Router."""
 
 from datetime import datetime
-from typing import Optional
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
-from src.app.modules.notifications.models import EmailTemplateOverride, Notification
-from src.app.modules.notifications.schemas import (
+from ...api.dependencies import get_current_tenant, get_current_user
+from ...core.db.database import async_get_db
+from ...modules.tenants.models import Tenant
+from ...modules.users.models import User
+from .models import EmailTemplateOverride, Notification
+from .schemas import (
     EmailTemplateOverrideCreate,
     EmailTemplateOverrideResponse,
     NotificationListResponse,
     NotificationResponse,
 )
-from src.app.modules.notifications.schemas import (
+from .schemas import (
     NotificationSendRequest as SendEmailRequest,
 )
-from src.app.modules.notifications.service import NotificationService
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
+from .service import NotificationService
 
 router = APIRouter(prefix="/notifications", tags=["Notifications"])
 
@@ -61,9 +60,9 @@ async def send_notification(
 
 @router.get("", response_model=NotificationListResponse)
 async def list_notifications(
-    status: Optional[str] = Query(None, description="Filter by status"),
-    start_date: Optional[datetime] = Query(None, description="Filter from date"),
-    end_date: Optional[datetime] = Query(None, description="Filter to date"),
+    status: str | None = Query(None, description="Filter by status"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),

@@ -6,10 +6,8 @@ Tests cover:
 - Template override model
 """
 
+
 import pytest
-from datetime import datetime, UTC
-from uuid import uuid4
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestNotificationStatus:

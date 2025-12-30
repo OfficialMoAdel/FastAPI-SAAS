@@ -7,6 +7,7 @@ Success Criteria:
 
 import asyncio
 import time
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -14,14 +15,15 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
 from src.app.main import app
-from src.app.modules.tenants.models import Tenant
 
 
 @pytest_asyncio.fixture
 async def async_client():
     """Create async test client."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
-        yield client
+    # Mock Redis rate limiter to avoid initialization error
+    with patch("src.app.core.utils.rate_limit.rate_limiter.client", new=AsyncMock()):
+        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+            yield client
 
 
 @pytest.mark.asyncio
@@ -61,7 +63,7 @@ class TestTenantResolutionPerformance:
         assert get_time < 1.0, f"get_tenant_context too slow: {get_time:.4f}ms"
         assert clear_time < 1.0, f"clear_tenant_context too slow: {clear_time:.4f}ms"
 
-        print(f"\nContext operation latencies:")
+        print("\nContext operation latencies:")
         print(f"  set: {set_time:.4f}ms")
         print(f"  get: {get_time:.4f}ms")
         print(f"  clear: {clear_time:.4f}ms")
@@ -97,7 +99,7 @@ class TestTenantResolutionPerformance:
         for tenant_id in range(100):
             assert results[tenant_id] == tenant_id, f"Context leakage detected for tenant {tenant_id}"
 
-        print(f"\n100 concurrent tasks completed with no context leakage")
+        print("\n100 concurrent tasks completed with no context leakage")
 
     async def test_whitelist_path_latency(self, async_client: AsyncClient) -> None:
         """Test that whitelist path bypass is fast (<5ms) (SC-004)."""

@@ -4,15 +4,15 @@ import asyncio
 from collections.abc import Callable
 from datetime import datetime
 from functools import wraps
-from typing import Any, Optional
+from typing import Any
 from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.events import EventPriority, event_bus
-from src.app.modules.audit_logs.models import AuditLog
+from ...core.events import EventPriority, event_bus
+from .models import AuditLog
 
 logger = get_logger(__name__)
 
@@ -32,12 +32,12 @@ class AuditLogService:
         self,
         tenant_id: int,
         action: str,
-        entity_type: Optional[str] = None,
-        entity_id: Optional[UUID] = None,
-        user_id: Optional[int] = None,
-        details: Optional[dict[str, Any]] = None,
-        ip_address: Optional[str] = None,
-        user_agent: Optional[str] = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+        user_id: int | None = None,
+        details: dict[str, Any] | None = None,
+        ip_address: str | None = None,
+        user_agent: str | None = None,
     ) -> AuditLog:
         """Create an audit log entry.
 
@@ -82,12 +82,12 @@ class AuditLogService:
     async def get_logs(
         self,
         tenant_id: UUID,
-        user_id: Optional[UUID] = None,
-        action: Optional[str] = None,
-        entity_type: Optional[str] = None,
-        entity_id: Optional[UUID] = None,
-        start_date: Optional[datetime] = None,
-        end_date: Optional[datetime] = None,
+        user_id: UUID | None = None,
+        action: str | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int = 100,
         offset: int = 0,
     ) -> list[AuditLog]:
@@ -136,17 +136,17 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
     Args:
         data: Event payload containing audit log details
     """
-    from src.app.core.db.database import async_get_db
+    from ...core.db.database import async_get_db
 
     async for db in async_get_db():
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=UUID(data["tenant_id"]),
+                tenant_id=int(data["tenant_id"]),
                 action=data["action"],
                 entity_type=data.get("entity_type"),
                 entity_id=UUID(data["entity_id"]) if data.get("entity_id") else None,
-                user_id=UUID(data["user_id"]) if data.get("user_id") else None,
+                user_id=int(data["user_id"]) if data.get("user_id") else None,
                 details=data.get("details", {}),
                 ip_address=data.get("ip_address"),
                 user_agent=data.get("user_agent"),

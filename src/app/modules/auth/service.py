@@ -1,7 +1,6 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 from datetime import timedelta
-from typing import Optional
 
 from fastapi import Response
 from jose import JWTError
@@ -94,7 +93,7 @@ class AuthService:
 
         return {"access_token": access_token, "token_type": "bearer"}
 
-    async def refresh_access_token(self, refresh_token: Optional[str], db: AsyncSession) -> dict[str, str]:
+    async def refresh_access_token(self, refresh_token: str | None, db: AsyncSession) -> dict[str, str]:
         """Refresh access token using refresh token.
 
         Parameters
@@ -127,7 +126,7 @@ class AuthService:
     async def logout(
         self,
         access_token: str,
-        refresh_token: Optional[str],
+        refresh_token: str | None,
         response: Response,
         db: AsyncSession,
     ) -> dict[str, str]:
@@ -164,6 +163,190 @@ class AuthService:
 
         except JWTError:
             raise UnauthorizedException("Invalid token.")
+
+    async def change_password(
+        self,
+        user_id: int,
+        current_password: str,
+        new_password: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Change user password.
+
+        Parameters
+        ----------
+        user_id : int
+            The user's ID
+        current_password : str
+            Current password for verification
+        new_password : str
+            New password to set
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message
+
+        Raises
+        ------
+        UnauthorizedException
+            If current password is incorrect
+        """
+        from ...core.security import get_password_hash, verify_password
+        from ...modules.users.crud import crud_users
+
+        user = await crud_users.get(db=db, id=user_id, is_deleted=False)
+        if not user:
+            raise UnauthorizedException("User not found.")
+
+        # Verify current password
+        if not await verify_password(current_password, user["hashed_password"]):
+            raise UnauthorizedException("Current password is incorrect.")
+
+        # Hash and update new password
+        new_hashed = await get_password_hash(new_password)
+        await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed})
+
+        return {"message": "Password changed successfully"}
+
+    async def request_password_reset(
+        self,
+        email: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Request password reset (sends email with reset token).
+
+        Parameters
+        ----------
+        email : str
+            User's email address
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message (always returns success for security)
+        """
+        import secrets
+        from datetime import UTC, datetime, timedelta
+
+        from ...modules.users.crud import crud_users
+
+        user = await crud_users.get(db=db, email=email, is_deleted=False)
+
+        # Always return success to prevent email enumeration
+        if user:
+            # Generate reset token (valid for 1 hour)
+            secrets.token_urlsafe(32)
+            datetime.now(UTC) + timedelta(hours=1)
+
+            # Store token in database (would need a password_reset_tokens table)
+            # For now, we'll use a simple approach - in production, store in DB
+            # This is a placeholder - actual implementation needs a tokens table
+
+            # TODO: Send email with reset link containing the token
+            # await notification_service.send_password_reset_email(email, reset_token)
+
+        return {"message": "If an account exists with that email, a reset link has been sent."}
+
+    async def reset_password(
+        self,
+        token: str,
+        new_password: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Reset password using reset token.
+
+        Parameters
+        ----------
+        token : str
+            Password reset token
+        new_password : str
+            New password to set
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message
+
+        Raises
+        ------
+        UnauthorizedException
+            If token is invalid or expired
+        """
+        # TODO: Validate token from password_reset_tokens table
+        # For now, this is a placeholder that shows the structure
+        raise UnauthorizedException("Password reset tokens not yet implemented. Please contact support.")
+
+    async def send_verification_email(
+        self,
+        email: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Send email verification link.
+
+        Parameters
+        ----------
+        email : str
+            User's email address
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message
+        """
+        import secrets
+        from datetime import UTC, datetime, timedelta
+
+        from ...modules.users.crud import crud_users
+
+        user = await crud_users.get(db=db, email=email, is_deleted=False)
+
+        if user and not user.get("is_email_verified", False):
+            # Generate verification token (valid for 24 hours)
+            secrets.token_urlsafe(32)
+            datetime.now(UTC) + timedelta(hours=24)
+
+            # TODO: Store token in database (would need email_verification_tokens table)
+            # TODO: Send email with verification link containing the token
+            # await notification_service.send_verification_email(email, verification_token)
+
+        return {"message": "If the email is registered and unverified, a verification link has been sent."}
+
+    async def verify_email(
+        self,
+        token: str,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Verify email using verification token.
+
+        Parameters
+        ----------
+        token : str
+            Email verification token
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message
+
+        Raises
+        ------
+        UnauthorizedException
+            If token is invalid or expired
+        """
+        # TODO: Validate token from email_verification_tokens table
+        # For now, this is a placeholder that shows the structure
+        raise UnauthorizedException("Email verification tokens not yet implemented. Please contact support.")
 
 
 # Singleton instance for import convenience

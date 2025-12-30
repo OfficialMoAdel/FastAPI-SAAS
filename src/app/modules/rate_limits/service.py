@@ -6,8 +6,6 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
-from ...modules.tiers.crud import crud_tiers
-from ...modules.tiers.schemas import TierRead
 from .crud import crud_rate_limits
 from .schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
 
@@ -17,10 +15,29 @@ class RateLimitService:
 
     async def _get_tier_or_404(self, tier_name: str, db: AsyncSession) -> dict[str, Any]:
         """Get tier by name or raise NotFoundException."""
-        db_tier = await crud_tiers.get(db=db, name=tier_name, schema_to_select=TierRead)
-        if not db_tier:
-            raise NotFoundException("Tier not found")
-        return db_tier
+        # Use tier_service for cross-module access
+        from ...modules.tiers.service import tier_service
+        return await tier_service.get_tier(tier_name, db)
+
+    async def get_rate_limits_by_tier_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
+        """Get all rate limits for a tier by tier ID.
+
+        This is an interface method for cross-module access.
+
+        Parameters
+        ----------
+        tier_id : int
+            Tier ID
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, Any]
+            Rate limits data with 'data' key containing list
+        """
+        rate_limits_data = await crud_rate_limits.get_multi(db=db, tier_id=tier_id)
+        return rate_limits_data
 
     async def create_rate_limit(
         self, tier_name: str, rate_limit: RateLimitCreate, db: AsyncSession

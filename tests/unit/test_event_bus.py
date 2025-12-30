@@ -8,9 +8,9 @@ Tests cover:
 - ARQ queue integration
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
-import asyncio
 
 from src.app.core.events import EventBus, EventPriority, event_bus
 
@@ -148,7 +148,7 @@ class TestEventBusPriority:
             handler_executed = True
 
         await fresh_event_bus.publish("sync.event", {}, priority=EventPriority.CRITICAL)
-        
+
         assert handler_executed is True
 
     @pytest.mark.asyncio

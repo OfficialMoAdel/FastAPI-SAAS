@@ -16,8 +16,8 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from src.app.core.db.database import Base
-from src.app.core.db.models import UUIDMixin
+from ...core.db.database import Base
+from ...core.db.models import UUIDMixin
 
 
 class NotificationStatus(str, enum.Enum):
@@ -55,7 +55,7 @@ class Notification(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), nullable=False, init=False
     )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True, init=False
     )
 
@@ -66,7 +66,7 @@ class Notification(Base, UUIDMixin):
         nullable=False,
         index=True,
     )
-    user_id: Mapped[Optional[int]] = mapped_column(
+    user_id: Mapped[int | None] = mapped_column(
         Integer,
         ForeignKey("user.id", ondelete="SET NULL"),
         nullable=True,
@@ -99,13 +99,13 @@ class Notification(Base, UUIDMixin):
         index=True,
         comment="Current delivery status",
     )
-    sent_at: Mapped[Optional[datetime]] = mapped_column(
+    sent_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
         init=False,
         comment="Timestamp when email was successfully sent",
     )
-    error_message: Mapped[Optional[str]] = mapped_column(
+    error_message: Mapped[str | None] = mapped_column(
         Text,
         nullable=True,
         init=False,
@@ -175,7 +175,7 @@ class EmailTemplateOverride(Base, UUIDMixin):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), nullable=False, init=False
     )
-    updated_at: Mapped[Optional[datetime]] = mapped_column(
+    updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), default=None, nullable=True, init=False
     )
 
@@ -193,7 +193,7 @@ class EmailTemplateOverride(Base, UUIDMixin):
         nullable=False,
         comment="Template name to override",
     )
-    subject_override: Mapped[Optional[str]] = mapped_column(
+    subject_override: Mapped[str | None] = mapped_column(
         String(255),
         nullable=True,
         comment="Custom subject line (null = use default)",

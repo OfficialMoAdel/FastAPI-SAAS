@@ -7,15 +7,12 @@ Tests cover:
 - Email template endpoints
 """
 
-import pytest
-from datetime import datetime, UTC
 from uuid import uuid4
-from unittest.mock import AsyncMock, patch, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
 
 from src.app.main import app
-from src.app.modules.notifications.models import Notification, NotificationStatus
 
 
 class TestNotificationListAPI:

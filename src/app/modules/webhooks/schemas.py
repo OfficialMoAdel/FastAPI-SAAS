@@ -4,15 +4,23 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl
+from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
 
 
 class WebhookEndpointBase(BaseModel):
     """Base webhook endpoint schema."""
 
-    url: HttpUrl = Field(..., description="Webhook URL to POST events to")
+    url: HttpUrl = Field(..., description="Webhook URL to POST events to (HTTPS required)")
     event_type: str = Field(..., description="Event type to subscribe to (e.g., 'user.created')")
     is_active: bool = Field(True, description="Whether webhook is active")
+
+    @field_validator("url")
+    @classmethod
+    def validate_https_url(cls, v: HttpUrl) -> HttpUrl:
+        """Ensure webhook URLs use HTTPS for security."""
+        if str(v).startswith("http://"):
+            raise ValueError("Webhook URLs must use HTTPS for security")
+        return v
 
 
 class WebhookEndpointCreate(WebhookEndpointBase):

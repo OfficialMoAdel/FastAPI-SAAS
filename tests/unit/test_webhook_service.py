@@ -6,12 +6,11 @@ Tests cover:
 - Service initialization
 """
 
-import pytest
-from datetime import datetime, timedelta
-from uuid import uuid4
 from unittest.mock import AsyncMock, MagicMock
 
-from src.app.modules.webhooks.service import WebhookService, WEBHOOK_RETRY_DELAYS
+import pytest
+
+from src.app.modules.webhooks.service import WEBHOOK_RETRY_DELAYS, WebhookService
 
 
 @pytest.fixture

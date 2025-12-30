@@ -4,21 +4,31 @@ Contract tests for RBAC security - verifies 403 Forbidden behavior.
 T024: Ensure 403 Forbidden is returned for all unauthorized access.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import pytest_asyncio
-from unittest.mock import patch, AsyncMock, MagicMock
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 
-from src.app.main import app
 from src.app.core.rbac.permissions import Permission
+from src.app.main import app
 
 
 @pytest_asyncio.fixture
 async def client() -> AsyncClient:
     """Create async HTTP client."""
-    transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
-        yield ac
+    # Mock Redis rate limiter to avoid initialization error
+    mock_rate_limiter = MagicMock()
+    mock_rate_limiter.initialize = AsyncMock()
+    mock_rate_limiter.client = AsyncMock()
+
+    # We need to patch where it's imported in the valid code
+    # It might be in src.app.core.utils.rate_limit.rate_limiter or similar
+    with patch("src.app.core.utils.rate_limit.rate_limiter.client", new=AsyncMock()):
+        # Also need to mock the Cache middleware or internal cache calls if any
+        transport = ASGITransport(app=app)
+        async with AsyncClient(transport=transport, base_url="http://test") as ac:
+            yield ac
 
 
 class TestRBACSecurityContract:

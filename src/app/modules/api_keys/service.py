@@ -1,0 +1,227 @@
+"""API Key service layer - business logic for API key management."""
+
+import hashlib
+import json
+import secrets
+from datetime import UTC, datetime
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
+from .crud import crud_api_keys
+from .schemas import APIKeyCreate, APIKeyResponse
+
+
+class APIKeyService:
+    """Service class for API key-related business logic."""
+
+    KEY_PREFIX_LENGTH = 8
+    KEY_LENGTH = 32  # 256 bits of entropy
+
+    def _generate_key(self) -> tuple[str, str, str]:
+        """Generate a new API key.
+
+        Returns:
+            Tuple of (full_key, prefix, hashed_key)
+        """
+        # Generate a secure random key
+        raw_key = secrets.token_urlsafe(self.KEY_LENGTH)
+        prefix = raw_key[:self.KEY_PREFIX_LENGTH]
+
+        # Hash the key for storage (using SHA-256)
+        hashed = hashlib.sha256(raw_key.encode()).hexdigest()
+
+        return raw_key, prefix, hashed
+
+    def _hash_key(self, key: str) -> str:
+        """Hash an API key for comparison."""
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    async def create_api_key(
+        self,
+        api_key_data: APIKeyCreate,
+        user_id: int,
+        tenant_id: int,
+        db: AsyncSession,
+    ) -> APIKeyResponse:
+        """Create a new API key for a user.
+
+        Parameters
+        ----------
+        api_key_data : APIKeyCreate
+            API key creation data
+        user_id : int
+            ID of the user creating the key
+        tenant_id : int
+            ID of the tenant
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        APIKeyResponse
+            Created API key with the actual key (only shown once)
+        """
+        # Generate the key
+        full_key, prefix, hashed_key = self._generate_key()
+
+        # Prepare scopes as JSON string if provided
+        scopes_json = json.dumps(api_key_data.scopes) if api_key_data.scopes else None
+
+        # Create the API key record
+        key_record = await crud_api_keys.create(
+            db=db,
+            object={
+                "name": api_key_data.name,
+                "key_prefix": prefix,
+                "hashed_key": hashed_key,
+                "user_id": user_id,
+                "tenant_id": tenant_id,
+                "scopes": scopes_json,
+                "expires_at": api_key_data.expires_at,
+                "is_active": True,
+            },
+        )
+
+        return APIKeyResponse(
+            id=key_record["id"],
+            name=key_record["name"],
+            key=full_key,  # Only returned on creation!
+            key_prefix=prefix,
+            expires_at=key_record.get("expires_at"),
+            created_at=key_record["created_at"],
+        )
+
+    async def list_api_keys(
+        self,
+        user_id: int,
+        tenant_id: int,
+        db: AsyncSession,
+        page: int = 1,
+        items_per_page: int = 10,
+    ) -> dict:
+        """List API keys for a user.
+
+        Parameters
+        ----------
+        user_id : int
+            ID of the user
+        tenant_id : int
+            ID of the tenant
+        db : AsyncSession
+            Database session
+        page : int
+            Page number
+        items_per_page : int
+            Items per page
+
+        Returns
+        -------
+        dict
+            Paginated list of API keys (without actual keys)
+        """
+        return await crud_api_keys.get_multi(
+            db=db,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            is_deleted=False,
+            offset=(page - 1) * items_per_page,
+            limit=items_per_page,
+        )
+
+    async def revoke_api_key(
+        self,
+        key_id: int,
+        user_id: int,
+        tenant_id: int,
+        db: AsyncSession,
+    ) -> dict[str, str]:
+        """Revoke an API key.
+
+        Parameters
+        ----------
+        key_id : int
+            ID of the API key to revoke
+        user_id : int
+            ID of the user making the request
+        tenant_id : int
+            ID of the tenant
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict[str, str]
+            Success message
+
+        Raises
+        ------
+        NotFoundException
+            If key not found
+        ForbiddenException
+            If user doesn't own the key
+        """
+        key = await crud_api_keys.get(db=db, id=key_id, is_deleted=False)
+
+        if not key:
+            raise NotFoundException("API key not found")
+
+        if key["user_id"] != user_id or key["tenant_id"] != tenant_id:
+            raise ForbiddenException("You don't have permission to revoke this key")
+
+        await crud_api_keys.update(
+            db=db,
+            id=key_id,
+            object={"is_active": False},
+        )
+
+        return {"message": "API key revoked successfully"}
+
+    async def validate_api_key(
+        self,
+        api_key: str,
+        db: AsyncSession,
+    ) -> dict | None:
+        """Validate an API key and return the associated user info.
+
+        Parameters
+        ----------
+        api_key : str
+            The API key to validate
+        db : AsyncSession
+            Database session
+
+        Returns
+        -------
+        dict | None
+            User info if valid, None otherwise
+        """
+        hashed = self._hash_key(api_key)
+
+        key = await crud_api_keys.get(db=db, hashed_key=hashed, is_active=True)
+
+        if not key:
+            return None
+
+        # Check expiration
+        if key.get("expires_at") and key["expires_at"] < datetime.now(UTC):
+            return None
+
+        # Update last used timestamp
+        await crud_api_keys.update(
+            db=db,
+            id=key["id"],
+            object={"last_used_at": datetime.now(UTC)},
+        )
+
+        # Return user info for authentication
+        return {
+            "user_id": key["user_id"],
+            "tenant_id": key["tenant_id"],
+            "scopes": json.loads(key["scopes"]) if key.get("scopes") else [],
+            "key_id": key["id"],
+        }
+
+
+# Singleton instance
+api_key_service = APIKeyService()

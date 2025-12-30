@@ -4,9 +4,10 @@ Tests the role CRUD endpoints with properly mocked middleware
 to avoid async database connection contention.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import AsyncMock, MagicMock, patch
 
 from src.app.main import app
 

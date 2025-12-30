@@ -1,6 +1,6 @@
 """Notification module for managing email and system notifications."""
 
-from src.app.modules.notifications.models import (
+from .models import (
     EmailTemplateOverride,
     Notification,
     NotificationStatus,

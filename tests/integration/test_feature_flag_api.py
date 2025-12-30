@@ -7,17 +7,13 @@ Tests cover:
 - Permission enforcement
 """
 
+
 import pytest
-from datetime import datetime, UTC
-from uuid import uuid4
-from unittest.mock import AsyncMock, patch, MagicMock
 
-from fastapi.testclient import TestClient
-
-from src.app.main import app
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
 from src.app.api.dependencies import get_current_user
+from src.app.main import app
 from src.app.modules.users.models import User
+
 
 @pytest.fixture(autouse=True)
 def mock_current_user():
@@ -27,7 +23,8 @@ def mock_current_user():
         name="Test User",
         username="testuser",
         hashed_password="mock_password_hash",
-        is_superuser=False
+        is_superuser=False,
+        tenant_id=1
     )
     mock_user.id = 1
     mock_user.tenant_id = 1
@@ -134,7 +131,7 @@ class TestFeatureFlagTenantIsolation:
         """Flag overrides from one tenant should not affect another."""
         # Create two real tenants in DB
         from src.app.modules.tenants.models import Tenant
-        
+
         # Use simple slugs
         t1 = Tenant(name="T1", slug="t1-iso", is_active=True)
         t2 = Tenant(name="T2", slug="t2-iso", is_active=True)
@@ -156,7 +153,7 @@ class TestFeatureFlagTenantIsolation:
     def test_override_only_affects_own_tenant(self, client, db) -> None:
         """Setting override should only affect the requesting tenant."""
         from src.app.modules.tenants.models import Tenant
-        
+
         # Reuse or create unique tenants
         existing_t3 = db.query(Tenant).filter(Tenant.slug == "t3-iso").first()
         if existing_t3:
@@ -164,14 +161,14 @@ class TestFeatureFlagTenantIsolation:
         else:
             t3 = Tenant(name="T3", slug="t3-iso", is_active=True)
             db.add(t3)
-        
+
         existing_t4 = db.query(Tenant).filter(Tenant.slug == "t4-iso").first()
         if existing_t4:
             t4 = existing_t4
         else:
             t4 = Tenant(name="T4", slug="t4-iso", is_active=True)
             db.add(t4)
-            
+
         db.commit()
 
         headers_a = {"X-Tenant-ID": t3.slug}
