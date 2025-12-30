@@ -4,6 +4,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Optional
 
+from pydantic import SecretStr
+
 
 @dataclass
 class EmailAttachment:
@@ -66,7 +68,7 @@ class SMTPProvider(EmailProvider):
         host: str,
         port: int,
         username: str,
-        password: str,
+        password: SecretStr,
         use_tls: bool = True,
         from_email: Optional[str] = None,
         from_name: Optional[str] = None,
@@ -127,7 +129,7 @@ class SMTPProvider(EmailProvider):
                 if self.use_tls:
                     server.starttls()
 
-                server.login(self.username, self.password)
+                server.login(self.username, self.password.get_secret_value())
                 server.send_message(msg)
 
             return True

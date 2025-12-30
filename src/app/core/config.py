@@ -19,6 +19,7 @@ class CryptSettings(BaseSettings):
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    ENCRYPTION_KEY: SecretStr | None = None  # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
 
 
 class DatabaseSettings(BaseSettings):
@@ -171,7 +172,15 @@ class EnvironmentSettings(BaseSettings):
 class CORSSettings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]  # SECURITY: Restrict to specific origins
     CORS_METHODS: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
-    CORS_HEADERS: list[str] = ["*"]
+    CORS_HEADERS: list[str] = [
+        "Content-Type",
+        "Authorization",
+        "X-Request-ID",
+        "X-Webhook-Signature",
+        "X-Webhook-Event",
+        "X-Webhook-ID",
+        "X-Webhook-Timestamp",
+    ]
 
 
 class Settings(

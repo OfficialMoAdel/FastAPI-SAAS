@@ -37,6 +37,7 @@ class UserCreate(UserBase):
 
 class UserCreateInternal(UserBase):
     hashed_password: str
+    tenant_id: int | None = None
 
 
 class UserUpdate(BaseModel):

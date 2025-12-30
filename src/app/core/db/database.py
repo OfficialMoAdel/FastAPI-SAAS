@@ -2,13 +2,21 @@ from collections.abc import AsyncGenerator
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass
+from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
 
 from ..config import settings
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
-    pass
+    """Base class for all SQLAlchemy models.
+    
+    Includes extend_existing=True to prevent duplicate table registration
+    errors during alembic migrations when models are imported from multiple paths.
+    """
+    
+    @declared_attr.directive
+    def __table_args__(cls) -> dict:
+        return {"extend_existing": True}
 
 
 DATABASE_URI = settings.POSTGRES_URI

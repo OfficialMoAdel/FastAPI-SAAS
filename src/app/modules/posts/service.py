@@ -6,6 +6,7 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
+from ...core.tenancy.context import get_tenant_context
 from ...modules.users.crud import crud_users
 from ...modules.users.schemas import UserRead
 from .crud import crud_posts
@@ -64,6 +65,11 @@ class PostService:
 
         post_dict = post.model_dump()
         post_dict["created_by_user_id"] = db_user["id"]
+        
+        # Inject tenant_id from context
+        tenant = get_tenant_context()
+        if tenant is not None:
+            post_dict["tenant_id"] = tenant.id
 
         post_internal = PostCreateInternal(**post_dict)
         created_post = await crud_posts.create(db=db, object=post_internal, schema_to_select=PostRead)

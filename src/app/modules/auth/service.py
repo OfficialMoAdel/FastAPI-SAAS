@@ -5,6 +5,7 @@ from typing import Optional
 
 from fastapi import Response
 from jose import JWTError
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
@@ -29,6 +30,7 @@ class AuthService:
         password: str,
         response: Response,
         db: AsyncSession,
+        redis: Redis,
     ) -> dict[str, str]:
         """Authenticate user and generate tokens.
 
@@ -42,6 +44,8 @@ class AuthService:
             FastAPI response object for setting cookies
         db : AsyncSession
             Database session
+        redis : Redis
+            Redis client for account lockout
 
         Returns
         -------
@@ -51,11 +55,27 @@ class AuthService:
         Raises
         ------
         UnauthorizedException
-            If credentials are invalid
+            If credentials are invalid or account is locked
         """
+        # Check for account lockout
+        login_attempts_key = f"login_attempts:{username}"
+        attempts = await redis.get(login_attempts_key)
+        if attempts and int(attempts) >= 5:
+            raise UnauthorizedException(
+                "Account locked due to too many failed attempts. Please try again in 15 minutes."
+            )
+
         user = await authenticate_user(username_or_email=username, password=password, db=db)
         if not user:
+            # Increment failed attempts
+            new_attempts = await redis.incr(login_attempts_key)
+            if new_attempts == 1:
+                await redis.expire(login_attempts_key, 900)  # 15 minutes
+
             raise UnauthorizedException("Wrong username, email or password.")
+
+        # Clear failed attempts on success
+        await redis.delete(login_attempts_key)
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = await create_access_token(data={"sub": user["username"]}, expires_delta=access_token_expires)

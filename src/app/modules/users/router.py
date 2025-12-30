@@ -28,11 +28,11 @@ async def write_user(
     return await user_service.create_user(user, db)
 
 
-@router.get("/users", response_model=PaginatedListResponse[UserRead])
+@router.get("/users", response_model=PaginatedListResponse[UserRead], dependencies=[Depends(get_current_superuser)])
 async def read_users(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
 ) -> dict:
-    """Get paginated list of users."""
+    """Get paginated list of users for the current tenant (superuser only)."""
     users_data = await crud_users.get_multi(
         db=db,
         offset=compute_offset(page, items_per_page),
@@ -50,11 +50,11 @@ async def read_users_me(request: Request, current_user: Annotated[dict, Depends(
     return current_user
 
 
-@router.get("/user/{username}", response_model=UserRead)
+@router.get("/user/{username}", response_model=UserRead, dependencies=[Depends(get_current_user)])
 async def read_user(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, Any]:
-    """Get user by username."""
+    """Get user by username (authenticated users only)."""
     return await user_service.get_user(username, db)
 
 
@@ -118,11 +118,11 @@ async def read_user_rate_limits(
     return user_dict
 
 
-@router.get("/user/{username}/tier")
+@router.get("/user/{username}/tier", dependencies=[Depends(get_current_user)])
 async def read_user_tier(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict | None:
-    """Get user's tier information."""
+    """Get user's tier information (authenticated users only)."""
     db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
     if db_user is None:
         raise NotFoundException("User not found")

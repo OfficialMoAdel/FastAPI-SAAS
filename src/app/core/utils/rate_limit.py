@@ -35,17 +35,17 @@ class RateLimiter:
             raise Exception("Redis client is not initialized.")
         return instance.client
 
-    async def check_rate_limit(self, key: str, limit: int, period: int) -> bool:
+    async def check_rate_limit(self, key: str, limit: int, period: int) -> tuple[bool, int]:
         """
         Check if a generic key is rate limited.
-        
+
         Args:
             key: Unique key for rate limiting
             limit: Maximum count allowed
             period: Time period in seconds
-            
+
         Returns:
-            True if rate limited, False otherwise
+            Tuple (is_limited, current_count)
         """
         client = self.get_client()
         current_timestamp = int(datetime.now(UTC).timestamp())
@@ -59,19 +59,20 @@ class RateLimiter:
                 await client.expire(redis_key, period)
 
             if current_count > limit:
-                return True
+                return True, current_count
 
         except Exception as e:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
-            # In case of Redis error, we allow the request by default (fail-open)
-            return False
+            # In case of Redis error, we allow the request by default
+            return False, 0
 
-        return False
+        return False, current_count
 
     async def is_rate_limited(self, db: AsyncSession, user_id: int, path: str, limit: int, period: int) -> bool:
         sanitized_path = sanitize_path(path)
         key = f"{user_id}:{sanitized_path}"
-        return await self.check_rate_limit(key, limit, period)
+        is_limited, _ = await self.check_rate_limit(key, limit, period)
+        return is_limited
 
 
 rate_limiter = RateLimiter()

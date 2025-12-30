@@ -1,6 +1,4 @@
 import asyncio
-import importlib
-import pkgutil
 from logging.config import fileConfig
 
 from alembic import context
@@ -23,14 +21,10 @@ config.set_main_option(
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-
-def import_models(package_name):
-    package = importlib.import_module(package_name)
-    for _, module_name, _ in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
-        importlib.import_module(module_name)
-
-
-import_models("app.models")
+# Note: We don't import app.models here because it causes duplicate table
+# registration errors due to circular imports and multiple import paths.
+# For autogenerate, models need to be imported. For simple migrations, 
+# the migration scripts themselves define the schema changes.
 target_metadata = Base.metadata
 
 

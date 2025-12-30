@@ -18,6 +18,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
@@ -45,11 +46,14 @@ class WebhookService:
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
+        # Encrypt the secret if provided
+        encrypted_secret = encrypt_data(secret) if secret else None
+        
         endpoint = WebhookEndpoint(
             tenant_id=tenant_id,
             url=url,
             event_type=event_type,
-            secret=secret,
+            secret=encrypted_secret,
             is_active=is_active,
         )
 
@@ -98,10 +102,19 @@ class WebhookService:
         payload: dict[str, Any],
     ) -> WebhookDelivery:
         """Trigger a specific webhook endpoint (e.g., for testing)."""
-        signature = self._generate_signature(payload, endpoint.secret or "")
+        secret = ""
+        if endpoint.secret:
+            try:
+                secret = decrypt_data(endpoint.secret)
+            except Exception:
+                logger.warning(f"Could not decrypt webhook secret for endpoint {endpoint.id}. Using as plaintext.")
+                secret = endpoint.secret
+
+        signature = self._generate_signature(payload, secret)
 
         delivery = WebhookDelivery(
             webhook_endpoint_id=endpoint.id,
+            tenant_id=endpoint.tenant_id,
             event_type=event_type,
             payload=payload,
             signature=signature,
@@ -128,14 +141,14 @@ class WebhookService:
         return f"sha256={signature}"
 
     async def _enqueue_delivery(self, delivery_id: UUID) -> None:
-        """Enqueue webhook delivery task.
+        """Enqueue webhook delivery task."""
+        from src.app.core.utils.queue import pool
 
-        TODO: Integrate with ARQ queue when background tasks are set up.
-        For now, this is a placeholder.
-        """
-        # This will be implemented in Phase 4 with ARQ integration
-        logger.debug(f"Enqueuing delivery task for {delivery_id}")
-        pass
+        if pool:
+            await pool.enqueue_job("deliver_webhook_task", delivery_id)
+            logger.debug(f"Enqueued delivery task for {delivery_id}")
+        else:
+            logger.warning(f"Redis queue pool not initialized. Cannot enqueue delivery {delivery_id}")
 
     async def deliver_webhook(self, delivery_id: UUID, attempt: int = 0) -> WebhookDelivery:
         """Deliver a webhook (called by background task).

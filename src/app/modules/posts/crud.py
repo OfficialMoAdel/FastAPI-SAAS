@@ -1,7 +1,8 @@
-from fastcrud import FastCRUD
+from src.app.core.db.tenant_crud import TenantAwareCRUD
 
 from .models import Post
 from .schemas import PostCreateInternal, PostDelete, PostRead, PostUpdate, PostUpdateInternal
 
-CRUDPost = FastCRUD[Post, PostCreateInternal, PostUpdate, PostUpdateInternal, PostDelete, PostRead]
+CRUDPost = TenantAwareCRUD[Post, PostCreateInternal, PostUpdate, PostUpdateInternal, PostDelete, PostRead]
 crud_posts = CRUDPost(Post)
+

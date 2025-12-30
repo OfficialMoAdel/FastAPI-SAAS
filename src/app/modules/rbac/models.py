@@ -21,7 +21,7 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[Optional[str]] = mapped_column(String, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -41,12 +41,12 @@ class RolePermission(Base):
     __tablename__ = "role_permissions"
 
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True)
-    permission_id: Mapped[int] = mapped_column(ForeignKey("permissions.id"), primary_key=True)
+    permission_id: Mapped[int] = mapped_column(ForeignKey("permissions.id"), primary_key=True, index=True)
 
 
 class UserRole(Base):
     __tablename__ = "user_roles"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True)
-    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True, index=True)
+    role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True, index=True)

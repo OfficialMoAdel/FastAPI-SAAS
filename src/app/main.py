@@ -33,6 +33,10 @@ app = create_application(router=router, settings=settings, lifespan=lifespan_wit
 # Add tenant middleware for multi-tenancy support
 app.add_middleware(TenantMiddleware)
 
+from .middleware.rate_limit import RateLimitMiddleware
+
+app.add_middleware(RateLimitMiddleware)
+
 # Mount admin interface if enabled
 if admin:
     app.mount(settings.CRUD_ADMIN_MOUNT_PATH, admin.app)

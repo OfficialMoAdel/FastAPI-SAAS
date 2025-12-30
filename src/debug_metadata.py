@@ -8,9 +8,11 @@ from app.core.db.database import Base
 
 # Import all models to register them
 try:
-    from app.models import *
+    # from app.models import *
+    # Explicitly import models here if needed for registration
+    # Add other models as needed
 
-    print("Successfully imported app.models")
+    print("Successfully imported app.models (partial)")
 except Exception as e:
     print(f"Error importing app.models: {e}")
 

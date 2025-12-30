@@ -4,10 +4,12 @@ from typing import Annotated, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
+from ...core.utils.cache import async_get_redis
 from .schemas import Token
 from .service import auth_service
 
@@ -19,9 +21,10 @@ async def login_for_access_token(
     response: Response,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> dict[str, str]:
     """Authenticate user and return access token."""
-    return await auth_service.login(form_data.username, form_data.password, response, db)
+    return await auth_service.login(form_data.username, form_data.password, response, db, redis)
 
 
 @router.post("/refresh")

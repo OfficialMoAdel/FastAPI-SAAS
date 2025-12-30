@@ -12,6 +12,7 @@ class Post(Base):
     __tablename__ = "post"
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
     created_by_user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
     title: Mapped[str] = mapped_column(String(30))
     text: Mapped[str] = mapped_column(String(63206))
@@ -22,3 +23,4 @@ class Post(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
+

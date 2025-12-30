@@ -42,6 +42,7 @@ class PostCreate(PostBase):
 
 class PostCreateInternal(PostCreate):
     created_by_user_id: int
+    tenant_id: int | None = None
 
 
 class PostUpdate(BaseModel):

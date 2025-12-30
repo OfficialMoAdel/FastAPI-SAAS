@@ -1,7 +1,7 @@
 """Add core services tables (audit logs, notifications, webhooks, email templates)
 
 Revision ID: 003
-Revises: 002
+Revises: 747ee1b94759
 Create Date: 2024-12-29
 
 """
@@ -15,7 +15,7 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "003"
-down_revision: Union[str, None] = "002"
+down_revision: Union[str, None] = "747ee1b94759"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 

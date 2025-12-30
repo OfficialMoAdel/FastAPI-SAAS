@@ -10,6 +10,7 @@ from ...core.exceptions.http_exceptions import (
     NotFoundException,
 )
 from ...core.security import blacklist_token, get_password_hash
+from ...core.tenancy.context import get_tenant_context
 from .crud import crud_users
 from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
@@ -51,8 +52,13 @@ class UserService:
 
         # Hash password and create internal user object
         user_dict = user.model_dump()
-        user_dict["hashed_password"] = get_password_hash(password=user_dict["password"])
+        user_dict["hashed_password"] = await get_password_hash(password=user_dict["password"])
         del user_dict["password"]
+        
+        # Inject tenant_id from context
+        tenant = get_tenant_context()
+        if tenant is not None:
+            user_dict["tenant_id"] = tenant.id
 
         user_internal = UserCreateInternal(**user_dict)
         created_user = await crud_users.create(db=db, object=user_internal, schema_to_select=UserRead)

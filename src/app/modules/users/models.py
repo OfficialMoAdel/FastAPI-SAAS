@@ -33,7 +33,7 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
 
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False, init=False)
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
 
     name: Mapped[str] = mapped_column(String(30))
     username: Mapped[str] = mapped_column(String(20), unique=True, index=True)
