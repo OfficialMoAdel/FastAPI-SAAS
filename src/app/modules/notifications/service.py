@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+import json
 import aiosmtplib
 from jinja2 import FileSystemLoader
 from jinja2.sandbox import SandboxedEnvironment
@@ -17,6 +18,7 @@ from structlog import get_logger
 from ...core.config import settings
 from ...core.events import EventPriority, event_bus
 from ...core.utils.rate_limit import rate_limiter
+from ...core.utils.cache import client as redis_client
 from .models import EmailTemplateOverride, Notification
 
 logger = get_logger(__name__)
@@ -45,7 +47,7 @@ class NotificationService:
     ) -> tuple[str, str]:
         """Get email template content (subject and body).
 
-        Checks for tenant override first, falls back to default file template.
+        Checks cache first, then tenant override, then falls back to default file template.
 
         Args:
             tenant_id: Tenant ID
@@ -54,6 +56,17 @@ class NotificationService:
         Returns:
             Tuple of (subject, html_content)
         """
+        # Try cache first to avoid N+1 queries
+        cache_key = f"tenant:{tenant_id}:email_template:{template_name}"
+        if redis_client:
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    return tuple(json.loads(cached))
+            except Exception:
+                # Fail gracefully if cache error
+                pass
+
         # Check for tenant override
         query = select(EmailTemplateOverride).where(
             EmailTemplateOverride.tenant_id == tenant_id,
@@ -68,21 +81,30 @@ class NotificationService:
                 tenant_id=str(tenant_id),
                 template_name=template_name,
             )
-            return override.subject_override or template_name, override.content
+            data = (override.subject_override or template_name, override.content)
+        else:
+            # Use default file template
+            try:
+                template = jinja_env.get_template(f"{template_name}.html.jinja2")
+                # Default subject from template metadata or template name
+                subject = template_name.replace("_", " ").title()
+                data = (subject, template.render())
+            except Exception as e:
+                logger.error(
+                    "template_load_failed",
+                    template_name=template_name,
+                    error=str(e),
+                )
+                raise ValueError(f"Template '{template_name}' not found")
 
-        # Use default file template
-        try:
-            template = jinja_env.get_template(f"{template_name}.html.jinja2")
-            # Default subject from template metadata or template name
-            subject = template_name.replace("_", " ").title()
-            return subject, template.render()
-        except Exception as e:
-            logger.error(
-                "template_load_failed",
-                template_name=template_name,
-                error=str(e),
-            )
-            raise ValueError(f"Template '{template_name}' not found")
+        # Update cache (1 hour TTL)
+        if redis_client:
+            try:
+                await redis_client.set(cache_key, json.dumps(data), ex=3600)
+            except Exception:
+                pass
+
+        return data
 
     async def render_template(
         self,
@@ -133,12 +155,14 @@ class NotificationService:
         """
         # Rate limiting check (T105)
         # 100 emails/minute per tenant
-        if await rate_limiter.check_rate_limit(f"notif:min:{tenant_id}", 100, 60):
+        is_limited_min, _ = await rate_limiter.check_rate_limit(f"notif:min:{tenant_id}", 100, 60)
+        if is_limited_min:
             logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
             raise ValueError("Rate limit exceeded: 100 emails per minute")
 
         # 1000 emails/hour per tenant
-        if await rate_limiter.check_rate_limit(f"notif:hour:{tenant_id}", 1000, 3600):
+        is_limited_hour, _ = await rate_limiter.check_rate_limit(f"notif:hour:{tenant_id}", 1000, 3600)
+        if is_limited_hour:
             logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
             raise ValueError("Rate limit exceeded: 1000 emails per hour")
 

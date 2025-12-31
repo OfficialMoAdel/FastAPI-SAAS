@@ -43,7 +43,7 @@ class WebhookEndpoint(Base, UUIDMixin):
         id: Unique UUID identifier
         tenant_id: Reference to tenant (multi-tenancy isolation)
         url: Target URL for webhook deliveries
-        secret: HMAC secret for signature generation (hashed)
+        secret: HMAC secret for signature generation (encrypted at rest)
         event_type: Event type to subscribe to (e.g., 'user.created')
         is_active: Whether endpoint is currently active
         created_at: Timestamp when endpoint was created
@@ -69,7 +69,7 @@ class WebhookEndpoint(Base, UUIDMixin):
     secret: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
-        comment="HMAC secret for signature generation (store hashed)",
+        comment="HMAC secret for signature generation (encrypted at rest)",
     )
     event_type: Mapped[str] = mapped_column(
         String(100),

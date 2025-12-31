@@ -13,6 +13,7 @@ from ...core.rbac.dependencies import requires_permission
 from ...core.rbac.permissions import Permission
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
+from ...core.utils.cache import client as redis_client
 from .models import EmailTemplateOverride, Notification
 from .schemas import (
     EmailTemplateOverrideCreate,
@@ -101,8 +102,9 @@ async def list_notifications(
     return NotificationListResponse(
         items=[NotificationResponse.model_validate(n) for n in notifications],
         total=total,
-        limit=limit,
-        offset=offset,
+        page=(offset // limit) + 1,
+        page_size=limit,
+        has_more=(offset + len(notifications)) < total,
     )
 
 
@@ -169,6 +171,11 @@ async def create_template_override(
         existing.content = request.content
         await db.commit()
         await db.refresh(existing)
+        
+        # Invalidate cache
+        if redis_client:
+            await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{request.template_name}")
+            
         return EmailTemplateOverrideResponse.model_validate(existing)
 
     # Create new
@@ -181,6 +188,10 @@ async def create_template_override(
     db.add(override)
     await db.commit()
     await db.refresh(override)
+
+    # Invalidate cache
+    if redis_client:
+        await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{request.template_name}")
 
     return EmailTemplateOverrideResponse.model_validate(override)
 
@@ -209,3 +220,7 @@ async def delete_template_override(
 
     await db.delete(override)
     await db.commit()
+
+    # Invalidate cache
+    if redis_client:
+        await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{template_name}")

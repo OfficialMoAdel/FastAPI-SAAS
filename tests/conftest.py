@@ -11,6 +11,10 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 
 from src.app.core.config import settings
+from pydantic import SecretStr
+# Ensure encryption key is set for tests
+settings.ENCRYPTION_KEY = SecretStr("81MXxT5OUDFQDPCXtjCkOsAFThNorA6V0J27DD_w7i0=")
+
 from src.app.main import app
 
 DATABASE_URI = settings.POSTGRES_URI
@@ -49,12 +53,112 @@ def setup_db():
     # Base.metadata.drop_all(bind=sync_engine)
 
 
-@pytest.fixture(scope="session")
+class MockScalarResult:
+    """Mock for SQLAlchemy ScalarResult."""
+    def all(self):
+        return []
+    
+    def first(self):
+        return None
+    
+    def one_or_none(self):
+        return None
+
+
+class MockResult:
+    """Mock for SQLAlchemy Result."""
+    def scalars(self):
+        return MockScalarResult()
+    
+    def scalar_one_or_none(self):
+        return None
+    
+    def scalar_one(self):
+        return 0
+    
+    def scalar(self):
+        return 0
+
+
+class MockAsyncSession:
+    """Mock AsyncSession that properly simulates async database operations."""
+    
+    async def execute(self, *args, **kwargs):
+        return MockResult()
+    
+    async def commit(self):
+        pass
+    
+    async def rollback(self):
+        pass
+    
+    async def close(self):
+        pass
+    
+    async def refresh(self, obj):
+        pass
+    
+    def add(self, obj):
+        pass
+
+
+@pytest.fixture
 def client() -> Generator[TestClient, Any, None]:
-    with TestClient(app) as _client:
-        yield _client
+    # Patch create_tables and warm_caches to avoid using the global async engine which causes loop conflicts
+    # Tables are already created by the setup_db fixture
+    # Patch rate_limiter.check_rate_limit to return (False, 0) tuple as expected by middleware
+    # Patch TenantMiddleware._get_tenant_by_slug to avoid async DB calls
+    
+    # Create a fake tenant object for middleware
+    fake_tenant = Mock()
+    fake_tenant.id = "test-tenant-id"
+    fake_tenant.slug = "test-tenant-integration"
+    fake_tenant.is_active = True
+    
+    # Create a fake user for dependency override (must support both attribute and dict access)
+    fake_user = Mock()
+    fake_user.id = "test-user-id"
+    fake_user.username = "testuser"
+    fake_user.email = "test@example.com"
+    fake_user.is_superuser = False
+    fake_user.tier_id = "test-tier-id"
+    # Support dict-style access as well
+    fake_user.__getitem__ = lambda self, key: getattr(self, key)
+    
+    # Import dependencies to override
+    from src.app.api.dependencies import get_current_user, get_current_tenant, get_optional_user
+    from src.app.core.db.database import async_get_db
+    
+    # Override dependencies to avoid async DB calls
+    app.dependency_overrides[get_current_user] = lambda: fake_user
+    app.dependency_overrides[get_current_tenant] = lambda: fake_tenant
+    app.dependency_overrides[get_optional_user] = lambda: fake_user
+    app.dependency_overrides[async_get_db] = lambda: MockAsyncSession()
+    
+    # Create a fake notification for send_email mock with all required fields for Pydantic
+    from datetime import datetime, UTC
+    from uuid import uuid4
+    fake_notification = Mock()
+    fake_notification.id = uuid4()
+    fake_notification.tenant_id = uuid4()
+    fake_notification.user_id = uuid4()
+    fake_notification.template_name = "welcome"
+    fake_notification.to_email = "test@example.com"
+    fake_notification.subject = "Welcome"
+    fake_notification.status = "sent"
+    fake_notification.sent_at = datetime.now(UTC)
+    fake_notification.error_message = None
+    fake_notification.created_at = datetime.now(UTC)
+    
+    with patch("src.app.core.setup.create_tables", new_callable=AsyncMock), \
+         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock), \
+         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)), \
+         patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new_callable=AsyncMock, return_value=fake_tenant), \
+         patch("src.app.modules.notifications.service.NotificationService.send_email", new_callable=AsyncMock, return_value=fake_notification):
+        
+        with TestClient(app) as _client:
+            yield _client
     app.dependency_overrides = {}
-    sync_engine.dispose()
 
 
 @pytest.fixture

@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.logger import get_logger
 from ...core.security.encryption import decrypt_data, encrypt_data
+from ...core.security.url_validator import SSRFProtectionError, validate_webhook_url
 from .models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
@@ -106,9 +107,16 @@ class WebhookService:
         if endpoint.secret:
             try:
                 secret = decrypt_data(endpoint.secret)
-            except Exception:
-                logger.warning(f"Could not decrypt webhook secret for endpoint {endpoint.id}. Using as plaintext.")
-                secret = endpoint.secret
+            except Exception as e:
+                logger.error(
+                    "webhook_secret_decryption_failed",
+                    endpoint_id=str(endpoint.id),
+                    error=str(e),
+                )
+                raise ValueError(
+                    f"Cannot decrypt webhook secret for endpoint {endpoint.id}. "
+                    "The encryption key may have changed."
+                )
 
         signature = self._generate_signature(payload, secret)
 
@@ -190,6 +198,22 @@ class WebhookService:
             "X-Webhook-ID": str(delivery.id),
             "X-Webhook-Timestamp": str(int(delivery.created_at.timestamp())),
         }
+
+        # Validate URL for SSRF protection before making request
+        try:
+            validate_webhook_url(endpoint.url)
+        except SSRFProtectionError as e:
+            logger.error(
+                "webhook_ssrf_blocked",
+                delivery_id=str(delivery_id),
+                endpoint_url=endpoint.url,
+                error=str(e),
+            )
+            delivery.status = WebhookDeliveryStatus.FAILED
+            delivery.response_body = f"SSRF protection: {e}"
+            await self.db.commit()
+            await self.db.refresh(delivery)
+            return delivery
 
         # Attempt delivery with circuit breaker tracking
         try:

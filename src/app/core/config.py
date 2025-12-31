@@ -12,6 +12,8 @@ class AppSettings(BaseSettings):
     LICENSE_NAME: str | None = None
     CONTACT_NAME: str | None = None
     CONTACT_EMAIL: str | None = None
+    # DATABASE: Control table creation (set to False in production)
+    CREATE_TABLES_ON_STARTUP: bool = True
 
 
 class CryptSettings(BaseSettings):
