@@ -9,11 +9,18 @@ async def verify():
     # We need a session. simpler to just make an engine.
     from sqlalchemy.ext.asyncio import create_async_engine
 
-    url = f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+    url = (
+        f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
+        f"@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}"
+    )
     engine = create_async_engine(url)
 
     async with engine.connect() as conn:
-        result = await conn.execute(text("SELECT indexname FROM pg_indexes WHERE tablename IN ('roles', 'role_permissions', 'user_roles')"))
+        query = text(
+            "SELECT indexname FROM pg_indexes "
+            "WHERE tablename IN ('roles', 'role_permissions', 'user_roles')"
+        )
+        result = await conn.execute(query)
         indexes = [row[0] for row in result.fetchall()]
 
         expected = [

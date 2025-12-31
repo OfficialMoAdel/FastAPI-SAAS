@@ -207,7 +207,7 @@ class CORSSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_cors_origins(self) -> "CORSSettings":
         """Validate CORS origins for production safety.
-        
+
         Warns if wildcard '*' is used in non-local environments.
         """
         import logging

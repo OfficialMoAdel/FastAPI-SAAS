@@ -11,9 +11,9 @@ from ...api.dependencies import get_current_tenant, get_current_user
 from ...core.db.database import async_get_db
 from ...core.rbac.dependencies import requires_permission
 from ...core.rbac.permissions import Permission
+from ...core.utils.cache import client as redis_client
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
-from ...core.utils.cache import client as redis_client
 from .models import EmailTemplateOverride, Notification
 from .schemas import (
     EmailTemplateOverrideCreate,
@@ -171,11 +171,11 @@ async def create_template_override(
         existing.content = request.content
         await db.commit()
         await db.refresh(existing)
-        
+
         # Invalidate cache
         if redis_client:
             await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{request.template_name}")
-            
+
         return EmailTemplateOverrideResponse.model_validate(existing)
 
     # Create new

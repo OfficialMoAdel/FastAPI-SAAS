@@ -10,7 +10,7 @@ from .schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserU
 class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]):
     async def get_user_with_tier_eager(self, db: AsyncSession, username: str) -> dict[str, Any] | None:
         """Get user with tier in single query using LEFT JOIN.
-        
+
         Security: Respects tenant isolation via tenant context.
         """
         from sqlalchemy import select
@@ -25,7 +25,7 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             .options(joinedload(User.tier))
             .where(
                 User.username == username,
-                User.is_deleted == False,
+                User.is_deleted.is_(False),
                 User.tenant_id == tenant.id if tenant else True,
             )
         )

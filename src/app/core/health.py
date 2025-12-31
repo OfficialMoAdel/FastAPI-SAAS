@@ -27,14 +27,14 @@ async def check_redis_health(redis: Redis) -> bool:
 
 async def check_redis_queue_health() -> bool:
     """Check Redis queue (ARQ) health for background job processing."""
-    from .utils.queue import queue_pool
+    from .utils.queue import pool
 
-    if queue_pool is None:
+    if pool is None:
         LOGGER.warning("Redis queue pool not initialized")
         return False
     try:
-        redis = Redis(connection_pool=queue_pool)
-        await redis.ping()
+        # ArqRedis has built-in ping method
+        await pool.ping()
         return True
     except Exception as e:
         LOGGER.exception(f"Redis queue health check failed with error: {e}")

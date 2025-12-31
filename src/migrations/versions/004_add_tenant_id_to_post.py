@@ -20,7 +20,7 @@ depends_on: Union[str, Sequence[str], None] = None
 
 def upgrade() -> None:
     """Add tenant_id column to post table with foreign key to tenants.
-    
+
     For existing posts, we need to populate tenant_id based on the
     created_by_user_id's tenant. This migration:
     1. Adds tenant_id as nullable first
@@ -41,10 +41,10 @@ def upgrade() -> None:
     # Step 3: Populate tenant_id from user's tenant for existing posts
     # This SQL updates all posts to have the tenant_id of their creator
     op.execute("""
-        UPDATE post 
+        UPDATE post
         SET tenant_id = (
-            SELECT "user".tenant_id 
-            FROM "user" 
+            SELECT "user".tenant_id
+            FROM "user"
             WHERE "user".id = post.created_by_user_id
         )
         WHERE tenant_id IS NULL

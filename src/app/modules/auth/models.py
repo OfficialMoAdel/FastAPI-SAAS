@@ -16,13 +16,13 @@ def generate_reset_token() -> str:
 
 class PasswordResetToken(Base):
     """Token for password reset requests.
-    
+
     Tokens are:
     - Single-use (used flag)
     - Time-limited (expires_at)
     - User-specific (user_id FK)
     - Securely generated (43 chars URL-safe)
-    
+
     Attributes:
         id: Primary key
         user_id: Foreign key to user table

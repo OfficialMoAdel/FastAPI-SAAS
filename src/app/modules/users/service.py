@@ -303,7 +303,7 @@ class UserService:
 
     async def get_user_with_tier(self, username: str, db: AsyncSession) -> dict[str, Any] | None:
         """Get user with tier information merged.
-        
+
         Optimized to use single query via get_user_with_tier_eager.
         """
         user_with_tier = await crud_users.get_user_with_tier_eager(db=db, username=username)

@@ -18,7 +18,7 @@ _FALLBACK_SALT: bytes | None = None
 
 def _get_salt() -> bytes:
     """Get encryption salt from config or generate secure fallback.
-    
+
     Raises ValueError in production if ENCRYPTION_SALT is not configured.
     """
     global _FALLBACK_SALT

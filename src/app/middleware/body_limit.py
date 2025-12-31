@@ -26,7 +26,7 @@ class BodySizeLimitExceeded(Exception):
 
 class LimitedBodyStream:
     """Wrapper that enforces size limits during streaming reads.
-    
+
     This handles chunked transfer encoding attacks where Content-Length
     is missing or spoofed.
     """

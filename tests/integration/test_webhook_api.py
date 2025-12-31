@@ -172,11 +172,6 @@ class TestWebhookTestDelivery:
 class TestWebhookTenantIsolation:
     """Tests for webhook tenant isolation."""
 
-    @pytest.fixture
-    def client(self):
-        """Test client fixture."""
-        return TestClient(app)
-
     def test_webhooks_isolated_between_tenants(self, client) -> None:
         """Webhooks from one tenant should not be visible to another."""
         tenant_a = str(uuid4())

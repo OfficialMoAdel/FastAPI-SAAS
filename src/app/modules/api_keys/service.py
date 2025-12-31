@@ -183,7 +183,7 @@ class APIKeyService:
         db: AsyncSession,
     ) -> dict | None:
         """Validate an API key and return the associated user info.
-        
+
         Security: Verifies tenant is active to prevent suspended tenant access.
 
         Parameters
@@ -211,8 +211,8 @@ class APIKeyService:
             .join(Tenant, APIKey.tenant_id == Tenant.id)
             .where(
                 APIKey.hashed_key == hashed,
-                APIKey.is_active == True,
-                Tenant.is_active == True,  # Prevent suspended tenant access
+                APIKey.is_active.is_(True),
+                Tenant.is_active.is_(True),  # Prevent suspended tenant access
             )
         )
 

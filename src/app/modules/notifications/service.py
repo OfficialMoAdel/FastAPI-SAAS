@@ -1,5 +1,6 @@
 """Notification service for sending emails with template support."""
 
+import json
 from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -7,7 +8,6 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import json
 import aiosmtplib
 from jinja2 import FileSystemLoader
 from jinja2.sandbox import SandboxedEnvironment
@@ -17,8 +17,8 @@ from structlog import get_logger
 
 from ...core.config import settings
 from ...core.events import EventPriority, event_bus
-from ...core.utils.rate_limit import rate_limiter
 from ...core.utils.cache import client as redis_client
+from ...core.utils.rate_limit import rate_limiter
 from .models import EmailTemplateOverride, Notification
 
 logger = get_logger(__name__)

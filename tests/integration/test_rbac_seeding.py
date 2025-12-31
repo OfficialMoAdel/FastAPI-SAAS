@@ -23,6 +23,8 @@ class TestSystemRoleSeeding:
             "roles:read",
             "roles:manage",
             "roles:assign",
+            "feature_flags:manage",
+            "notifications:manage",
         }
 
         actual_permissions = {p.value for p in Permission}
@@ -35,16 +37,19 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
-        assert len(Permission) == 5, f"Expected 5 permissions, got {len(Permission)}"
+        assert len(Permission) == 7, f"Expected 7 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
+        valid_resources = {"users", "roles", "feature_flags", "notifications"}
+        valid_actions = {"read", "manage", "assign"}
+        
         for perm in Permission:
             assert ":" in perm.value, f"Permission {perm.name} missing colon separator"
             parts = perm.value.split(":")
             assert len(parts) == 2, f"Permission {perm.name} has invalid format"
-            assert parts[0] in {"users", "roles"}, f"Unknown resource: {parts[0]}"
-            assert parts[1] in {"read", "manage", "assign"}, f"Unknown action: {parts[1]}"
+            assert parts[0] in valid_resources, f"Unknown resource: {parts[0]}"
+            assert parts[1] in valid_actions, f"Unknown action: {parts[1]}"
 
     def test_admin_role_should_have_all_permissions(self) -> None:
         """
@@ -55,7 +60,7 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 5
+        assert len(admin_permissions) == 7
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """

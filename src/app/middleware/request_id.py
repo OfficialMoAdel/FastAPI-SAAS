@@ -20,7 +20,7 @@ REQUEST_ID_HEADER = "X-Request-ID"
 
 class RequestIDMiddleware(BaseHTTPMiddleware):
     """Middleware to generate and track request IDs for tracing.
-    
+
     Features:
     - Generates UUID4 for each request
     - Respects incoming X-Request-ID header (for distributed tracing)

@@ -65,8 +65,10 @@ class AuthService:
         login_attempts_key = f"login_attempts:{username}"
         attempts = await redis.get(login_attempts_key)
         if attempts and int(attempts) >= MAX_LOGIN_ATTEMPTS:
+            lockout_minutes = LOCKOUT_DURATION_SECONDS // 60
             raise UnauthorizedException(
-                f"Account locked due to too many failed attempts. Please try again in {LOCKOUT_DURATION_SECONDS // 60} minutes."
+                f"Account locked due to too many failed attempts. "
+                f"Please try again in {lockout_minutes} minutes."
             )
 
         user = await authenticate_user(username_or_email=username, password=password, db=db)
@@ -104,7 +106,7 @@ class AuthService:
         self, refresh_token: str | None, response: Response, db: AsyncSession
     ) -> dict[str, str]:
         """Refresh access token using refresh token.
-        
+
         Implements rotation: invalidates old refresh token and issues a new one.
         """
         if not refresh_token:

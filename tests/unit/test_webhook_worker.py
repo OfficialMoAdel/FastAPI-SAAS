@@ -24,14 +24,17 @@ def service(mock_db):
 @pytest.mark.asyncio
 async def test_trigger_webhooks_enqueues_job(service, mock_db):
     """Test that trigger_webhooks eventually calls _enqueue_delivery."""
+    from src.app.core.security.encryption import encrypt_data
+    
     tenant_id = uuid4()
     event_type = "user.created"
     payload = {"id": 123}
 
-    # Mock endpoints
+    # Mock endpoints - secret must be encrypted
+    encrypted_secret = encrypt_data("test_secret")
     mock_endpoint = MagicMock()
     mock_endpoint.id = uuid4()
-    mock_endpoint.secret = "secret"
+    mock_endpoint.secret = encrypted_secret
     mock_endpoint_result = MagicMock()
     mock_endpoint_result.scalars.return_value.all.return_value = [mock_endpoint]
     mock_db.execute.return_value = mock_endpoint_result

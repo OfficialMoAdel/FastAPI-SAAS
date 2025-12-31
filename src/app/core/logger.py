@@ -109,7 +109,7 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
 
     Returns:
         Configured structlog logger
-    
+
     Usage:
         logger = get_logger(__name__)
         logger.info("User logged in", user_id=123, ip="1.2.3.4")

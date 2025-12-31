@@ -78,6 +78,14 @@ class MockResult:
     
     def scalar(self):
         return 0
+    
+    def first(self):
+        """Return the first row or None."""
+        return None
+    
+    def one_or_none(self):
+        """Return one row or None."""
+        return None
 
 
 class MockAsyncSession:
@@ -100,6 +108,10 @@ class MockAsyncSession:
     
     def add(self, obj):
         pass
+    
+    async def get(self, entity, ident, **kwargs):
+        """Get entity by primary key - returns None in mock."""
+        return None
 
 
 @pytest.fixture
@@ -225,6 +237,10 @@ class FakeRedis:
         if match:
             keys = fnmatch.filter(keys, match)
         return 0, keys
+
+    async def ping(self):
+        """Simulate Redis ping for health checks."""
+        return True
 
     async def close(self):
         pass

@@ -32,7 +32,7 @@ DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware for tier-aware rate limiting.
-    
+
     Features:
     - Unauthenticated requests: IP-based limits
     - Authenticated requests: User + tier-based limits
@@ -75,7 +75,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def _get_rate_limit_config(self, request: Request) -> tuple[int, int, str]:
         """Determine rate limit configuration based on request context.
-        
+
         Returns:
             Tuple of (limit, period, key)
         """
@@ -102,10 +102,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def _get_user_tier_name(self, user) -> str | None:
         """Get tier name for user, with Redis caching.
-        
+
         Args:
             user: User object or dict
-            
+
         Returns:
             Tier name or None
         """
