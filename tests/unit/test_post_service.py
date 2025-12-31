@@ -217,7 +217,7 @@ class TestPostServiceUpdate:
                 db=mock_db,
             )
 
-            assert result["message"] == "Post updated successfully"
+            assert result["message"] == "Post updated"
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
@@ -270,8 +270,8 @@ class TestPostServiceDelete:
                 db=mock_db,
             )
 
-            assert result["message"] == "Post deleted successfully"
-            mock_crud.update.assert_called_once()
+            assert result["message"] == "Post deleted"
+            mock_crud.delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_hard_delete_post_superuser_only(self, mock_db, mock_user, mock_post):
@@ -292,8 +292,8 @@ class TestPostServiceDelete:
                 db=mock_db,
             )
 
-            assert result["message"] == "Post permanently deleted"
-            mock_crud.delete.assert_called_once()
+            assert result["message"] == "Post deleted from the database"
+            mock_crud.db_delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_delete_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post):

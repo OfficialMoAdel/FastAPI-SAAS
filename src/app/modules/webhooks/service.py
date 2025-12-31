@@ -9,7 +9,6 @@ This module provides:
 
 import hashlib
 import hmac
-import logging
 from datetime import datetime, timedelta
 from typing import Any
 from uuid import UUID
@@ -18,6 +17,7 @@ import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.logger import get_logger
 from ...core.security.encryption import decrypt_data, encrypt_data
 from .models import (
     WebhookDelivery,
@@ -25,7 +25,7 @@ from .models import (
     WebhookEndpoint,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Retry schedule: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
 WEBHOOK_RETRY_DELAYS = [60, 300, 900, 1800, 3600]
@@ -153,8 +153,10 @@ class WebhookService:
     async def deliver_webhook(self, delivery_id: UUID, attempt: int = 0) -> WebhookDelivery:
         """Deliver a webhook (called by background task).
 
-        Implements retry logic with exponential backoff.
+        Implements retry logic with exponential backoff and circuit breaker protection.
         """
+        from ...core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
+
         # Get delivery record
         delivery = await self.db.get(WebhookDelivery, delivery_id)
         if not delivery:
@@ -165,6 +167,21 @@ class WebhookService:
         if not endpoint:
             raise ValueError(f"Endpoint {delivery.webhook_endpoint_id} not found")
 
+        # Check circuit breaker before attempting delivery
+        if not webhook_circuit.is_closed:
+            logger.warning(
+                "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
+                delivery_id,
+                webhook_circuit.recovery_timeout - (
+                    __import__("time").time() - webhook_circuit._last_failure_time
+                ),
+            )
+            # Mark for retry later when circuit recovers
+            await self._handle_delivery_failure(delivery, attempt)
+            await self.db.commit()
+            await self.db.refresh(delivery)
+            return delivery
+
         # Prepare request
         headers = {
             "Content-Type": "application/json",
@@ -174,7 +191,7 @@ class WebhookService:
             "X-Webhook-Timestamp": str(int(delivery.created_at.timestamp())),
         }
 
-        # Attempt delivery
+        # Attempt delivery with circuit breaker tracking
         try:
             async with httpx.AsyncClient(timeout=30.0) as client:
                 response = await client.post(endpoint.url, json=delivery.payload, headers=headers)
@@ -184,17 +201,29 @@ class WebhookService:
                 delivery.response_body = response.text[:1000]  # Limit to 1KB
 
                 if 200 <= response.status_code < 300:
-                    # Success
+                    # Success - record with circuit breaker
+                    await webhook_circuit.record_success()
                     delivery.status = WebhookDeliveryStatus.DELIVERED
                     delivery.delivered_at = datetime.utcnow()
                     logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
                 else:
-                    # HTTP error - retry if attempts remain
+                    # HTTP error - record failure and retry if attempts remain
+                    await webhook_circuit.record_failure(
+                        Exception(f"HTTP {response.status_code}")
+                    )
                     await self._handle_delivery_failure(delivery, attempt)
 
+        except CircuitBreakerOpen as e:
+            # Circuit opened during delivery attempt
+            logger.warning("Webhook circuit breaker opened: %s", e)
+            delivery.attempt_count += 1
+            delivery.response_body = str(e)[:1000]
+            await self._handle_delivery_failure(delivery, attempt)
+
         except Exception as e:
-            # Network/timeout error - retry if attempts remain
+            # Network/timeout error - record failure and retry
             logger.error(f"Webhook delivery failed: {delivery_id} - {str(e)}")
+            await webhook_circuit.record_failure(e)
             delivery.attempt_count += 1
             delivery.response_body = str(e)[:1000]
             await self._handle_delivery_failure(delivery, attempt)

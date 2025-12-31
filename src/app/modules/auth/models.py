@@ -31,7 +31,7 @@ class PasswordResetToken(Base):
         used: Whether token has been used
         created_at: When token was created
     """
-    
+
     __tablename__ = "password_reset_tokens"
 
     id: Mapped[int] = mapped_column(
@@ -40,14 +40,14 @@ class PasswordResetToken(Base):
         autoincrement=True,
         init=False,
     )
-    
+
     user_id: Mapped[int] = mapped_column(
         Integer,
         ForeignKey("user.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
-    
+
     token: Mapped[str] = mapped_column(
         String(64),
         nullable=False,
@@ -55,20 +55,20 @@ class PasswordResetToken(Base):
         index=True,
         default_factory=generate_reset_token,
     )
-    
+
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
         default_factory=lambda: datetime.now(UTC) + timedelta(hours=1),
     )
-    
+
     used: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
         default=False,
         server_default="false",
     )
-    
+
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         default_factory=lambda: datetime.now(UTC),

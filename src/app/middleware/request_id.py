@@ -7,7 +7,7 @@ Generates a unique request ID for each request and adds it to:
 """
 
 import uuid
-from typing import Callable
+from collections.abc import Callable
 
 from fastapi import Request, Response
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -32,10 +32,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
         """Process request and add request ID."""
         # Use existing header or generate new ID
         request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
-        
+
         # Store in request state for downstream access
         request.state.request_id = request_id
-        
+
         # Log request with ID
         logger.debug(
             "Request started",
@@ -43,10 +43,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             method=request.method,
             path=request.url.path,
         )
-        
+
         response = await call_next(request)
-        
+
         # Add to response headers
         response.headers[REQUEST_ID_HEADER] = request_id
-        
+
         return response

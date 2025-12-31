@@ -85,7 +85,7 @@ class TestGetCachedPermissions:
         """Should return cached permissions without hitting DB."""
         mock_db = AsyncMock()
         cached_perms = ["users:read", "roles:read"]
-        mock_redis = MagicMock()
+        mock_redis = AsyncMock()
         mock_redis.get.return_value = json.dumps(cached_perms)
 
         # Patch at the source module where client is defined
@@ -103,7 +103,7 @@ class TestGetCachedPermissions:
         mock_result.scalars.return_value.all.return_value = ["users:read"]
         mock_db.execute.return_value = mock_result
 
-        mock_redis = MagicMock()
+        mock_redis = AsyncMock()
         mock_redis.get.return_value = None  # Cache miss
 
         with patch("src.app.core.utils.cache.client", mock_redis):
@@ -135,7 +135,7 @@ class TestInvalidateUserPermissionsCache:
     @pytest.mark.asyncio
     async def test_deletes_cache_key(self):
         """Should delete the correct cache key."""
-        mock_redis = MagicMock()
+        mock_redis = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             await invalidate_user_permissions_cache(user_id=1, tenant_id=1)

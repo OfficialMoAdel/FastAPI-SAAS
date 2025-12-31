@@ -5,7 +5,6 @@ Provides different rate limits based on user's tier:
 - Authenticated: User-based with tier-specific limits
 """
 
-import logging
 from collections.abc import Callable
 
 from fastapi import Request, Response
@@ -13,9 +12,10 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.utils.rate_limit import rate_limiter
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Tier-based rate limits configuration
 # Format: {tier_name: (limit, period_seconds)}
@@ -81,7 +81,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         """
         # Try to get user tier from request state (set by auth dependency)
         user = getattr(request.state, "user", None)
-        
+
         if user:
             # Authenticated user - use tier-based limits
             tier_name = await self._get_user_tier_name(user)
@@ -126,32 +126,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Look up tier name from cache or DB
         from src.app.core.utils.cache import client as redis_client
-        
+
         if redis_client:
             try:
                 cache_key = f"tier:name:{tier_id}"
                 cached = await redis_client.get(cache_key)
                 if cached:
                     return cached.decode()
-                
+
                 # Cache miss - query DB
+                from sqlalchemy import select
+
                 from src.app.core.db.database import local_session
                 from src.app.modules.tiers.models import Tier
-                from sqlalchemy import select
-                
+
                 async with local_session() as session:
                     result = await session.execute(
                         select(Tier.name).where(Tier.id == tier_id)
                     )
                     tier_name = result.scalar_one_or_none()
-                    
+
                     if tier_name:
                         await redis_client.setex(cache_key, 3600, tier_name)
-                    
+
                     return tier_name
             except Exception as e:
                 logger.warning("Tier lookup failed: %s", e)
-        
+
         return None
 
     def _get_client_ip(self, request: Request) -> str:

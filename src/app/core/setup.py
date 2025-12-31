@@ -116,6 +116,17 @@ def lifespan_factory(
             if create_tables_on_start:
                 await create_tables()
 
+            # Warm caches after DB and Redis are ready
+            from .utils.cache_warming import warm_caches
+
+            try:
+                await warm_caches()
+            except Exception as e:
+                # Log but don't fail startup - caches will be populated on-demand
+                import logging
+
+                logging.getLogger(__name__).warning("Cache warming failed: %s", e)
+
             initialization_complete.set()
 
             yield

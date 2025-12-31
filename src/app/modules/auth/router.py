@@ -38,7 +38,7 @@ async def login_for_access_token(
 @router.post("/refresh")
 async def refresh_access_token(
     response: Response,
-    request: Request, 
+    request: Request,
     db: AsyncSession = Depends(async_get_db)
 ) -> dict[str, str]:
     """Refresh access token using refresh token from cookie."""

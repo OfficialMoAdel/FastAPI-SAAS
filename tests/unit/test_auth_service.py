@@ -211,7 +211,9 @@ class TestAuthServiceTokenRefresh:
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "testuser"
 
+        # Mock settings to simulate production environment
         with (
+            patch("src.app.modules.auth.service.settings") as mock_settings,
             patch(
                 "src.app.modules.auth.service.verify_token", new_callable=AsyncMock
             ) as mock_verify,
@@ -225,6 +227,10 @@ class TestAuthServiceTokenRefresh:
                 "src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock
             ) as mock_blacklist,
         ):
+            from src.app.core.config import EnvironmentOption
+            mock_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
+            mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
+
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
@@ -249,7 +255,7 @@ class TestAuthServiceTokenRefresh:
             assert call_kwargs["value"] == "new_refresh_token"
             assert call_kwargs["httponly"] is True
             assert call_kwargs["secure"] is True
-            assert call_kwargs["samesite"] == "lax"
+            assert call_kwargs["samesite"] == "strict"
 
 
 class TestAuthServiceLogout:

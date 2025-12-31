@@ -307,24 +307,24 @@ class UserService:
         Optimized to use single query via get_user_with_tier_eager.
         """
         user_with_tier = await crud_users.get_user_with_tier_eager(db=db, username=username)
-        
+
         if not user_with_tier:
             raise NotFoundException("User not found")
-            
+
         if not user_with_tier.get("tier"):
             return None
-            
+
         # Flatten structure to match expected output format
         user_dict = user_with_tier.copy()
         tier_data = user_dict.pop("tier")
-        
+
         # Filter out SQLAlchemy internal state
         if "_sa_instance_state" in tier_data:
             del tier_data["_sa_instance_state"]
-            
+
         for key, value in tier_data.items():
             user_dict[f"tier_{key}"] = value
-            
+
         return user_dict
 
 

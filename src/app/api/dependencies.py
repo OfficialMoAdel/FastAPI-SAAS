@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..core.config import settings
 from ..core.db.database import async_get_db
 from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
-from ..core.logger import logging
+from ..core.logger import get_logger
 from ..core.security import TokenType, oauth2_scheme, verify_token
 from ..core.tenancy.context import get_tenant_context
 from ..core.utils.rate_limit import rate_limiter
@@ -17,7 +17,7 @@ from ..modules.tiers.crud import crud_tiers
 from ..modules.tiers.schemas import TierRead
 from ..modules.users.crud import crud_users
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def get_current_user(

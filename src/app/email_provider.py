@@ -82,11 +82,24 @@ class SMTPProvider(EmailProvider):
         self.from_name = from_name
 
     async def send_email(self, message: EmailMessage) -> bool:
-        """Send email via SMTP."""
+        """Send email via SMTP with circuit breaker protection."""
+        import logging
         import smtplib
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.utils import formataddr
+
+        from .core.utils.circuit_breaker import email_circuit
+
+        logger = logging.getLogger(__name__)
+
+        # Check circuit breaker before attempting send
+        if not email_circuit.is_closed:
+            logger.warning(
+                "Email circuit breaker open, skipping email to %s",
+                message.to_email,
+            )
+            return False
 
         try:
             # Prepare message
@@ -131,12 +144,14 @@ class SMTPProvider(EmailProvider):
                 server.login(self.username, self.password.get_secret_value())
                 server.send_message(msg)
 
+            # Record success with circuit breaker
+            await email_circuit.record_success()
             return True
 
         except Exception as e:
-            import logging
-
-            logging.error(f"Failed to send email: {e}")
+            # Record failure with circuit breaker
+            await email_circuit.record_failure(e)
+            logger.error(f"Failed to send email: {e}")
             return False
 
     async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:

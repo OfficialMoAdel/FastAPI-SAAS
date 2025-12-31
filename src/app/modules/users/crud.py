@@ -6,12 +6,13 @@ from ...core.db.tenant_crud import TenantAwareCRUD
 from .models import User
 from .schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
+
 class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]):
     async def get_user_with_tier_eager(self, db: AsyncSession, username: str) -> dict[str, Any] | None:
         """Get user with tier in single query using LEFT JOIN."""
         from sqlalchemy import select
         from sqlalchemy.orm import joinedload
-        from ..tiers.models import Tier
+
 
         stmt = (
             select(User)

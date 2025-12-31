@@ -5,11 +5,10 @@ Revises: 34b490f50795
 Create Date: 2025-12-31 00:47:37.139691
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
-import sqlalchemy as sa
-from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = '38822bf497a4'

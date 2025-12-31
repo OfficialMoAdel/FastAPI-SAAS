@@ -14,8 +14,11 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ..logger import get_logger
 from .permissions import Permission as PermissionEnum
 from .utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
+
+logger = get_logger(__name__)
 
 # OAuth2 scheme - same as used in api/dependencies.py
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
@@ -67,10 +70,11 @@ async def get_cached_permissions(
                 return set(json.loads(cached))
         except Exception as e:
             # Log cache read failure but continue to DB query
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"Failed to read permissions from cache for user {user_id}, tenant {tenant_id}: {e}"
+            logger.warning(
+                "Failed to read permissions from cache",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                error=str(e),
             )
 
     # Query from database
@@ -83,10 +87,11 @@ async def get_cached_permissions(
             await redis_client.expire(cache_key, PERMISSIONS_CACHE_TTL)
         except Exception as e:
             # Log cache write failure but continue successfully (permissions already retrieved)
-            import logging
-
-            logging.getLogger(__name__).warning(
-                f"Failed to cache permissions for user {user_id}, tenant {tenant_id}: {e}"
+            logger.warning(
+                "Failed to cache permissions",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                error=str(e),
             )
 
     return permissions
@@ -153,10 +158,11 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> Non
         await redis_client.delete(cache_key)
     except Exception as e:
         # Log cache invalidation failure
-        import logging
-
-        logging.getLogger(__name__).warning(
-            f"Failed to invalidate permissions cache for user {user_id}, tenant {tenant_id}: {e}"
+        logger.warning(
+            "Failed to invalidate permissions cache",
+            user_id=user_id,
+            tenant_id=tenant_id,
+            error=str(e),
         )
 
 

@@ -210,10 +210,10 @@ class CORSSettings(BaseSettings):
         """
         import logging
         import os
-        
+
         env = os.getenv("ENVIRONMENT", "local")
         has_wildcard = "*" in self.CORS_ORIGINS
-        
+
         if has_wildcard and env != "local":
             logging.getLogger(__name__).warning(
                 "SECURITY WARNING: CORS_ORIGINS contains '*' wildcard in %s environment. "
@@ -221,7 +221,7 @@ class CORSSettings(BaseSettings):
                 "Consider specifying explicit origins for production.",
                 env
             )
-        
+
         return self
 
 

@@ -34,6 +34,7 @@ dependencies = [
     "mypy>=1.16.0",
     "jinja2>=3.1.0",
     "cryptography>=45.0.3",
+    "structlog>=24.1.0",
 ]
 
 [project.optional-dependencies]

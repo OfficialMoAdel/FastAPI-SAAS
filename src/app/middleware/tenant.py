@@ -7,7 +7,6 @@ This middleware:
 - Clears context in finally block to prevent leakage
 """
 
-import logging
 from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request, Response, status
@@ -16,13 +15,14 @@ from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.app.core.db.database import local_session
+from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
 from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
     from sqlalchemy.ext.asyncio import AsyncSession
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
     [

@@ -2,6 +2,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.openapi.utils import get_openapi
 
 from .admin.initialize import create_admin_interface
 from .api import router
@@ -14,12 +15,23 @@ admin = create_admin_interface()
 
 @asynccontextmanager
 async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Custom lifespan that includes admin initialization."""
+    """Custom lifespan that includes admin initialization and pool metrics."""
     # Get the default lifespan
     default_lifespan = lifespan_factory(settings)
 
     # Run the default lifespan initialization and our admin initialization
     async with default_lifespan(app):
+        # Initialize pool metrics for observability
+        from .core.db.database import async_engine
+        from .core.utils.pool_metrics import setup_pool_metrics
+
+        try:
+            setup_pool_metrics(async_engine)
+        except Exception as e:
+            import logging
+
+            logging.getLogger(__name__).warning("Pool metrics setup failed: %s", e)
+
         # Initialize admin interface if it exists
         if admin:
             # Initialize admin database and setup
@@ -33,13 +45,54 @@ app = create_application(router=router, settings=settings, lifespan=lifespan_wit
 # Add tenant middleware for multi-tenancy support
 app.add_middleware(TenantMiddleware)
 
+from .middleware.body_limit import RequestBodyLimitMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.request_id import RequestIDMiddleware
 
 # Request ID must be first (outermost) for tracing
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RateLimitMiddleware)
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
 
 # Mount admin interface if enabled
 if admin:
     app.mount(settings.CRUD_ADMIN_MOUNT_PATH, admin.app)
+
+
+# OpenAPI security schemes
+def custom_openapi():
+    """Custom OpenAPI schema with security definitions."""
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    openapi_schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+
+    # Add security schemes
+    openapi_schema["components"]["securitySchemes"] = {
+        "BearerAuth": {
+            "type": "http",
+            "scheme": "bearer",
+            "bearerFormat": "JWT",
+            "description": "JWT access token from /api/v1/auth/login",
+        },
+        "APIKeyHeader": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "API key for programmatic access",
+        },
+    }
+
+    # Apply default security to all endpoints
+    openapi_schema["security"] = [{"BearerAuth": []}, {"APIKeyHeader": []}]
+
+    app.openapi_schema = openapi_schema
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi

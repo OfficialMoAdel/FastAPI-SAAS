@@ -13,6 +13,7 @@ from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     TokenType,
     authenticate_user,
+    blacklist_token,
     blacklist_tokens,
     create_access_token,
     create_refresh_token,
@@ -119,7 +120,7 @@ class AuthService:
         # Create new tokens
         new_access_token = await create_access_token(data={"sub": user_data.username_or_email})
         new_refresh_token = await create_refresh_token(data={"sub": user_data.username_or_email})
-        
+
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
@@ -242,7 +243,6 @@ class AuthService:
             Success message (always returns success for security)
         """
         import logging
-        from sqlalchemy import select
 
         from ...modules.users.crud import crud_users
         from .models import PasswordResetToken
