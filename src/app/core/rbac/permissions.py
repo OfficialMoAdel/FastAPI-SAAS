@@ -16,3 +16,7 @@ class Permission(str, Enum):
     # Feature Flags Management
     FEATURE_FLAGS_MANAGE = "feature_flags:manage"
 
+    # Notification Management
+    NOTIFICATIONS_MANAGE = "notifications:manage"
+
+

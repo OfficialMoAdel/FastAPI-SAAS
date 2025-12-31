@@ -9,7 +9,7 @@ This module provides:
 
 import hashlib
 import hmac
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
@@ -204,7 +204,7 @@ class WebhookService:
                     # Success - record with circuit breaker
                     await webhook_circuit.record_success()
                     delivery.status = WebhookDeliveryStatus.DELIVERED
-                    delivery.delivered_at = datetime.utcnow()
+                    delivery.delivered_at = datetime.now(UTC)
                     logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
                 else:
                     # HTTP error - record failure and retry if attempts remain
@@ -237,7 +237,7 @@ class WebhookService:
         if attempt < len(WEBHOOK_RETRY_DELAYS):
             # Schedule retry
             retry_delay = WEBHOOK_RETRY_DELAYS[attempt]
-            delivery.next_retry_at = datetime.utcnow() + timedelta(seconds=retry_delay)
+            delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
             delivery.status = WebhookDeliveryStatus.PENDING
 
             # Enqueue retry task

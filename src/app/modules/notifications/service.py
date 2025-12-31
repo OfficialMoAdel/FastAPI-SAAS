@@ -1,14 +1,15 @@
 """Notification service for sending emails with template support."""
 
-import smtplib
-from datetime import datetime
+from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-from jinja2 import Environment, FileSystemLoader, Template
+import aiosmtplib
+from jinja2 import FileSystemLoader
+from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
@@ -22,7 +23,8 @@ logger = get_logger(__name__)
 
 # Initialize Jinja2 environment
 TEMPLATE_DIR = Path(__file__).parent.parent.parent / "templates" / "email"
-jinja_env = Environment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
+# Use SandboxedEnvironment to prevent SSTI attacks from user-supplied templates
+jinja_env = SandboxedEnvironment(loader=FileSystemLoader(str(TEMPLATE_DIR)), autoescape=True)
 
 
 class NotificationService:
@@ -100,8 +102,9 @@ class NotificationService:
         """
         subject, template_content = await self.get_template_content(tenant_id, template_name)
 
-        # Render with context
-        template = Template(template_content)
+        # Render with context using the sandboxed environment
+        # This prevents execution of unsafe code if the template comes from user input
+        template = jinja_env.from_string(template_content)
         rendered_html = template.render(**context)
 
         return subject, rendered_html
@@ -185,7 +188,7 @@ class NotificationService:
         notification = await self.db.get(Notification, notification_id)
         if notification:
             notification.status = "sent"
-            notification.sent_at = datetime.utcnow()
+            notification.sent_at = datetime.now(UTC)
             await self.db.commit()
 
     async def mark_failed(self, notification_id: UUID, error_message: str) -> None:
@@ -267,13 +270,15 @@ async def send_email_task(
             html_part = MIMEText(html_content, "html")
             msg.attach(html_part)
 
-            # Send via SMTP
-            with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT) as server:
-                if settings.SMTP_TLS:
-                    server.starttls()
-                if settings.SMTP_USER and settings.SMTP_PASSWORD:
-                    server.login(settings.SMTP_USER, settings.SMTP_PASSWORD)
-                server.send_message(msg)
+            # Send via async SMTP (non-blocking)
+            await aiosmtplib.send(
+                msg,
+                hostname=settings.SMTP_HOST,
+                port=settings.SMTP_PORT,
+                username=settings.SMTP_USER if settings.SMTP_USER else None,
+                password=settings.SMTP_PASSWORD if settings.SMTP_PASSWORD else None,
+                start_tls=settings.SMTP_USE_TLS,
+            )
 
             # Mark as sent
             await service.mark_sent(UUID(notification_id))

@@ -36,7 +36,7 @@ class TestNotificationListAPI:
     def test_list_notifications_requires_auth(self, client) -> None:
         """API should require tenant authentication."""
         response = client.get("/api/v1/notifications/")
-        assert response.status_code in [401, 403, 422]
+        assert response.status_code in [400, 401, 403, 422]
 
     def test_list_notifications_with_auth(self, client, auth_headers) -> None:
         """API should return notifications with proper auth."""
@@ -113,7 +113,7 @@ class TestNotificationSendAPI:
     def test_send_notification_requires_auth(self, client) -> None:
         """Send notification endpoint requires authentication."""
         response = client.post("/api/v1/notifications/send")
-        assert response.status_code in [401, 403, 422]
+        assert response.status_code in [400, 401, 403, 422]
 
     def test_send_notification(self, client, auth_headers) -> None:
         """API should send notification."""

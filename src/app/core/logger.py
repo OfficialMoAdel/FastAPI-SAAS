@@ -33,7 +33,7 @@ def get_log_level() -> int:
 
 def setup_logging() -> None:
     """Configure structlog with appropriate processors for the environment."""
-    
+
     # Shared processors for both stdlib and structlog
     shared_processors: list[Processor] = [
         structlog.contextvars.merge_contextvars,

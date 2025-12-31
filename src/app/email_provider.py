@@ -84,10 +84,11 @@ class SMTPProvider(EmailProvider):
     async def send_email(self, message: EmailMessage) -> bool:
         """Send email via SMTP with circuit breaker protection."""
         import logging
-        import smtplib
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.utils import formataddr
+
+        import aiosmtplib
 
         from .core.utils.circuit_breaker import email_circuit
 
@@ -136,13 +137,15 @@ class SMTPProvider(EmailProvider):
                     part.add_header("Content-Disposition", f"attachment; filename={attachment.filename}")
                     msg.attach(part)
 
-            # Send via SMTP
-            with smtplib.SMTP(self.host, self.port) as server:
-                if self.use_tls:
-                    server.starttls()
-
-                server.login(self.username, self.password.get_secret_value())
-                server.send_message(msg)
+            # Send via async SMTP (non-blocking)
+            await aiosmtplib.send(
+                msg,
+                hostname=self.host,
+                port=self.port,
+                username=self.username if self.username else None,
+                password=self.password.get_secret_value() if self.password else None,
+                start_tls=self.use_tls,
+            )
 
             # Record success with circuit breaker
             await email_circuit.record_success()

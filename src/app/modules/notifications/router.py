@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_tenant, get_current_user
 from ...core.db.database import async_get_db
+from ...core.rbac.dependencies import requires_permission
+from ...core.rbac.permissions import Permission
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
 from .models import EmailTemplateOverride, Notification
@@ -140,7 +142,12 @@ async def list_template_overrides(
     return [EmailTemplateOverrideResponse.model_validate(o) for o in overrides]
 
 
-@router.post("/templates/overrides", response_model=EmailTemplateOverrideResponse, status_code=201)
+@router.post(
+    "/templates/overrides",
+    response_model=EmailTemplateOverrideResponse,
+    status_code=201,
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
+)
 async def create_template_override(
     request: EmailTemplateOverrideCreate,
     db: AsyncSession = Depends(async_get_db),
@@ -178,7 +185,11 @@ async def create_template_override(
     return EmailTemplateOverrideResponse.model_validate(override)
 
 
-@router.delete("/templates/overrides/{template_name}", status_code=204)
+@router.delete(
+    "/templates/overrides/{template_name}",
+    status_code=204,
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
+)
 async def delete_template_override(
     template_name: str,
     db: AsyncSession = Depends(async_get_db),

@@ -8,7 +8,7 @@ Handles:
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 from email.message import EmailMessage
 from typing import Any
 from uuid import UUID
@@ -94,7 +94,7 @@ async def send_email_task(
 
             # Update notification status
             notification.status = NotificationStatus.SENT
-            notification.sent_at = datetime.utcnow()
+            notification.sent_at = datetime.now(UTC)
             await db.commit()
 
             logger.info(f"Email sent successfully: {notification_id}")
@@ -154,7 +154,7 @@ async def deliver_webhook_task(
             if attempt < len(WEBHOOK_RETRY_DELAYS):
                 # Schedule retry
                 delay = WEBHOOK_RETRY_DELAYS[attempt]
-                delivery.next_retry_at = datetime.utcnow() + timedelta(seconds=delay)
+                delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=delay)
                 await db.commit()
 
                 # Enqueue retry task

@@ -20,7 +20,7 @@ def _get_tenant_id() -> int:
     if context is None:
         from fastapi import HTTPException
         raise HTTPException(status_code=400, detail="Tenant context not set")
-    return context.tenant_id
+    return context.id
 
 
 @router.post("", response_model=APIKeyResponse)

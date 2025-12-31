@@ -12,7 +12,6 @@ from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import event
-from sqlalchemy.pool import Pool
 
 logger = logging.getLogger(__name__)
 

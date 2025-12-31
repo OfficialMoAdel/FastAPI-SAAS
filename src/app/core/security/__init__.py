@@ -4,8 +4,9 @@ from enum import Enum
 from typing import Any, Literal
 
 import bcrypt
+import jwt
 from fastapi.security import OAuth2PasswordBearer
-from jose import JWTError, jwt
+from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 

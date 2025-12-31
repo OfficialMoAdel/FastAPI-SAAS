@@ -1,7 +1,7 @@
 """Email sending and logging utilities."""
 
 import logging
-from datetime import datetime
+from datetime import UTC, datetime
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
@@ -121,7 +121,7 @@ class EmailService:
                 to_email=to_email,
                 subject=subject,
                 status=status,
-                sent_at=datetime.utcnow() if status == NotificationStatus.SENT else None,
+                sent_at=datetime.now(UTC) if status == NotificationStatus.SENT else None,
                 error_message=error_message,
             )
 

@@ -69,7 +69,7 @@ class MySQLSettings(DatabaseSettings):
 class PostgresSettings(DatabaseSettings):
     POSTGRES_USER: str  # REQUIRED: No defaults
     POSTGRES_PASSWORD: str  # REQUIRED: No defaults
-    POSTGRES_SERVER: str = "192.168.121.147"  # Default VM IP
+    POSTGRES_SERVER: str = "localhost"  # Override via POSTGRES_SERVER in .env
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
     POSTGRES_SYNC_PREFIX: str = "postgresql://"
@@ -96,7 +96,7 @@ class TestSettings(BaseSettings): ...
 
 class RedisCacheSettings(BaseSettings):
     REDIS_CACHE_ENABLED: bool = True
-    REDIS_CACHE_HOST: str = "192.168.121.147"
+    REDIS_CACHE_HOST: str = "localhost"  # Override via REDIS_CACHE_HOST in .env
     REDIS_CACHE_PORT: int = 6379
     REDIS_CACHE_PASSWORD: str | None = None
 
@@ -112,14 +112,14 @@ class ClientSideCacheSettings(BaseSettings):
 
 class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_ENABLED: bool = True
-    REDIS_QUEUE_HOST: str = "192.168.121.147"
+    REDIS_QUEUE_HOST: str = "localhost"  # Override via REDIS_QUEUE_HOST in .env
     REDIS_QUEUE_PORT: int = 6379
     REDIS_QUEUE_PASSWORD: str | None = None
 
 
 class RedisRateLimiterSettings(BaseSettings):
     REDIS_RATE_LIMIT_ENABLED: bool = True
-    REDIS_RATE_LIMIT_HOST: str = "192.168.121.147"
+    REDIS_RATE_LIMIT_HOST: str = "localhost"  # Override via REDIS_RATE_LIMIT_HOST in .env
     REDIS_RATE_LIMIT_PORT: int = 6379
     REDIS_RATE_LIMIT_PASSWORD: str | None = None
 
@@ -151,7 +151,7 @@ class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_TRACK_SESSIONS: bool = True
 
     CRUD_ADMIN_REDIS_ENABLED: bool = True
-    CRUD_ADMIN_REDIS_HOST: str = "192.168.121.147"
+    CRUD_ADMIN_REDIS_HOST: str = "localhost"  # Override via CRUD_ADMIN_REDIS_HOST in .env
     CRUD_ADMIN_REDIS_PORT: int = 6379
     CRUD_ADMIN_REDIS_DB: int = 0
     CRUD_ADMIN_REDIS_PASSWORD: str | None = None

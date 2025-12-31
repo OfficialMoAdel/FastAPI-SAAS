@@ -156,6 +156,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         Returns:
             The tenant if found, None otherwise.
         """
+        # Security: Prevent DoS/large payload attacks
+        if len(slug) > 64:
+            logger.debug("Tenant resolution failed: slug_too_long | length=%d", len(slug))
+            return None
+
         from src.app.core.utils.cache import client as redis_client
 
         cache_key = f"tenant:slug:{slug}"
@@ -169,6 +174,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 if cached:
                     # Deserialize cached tenant data
                     data = json.loads(cached)
+
+                    # Handle negative cache
+                    if data is None:
+                        logger.debug("Tenant negative cache hit | slug=%s", slug)
+                        return None
+
                     logger.debug("Tenant cache hit | slug=%s", slug)
                     # Reconstruct minimal Tenant object for validation
                     return await self._get_tenant_from_cache_data(data)
@@ -182,18 +193,25 @@ class TenantMiddleware(BaseHTTPMiddleware):
             result = await session.execute(stmt)
             tenant = result.scalar_one_or_none()
 
-            # Cache the result (even None as empty string to prevent repeated lookups)
-            if redis_client and tenant:
+            if redis_client:
                 try:
                     import json
 
-                    cache_data = json.dumps({
-                        "id": tenant.id,
-                        "slug": tenant.slug,
-                        "is_active": tenant.is_active,
-                    })
-                    await redis_client.setex(cache_key, 3600, cache_data)  # 1 hour TTL
-                    logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
+                    if tenant:
+                        # Cache Success (1 hour)
+                        cache_data = json.dumps({
+                            "id": tenant.id,
+                            "slug": tenant.slug,
+                            "is_active": tenant.is_active,
+                        })
+                        await redis_client.setex(cache_key, 3600, cache_data)
+                        logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
+                    else:
+                        # Cache Failure (Negative Cache - 1 minute)
+                        # Prevent Cache Penetration DoS
+                        await redis_client.setex(cache_key, 60, "null")
+                        logger.debug("Tenant negative cache set | slug=%s", slug)
+
                 except Exception as e:
                     logger.warning("Tenant cache write error: %s", e)
 

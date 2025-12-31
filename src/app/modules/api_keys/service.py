@@ -183,6 +183,8 @@ class APIKeyService:
         db: AsyncSession,
     ) -> dict | None:
         """Validate an API key and return the associated user info.
+        
+        Security: Verifies tenant is active to prevent suspended tenant access.
 
         Parameters
         ----------
@@ -196,30 +198,47 @@ class APIKeyService:
         dict | None
             User info if valid, None otherwise
         """
+        from sqlalchemy import select
+
+        from ...modules.tenants.models import Tenant
+        from .models import APIKey
+
         hashed = self._hash_key(api_key)
 
-        key = await crud_api_keys.get(db=db, hashed_key=hashed, is_active=True)
+        # JOIN with tenant to check tenant.is_active
+        stmt = (
+            select(APIKey)
+            .join(Tenant, APIKey.tenant_id == Tenant.id)
+            .where(
+                APIKey.hashed_key == hashed,
+                APIKey.is_active == True,
+                Tenant.is_active == True,  # Prevent suspended tenant access
+            )
+        )
+
+        result = await db.execute(stmt)
+        key = result.scalar_one_or_none()
 
         if not key:
             return None
 
         # Check expiration
-        if key.get("expires_at") and key["expires_at"] < datetime.now(UTC):
+        if key.expires_at and key.expires_at < datetime.now(UTC):
             return None
 
         # Update last used timestamp
         await crud_api_keys.update(
             db=db,
-            id=key["id"],
+            id=key.id,
             object={"last_used_at": datetime.now(UTC)},
         )
 
         # Return user info for authentication
         return {
-            "user_id": key["user_id"],
-            "tenant_id": key["tenant_id"],
-            "scopes": json.loads(key["scopes"]) if key.get("scopes") else [],
-            "key_id": key["id"],
+            "user_id": key.user_id,
+            "tenant_id": key.tenant_id,
+            "scopes": json.loads(key.scopes) if key.scopes else [],
+            "key_id": key.id,
         }
 
 

@@ -64,7 +64,8 @@ class EmailTemplateOverrideBase(BaseModel):
 
     template_name: str
     subject_override: str | None = None
-    content: str
+    # Limit content to 50KB to prevent DoS
+    content: str = Field(..., max_length=51200, description="HTML template content (max 50KB)")
 
 
 class EmailTemplateOverrideCreate(EmailTemplateOverrideBase):
