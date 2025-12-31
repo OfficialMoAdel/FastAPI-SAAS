@@ -166,29 +166,29 @@ class TestAuthServiceTokenRefresh:
     """Tests for token refresh edge cases."""
 
     @pytest.mark.asyncio
-    async def test_refresh_with_missing_token_raises_error(self, mock_db):
+    async def test_refresh_with_missing_token_raises_error(self, mock_db, mock_response):
         """Test that refresh with no token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.refresh_access_token(None, mock_db)
+            await auth_service.refresh_access_token(None, mock_response, mock_db)
 
         assert "Refresh token missing" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_with_empty_string_token_raises_error(self, mock_db):
+    async def test_refresh_with_empty_string_token_raises_error(self, mock_db, mock_response):
         """Test that refresh with empty string token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.refresh_access_token("", mock_db)
+            await auth_service.refresh_access_token("", mock_response, mock_db)
 
         assert "Refresh token missing" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_with_invalid_token_raises_error(self, mock_db):
+    async def test_refresh_with_invalid_token_raises_error(self, mock_db, mock_response):
         """Test that refresh with invalid/expired token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -199,13 +199,13 @@ class TestAuthServiceTokenRefresh:
             mock_verify.return_value = None  # Token invalid or expired
 
             with pytest.raises(UnauthorizedException) as exc_info:
-                await auth_service.refresh_access_token("expired_token", mock_db)
+                await auth_service.refresh_access_token("expired_token", mock_response, mock_db)
 
             assert "Invalid refresh token" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_success_returns_new_access_token(self, mock_db):
-        """Test successful token refresh returns new access token."""
+    async def test_refresh_success_rotates_tokens(self, mock_db, mock_response):
+        """Test successful token refresh rotates both tokens and sets cookie."""
         from src.app.modules.auth.service import auth_service
 
         mock_token_data = MagicMock()
@@ -217,15 +217,39 @@ class TestAuthServiceTokenRefresh:
             ) as mock_verify,
             patch(
                 "src.app.modules.auth.service.create_access_token", new_callable=AsyncMock
-            ) as mock_create,
+            ) as mock_create_access,
+            patch(
+                "src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock
+            ) as mock_create_refresh,
+            patch(
+                "src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock
+            ) as mock_blacklist,
         ):
             mock_verify.return_value = mock_token_data
-            mock_create.return_value = "new_access_token"
+            mock_create_access.return_value = "new_access_token"
+            mock_create_refresh.return_value = "new_refresh_token"
 
-            result = await auth_service.refresh_access_token("valid_refresh_token", mock_db)
+            result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
 
+            # Check new access token returned
             assert result["access_token"] == "new_access_token"
             assert result["token_type"] == "bearer"
+            
+            # Verify Rotation Logic
+            # 1. Old token blacklisted
+            mock_blacklist.assert_called_once_with(token="valid_refresh_token", db=mock_db)
+            
+            # 2. New refresh token created
+            mock_create_refresh.assert_called_once()
+            
+            # 3. New cookie set
+            mock_response.set_cookie.assert_called_once()
+            call_kwargs = mock_response.set_cookie.call_args[1]
+            assert call_kwargs["key"] == "refresh_token"
+            assert call_kwargs["value"] == "new_refresh_token"
+            assert call_kwargs["httponly"] is True
+            assert call_kwargs["secure"] is True
+            assert call_kwargs["samesite"] == "lax"
 
 
 class TestAuthServiceLogout:

@@ -7,7 +7,7 @@ from jose import JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.config import settings
+from ...core.config import EnvironmentOption, settings
 from ...core.exceptions.http_exceptions import UnauthorizedException
 from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -18,6 +18,10 @@ from ...core.security import (
     create_refresh_token,
     verify_token,
 )
+
+# Account lockout constants
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
 
 
 class AuthService:
@@ -59,9 +63,9 @@ class AuthService:
         # Check for account lockout
         login_attempts_key = f"login_attempts:{username}"
         attempts = await redis.get(login_attempts_key)
-        if attempts and int(attempts) >= 5:
+        if attempts and int(attempts) >= MAX_LOGIN_ATTEMPTS:
             raise UnauthorizedException(
-                "Account locked due to too many failed attempts. Please try again in 15 minutes."
+                f"Account locked due to too many failed attempts. Please try again in {LOCKOUT_DURATION_SECONDS // 60} minutes."
             )
 
         user = await authenticate_user(username_or_email=username, password=password, db=db)
@@ -69,7 +73,7 @@ class AuthService:
             # Increment failed attempts
             new_attempts = await redis.incr(login_attempts_key)
             if new_attempts == 1:
-                await redis.expire(login_attempts_key, 900)  # 15 minutes
+                await redis.expire(login_attempts_key, LOCKOUT_DURATION_SECONDS)
 
             raise UnauthorizedException("Wrong username, email or password.")
 
@@ -82,36 +86,25 @@ class AuthService:
         refresh_token = await create_refresh_token(data={"sub": user["username"]})
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
+        # Cookie security settings based on environment
+        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
         response.set_cookie(
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
-            samesite="lax",
+            secure=is_production,
+            samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
 
         return {"access_token": access_token, "token_type": "bearer"}
 
-    async def refresh_access_token(self, refresh_token: str | None, db: AsyncSession) -> dict[str, str]:
+    async def refresh_access_token(
+        self, refresh_token: str | None, response: Response, db: AsyncSession
+    ) -> dict[str, str]:
         """Refresh access token using refresh token.
-
-        Parameters
-        ----------
-        refresh_token : Optional[str]
-            Refresh token from cookie
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            New access token and token type
-
-        Raises
-        ------
-        UnauthorizedException
-            If refresh token is missing or invalid
+        
+        Implements rotation: invalidates old refresh token and issues a new one.
         """
         if not refresh_token:
             raise UnauthorizedException("Refresh token missing.")
@@ -120,7 +113,25 @@ class AuthService:
         if not user_data:
             raise UnauthorizedException("Invalid refresh token.")
 
+        # Blacklist the used refresh token (Rotation)
+        await blacklist_token(token=refresh_token, db=db)
+
+        # Create new tokens
         new_access_token = await create_access_token(data={"sub": user_data.username_or_email})
+        new_refresh_token = await create_refresh_token(data={"sub": user_data.username_or_email})
+        
+        # Cookie security settings based on environment
+        max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+        response.set_cookie(
+            key="refresh_token",
+            value=new_refresh_token,
+            httponly=True,
+            secure=is_production,
+            samesite="strict" if is_production else "lax",
+            max_age=max_age,
+        )
+
         return {"access_token": new_access_token, "token_type": "bearer"}
 
     async def logout(
@@ -230,25 +241,33 @@ class AuthService:
         dict[str, str]
             Success message (always returns success for security)
         """
-        import secrets
-        from datetime import UTC, datetime, timedelta
+        import logging
+        from sqlalchemy import select
 
         from ...modules.users.crud import crud_users
+        from .models import PasswordResetToken
+
+        logger = logging.getLogger(__name__)
 
         user = await crud_users.get(db=db, email=email, is_deleted=False)
 
         # Always return success to prevent email enumeration
         if user:
-            # Generate reset token (valid for 1 hour)
-            secrets.token_urlsafe(32)
-            datetime.now(UTC) + timedelta(hours=1)
+            # Create password reset token (expires in 1 hour)
+            reset_token = PasswordResetToken(user_id=user["id"])
+            db.add(reset_token)
+            await db.commit()
+            await db.refresh(reset_token)
 
-            # Store token in database (would need a password_reset_tokens table)
-            # For now, we'll use a simple approach - in production, store in DB
-            # This is a placeholder - actual implementation needs a tokens table
+            logger.info(
+                "Password reset token created | user_id=%s | token_id=%s",
+                user["id"], reset_token.id
+            )
 
             # TODO: Send email with reset link containing the token
-            # await notification_service.send_password_reset_email(email, reset_token)
+            # In production, integrate with email service:
+            # reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+            # await notification_service.send_password_reset_email(email, reset_link)
 
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
@@ -279,9 +298,51 @@ class AuthService:
         UnauthorizedException
             If token is invalid or expired
         """
-        # TODO: Validate token from password_reset_tokens table
-        # For now, this is a placeholder that shows the structure
-        raise UnauthorizedException("Password reset tokens not yet implemented. Please contact support.")
+        import logging
+
+        from sqlalchemy import select
+
+        from ...core.security import get_password_hash
+        from ...modules.users.crud import crud_users
+        from .models import PasswordResetToken
+
+        logger = logging.getLogger(__name__)
+
+        # Find token in database
+        result = await db.execute(
+            select(PasswordResetToken).where(PasswordResetToken.token == token)
+        )
+        reset_token = result.scalar_one_or_none()
+
+        if not reset_token:
+            raise UnauthorizedException("Invalid password reset token.")
+
+        if not reset_token.is_valid:
+            if reset_token.used:
+                raise UnauthorizedException("This password reset token has already been used.")
+            if reset_token.is_expired:
+                raise UnauthorizedException("This password reset token has expired.")
+            raise UnauthorizedException("Invalid password reset token.")
+
+        # Get user
+        user = await crud_users.get(db=db, id=reset_token.user_id, is_deleted=False)
+        if not user:
+            raise UnauthorizedException("User not found.")
+
+        # Update password
+        new_hashed = await get_password_hash(new_password)
+        await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed})
+
+        # Mark token as used
+        reset_token.used = True
+        await db.commit()
+
+        logger.info(
+            "Password reset successful | user_id=%s | token_id=%s",
+            reset_token.user_id, reset_token.id
+        )
+
+        return {"message": "Password reset successfully."}
 
     async def send_verification_email(
         self,

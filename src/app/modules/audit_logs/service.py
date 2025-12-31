@@ -188,22 +188,28 @@ def audit_action(action: str, entity_type: str) -> Callable:
             user_id = kwargs.get("current_user_id") or kwargs.get("user_id")
             entity_id = getattr(result, "id", None)
 
-            # Publish audit event (fire-and-forget, critical priority)
+            # Publish audit event with error handling
             if tenant_id:
-                asyncio.create_task(
-                    event_bus.publish(
-                        "audit.log",
-                        {
-                            "action": action,
-                            "entity_type": entity_type,
-                            "entity_id": str(entity_id) if entity_id else None,
-                            "tenant_id": str(tenant_id),
-                            "user_id": str(user_id) if user_id else None,
-                            "details": {"result_id": str(getattr(result, "id", ""))},
-                        },
-                        priority=EventPriority.CRITICAL,
-                    )
-                )
+
+                async def _publish_audit_event() -> None:
+                    """Publish audit event with error handling."""
+                    try:
+                        await event_bus.publish(
+                            "audit.log",
+                            {
+                                "action": action,
+                                "entity_type": entity_type,
+                                "entity_id": str(entity_id) if entity_id else None,
+                                "tenant_id": str(tenant_id),
+                                "user_id": str(user_id) if user_id else None,
+                                "details": {"result_id": str(getattr(result, "id", ""))},
+                            },
+                            priority=EventPriority.CRITICAL,
+                        )
+                    except Exception as e:
+                        logger.error("audit_publish_failed", error=str(e), action=action)
+
+                asyncio.create_task(_publish_audit_event())
 
             return result
 

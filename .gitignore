@@ -169,4 +169,5 @@ Specify.md
 .claude
 specs
 claudedocs
-geminidocs
+#geminidocs
+env.txt

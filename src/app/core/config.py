@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from pydantic import SecretStr, computed_field
+from pydantic import SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -24,6 +24,19 @@ class CryptSettings(BaseSettings):
     # SECURITY: Set unique salt per deployment for key derivation
     ENCRYPTION_SALT: SecretStr | None = None
 
+    @model_validator(mode="after")
+    def validate_secrets(self) -> "CryptSettings":
+        """Validate required secrets are set and meet security requirements."""
+        key = self.SECRET_KEY.get_secret_value()
+        if not key:
+            raise ValueError("SECRET_KEY must be set and non-empty")
+        if len(key) < 32:
+            raise ValueError(
+                "SECRET_KEY must be at least 32 characters for HS256. "
+                "Generate with: openssl rand -hex 32"
+            )
+        return self
+
 
 class DatabaseSettings(BaseSettings):
     pass
@@ -37,7 +50,7 @@ class SQLiteSettings(DatabaseSettings):
 
 class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
-    MYSQL_PASSWORD: str = "password"
+    MYSQL_PASSWORD: str = ""  # REQUIRED: No default - must be set via env
     MYSQL_SERVER: str = "localhost"
     MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
@@ -54,9 +67,9 @@ class MySQLSettings(DatabaseSettings):
 
 
 class PostgresSettings(DatabaseSettings):
-    POSTGRES_USER: str = "postgres"
-    POSTGRES_PASSWORD: str = "postgres"
-    POSTGRES_SERVER: str = "192.168.121.147"
+    POSTGRES_USER: str  # REQUIRED: No defaults
+    POSTGRES_PASSWORD: str  # REQUIRED: No defaults
+    POSTGRES_SERVER: str = "192.168.121.147"  # Default VM IP
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
     POSTGRES_SYNC_PREFIX: str = "postgresql://"
@@ -121,7 +134,7 @@ class DefaultRateLimitSettings(BaseSettings):
     DEFAULT_RATE_LIMIT_PERIOD: int = 3600
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
-    RATE_LIMIT_FAIL_OPEN: bool = True
+    RATE_LIMIT_FAIL_OPEN: bool = False
 
 
 class CRUDAdminSettings(BaseSettings):
@@ -186,7 +199,30 @@ class CORSSettings(BaseSettings):
         "X-Webhook-Event",
         "X-Webhook-ID",
         "X-Webhook-Timestamp",
+        "X-Tenant-ID",
     ]
+
+    @model_validator(mode="after")
+    def validate_cors_origins(self) -> "CORSSettings":
+        """Validate CORS origins for production safety.
+        
+        Warns if wildcard '*' is used in non-local environments.
+        """
+        import logging
+        import os
+        
+        env = os.getenv("ENVIRONMENT", "local")
+        has_wildcard = "*" in self.CORS_ORIGINS
+        
+        if has_wildcard and env != "local":
+            logging.getLogger(__name__).warning(
+                "SECURITY WARNING: CORS_ORIGINS contains '*' wildcard in %s environment. "
+                "This allows any website to access your API. "
+                "Consider specifying explicit origins for production.",
+                env
+            )
+        
+        return self
 
 
 class Settings(

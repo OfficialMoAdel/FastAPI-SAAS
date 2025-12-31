@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, ForeignKey, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
@@ -50,3 +50,6 @@ class UserRole(Base):
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), primary_key=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True, index=True)
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True, index=True)
+
+    # Composite index for efficient permission lookups by tenant+user
+    __table_args__ = (Index("idx_user_roles_tenant_user", "tenant_id", "user_id"),)

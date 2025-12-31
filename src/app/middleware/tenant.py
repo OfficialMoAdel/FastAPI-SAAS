@@ -145,7 +145,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
             clear_tenant_context()
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | None:
-        """Look up tenant by slug in the database.
+        """Look up tenant by slug with Redis caching (1-hour TTL).
+
+        Uses Redis cache to avoid DB query on every request.
+        Cache key: tenant:slug:{slug}
 
         Args:
             slug: The tenant slug to look up.
@@ -153,8 +156,62 @@ class TenantMiddleware(BaseHTTPMiddleware):
         Returns:
             The tenant if found, None otherwise.
         """
+        from src.app.core.utils.cache import client as redis_client
+
+        cache_key = f"tenant:slug:{slug}"
+
+        # Try Redis cache first
+        if redis_client:
+            try:
+                import json
+
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    # Deserialize cached tenant data
+                    data = json.loads(cached)
+                    logger.debug("Tenant cache hit | slug=%s", slug)
+                    # Reconstruct minimal Tenant object for validation
+                    return await self._get_tenant_from_cache_data(data)
+            except Exception as e:
+                logger.warning("Tenant cache read error: %s", e)
+
+        # Cache miss - query DB
         async with local_session() as session:
             session: AsyncSession
             stmt = select(Tenant).where(Tenant.slug == slug)
             result = await session.execute(stmt)
-            return result.scalar_one_or_none()
+            tenant = result.scalar_one_or_none()
+
+            # Cache the result (even None as empty string to prevent repeated lookups)
+            if redis_client and tenant:
+                try:
+                    import json
+
+                    cache_data = json.dumps({
+                        "id": tenant.id,
+                        "slug": tenant.slug,
+                        "is_active": tenant.is_active,
+                    })
+                    await redis_client.setex(cache_key, 3600, cache_data)  # 1 hour TTL
+                    logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
+                except Exception as e:
+                    logger.warning("Tenant cache write error: %s", e)
+
+            return tenant
+
+    async def _get_tenant_from_cache_data(self, data: dict) -> Tenant | None:
+        """Create a minimal Tenant object from cached data for validation.
+
+        Args:
+            data: Cached tenant data dict with id, slug, is_active.
+
+        Returns:
+            Tenant object with cached fields populated.
+        """
+        # For middleware validation, we only need id, slug, and is_active
+        # Create a detached object (not bound to session)
+        tenant = Tenant.__new__(Tenant)
+        object.__setattr__(tenant, "id", data["id"])
+        object.__setattr__(tenant, "slug", data["slug"])
+        object.__setattr__(tenant, "is_active", data["is_active"])
+        return tenant

@@ -303,41 +303,28 @@ class UserService:
 
     async def get_user_with_tier(self, username: str, db: AsyncSession) -> dict[str, Any] | None:
         """Get user with tier information merged.
-
-        Parameters
-        ----------
-        username : str
-            Username to look up
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, Any] | None
-            User data with tier info prefixed, or None if no tier
-
-        Raises
-        ------
-        NotFoundException
-            If user or tier not found
+        
+        Optimized to use single query via get_user_with_tier_eager.
         """
-        from ...modules.tiers.service import tier_service
-
-        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
-        if db_user is None:
+        user_with_tier = await crud_users.get_user_with_tier_eager(db=db, username=username)
+        
+        if not user_with_tier:
             raise NotFoundException("User not found")
-
-        if db_user["tier_id"] is None:
+            
+        if not user_with_tier.get("tier"):
             return None
-
-        db_tier = await tier_service.get_tier_by_id(db_user["tier_id"], db)
-
-        user_dict = dict(db_user)
-        tier_dict = dict(db_tier)
-
-        for key, value in tier_dict.items():
+            
+        # Flatten structure to match expected output format
+        user_dict = user_with_tier.copy()
+        tier_data = user_dict.pop("tier")
+        
+        # Filter out SQLAlchemy internal state
+        if "_sa_instance_state" in tier_data:
+            del tier_data["_sa_instance_state"]
+            
+        for key, value in tier_data.items():
             user_dict[f"tier_{key}"] = value
-
+            
         return user_dict
 
 

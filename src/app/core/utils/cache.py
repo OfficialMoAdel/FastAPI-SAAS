@@ -411,9 +411,21 @@ def cache(
 
 
 async def async_get_redis() -> AsyncGenerator[Redis, None]:
-    """Get a Redis client from the pool for each request."""
-    client = Redis(connection_pool=pool)
-    try:
-        yield client
-    finally:
-        await client.aclose()  # type: ignore
+    """Get the shared Redis client from the pool.
+
+    Note: The module-level `client` is initialized at startup and reuses
+    the connection pool for all requests, avoiding per-request overhead.
+
+    Yields
+    ------
+    Redis
+        The shared Redis client instance.
+
+    Raises
+    ------
+    MissingClientError
+        If the Redis client has not been initialized.
+    """
+    if client is None:
+        raise MissingClientError("Redis client not initialized")
+    yield client

@@ -34,7 +34,10 @@ app = create_application(router=router, settings=settings, lifespan=lifespan_wit
 app.add_middleware(TenantMiddleware)
 
 from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.request_id import RequestIDMiddleware
 
+# Request ID must be first (outermost) for tracing
+app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RateLimitMiddleware)
 
 # Mount admin interface if enabled

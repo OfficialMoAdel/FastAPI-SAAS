@@ -7,7 +7,7 @@ from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
-from src.app.core.config import settings
+from src.app.core.config import EnvironmentOption, settings
 
 logger = logging.getLogger(__name__)
 
@@ -17,18 +17,28 @@ _FALLBACK_SALT: bytes | None = None
 
 
 def _get_salt() -> bytes:
-    """Get encryption salt from config or generate secure fallback."""
+    """Get encryption salt from config or generate secure fallback.
+    
+    Raises ValueError in production if ENCRYPTION_SALT is not configured.
+    """
     global _FALLBACK_SALT
 
     if settings.ENCRYPTION_SALT:
         return settings.ENCRYPTION_SALT.get_secret_value().encode()
 
-    # Fallback: generate random salt per process (NOT recommended for production)
+    # SECURITY: Fail fast in production if salt not configured
+    if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+        raise ValueError(
+            "ENCRYPTION_SALT must be set in production. "
+            "Generate with: openssl rand -hex 32"
+        )
+
+    # Fallback: generate random salt per process (dev/staging only)
     if _FALLBACK_SALT is None:
         _FALLBACK_SALT = os.urandom(32)
         logger.warning(
-            "ENCRYPTION_SALT not configured. Using random per-process salt. "
-            "This is insecure for production - encrypted data will be unrecoverable after restart!"
+            "ENCRYPTION_SALT not configured. Using random per-process salt (dev only). "
+            "Encrypted data will be unrecoverable after restart!"
         )
     return _FALLBACK_SALT
 

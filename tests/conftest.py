@@ -23,6 +23,18 @@ from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
+from src.app.modules.users.models import User  # noqa: F401
+from src.app.modules.tiers.models import Tier  # noqa: F401
+from src.app.modules.posts.models import Post  # noqa: F401
+from src.app.modules.auth.models import PasswordResetToken  # noqa: F401
+from src.app.modules.rbac.models import Role, Permission  # noqa: F401
+from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
+from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery  # noqa: F401
+from src.app.modules.notifications.models import Notification  # noqa: F401
+from src.app.modules.api_keys.models import APIKey  # noqa: F401
+from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride  # noqa: F401
+from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
 
 fake = Faker()
 
@@ -87,6 +99,11 @@ class FakeRedis:
         self.store[key] = str(val)
         return val
 
+    async def setex(self, key, seconds, value):
+        """Set key with expiration (seconds ignored in mock)."""
+        self.store[key] = value
+        return True
+
     async def expire(self, key, seconds):
         return bool(key in self.store)
 
@@ -124,6 +141,7 @@ def mock_redis():
          patch("src.app.core.setup.close_redis_rate_limit_pool", new=AsyncMock()), \
          patch("src.app.core.utils.cache.client", new=fake_redis), \
          patch("src.app.core.utils.rate_limit.rate_limiter.client", new=fake_redis), \
+         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis), \
          patch("src.app.core.utils.queue.pool", new=fake_redis):
         yield fake_redis
 
