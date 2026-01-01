@@ -9,11 +9,23 @@ from ...modules.rate_limits.schemas import sanitize_path
 
 logger = logging.getLogger(__name__)
 
+# Lua script for atomic rate limit check
+# Returns the current count after increment
+# Sets expiry only on first increment (when count is 1)
+RATE_LIMIT_LUA_SCRIPT = """
+local current = redis.call('INCR', KEYS[1])
+if current == 1 then
+    redis.call('EXPIRE', KEYS[1], ARGV[1])
+end
+return current
+"""
+
 
 class RateLimiter:
     _instance: Optional["RateLimiter"] = None
     pool: ConnectionPool | None = None
     client: Redis | None = None
+    _rate_limit_script_sha: str | None = None
 
     def __new__(cls) -> "RateLimiter":
         if cls._instance is None:
@@ -35,9 +47,15 @@ class RateLimiter:
             raise Exception("Redis client is not initialized.")
         return instance.client
 
+    async def _get_script_sha(self, client: Redis) -> str:
+        """Get or create the Lua script SHA for atomic rate limiting."""
+        if self._rate_limit_script_sha is None:
+            self._rate_limit_script_sha = await client.script_load(RATE_LIMIT_LUA_SCRIPT)
+        return self._rate_limit_script_sha
+
     async def check_rate_limit(self, key: str, limit: int, period: int) -> tuple[bool, int]:
         """
-        Check if a generic key is rate limited.
+        Check if a generic key is rate limited using atomic Lua script.
 
         Args:
             key: Unique key for rate limiting
@@ -55,9 +73,15 @@ class RateLimiter:
         redis_key = f"ratelimit:{key}:{window_start}"
 
         try:
-            current_count = await client.incr(redis_key)
-            if current_count == 1:
-                await client.expire(redis_key, period)
+            # Use atomic Lua script to prevent race conditions
+            script_sha = await self._get_script_sha(client)
+            try:
+                current_count = await client.evalsha(script_sha, 1, redis_key, str(period))  # type: ignore
+            except Exception:
+                # Script may have been flushed, reload it
+                self._rate_limit_script_sha = None
+                script_sha = await self._get_script_sha(client)
+                current_count = await client.evalsha(script_sha, 1, redis_key, str(period))  # type: ignore
 
             if current_count > limit:
                 return True, current_count
@@ -82,3 +106,4 @@ class RateLimiter:
 
 
 rate_limiter = RateLimiter()
+

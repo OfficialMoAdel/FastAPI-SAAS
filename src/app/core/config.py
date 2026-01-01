@@ -95,6 +95,13 @@ class FirstUserSettings(BaseSettings):
     ADMIN_PASSWORD: str  # REQUIRED: Must be set via environment variable
 
 
+class AuthSettings(BaseSettings):
+    """Authentication security settings."""
+    # Account lockout configuration
+    AUTH_MAX_LOGIN_ATTEMPTS: int = 5
+    AUTH_LOCKOUT_DURATION_SECONDS: int = 900  # 15 minutes
+
+
 class TestSettings(BaseSettings): ...
 
 
@@ -235,6 +242,7 @@ class Settings(
     PostgresSettings,
     CryptSettings,
     FirstUserSettings,
+    AuthSettings,
     TestSettings,
     RedisCacheSettings,
     ClientSideCacheSettings,
@@ -255,4 +263,4 @@ class Settings(
     )
 
 
-settings = Settings()
+settings = Settings()  # type: ignore

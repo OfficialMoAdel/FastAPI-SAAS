@@ -27,7 +27,7 @@ class HealthResult:
 
     def to_dict(self) -> dict:
         """Convert to dictionary for JSON response."""
-        result = {"status": self.status}
+        result: dict[str, Any] = {"status": self.status}
         if self.latency_ms is not None:
             result["latency_ms"] = round(self.latency_ms, 2)
         if self.error is not None:

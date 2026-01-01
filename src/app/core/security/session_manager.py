@@ -247,7 +247,10 @@ class SessionManager:
         if not sessions_raw:
             return []
 
-        return json.loads(sessions_raw)
+        # Cast for mypy strictness
+        from typing import cast
+
+        return cast(list[dict[str, Any]], json.loads(sessions_raw))
 
 
 # Global session manager instance

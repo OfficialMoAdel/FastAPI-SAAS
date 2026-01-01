@@ -129,7 +129,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         request_id = getattr(request.state, "request_id", None)
 
         # Format validation errors
-        details = {"fields": []}
+        details: dict[str, Any] = {"fields": []}
         for error in exc.errors():
             details["fields"].append(
                 {

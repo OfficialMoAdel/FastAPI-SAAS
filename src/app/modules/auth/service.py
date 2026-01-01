@@ -12,21 +12,36 @@ from ...core.exceptions.http_exceptions import UnauthorizedException
 from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     TokenType,
-    authenticate_user,
     blacklist_token,
     blacklist_tokens,
     create_access_token,
     create_refresh_token,
     verify_token,
+    verify_password,
 )
-
-# Account lockout constants
-MAX_LOGIN_ATTEMPTS = 5
-LOCKOUT_DURATION_SECONDS = 900  # 15 minutes
+from ...modules.users.crud import crud_users
 
 
 class AuthService:
     """Service class for authentication-related business logic."""
+
+
+    async def authenticate_user(
+        self, username_or_email: str, password: str, db: AsyncSession
+    ) -> dict | bool:
+        """Authenticate user by checking database and password."""
+        if "@" in username_or_email:
+            db_user = await crud_users.get(db=db, email=username_or_email, is_deleted=False)
+        else:
+            db_user = await crud_users.get(db=db, username=username_or_email, is_deleted=False)
+
+        if not db_user:
+            return False
+
+        if not await verify_password(password, db_user["hashed_password"]):
+            return False
+
+        return db_user
 
     async def login(
         self,
@@ -64,18 +79,18 @@ class AuthService:
         # Check for account lockout
         login_attempts_key = f"login_attempts:{username}"
         attempts = await redis.get(login_attempts_key)
-        if attempts and int(attempts) >= MAX_LOGIN_ATTEMPTS:
-            lockout_minutes = LOCKOUT_DURATION_SECONDS // 60
+        if attempts and int(attempts) >= settings.AUTH_MAX_LOGIN_ATTEMPTS:
+            lockout_minutes = settings.AUTH_LOCKOUT_DURATION_SECONDS // 60
             raise UnauthorizedException(
                 f"Account locked due to too many failed attempts. Please try again in {lockout_minutes} minutes."
             )
 
-        user = await authenticate_user(username_or_email=username, password=password, db=db)
+        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
         if not user:
             # Increment failed attempts
             new_attempts = await redis.incr(login_attempts_key)
             if new_attempts == 1:
-                await redis.expire(login_attempts_key, LOCKOUT_DURATION_SECONDS)
+                await redis.expire(login_attempts_key, settings.AUTH_LOCKOUT_DURATION_SECONDS)
 
             raise UnauthorizedException("Wrong username, email or password.")
 

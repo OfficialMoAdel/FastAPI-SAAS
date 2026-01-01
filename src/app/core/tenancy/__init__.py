@@ -14,7 +14,10 @@ __all__ = [
 ]
 
 
-def __getattr__(name: str):
+from typing import Any
+
+
+def __getattr__(name: str) -> Any:
     """Lazy import to avoid circular imports."""
     if name == "get_tenant_context":
         from src.app.core.tenancy.context import get_tenant_context

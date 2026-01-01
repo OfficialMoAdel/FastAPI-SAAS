@@ -114,7 +114,7 @@ def validate_webhook_url(url: str) -> None:
 
     # Check all resolved IPs
     for ip in resolved_ips:
-        if is_ip_blocked(ip):
+        if is_ip_blocked(str(ip)):
             logger.warning(
                 "ssrf_blocked_ip",
                 url=url,

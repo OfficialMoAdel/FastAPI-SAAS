@@ -48,7 +48,7 @@ class EventBus:
 
     def __init__(self) -> None:
         """Initialize event bus with handler registry."""
-        self._handlers = defaultdict(list)
+        self._handlers: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
         self._arq_queue = None
         self._redis_client = None  # Set via set_redis_client()
 

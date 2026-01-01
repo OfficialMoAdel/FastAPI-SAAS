@@ -81,7 +81,7 @@ class TenantAwareCRUD(
                 kwargs["tenant_id"] = tenant.id
         return kwargs
 
-    async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:
+    async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
         """Get a single record, filtered by tenant context.
 
         Args:
@@ -95,7 +95,7 @@ class TenantAwareCRUD(
         kwargs = self._inject_tenant_filter(kwargs)
         return await super().get(db, **kwargs)
 
-    async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:
+    async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
         """Get multiple records, filtered by tenant context.
 
         Args:
@@ -123,7 +123,7 @@ class TenantAwareCRUD(
         kwargs = self._inject_tenant_filter(kwargs)
         return await super().exists(db, **kwargs)
 
-    async def count(self, db: AsyncSession, **kwargs: Any) -> int:
+    async def count(self, db: AsyncSession, **kwargs: Any) -> int:  # type: ignore[override]
         """Count records, filtered by tenant context.
 
         Args:
@@ -148,7 +148,7 @@ class TenantAwareCRUD(
         kwargs = self._inject_tenant_filter(kwargs)
         return await super().update(db, object, **kwargs)
 
-    async def delete(self, db: AsyncSession, **kwargs: Any) -> None:
+    async def delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Soft delete records, filtered by tenant context.
 
         Args:
@@ -158,7 +158,7 @@ class TenantAwareCRUD(
         kwargs = self._inject_tenant_filter(kwargs)
         return await super().delete(db, **kwargs)
 
-    async def db_delete(self, db: AsyncSession, **kwargs: Any) -> None:
+    async def db_delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Hard delete records, filtered by tenant context.
 
         Args:

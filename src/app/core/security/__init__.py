@@ -12,7 +12,7 @@ from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...modules.users.crud import crud_users
+
 from ..config import settings
 from ..db.crud_token_blacklist import crud_token_blacklist
 from ..schemas import TokenBlacklistCreate, TokenData
@@ -50,19 +50,7 @@ async def get_password_hash(password: str) -> str:
     return hashed_password.decode()
 
 
-async def authenticate_user(username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | Literal[False]:
-    if "@" in username_or_email:
-        db_user = await crud_users.get(db=db, email=username_or_email, is_deleted=False)
-    else:
-        db_user = await crud_users.get(db=db, username=username_or_email, is_deleted=False)
 
-    if not db_user:
-        return False
-
-    if not await verify_password(password, db_user["hashed_password"]):
-        return False
-
-    return db_user
 
 
 async def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:

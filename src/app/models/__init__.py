@@ -1,4 +1,5 @@
 from ..modules.audit_logs.models import AuditLog
+from ..modules.feature_flags.models import FeatureFlagOverride
 from ..modules.notifications.models import EmailTemplateOverride, Notification
 from ..modules.posts.models import Post
 from ..modules.rate_limits.models import RateLimit

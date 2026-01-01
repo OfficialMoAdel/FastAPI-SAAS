@@ -207,7 +207,7 @@ def audit_action(action: str, entity_type: str) -> Callable:
                                 "user_id": str(user_id) if user_id else None,
                                 "details": {"result_id": str(getattr(result, "id", ""))},
                             },
-                            priority=EventPriority.CRITICAL,
+                            priority=EventPriority.NORMAL,
                         )
                     except Exception as e:
                         logger.error("audit_publish_failed", error=str(e), action=action)

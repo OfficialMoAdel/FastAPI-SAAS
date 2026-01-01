@@ -78,7 +78,7 @@ class TestAuthServiceLockout:
 
         with (
             patch(
-                "src.app.modules.auth.service.authenticate_user", new_callable=AsyncMock
+                "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
             ) as mock_auth,
         ):
             mock_auth.return_value = None  # Authentication fails
@@ -100,7 +100,7 @@ class TestAuthServiceLockout:
         mock_redis.incr = AsyncMock(return_value=1)
 
         with patch(
-            "src.app.modules.auth.service.authenticate_user", new_callable=AsyncMock
+            "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
         ) as mock_auth:
             mock_auth.return_value = None
 
@@ -121,7 +121,7 @@ class TestAuthServiceLockout:
 
         with (
             patch(
-                "src.app.modules.auth.service.authenticate_user", new_callable=AsyncMock
+                "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
             ) as mock_auth,
             patch(
                 "src.app.modules.auth.service.create_access_token", new_callable=AsyncMock
@@ -149,7 +149,7 @@ class TestAuthServiceLockout:
         mock_redis.get = AsyncMock(return_value=b"4")
 
         with patch(
-            "src.app.modules.auth.service.authenticate_user", new_callable=AsyncMock
+            "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
         ) as mock_auth:
             mock_auth.return_value = None  # Auth fails
 

@@ -129,3 +129,8 @@ ignore_errors = true
 [[tool.mypy.overrides]]
 module = "src.app.*"
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = "src.app.core.*"
+disallow_untyped_defs = true
+ignore_errors = false

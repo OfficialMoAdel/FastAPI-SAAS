@@ -15,7 +15,25 @@ from fastapi.openapi.utils import get_openapi
 from ..api.dependencies import get_current_superuser
 from ..core.utils.rate_limit import rate_limiter
 from ..middleware.client_cache_middleware import ClientCacheMiddleware
-from ..models import *
+# Import all models to register them with SQLAlchemy's Base.metadata
+# This ensures create_all() creates all tables
+from ..models import (  # noqa: F401
+    AuditLog,
+    EmailTemplateOverride,
+    FeatureFlagOverride,
+    Notification,
+    Permission,
+    Post,
+    RateLimit,
+    Role,
+    RolePermission,
+    Tenant,
+    Tier,
+    User,
+    UserRole,
+    WebhookDelivery,
+    WebhookEndpoint,
+)
 from .config import (
     AppSettings,
     ClientSideCacheSettings,
