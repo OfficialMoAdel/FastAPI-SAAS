@@ -66,6 +66,7 @@ class RateLimiter:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
             # Use configurable fail-open/fail-closed behavior
             from ...core.config import settings
+
             if settings.RATE_LIMIT_FAIL_OPEN:
                 return False, 0  # Allow request (fail-open)
             else:

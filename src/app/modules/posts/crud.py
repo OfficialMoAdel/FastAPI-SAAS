@@ -4,4 +4,3 @@ from .schemas import PostCreateInternal, PostDelete, PostRead, PostUpdate, PostU
 
 CRUDPost = TenantAwareCRUD[Post, PostCreateInternal, PostUpdate, PostUpdateInternal, PostDelete, PostRead]
 crud_posts = CRUDPost(Post)
-

@@ -7,6 +7,7 @@ This module provides:
 - Delivery status tracking
 """
 
+import asyncio
 import hashlib
 import hmac
 from datetime import UTC, datetime, timedelta
@@ -64,12 +65,13 @@ class WebhookService:
 
         logger.info(f"Created webhook endpoint for tenant {tenant_id}: {event_type} -> {url}")
         return endpoint
+
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
         """Get all active webhook endpoints for a tenant and event type."""
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
             WebhookEndpoint.event_type == event_type,
-            WebhookEndpoint.is_active == True,
+            WebhookEndpoint.is_active.is_(True),
         )
 
         result = await self.db.execute(stmt)
@@ -88,10 +90,21 @@ class WebhookService:
         """
         endpoints = await self.get_active_endpoints(tenant_id, event_type)
 
-        deliveries = []
-        for endpoint in endpoints:
-            delivery = await self.trigger_endpoint(endpoint, event_type, payload)
-            deliveries.append(delivery)
+        # Parallelize webhook triggering for better performance
+        if endpoints:
+            results = await asyncio.gather(
+                *(self.trigger_endpoint(endpoint, event_type, payload) for endpoint in endpoints),
+                return_exceptions=True,
+            )
+            # Filter out exceptions and log them
+            deliveries = []
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    logger.error(f"Webhook trigger failed for endpoint {endpoints[i].id}: {result}")
+                else:
+                    deliveries.append(result)
+        else:
+            deliveries = []
 
         logger.info(f"Triggered {len(deliveries)} webhooks for event {event_type} in tenant {tenant_id}")
         return deliveries
@@ -114,8 +127,7 @@ class WebhookService:
                     error=str(e),
                 )
                 raise ValueError(
-                    f"Cannot decrypt webhook secret for endpoint {endpoint.id}. "
-                    "The encryption key may have changed."
+                    f"Cannot decrypt webhook secret for endpoint {endpoint.id}. The encryption key may have changed."
                 )
 
         signature = self._generate_signature(payload, secret)
@@ -180,9 +192,7 @@ class WebhookService:
             logger.warning(
                 "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
                 delivery_id,
-                webhook_circuit.recovery_timeout - (
-                    __import__("time").time() - webhook_circuit._last_failure_time
-                ),
+                webhook_circuit.recovery_timeout - (__import__("time").time() - webhook_circuit._last_failure_time),
             )
             # Mark for retry later when circuit recovers
             await self._handle_delivery_failure(delivery, attempt)
@@ -224,7 +234,7 @@ class WebhookService:
                 delivery.response_status = response.status_code
                 delivery.response_body = response.text[:1000]  # Limit to 1KB
 
-                if 200 <= response.status_code < 300:
+                if 200 <= response.status_code < 300:  # HTTP success range
                     # Success - record with circuit breaker
                     await webhook_circuit.record_success()
                     delivery.status = WebhookDeliveryStatus.DELIVERED
@@ -232,9 +242,7 @@ class WebhookService:
                     logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
                 else:
                     # HTTP error - record failure and retry if attempts remain
-                    await webhook_circuit.record_failure(
-                        Exception(f"HTTP {response.status_code}")
-                    )
+                    await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
                     await self._handle_delivery_failure(delivery, attempt)
 
         except CircuitBreakerOpen as e:

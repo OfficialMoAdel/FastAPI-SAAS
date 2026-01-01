@@ -4,7 +4,6 @@ Note: Token and TokenData are kept in core/schemas.py to avoid circular imports.
 This module re-exports them for module-internal use and adds auth-specific schemas.
 """
 
-
 from pydantic import BaseModel
 
 # Re-export from core for convenience (these are the canonical definitions)

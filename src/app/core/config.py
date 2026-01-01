@@ -29,12 +29,13 @@ class CryptSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_secrets(self) -> "CryptSettings":
         """Validate required secrets are set and meet security requirements."""
+        MIN_SECRET_KEY_LENGTH = 32  # Minimum for HS256 algorithm
         key = self.SECRET_KEY.get_secret_value()
         if not key:
             raise ValueError("SECRET_KEY must be set and non-empty")
-        if len(key) < 32:
+        if len(key) < MIN_SECRET_KEY_LENGTH:
             raise ValueError(
-                "SECRET_KEY must be at least 32 characters for HS256. "
+                f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters for HS256. "
                 "Generate with: openssl rand -hex 32"
             )
         return self
@@ -43,7 +44,6 @@ class CryptSettings(BaseSettings):
 class DatabaseSettings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
-
 
 
 class SQLiteSettings(DatabaseSettings):
@@ -223,7 +223,7 @@ class CORSSettings(BaseSettings):
                 "SECURITY WARNING: CORS_ORIGINS contains '*' wildcard in %s environment. "
                 "This allows any website to access your API. "
                 "Consider specifying explicit origins for production.",
-                env
+                env,
             )
 
         return self

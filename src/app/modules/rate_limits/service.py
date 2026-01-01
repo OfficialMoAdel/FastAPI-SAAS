@@ -17,6 +17,7 @@ class RateLimitService:
         """Get tier by name or raise NotFoundException."""
         # Use tier_service for cross-module access
         from ...modules.tiers.service import tier_service
+
         return await tier_service.get_tier(tier_name, db)
 
     async def get_rate_limits_by_tier_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
@@ -39,9 +40,7 @@ class RateLimitService:
         rate_limits_data = await crud_rate_limits.get_multi(db=db, tier_id=tier_id)
         return rate_limits_data
 
-    async def create_rate_limit(
-        self, tier_name: str, rate_limit: RateLimitCreate, db: AsyncSession
-    ) -> dict[str, Any]:
+    async def create_rate_limit(self, tier_name: str, rate_limit: RateLimitCreate, db: AsyncSession) -> dict[str, Any]:
         """Create a new rate limit for a tier.
 
         Parameters

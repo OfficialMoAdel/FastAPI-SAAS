@@ -126,9 +126,7 @@ class CircuitBreakerOpen(Exception):
     def __init__(self, name: str, recovery_in: float):
         self.name = name
         self.recovery_in = recovery_in
-        super().__init__(
-            f"Circuit breaker '{name}' is open. Recovery in {recovery_in:.1f}s"
-        )
+        super().__init__(f"Circuit breaker '{name}' is open. Recovery in {recovery_in:.1f}s")
 
 
 def circuit_breaker(
@@ -157,9 +155,7 @@ def circuit_breaker(
 
             # Fast-fail if circuit is open
             if state == CircuitState.OPEN:
-                recovery_in = breaker.recovery_timeout - (
-                    time.time() - breaker._last_failure_time
-                )
+                recovery_in = breaker.recovery_timeout - (time.time() - breaker._last_failure_time)
                 raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
 
             try:
@@ -197,4 +193,3 @@ arq_circuit = CircuitBreaker(
     recovery_timeout=30.0,  # Shorter timeout for Redis recovery
     success_threshold=2,
 )
-

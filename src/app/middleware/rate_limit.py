@@ -20,9 +20,9 @@ logger = get_logger(__name__)
 # Tier-based rate limits configuration
 # Format: {tier_name: (limit, period_seconds)}
 TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
-    "free": (10, 3600),       # 10 requests per hour
-    "basic": (100, 3600),     # 100 requests per hour
-    "pro": (1000, 3600),      # 1000 requests per hour
+    "free": (10, 3600),  # 10 requests per hour
+    "basic": (100, 3600),  # 100 requests per hour
+    "pro": (1000, 3600),  # 1000 requests per hour
     "enterprise": (10000, 3600),  # 10000 requests per hour
 }
 
@@ -59,10 +59,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
 
         if is_limited:
-            logger.warning(
-                "Rate limit exceeded | key=%s | limit=%s | period=%s",
-                key, limit, period
-            )
+            logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
             return Response("Too Many Requests", status_code=429, headers=headers)
 
         response = await call_next(request)
@@ -86,10 +83,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if user:
             # Authenticated user - use tier-based limits
             tier_name = await self._get_user_tier_name(user)
-            limit, period = TIER_RATE_LIMITS.get(
-                tier_name.lower() if tier_name else "",
-                DEFAULT_AUTHENTICATED_LIMIT
-            )
+            limit, period = TIER_RATE_LIMITS.get(tier_name.lower() if tier_name else "", DEFAULT_AUTHENTICATED_LIMIT)
             # Key based on user ID for authenticated requests
             user_id = getattr(user, "id", None) or user.get("id") if isinstance(user, dict) else None
             key = f"user:{user_id}" if user_id else f"ip:{self._get_client_ip(request)}"
@@ -143,9 +137,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 from src.app.modules.tiers.models import Tier
 
                 async with local_session() as session:
-                    result = await session.execute(
-                        select(Tier.name).where(Tier.id == tier_id)
-                    )
+                    result = await session.execute(select(Tier.name).where(Tier.id == tier_id))
                     tier_name = result.scalar_one_or_none()
 
                     if tier_name:
@@ -157,9 +149,23 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         return None
 
+    # Trusted proxy IPs - configure based on your infrastructure
+    # Cloud load balancers, Kubernetes ingress, etc.
+    TRUSTED_PROXIES = {"127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+
     def _get_client_ip(self, request: Request) -> str:
-        """Get client IP, respecting X-Forwarded-For header."""
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            return forwarded.split(",")[0].strip()
-        return request.client.host if request.client else "unknown"
+        """Get client IP with trusted proxy validation.
+        
+        Only trusts X-Forwarded-For header if request comes from a trusted proxy.
+        This prevents attackers from spoofing their IP to bypass rate limits.
+        """
+        client_ip = request.client.host if request.client else "unknown"
+
+        # Only trust X-Forwarded-For if request is from a trusted proxy
+        if client_ip in self.TRUSTED_PROXIES:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                # Return the first (original client) IP from the chain
+                return forwarded.split(",")[0].strip()
+
+        return client_ip

@@ -18,5 +18,3 @@ class Permission(str, Enum):
 
     # Notification Management
     NOTIFICATIONS_MANAGE = "notifications:manage"
-
-

@@ -111,4 +111,3 @@ async def patch_user_tier(
 ) -> dict[str, str]:
     """Update user's tier (superuser only)."""
     return await user_service.update_user_tier(username, values, db)
-

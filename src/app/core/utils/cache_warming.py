@@ -48,23 +48,29 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 
     import json
 
-    stmt = select(Tenant).where(Tenant.is_active == True)
+    stmt = select(Tenant).where(Tenant.is_active.is_(True))
     result = await session.execute(stmt)
     tenants = result.scalars().all()
 
     cached_count = 0
-    for tenant in tenants:
-        try:
-            cache_key = f"tenant:slug:{tenant.slug}"
-            cache_data = json.dumps({
-                "id": tenant.id,
-                "slug": tenant.slug,
-                "is_active": tenant.is_active,
-            })
-            await redis_client.setex(cache_key, TENANT_CACHE_TTL, cache_data)
-            cached_count += 1
-        except Exception as e:
-            logger.warning("Failed to cache tenant %s: %s", tenant.slug, e)
+    try:
+        async with redis_client.pipeline() as pipe:
+            for tenant in tenants:
+                cache_key = f"tenant:slug:{tenant.slug}"
+                cache_data = json.dumps(
+                    {
+                        "id": tenant.id,
+                        "slug": tenant.slug,
+                        "is_active": tenant.is_active,
+                    }
+                )
+                pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
+            await pipe.execute()
+        cached_count = len(tenants)
+        logger.info(f"Cache warming completed: {cached_count} tenants")
+    except Exception as e:
+        logger.error(f"Cache warming failed: {e}")
+        return 0
 
     return cached_count
 
@@ -87,13 +93,17 @@ async def warm_tier_cache(session: AsyncSession) -> int:
     tiers = result.scalars().all()
 
     cached_count = 0
-    for tier in tiers:
-        try:
-            cache_key = f"tier:name:{tier.id}"
-            await redis_client.setex(cache_key, TIER_CACHE_TTL, tier.name)
-            cached_count += 1
-        except Exception as e:
-            logger.warning("Failed to cache tier %s: %s", tier.name, e)
+    try:
+        async with redis_client.pipeline() as pipe:
+            for tier in tiers:
+                cache_key = f"tier:name:{tier.id}"
+                pipe.setex(cache_key, TIER_CACHE_TTL, tier.name)
+            await pipe.execute()
+        cached_count = len(tiers)
+        logger.info(f"Tier cache warming completed: {cached_count} tiers")
+    except Exception as e:
+        logger.error(f"Tier cache warming failed: {e}")
+        return 0
 
     return cached_count
 

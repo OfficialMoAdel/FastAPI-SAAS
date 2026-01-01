@@ -302,3 +302,157 @@ class TestAuthServiceLogout:
                 await auth_service.logout("invalid_token", "refresh_token", mock_response, mock_db)
 
             assert "Invalid token" in str(exc_info.value.detail)
+
+
+
+
+
+class TestAuthServiceEmailFlows:
+    """Tests for email-related flows (password reset, verification)."""
+
+    @pytest.mark.asyncio
+    async def test_request_password_reset_sends_email(self, mock_db):
+        """Test that requesting password reset triggers email event."""
+        from src.app.modules.auth.service import auth_service
+        from src.app.core.events import EventPriority
+
+        mock_user = {
+            "id": 1,
+            "email": "test@example.com",
+            "username": "testuser",
+            "tenant_id": 100
+        }
+
+        with (
+            patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
+            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.auth.models.PasswordResetToken") as mock_token_model,
+            patch("src.app.modules.auth.service.settings") as mock_settings
+        ):
+            mock_get_user.return_value = mock_user
+            mock_settings.FRONTEND_URL = "http://test-frontend"
+            
+            # Mock the session.add and commit behavior
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+            
+            # Mock token creation
+            mock_token = MagicMock()
+            mock_token.token = "reset_token_123"
+            mock_token.id = 55
+            mock_token_model.return_value = mock_token
+
+            await auth_service.request_password_reset("test@example.com", mock_db)
+
+            # Check user lookup
+            mock_get_user.assert_called_once_with(db=mock_db, email="test@example.com", is_deleted=False)
+
+            # Check token saved
+            mock_db.add.assert_called()
+            mock_db.commit.assert_called()
+
+            # Check event published
+            mock_publish.assert_called_once()
+            call_args = mock_publish.call_args
+            assert call_args[0][0] == "notification.send"
+            assert call_args[0][1]["template_name"] == "password_reset"
+            assert call_args[0][1]["to_email"] == "test@example.com"
+            assert "reset_link" in call_args[0][1]["context"]
+            assert "http://test-frontend" in call_args[0][1]["context"]["reset_link"]
+
+    @pytest.mark.asyncio
+    async def test_send_verification_email_creates_token_and_event(self, mock_db):
+        """Test sending verification email creates token and triggers event."""
+        from src.app.modules.auth.service import auth_service
+        from src.app.core.events import EventPriority
+
+        mock_user = {
+            "id": 1,
+            "email": "test@example.com",
+            "username": "testuser",
+            "is_email_verified": False,
+            "tenant_id": 100
+        }
+
+        with (
+            patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
+            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.auth.models.EmailVerificationToken") as mock_token_cls,
+            patch("src.app.modules.auth.service.settings") as mock_settings
+        ):
+            mock_get_user.return_value = mock_user
+            mock_settings.FRONTEND_URL = "http://test-frontend"
+            
+            mock_token_instance = MagicMock()
+            mock_token_instance.token = "verify_token_123"
+            mock_token_cls.return_value = mock_token_instance
+
+            mock_db.add = MagicMock()
+            mock_db.commit = AsyncMock()
+            mock_db.refresh = AsyncMock()
+
+            await auth_service.send_verification_email("test@example.com", mock_db)
+
+            # Check token created and stored
+            mock_token_cls.assert_called_with(user_id=1)
+            mock_db.add.assert_called_with(mock_token_instance)
+            mock_db.commit.assert_called()
+
+            # Check event published
+            mock_publish.assert_called_once()
+            call_args = mock_publish.call_args
+            assert call_args[0][0] == "notification.send"
+            assert call_args[0][1]["template_name"] == "email_verification"
+            assert "verification_link" in call_args[0][1]["context"]
+
+    @pytest.mark.asyncio
+    async def test_verify_email_validates_and_updates_user(self, mock_db):
+        """Test verification logic updates user and deletes token."""
+        from src.app.modules.auth.service import auth_service
+        from src.app.modules.auth.models import EmailVerificationToken
+
+        mock_user = {"id": 99, "is_email_verified": False}
+
+        with (
+            patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
+            patch("src.app.modules.users.crud.crud_users.update", new_callable=AsyncMock) as mock_update_user
+        ):
+            mock_get_user.return_value = mock_user
+
+            # Create a mock token object returned by DB query
+            mock_token = MagicMock()
+            mock_token.is_expired = False
+            mock_token.user_id = 99
+
+            # Mock DB Query results
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_token
+            
+            mock_db.execute = AsyncMock(return_value=mock_result)
+            mock_db.delete = AsyncMock()
+            mock_db.commit = AsyncMock()
+
+            result = await auth_service.verify_email("verify_token_123", mock_db)
+
+            # Assertions
+            mock_get_user.assert_called_once()
+            mock_update_user.assert_called_once()
+            mock_db.delete.assert_called_once_with(mock_token)
+            mock_db.commit.assert_called()
+            assert result == {"message": "Email verified successfully."}
+
+    @pytest.mark.asyncio
+    async def test_verify_email_invalid_token_raises_error(self, mock_db):
+        """Test verify_email raises error if token is invalid or missing."""
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+        from src.app.modules.auth.service import auth_service
+
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = None
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        with pytest.raises(UnauthorizedException) as exc_info:
+            await auth_service.verify_email("invalid_token", mock_db)
+        
+        assert "Invalid verification token" in str(exc_info.value.detail)

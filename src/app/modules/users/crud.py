@@ -41,5 +41,5 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         return user_dict
 
-crud_users = CRUDUser(User)
 
+crud_users = CRUDUser(User)

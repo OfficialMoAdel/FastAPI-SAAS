@@ -138,7 +138,16 @@ class SessionManager:
             True if session is valid, False otherwise
         """
         if not self._redis_client:
-            # Fail open if Redis unavailable
+            # Fail open if Redis unavailable - with critical logging for monitoring
+            logger.critical(
+                "redis_unavailable_session_bypass",
+                extra={
+                    "user_id": user_id,
+                    "session_id": session_id,
+                    "severity": "high",
+                    "action": "session_validation_bypassed",
+                },
+            )
             return True
 
         session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"

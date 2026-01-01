@@ -132,12 +132,19 @@ async def get_notification(
 # Email Template Override endpoints
 @router.get("/templates/overrides", response_model=list[EmailTemplateOverrideResponse])
 async def list_template_overrides(
+    limit: int = Query(100, ge=1, le=1000, description="Page size"),
+    offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> list[EmailTemplateOverrideResponse]:
-    """List all email template overrides for the current tenant."""
-    query = select(EmailTemplateOverride).where(EmailTemplateOverride.tenant_id == current_tenant.id)
+    """List all email template overrides for the current tenant with pagination."""
+    query = (
+        select(EmailTemplateOverride)
+        .where(EmailTemplateOverride.tenant_id == current_tenant.id)
+        .limit(limit)
+        .offset(offset)
+    )
     result = await db.execute(query)
     overrides = result.scalars().all()
 

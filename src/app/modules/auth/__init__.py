@@ -25,8 +25,10 @@ def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "auth_router":
         from .router import router as auth_router
+
         return auth_router
     if name == "auth_service":
         from .service import auth_service
+
         return auth_service
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

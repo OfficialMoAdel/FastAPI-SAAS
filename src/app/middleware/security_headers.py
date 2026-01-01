@@ -65,7 +65,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         self.frame_options = frame_options
 
         # Only enable HSTS in production (requires HTTPS)
-        self.is_production = getattr(settings, 'ENVIRONMENT', None) == EnvironmentOption.PRODUCTION
+        self.is_production = getattr(settings, "ENVIRONMENT", None) == EnvironmentOption.PRODUCTION
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Add security headers to response."""
@@ -97,8 +97,6 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
         # HSTS - only in production (HTTPS required)
         if self.enable_hsts and self.is_production:
-            response.headers["Strict-Transport-Security"] = (
-                f"max-age={self.hsts_max_age}; includeSubDomains; preload"
-            )
+            response.headers["Strict-Transport-Security"] = f"max-age={self.hsts_max_age}; includeSubDomains; preload"
 
         return response

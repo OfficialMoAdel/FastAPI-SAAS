@@ -65,9 +65,7 @@ class TierService:
         dict[str, Any]
             Paginated tiers response
         """
-        tiers_data = await crud_tiers.get_multi(
-            db=db, offset=(page - 1) * items_per_page, limit=items_per_page
-        )
+        tiers_data = await crud_tiers.get_multi(db=db, offset=(page - 1) * items_per_page, limit=items_per_page)
         response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
         return response
 
@@ -97,7 +95,6 @@ class TierService:
         if db_tier is None:
             raise NotFoundException("Tier not found")
         return db_tier
-
 
     async def get_tier(self, name: str, db: AsyncSession) -> dict[str, Any]:
         """Get a tier by name.

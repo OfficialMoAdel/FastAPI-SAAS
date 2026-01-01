@@ -27,7 +27,7 @@ class APIKeyService:
         """
         # Generate a secure random key
         raw_key = secrets.token_urlsafe(self.KEY_LENGTH)
-        prefix = raw_key[:self.KEY_PREFIX_LENGTH]
+        prefix = raw_key[: self.KEY_PREFIX_LENGTH]
 
         # Hash the key for storage (using SHA-256)
         hashed = hashlib.sha256(raw_key.encode()).hexdigest()

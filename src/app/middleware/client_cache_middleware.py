@@ -59,4 +59,3 @@ class ClientCacheMiddleware(BaseHTTPMiddleware):
             response.headers["Cache-Control"] = "private, no-store"
 
         return response
-

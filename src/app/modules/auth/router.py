@@ -37,9 +37,7 @@ async def login_for_access_token(
 
 @router.post("/refresh")
 async def refresh_access_token(
-    response: Response,
-    request: Request,
-    db: AsyncSession = Depends(async_get_db)
+    response: Response, request: Request, db: AsyncSession = Depends(async_get_db)
 ) -> dict[str, str]:
     """Refresh access token using refresh token from cookie."""
     refresh_token = request.cookies.get("refresh_token")
@@ -107,5 +105,3 @@ async def verify_email(
 ) -> dict[str, str]:
     """Verify email using verification token."""
     return await auth_service.verify_email(token=body.token, db=db)
-
-

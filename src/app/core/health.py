@@ -94,5 +94,3 @@ async def check_redis_queue_health() -> HealthResult:
     except Exception as e:
         LOGGER.exception(f"Redis queue health check failed with error: {e}")
         return HealthResult(status="unhealthy", error=f"{type(e).__name__}: {e}")
-
-

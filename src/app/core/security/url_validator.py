@@ -14,24 +14,24 @@ logger = get_logger(__name__)
 
 # Blocked IP ranges (RFC 1918, RFC 6890, cloud metadata)
 BLOCKED_NETWORKS = [
-    ipaddress.ip_network("127.0.0.0/8"),      # Loopback
-    ipaddress.ip_network("10.0.0.0/8"),       # Private Class A
-    ipaddress.ip_network("172.16.0.0/12"),    # Private Class B
-    ipaddress.ip_network("192.168.0.0/16"),   # Private Class C
-    ipaddress.ip_network("169.254.0.0/16"),   # Link-local (AWS/Azure/GCP metadata)
-    ipaddress.ip_network("0.0.0.0/8"),        # Current network
-    ipaddress.ip_network("100.64.0.0/10"),    # Carrier-grade NAT
-    ipaddress.ip_network("192.0.0.0/24"),     # IETF Protocol Assignments
-    ipaddress.ip_network("192.0.2.0/24"),     # TEST-NET-1
+    ipaddress.ip_network("127.0.0.0/8"),  # Loopback
+    ipaddress.ip_network("10.0.0.0/8"),  # Private Class A
+    ipaddress.ip_network("172.16.0.0/12"),  # Private Class B
+    ipaddress.ip_network("192.168.0.0/16"),  # Private Class C
+    ipaddress.ip_network("169.254.0.0/16"),  # Link-local (AWS/Azure/GCP metadata)
+    ipaddress.ip_network("0.0.0.0/8"),  # Current network
+    ipaddress.ip_network("100.64.0.0/10"),  # Carrier-grade NAT
+    ipaddress.ip_network("192.0.0.0/24"),  # IETF Protocol Assignments
+    ipaddress.ip_network("192.0.2.0/24"),  # TEST-NET-1
     ipaddress.ip_network("198.51.100.0/24"),  # TEST-NET-2
-    ipaddress.ip_network("203.0.113.0/24"),   # TEST-NET-3
-    ipaddress.ip_network("224.0.0.0/4"),      # Multicast
-    ipaddress.ip_network("240.0.0.0/4"),      # Reserved for future use
+    ipaddress.ip_network("203.0.113.0/24"),  # TEST-NET-3
+    ipaddress.ip_network("224.0.0.0/4"),  # Multicast
+    ipaddress.ip_network("240.0.0.0/4"),  # Reserved for future use
     ipaddress.ip_network("255.255.255.255/32"),  # Broadcast
     # IPv6 equivalents
-    ipaddress.ip_network("::1/128"),          # IPv6 loopback
-    ipaddress.ip_network("fc00::/7"),         # IPv6 unique local
-    ipaddress.ip_network("fe80::/10"),        # IPv6 link-local
+    ipaddress.ip_network("::1/128"),  # IPv6 loopback
+    ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
+    ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
 ]
 
 # Specific blocked hostnames (cloud metadata endpoints)
@@ -121,9 +121,7 @@ def validate_webhook_url(url: str) -> None:
                 hostname=hostname,
                 blocked_ip=ip,
             )
-            raise SSRFProtectionError(
-                f"URL resolves to blocked IP address: {ip}"
-            )
+            raise SSRFProtectionError(f"URL resolves to blocked IP address: {ip}")
 
     logger.debug(
         "ssrf_url_validated",

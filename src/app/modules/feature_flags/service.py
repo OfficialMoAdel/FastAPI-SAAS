@@ -1,4 +1,3 @@
-
 from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -61,9 +60,7 @@ class FeatureFlagsService:
     async def delete_override(self, db: AsyncSession, flag_name: str, user_id: int, tenant_id: int) -> bool:
         return await self.override_crud.delete(db, flag_name=flag_name, user_id=user_id, tenant_id=tenant_id)
 
-    async def is_feature_enabled(
-        self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: int
-    ) -> bool:
+    async def is_feature_enabled(self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: int) -> bool:
         flag = await self.get_flag(db, flag_name, tenant_id)
         if not flag:
             return False

@@ -67,8 +67,7 @@ class AuthService:
         if attempts and int(attempts) >= MAX_LOGIN_ATTEMPTS:
             lockout_minutes = LOCKOUT_DURATION_SECONDS // 60
             raise UnauthorizedException(
-                f"Account locked due to too many failed attempts. "
-                f"Please try again in {lockout_minutes} minutes."
+                f"Account locked due to too many failed attempts. Please try again in {lockout_minutes} minutes."
             )
 
         user = await authenticate_user(username_or_email=username, password=password, db=db)
@@ -246,6 +245,7 @@ class AuthService:
         """
         import logging
 
+        from ...core.events import EventPriority, event_bus
         from ...modules.users.crud import crud_users
         from .models import PasswordResetToken
 
@@ -261,15 +261,26 @@ class AuthService:
             await db.commit()
             await db.refresh(reset_token)
 
-            logger.info(
-                "Password reset token created | user_id=%s | token_id=%s",
-                user["id"], reset_token.id
-            )
+            logger.info("Password reset token created | user_id=%s | token_id=%s", user["id"], reset_token.id)
 
-            # TODO: Send email with reset link containing the token
-            # In production, integrate with email service:
-            # reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
-            # await notification_service.send_password_reset_email(email, reset_link)
+            # Send email via event bus
+            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+            
+            await event_bus.publish(
+                "notification.send",
+                {
+                    "to_email": email,
+                    "template_name": "password_reset",
+                    "context": {
+                        "username": user["username"],
+                        "reset_link": reset_link,
+                        "valid_minutes": 60,
+                    },
+                    "tenant_id": str(user["tenant_id"]),
+                    "user_id": str(user["id"]),
+                },
+                priority=EventPriority.NORMAL,
+            )
 
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
@@ -311,9 +322,7 @@ class AuthService:
         logger = logging.getLogger(__name__)
 
         # Find token in database
-        result = await db.execute(
-            select(PasswordResetToken).where(PasswordResetToken.token == token)
-        )
+        result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token))
         reset_token = result.scalar_one_or_none()
 
         if not reset_token:
@@ -339,10 +348,7 @@ class AuthService:
         reset_token.used = True
         await db.commit()
 
-        logger.info(
-            "Password reset successful | user_id=%s | token_id=%s",
-            reset_token.user_id, reset_token.id
-        )
+        logger.info("Password reset successful | user_id=%s | token_id=%s", reset_token.user_id, reset_token.id)
 
         return {"message": "Password reset successfully."}
 
@@ -368,18 +374,38 @@ class AuthService:
         import secrets
         from datetime import UTC, datetime, timedelta
 
+        from ...core.events import EventPriority, event_bus
         from ...modules.users.crud import crud_users
+        from .models import EmailVerificationToken
 
         user = await crud_users.get(db=db, email=email, is_deleted=False)
 
         if user and not user.get("is_email_verified", False):
-            # Generate verification token (valid for 24 hours)
-            secrets.token_urlsafe(32)
-            datetime.now(UTC) + timedelta(hours=24)
-
-            # TODO: Store token in database (would need email_verification_tokens table)
-            # TODO: Send email with verification link containing the token
-            # await notification_service.send_verification_email(email, verification_token)
+            # Create verification token (defaults handle generation)
+            token_model = EmailVerificationToken(user_id=user["id"])
+            db.add(token_model)
+            await db.commit()
+            await db.refresh(token_model)
+            
+            verification_token = token_model.token
+            
+            # Send email via event bus
+            verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
+            
+            await event_bus.publish(
+                "notification.send",
+                {
+                    "to_email": email,
+                    "template_name": "email_verification",
+                    "context": {
+                        "username": user["username"],
+                        "verification_link": verification_link,
+                    },
+                    "tenant_id": str(user["tenant_id"]),
+                    "user_id": str(user["id"]),
+                },
+                priority=EventPriority.NORMAL,
+            )
 
         return {"message": "If the email is registered and unverified, a verification link has been sent."}
 
@@ -407,9 +433,33 @@ class AuthService:
         UnauthorizedException
             If token is invalid or expired
         """
-        # TODO: Validate token from email_verification_tokens table
-        # For now, this is a placeholder that shows the structure
-        raise UnauthorizedException("Email verification tokens not yet implemented. Please contact support.")
+        from sqlalchemy import select
+        from ...modules.users.crud import crud_users
+        from .models import EmailVerificationToken
+
+        # Find token in database
+        result = await db.execute(select(EmailVerificationToken).where(EmailVerificationToken.token == token))
+        verification_token = result.scalar_one_or_none()
+
+        if not verification_token:
+            raise UnauthorizedException("Invalid verification token.")
+
+        if verification_token.is_expired:
+            raise UnauthorizedException("Verification token has expired.")
+
+        # Get user
+        user = await crud_users.get(db=db, id=verification_token.user_id, is_deleted=False)
+        if not user:
+            raise UnauthorizedException("User not found.")
+
+        # Update user status
+        await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True})
+
+        # Delete token (it's single use)
+        await db.delete(verification_token)
+        await db.commit()
+
+        return {"message": "Email verified successfully."}
 
 
 # Singleton instance for import convenience

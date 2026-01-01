@@ -61,5 +61,3 @@ class User(Base):
     )
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
     # Note: api_keys relationship is defined in APIKey model using back_populates="user"
-
-

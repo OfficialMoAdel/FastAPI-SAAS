@@ -3,6 +3,7 @@
 Supports key rotation: configure ENCRYPTION_KEY_PREVIOUS to enable
 decryption with the old key while encrypting with the new key.
 """
+
 import base64
 import logging
 import os
@@ -32,10 +33,7 @@ def _get_salt() -> bytes:
 
     # SECURITY: Fail fast in production if salt not configured
     if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
-        raise ValueError(
-            "ENCRYPTION_SALT must be set in production. "
-            "Generate with: openssl rand -hex 32"
-        )
+        raise ValueError("ENCRYPTION_SALT must be set in production. Generate with: openssl rand -hex 32")
 
     # Fallback: generate random salt per process (dev/staging only)
     if _FALLBACK_SALT is None:
@@ -93,8 +91,8 @@ def _get_multi_fernet() -> MultiFernet:
     fernets = [current_fernet]
 
     # Check for previous key (for rotation)
-    prev_key_str = getattr(settings, 'ENCRYPTION_KEY_PREVIOUS', None)
-    if prev_key_str and hasattr(prev_key_str, 'get_secret_value'):
+    prev_key_str = getattr(settings, "ENCRYPTION_KEY_PREVIOUS", None)
+    if prev_key_str and hasattr(prev_key_str, "get_secret_value"):
         prev_key_value = prev_key_str.get_secret_value()
         if prev_key_value:
             try:
@@ -133,4 +131,3 @@ def rotate_encryption(encrypted_data: str) -> str:
     """
     mf = _get_multi_fernet()
     return mf.rotate(encrypted_data.encode()).decode()
-

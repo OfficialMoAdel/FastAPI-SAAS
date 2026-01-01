@@ -8,6 +8,10 @@ from .admin.initialize import create_admin_interface
 from .api import router
 from .core.config import settings
 from .core.setup import create_application, lifespan_factory
+from .middleware.body_limit import RequestBodyLimitMiddleware
+from .middleware.rate_limit import RateLimitMiddleware
+from .middleware.request_id import RequestIDMiddleware
+from .middleware.security_headers import SecurityHeadersMiddleware
 from .middleware.tenant import TenantMiddleware
 
 admin = create_admin_interface()
@@ -22,9 +26,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging()
 
     # Get the default lifespan
-    default_lifespan = lifespan_factory(
-        settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP
-    )
+    default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
 
     # Run the default lifespan initialization and our admin initialization
     async with default_lifespan(app):
@@ -65,16 +67,17 @@ app = create_application(router=router, settings=settings, lifespan=lifespan_wit
 # Add tenant middleware for multi-tenancy support
 app.add_middleware(TenantMiddleware)
 
-from .middleware.body_limit import RequestBodyLimitMiddleware
-from .middleware.rate_limit import RateLimitMiddleware
-from .middleware.request_id import RequestIDMiddleware
-from .middleware.security_headers import SecurityHeadersMiddleware
 
 # Request ID must be first (outermost) for tracing
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+
+# GZip compression for responses > 500 bytes
+from fastapi.middleware.gzip import GZipMiddleware
+
+app.add_middleware(GZipMiddleware, minimum_size=500)
 
 # Mount admin interface if enabled
 if admin:

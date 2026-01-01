@@ -19,6 +19,7 @@ def _get_tenant_id() -> int:
     context = get_tenant_context()
     if context is None:
         from fastapi import HTTPException
+
         raise HTTPException(status_code=400, detail="Tenant context not set")
     return context.id
 

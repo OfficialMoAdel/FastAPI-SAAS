@@ -20,13 +20,13 @@ class PostService:
         Uses UserService for cross-module access instead of direct CRUD import.
         """
         from ...modules.users.service import user_service
+
         return await user_service.get_user(username, db)
 
     async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
         """Check if current user owns the resource."""
         if current_user_id != target_user_id:
             raise ForbiddenException()
-
 
     async def create_post(
         self,

@@ -257,6 +257,7 @@ def create_application(
 
     # Register standardized error handlers
     from .errors import setup_exception_handlers
+
     setup_exception_handlers(application)
 
     return application

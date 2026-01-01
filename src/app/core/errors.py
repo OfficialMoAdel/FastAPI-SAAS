@@ -102,10 +102,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
     """
 
     @app.exception_handler(StarletteHTTPException)
-    async def http_exception_handler(
-        request: Request,
-        exc: StarletteHTTPException
-    ) -> JSONResponse:
+    async def http_exception_handler(request: Request, exc: StarletteHTTPException) -> JSONResponse:
         """Handle HTTP exceptions with standardized format."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -127,21 +124,20 @@ def setup_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(ValidationError)
-    async def validation_exception_handler(
-        request: Request,
-        exc: ValidationError
-    ) -> JSONResponse:
+    async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
         """Handle Pydantic validation errors."""
         request_id = getattr(request.state, "request_id", None)
 
         # Format validation errors
         details = {"fields": []}
         for error in exc.errors():
-            details["fields"].append({
-                "location": ".".join(str(loc) for loc in error["loc"]),
-                "message": error["msg"],
-                "type": error["type"],
-            })
+            details["fields"].append(
+                {
+                    "location": ".".join(str(loc) for loc in error["loc"]),
+                    "message": error["msg"],
+                    "type": error["type"],
+                }
+            )
 
         logger.warning(
             "Validation error",
@@ -159,10 +155,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         )
 
     @app.exception_handler(Exception)
-    async def global_exception_handler(
-        request: Request,
-        exc: Exception
-    ) -> JSONResponse:
+    async def global_exception_handler(request: Request, exc: Exception) -> JSONResponse:
         """Catch-all handler for unexpected exceptions."""
         request_id = getattr(request.state, "request_id", None)
 

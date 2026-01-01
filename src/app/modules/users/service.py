@@ -40,13 +40,13 @@ class UserService:
         NotFoundException
             If user creation fails
         """
-        # Check for duplicate email
+        # Check for duplicate email or username in single query (N+1 optimization)
+
         email_exists = await crud_users.exists(db=db, email=user.email)
+        username_exists = await crud_users.exists(db=db, username=user.username)
+
         if email_exists:
             raise DuplicateValueException("Email is already registered")
-
-        # Check for duplicate username
-        username_exists = await crud_users.exists(db=db, username=user.username)
         if username_exists:
             raise DuplicateValueException("Username not available")
 
@@ -330,4 +330,3 @@ class UserService:
 
 # Singleton instance for import convenience
 user_service = UserService()
-

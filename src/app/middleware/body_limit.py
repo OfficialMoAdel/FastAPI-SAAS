@@ -42,9 +42,7 @@ class LimitedBodyStream:
         self._bytes_read += len(chunk)
 
         if self._bytes_read > self._max_size:
-            raise BodySizeLimitExceeded(
-                f"Request body exceeded limit of {self._max_size} bytes"
-            )
+            raise BodySizeLimitExceeded(f"Request body exceeded limit of {self._max_size} bytes")
 
         return chunk
 
@@ -139,4 +137,3 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                 status_code=413,
                 headers={"X-Max-Body-Size": str(self.max_body_size)},
             )
-

@@ -30,6 +30,7 @@ local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine
 
 from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
+from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 
@@ -39,9 +40,11 @@ fake = Faker()
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """Ensure fresh database schema for tests."""
-    Base.metadata.drop_all(bind=sync_engine)
+    try:
+        Base.metadata.drop_all(bind=sync_engine)
+    except Exception as e:
+        print(f"Warning: drop_all failed: {e}")
     Base.metadata.create_all(bind=sync_engine)
-    return
     # Optional: drop after tests
     # Base.metadata.drop_all(bind=sync_engine)
 

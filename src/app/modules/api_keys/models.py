@@ -25,7 +25,7 @@ class APIKey(Base):
     hashed_key: Mapped[str] = mapped_column(String(255), unique=True)
 
     # Ownership
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"))
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
 
     # Status and metadata
@@ -43,4 +43,3 @@ class APIKey(Base):
 
     def __repr__(self) -> str:
         return f"APIKey(id={self.id}, name='{self.name}', prefix='{self.key_prefix}')"
-

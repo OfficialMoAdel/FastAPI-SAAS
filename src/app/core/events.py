@@ -174,7 +174,7 @@ class EventBus:
                 "sequence": sequence,
                 "event_id": event_id,
                 "event_name": event_name,
-            }
+            },
         }
 
         logger.info(
@@ -351,10 +351,7 @@ class EventBus:
 
         if self._redis_client:
             # Persist to Redis for production reliability
-            await self._redis_client.lpush(
-                self.DLQ_REDIS_KEY,
-                json.dumps(dlq_entry)
-            )
+            await self._redis_client.lpush(self.DLQ_REDIS_KEY, json.dumps(dlq_entry))
         else:
             logger.warning(
                 "Redis not configured for DLQ, event will be lost on restart",
@@ -494,4 +491,3 @@ async def process_event_handler(
             error=str(e),
         )
         raise  # Re-raise for ARQ retry logic
-

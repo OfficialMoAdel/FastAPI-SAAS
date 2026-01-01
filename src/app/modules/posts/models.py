@@ -23,4 +23,3 @@ class Post(Base):
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
-

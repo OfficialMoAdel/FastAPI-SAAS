@@ -8,4 +8,3 @@ from .schemas import (
     AuditLogResponse,
 )
 from .service import AuditLogService
-
