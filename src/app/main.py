@@ -34,6 +34,19 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
             logging.getLogger(__name__).warning("Pool metrics setup failed: %s", e)
 
+        # Initialize event bus Redis client for DLQ persistence
+        from .core.events import event_bus
+        from .core.utils.cache import client as redis_client
+
+        if redis_client:
+            event_bus.set_redis_client(redis_client)
+            
+        # Initialize session manager for concurrent session limiting
+        from .core.security.session_manager import session_manager
+        
+        if redis_client:
+            session_manager.set_redis_client(redis_client)
+
         # Initialize admin interface if it exists
         if admin:
             # Initialize admin database and setup
@@ -50,11 +63,13 @@ app.add_middleware(TenantMiddleware)
 from .middleware.body_limit import RequestBodyLimitMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.request_id import RequestIDMiddleware
+from .middleware.security_headers import SecurityHeadersMiddleware
 
 # Request ID must be first (outermost) for tracing
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(RateLimitMiddleware)
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
+app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 
 # Mount admin interface if enabled
 if admin:

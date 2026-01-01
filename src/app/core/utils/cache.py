@@ -87,6 +87,142 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     return deleted
 
 
+# =============================================================================
+# Cache Stampede Protection
+# =============================================================================
+
+import asyncio
+import random
+import time
+from structlog import get_logger
+
+stampede_logger = get_logger(__name__)
+
+
+async def get_with_stampede_protection(
+    key: str,
+    fetch_func: Callable[[], Any],
+    ttl: int = 3600,
+    beta: float = 1.0,
+) -> Any:
+    """Get cached value with probabilistic early expiration (XFetch algorithm).
+    
+    Prevents cache stampede by probabilistically refreshing cache before
+    expiration, spreading out refresh requests across time.
+    
+    Args:
+        key: Cache key
+        fetch_func: Async function to fetch fresh data if cache miss
+        ttl: Time-to-live in seconds (default: 1 hour)
+        beta: Tuning parameter for early refresh probability (higher = earlier refresh)
+        
+    Returns:
+        Cached or freshly fetched value
+        
+    Example:
+        data = await get_with_stampede_protection(
+            "user:123:profile",
+            lambda: fetch_user_profile(123),
+            ttl=3600,
+        )
+    """
+    if client is None:
+        return await fetch_func()
+    
+    # Try to get cached value with TTL info
+    cached = await client.get(key)
+    remaining_ttl = await client.ttl(key)
+    
+    if cached is not None and remaining_ttl > 0:
+        # XFetch probabilistic early expiration
+        # As TTL approaches 0, probability of refresh increases
+        delta = ttl - remaining_ttl  # Time since cache was set
+        if delta > 0:
+            # Probability increases as we approach expiration
+            probability = beta * (delta / ttl) ** 2
+            if random.random() < probability:
+                stampede_logger.debug(
+                    "Cache early refresh triggered",
+                    key=key,
+                    remaining_ttl=remaining_ttl,
+                    probability=probability,
+                )
+                # Refresh in background, return stale data
+                asyncio.create_task(_refresh_cache(key, fetch_func, ttl))
+        
+        return json.loads(cached)
+    
+    # Cache miss - fetch and cache
+    return await _refresh_cache(key, fetch_func, ttl)
+
+
+async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> Any:
+    """Refresh cache with fresh data."""
+    if client is None:
+        return await fetch_func()
+        
+    data = await fetch_func()
+    serialized = json.dumps(jsonable_encoder(data))
+    await client.setex(key, ttl, serialized)
+    return data
+
+
+async def get_with_lock(
+    key: str,
+    fetch_func: Callable[[], Any],
+    ttl: int = 3600,
+    lock_timeout: int = 10,
+) -> Any:
+    """Get cached value with lock-based stampede protection.
+    
+    Uses a distributed lock to ensure only one process refreshes the cache
+    at a time. Other processes wait for the lock holder to complete.
+    
+    Best for high-contention keys where data is expensive to compute.
+    
+    Args:
+        key: Cache key
+        fetch_func: Async function to fetch fresh data if cache miss
+        ttl: Time-to-live in seconds
+        lock_timeout: Maximum time to hold lock in seconds
+        
+    Returns:
+        Cached or freshly fetched value
+    """
+    if client is None:
+        return await fetch_func()
+    
+    # Try cache first
+    cached = await client.get(key)
+    if cached is not None:
+        return json.loads(cached)
+    
+    # Cache miss - try to acquire lock
+    lock_key = f"{key}:lock"
+    lock_acquired = await client.set(lock_key, "1", nx=True, ex=lock_timeout)
+    
+    if lock_acquired:
+        try:
+            # We got the lock - fetch and cache
+            data = await fetch_func()
+            serialized = json.dumps(jsonable_encoder(data))
+            await client.setex(key, ttl, serialized)
+            return data
+        finally:
+            await client.delete(lock_key)
+    else:
+        # Another process has the lock - wait and retry
+        for _ in range(lock_timeout * 10):  # Poll every 100ms
+            await asyncio.sleep(0.1)
+            cached = await client.get(key)
+            if cached is not None:
+                return json.loads(cached)
+        
+        # Lock timeout - fetch anyway
+        stampede_logger.warning("Cache lock timeout, fetching anyway", key=key)
+        return await fetch_func()
+
+
 def _infer_resource_id(kwargs: dict[str, Any], resource_id_type: type | tuple[type, ...]) -> int | str:
     """Infer the resource ID from a dictionary of keyword arguments.
 

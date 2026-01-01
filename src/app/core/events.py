@@ -5,6 +5,7 @@ Supports priority-based event handling:
 - NORMAL/LOW: Asynchronous via ARQ queue (emails, webhooks)
 """
 
+import json
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from enum import Enum
@@ -28,7 +29,9 @@ class EventBus:
 
     Features:
     - Priority-based event handling (CRITICAL=sync, NORMAL/LOW=async)
-    - Dead-letter queue (DLQ) for failed events after max retries
+    - Dead-letter queue (DLQ) backed by Redis for production reliability
+    - Event idempotency via Redis-backed duplicate detection
+    - Event ordering guarantees via sequence numbers
     - ARQ integration for background processing
     """
 
@@ -36,12 +39,25 @@ class EventBus:
     MAX_RETRIES = 3
     # Retry delays in seconds: [60, 300, 900] = 1min, 5min, 15min
     RETRY_DELAYS = [60, 300, 900]
+    # Redis key for DLQ list
+    DLQ_REDIS_KEY = "event_bus:dlq"
+    # Redis key prefix for event sequence counters (per event type)
+    SEQUENCE_KEY_PREFIX = "event_bus:seq:"
 
     def __init__(self) -> None:
         """Initialize event bus with handler registry."""
         self._handlers = defaultdict(list)
         self._arq_queue = None
-        self._dlq: list[dict] = []  # In-memory DLQ (use Redis in production)
+        self._redis_client = None  # Set via set_redis_client()
+
+    def set_redis_client(self, redis_client: Any) -> None:
+        """Set Redis client for DLQ persistence.
+
+        Args:
+            redis_client: Async Redis client instance
+        """
+        self._redis_client = redis_client
+        logger.info("Event bus Redis client configured for DLQ persistence")
 
     def set_arq_queue(self, queue: Any) -> None:
         """Set ARQ queue for async event processing.
@@ -50,6 +66,24 @@ class EventBus:
             queue: ARQ queue instance
         """
         self._arq_queue = queue
+
+    async def get_next_sequence(self, event_name: str) -> int:
+        """Get the next sequence number for an event type.
+        
+        Sequence numbers are monotonically increasing per event type,
+        enabling consumers to detect gaps and process events in order.
+        
+        Args:
+            event_name: Name of the event type
+            
+        Returns:
+            Next sequence number (starting from 1)
+        """
+        if not self._redis_client:
+            return 0  # No ordering guarantee without Redis
+            
+        seq_key = f"{self.SEQUENCE_KEY_PREFIX}{event_name}"
+        return await self._redis_client.incr(seq_key)
 
     def subscribe(self, event_name: str) -> Callable:
         """Decorator to subscribe a handler to an event.
@@ -73,11 +107,17 @@ class EventBus:
 
         return decorator
 
+    # TTL for processed event IDs (24 hours)
+    IDEMPOTENCY_TTL_SECONDS = 86400
+    # Redis key prefix for processed event IDs
+    IDEMPOTENCY_KEY_PREFIX = "event_bus:processed:"
+
     async def publish(
         self,
         event_name: str,
         data: dict[str, Any],
         priority: EventPriority = EventPriority.NORMAL,
+        event_id: str | None = None,
     ) -> None:
         """Publish an event to all registered handlers.
 
@@ -85,33 +125,69 @@ class EventBus:
             event_name: Name of event
             data: Event payload data
             priority: Event priority (CRITICAL=sync, NORMAL/LOW=async)
+            event_id: Optional unique event ID for idempotency. If provided,
+                      duplicate events with the same ID will be skipped.
 
         Example:
             await event_bus.publish(
                 "user.created",
                 {"user_id": str(user.id), "email": user.email},
-                priority=EventPriority.NORMAL
+                priority=EventPriority.NORMAL,
+                event_id="user-created-12345-abc"
             )
         """
+        # Check for duplicate event if event_id provided
+        if event_id and self._redis_client:
+            idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
+            already_processed = await self._redis_client.get(idempotency_key)
+            if already_processed:
+                logger.info(
+                    "Duplicate event skipped",
+                    event_name=event_name,
+                    event_id=event_id,
+                )
+                return
+            # Mark event as processed with TTL
+            await self._redis_client.setex(
+                idempotency_key,
+                self.IDEMPOTENCY_TTL_SECONDS,
+                "1",
+            )
+
         handlers = self._handlers.get(event_name, [])
 
         if not handlers:
             logger.debug("Event published no handlers", event_name=event_name)
             return
 
+        # Get sequence number for ordering guarantees
+        sequence = await self.get_next_sequence(event_name)
+        
+        # Inject sequence into event data for consumers
+        enriched_data = {
+            **data,
+            "_event_meta": {
+                "sequence": sequence,
+                "event_id": event_id,
+                "event_name": event_name,
+            }
+        }
+
         logger.info(
             "Event published",
             event_name=event_name,
             priority=priority,
             handler_count=len(handlers),
+            event_id=event_id,
+            sequence=sequence,
         )
 
         if priority == EventPriority.CRITICAL:
             # Execute synchronously, fire-and-forget
-            await self._publish_sync(event_name, data, handlers)
+            await self._publish_sync(event_name, enriched_data, handlers)
         else:
             # Queue for async execution via ARQ
-            await self._publish_async(event_name, data, handlers, priority)
+            await self._publish_async(event_name, enriched_data, handlers, priority)
 
     async def _publish_sync(
         self,
@@ -205,7 +281,7 @@ class EventBus:
         """
         return self._handlers.get(event_name, [])
 
-    def add_to_dlq(
+    async def add_to_dlq(
         self,
         event_name: str,
         handler_name: str,
@@ -213,7 +289,7 @@ class EventBus:
         error: str,
         attempt_count: int,
     ) -> None:
-        """Add failed event to dead-letter queue.
+        """Add failed event to dead-letter queue (Redis-backed).
 
         Args:
             event_name: Name of event
@@ -232,7 +308,19 @@ class EventBus:
             "attempt_count": attempt_count,
             "failed_at": datetime.now(UTC).isoformat(),
         }
-        self._dlq.append(dlq_entry)
+
+        if self._redis_client:
+            # Persist to Redis for production reliability
+            await self._redis_client.lpush(
+                self.DLQ_REDIS_KEY,
+                json.dumps(dlq_entry)
+            )
+        else:
+            logger.warning(
+                "Redis not configured for DLQ, event will be lost on restart",
+                event_name=event_name,
+            )
+
         logger.warning(
             "Event moved to DLQ",
             event_name=event_name,
@@ -241,35 +329,56 @@ class EventBus:
             error=error,
         )
 
-    def get_dlq_entries(self) -> list[dict]:
-        """Get all dead-letter queue entries.
+    async def get_dlq_entries(self, limit: int = 100) -> list[dict]:
+        """Get dead-letter queue entries from Redis.
+
+        Args:
+            limit: Maximum number of entries to return
 
         Returns:
             List of failed event entries
         """
-        return self._dlq.copy()
+        if not self._redis_client:
+            return []
 
-    def retry_dlq_entry(self, index: int) -> dict | None:
-        """Remove and return a DLQ entry for retry.
+        entries = await self._redis_client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
+        return [json.loads(entry) for entry in entries]
 
-        Args:
-            index: Index of entry to retry
+    async def get_dlq_size(self) -> int:
+        """Get the number of entries in the DLQ.
 
         Returns:
-            DLQ entry or None if not found
+            Number of DLQ entries
         """
-        if 0 <= index < len(self._dlq):
-            return self._dlq.pop(index)
+        if not self._redis_client:
+            return 0
+        return await self._redis_client.llen(self.DLQ_REDIS_KEY)
+
+    async def retry_dlq_entry(self) -> dict | None:
+        """Remove and return the oldest DLQ entry for retry (FIFO).
+
+        Returns:
+            DLQ entry or None if queue is empty
+        """
+        if not self._redis_client:
+            return None
+
+        entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
+        if entry:
+            return json.loads(entry)
         return None
 
-    def clear_dlq(self) -> int:
+    async def clear_dlq(self) -> int:
         """Clear all DLQ entries.
 
         Returns:
             Number of entries cleared
         """
-        count = len(self._dlq)
-        self._dlq.clear()
+        if not self._redis_client:
+            return 0
+
+        count = await self._redis_client.llen(self.DLQ_REDIS_KEY)
+        await self._redis_client.delete(self.DLQ_REDIS_KEY)
         return count
 
 
@@ -322,7 +431,7 @@ async def process_event_handler(
                 error=str(e),
             )
             # Add to dead-letter queue
-            event_bus.add_to_dlq(
+            await event_bus.add_to_dlq(
                 event_name=event_name,
                 handler_name=handler_full_name,
                 data=data,

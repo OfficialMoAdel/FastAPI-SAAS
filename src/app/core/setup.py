@@ -255,4 +255,8 @@ def create_application(
 
             application.include_router(docs_router)
 
+    # Register standardized error handlers
+    from .errors import setup_exception_handlers
+    setup_exception_handlers(application)
+
     return application

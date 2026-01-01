@@ -65,7 +65,7 @@ def locked_out_user(db):
     db.refresh(user)
     return user
 
-def test_account_lockout(client, db, tenant): # tenant fixture ensures a tenant
+def test_account_lockout(client_auth, db, tenant): # tenant fixture ensures a tenant
     # Ensure user exists for authentication attempt
     hashed_pw = get_password_hash_sync("password123")
     user = db.query(User).filter_by(username="lockoutuser").first()
@@ -90,7 +90,7 @@ def test_account_lockout(client, db, tenant): # tenant fixture ensures a tenant
     try:
         # 1. 5 failed attempts
         for i in range(5):
-            response = client.post(
+            response = client_auth.post(
                 "/api/v1/auth/login",
                 data={"username": "lockoutuser", "password": "wrongpassword"},
                 headers={"X-Tenant-ID": tenant.slug}
@@ -99,7 +99,7 @@ def test_account_lockout(client, db, tenant): # tenant fixture ensures a tenant
             assert "Wrong username" in response.json()['detail']
 
         # 2. 6th attempt -> Locked
-        response = client.post(
+        response = client_auth.post(
             "/api/v1/auth/login",
             data={"username": "lockoutuser", "password": "wrongpassword"},
             headers={"X-Tenant-ID": tenant.slug}
@@ -108,7 +108,7 @@ def test_account_lockout(client, db, tenant): # tenant fixture ensures a tenant
         assert "Account locked" in response.json()['detail']
 
         # 3. Even with CORRECT password -> Locked
-        response = client.post(
+        response = client_auth.post(
             "/api/v1/auth/login",
             data={"username": "lockoutuser", "password": "password123"},
             headers={"X-Tenant-ID": tenant.slug}
@@ -120,7 +120,7 @@ def test_account_lockout(client, db, tenant): # tenant fixture ensures a tenant
         fake_redis_instance.store.clear()
 
         # 5. Correct password -> Success
-        response = client.post(
+        response = client_auth.post(
             "/api/v1/auth/login",
             data={"username": "lockoutuser", "password": "password123"},
             headers={"X-Tenant-ID": tenant.slug}

@@ -180,6 +180,28 @@ def db() -> Generator[Session, Any, None]:
     session.close()
 
 
+@pytest.fixture
+def client_auth() -> Generator[TestClient, Any, None]:
+    """Client fixture for authentication tests - doesn't mock DB dependencies.
+    
+    Use this for tests that need real database access for authentication,
+    like login/lockout tests.
+    """
+    # Create a fake tenant object for middleware
+    fake_tenant = Mock()
+    fake_tenant.id = 1
+    fake_tenant.slug = "test-tenant-integration"
+    fake_tenant.is_active = True
+    
+    with patch("src.app.core.setup.create_tables", new_callable=AsyncMock), \
+         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock), \
+         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)), \
+         patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new_callable=AsyncMock, return_value=fake_tenant):
+        
+        with TestClient(app) as _client:
+            yield _client
+
+
 def override_dependency(dependency: Callable[..., Any], mocked_response: Any) -> None:
     app.dependency_overrides[dependency] = lambda: mocked_response
 
