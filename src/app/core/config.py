@@ -41,7 +41,9 @@ class CryptSettings(BaseSettings):
 
 
 class DatabaseSettings(BaseSettings):
-    pass
+    DB_POOL_SIZE: int = 20
+    DB_MAX_OVERFLOW: int = 10
+
 
 
 class SQLiteSettings(DatabaseSettings):

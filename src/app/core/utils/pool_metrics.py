@@ -107,7 +107,8 @@ def log_pool_status(engine: Any) -> dict[str, int]:
     Args:
         engine: SQLAlchemy engine instance
 
-    Returns:
+    Returns
+    -------
         Dictionary with pool status
     """
     pool = engine.pool

@@ -2,7 +2,7 @@
 
 Tests cover:
 - Notification status enum values
-- NotificationChannel values  
+- NotificationChannel values
 - Template override model
 """
 

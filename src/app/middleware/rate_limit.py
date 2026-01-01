@@ -76,7 +76,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def _get_rate_limit_config(self, request: Request) -> tuple[int, int, str]:
         """Determine rate limit configuration based on request context.
 
-        Returns:
+        Returns
+        -------
             Tuple of (limit, period, key)
         """
         # Try to get user tier from request state (set by auth dependency)
@@ -106,7 +107,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         Args:
             user: User object or dict
 
-        Returns:
+        Returns
+        -------
             Tier name or None
         """
         # Try to get tier from user object/dict directly

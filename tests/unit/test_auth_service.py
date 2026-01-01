@@ -9,7 +9,6 @@ Tests cover:
 - Logout edge cases
 """
 
-from datetime import timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -240,14 +239,14 @@ class TestAuthServiceTokenRefresh:
             # Check new access token returned
             assert result["access_token"] == "new_access_token"
             assert result["token_type"] == "bearer"
-            
+
             # Verify Rotation Logic
             # 1. Old token blacklisted
             mock_blacklist.assert_called_once_with(token="valid_refresh_token", db=mock_db)
-            
+
             # 2. New refresh token created
             mock_create_refresh.assert_called_once()
-            
+
             # 3. New cookie set
             mock_response.set_cookie.assert_called_once()
             call_kwargs = mock_response.set_cookie.call_args[1]

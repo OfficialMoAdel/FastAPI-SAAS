@@ -22,7 +22,7 @@ logger = get_logger(__name__)
 
 class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     """Add security headers to all responses.
-    
+
     Configurable via settings or constructor parameters.
     """
 
@@ -48,7 +48,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         frame_options: str = "DENY",
     ):
         """Initialize security headers middleware.
-        
+
         Args:
             app: ASGI application
             enable_hsts: Enable HTTP Strict Transport Security
@@ -63,22 +63,22 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         self.enable_csp = enable_csp
         self.csp_policy = csp_policy or self.DEFAULT_CSP
         self.frame_options = frame_options
-        
+
         # Only enable HSTS in production (requires HTTPS)
         self.is_production = getattr(settings, 'ENVIRONMENT', None) == EnvironmentOption.PRODUCTION
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Add security headers to response."""
         response = await call_next(request)
-        
+
         # XSS Prevention Headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = self.frame_options
         response.headers["X-XSS-Protection"] = "1; mode=block"
-        
+
         # Referrer Policy - don't leak full URL to external sites
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
-        
+
         # Permissions Policy - disable potentially dangerous browser features
         response.headers["Permissions-Policy"] = (
             "accelerometer=(), "
@@ -90,15 +90,15 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             "payment=(), "
             "usb=()"
         )
-        
+
         # Content-Security-Policy
         if self.enable_csp:
             response.headers["Content-Security-Policy"] = self.csp_policy
-        
+
         # HSTS - only in production (HTTPS required)
         if self.enable_hsts and self.is_production:
             response.headers["Strict-Transport-Security"] = (
                 f"max-age={self.hsts_max_age}; includeSubDomains; preload"
             )
-        
+
         return response

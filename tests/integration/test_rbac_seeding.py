@@ -43,7 +43,7 @@ class TestSystemRoleSeeding:
         """Verify all permission slugs follow resource:action pattern."""
         valid_resources = {"users", "roles", "feature_flags", "notifications"}
         valid_actions = {"read", "manage", "assign"}
-        
+
         for perm in Permission:
             assert ":" in perm.value, f"Permission {perm.name} missing colon separator"
             parts = perm.value.split(":")

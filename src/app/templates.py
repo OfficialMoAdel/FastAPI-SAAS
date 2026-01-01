@@ -42,10 +42,12 @@ class EmailTemplatesService:
             template_name: Name of template (e.g., 'password_changed')
             context: Template context variables
 
-        Returns:
+        Returns
+        -------
             Tuple of (subject, html_content)
 
-        Raises:
+        Raises
+        ------
             TemplateNotFound: If template file doesn't exist
         """
         # Check for tenant override

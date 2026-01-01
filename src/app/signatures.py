@@ -14,7 +14,8 @@ def generate_webhook_signature(payload: dict[str, Any], secret: str) -> str:
         payload: Webhook payload data
         secret: Webhook secret
 
-    Returns:
+    Returns
+    -------
         Hexadecimal signature string
     """
     payload_str = json.dumps(payload, separators=(",", ":"))
@@ -32,7 +33,8 @@ def verify_webhook_signature(payload: dict[str, Any], secret: str, signature: st
         secret: Webhook secret
         signature: Received signature
 
-    Returns:
+    Returns
+    -------
         True if signature is valid
     """
     expected_signature = generate_webhook_signature(payload, secret)

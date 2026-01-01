@@ -53,7 +53,8 @@ class NotificationService:
             tenant_id: Tenant ID
             template_name: Name of the template (e.g., "welcome", "password_reset")
 
-        Returns:
+        Returns
+        -------
             Tuple of (subject, html_content)
         """
         # Try cache first to avoid N+1 queries
@@ -119,7 +120,8 @@ class NotificationService:
             template_name: Name of the template
             context: Variables to pass to the template
 
-        Returns:
+        Returns
+        -------
             Tuple of (subject, rendered_html)
         """
         subject, template_content = await self.get_template_content(tenant_id, template_name)
@@ -150,7 +152,8 @@ class NotificationService:
             context: Template variables
             user_id: Optional user ID
 
-        Returns:
+        Returns
+        -------
             Notification record
         """
         # Rate limiting check (T105)
@@ -245,7 +248,8 @@ class NotificationService:
             limit: Maximum results
             offset: Offset for pagination
 
-        Returns:
+        Returns
+        -------
             List of notifications
         """
         query = select(Notification).where(Notification.tenant_id == tenant_id)

@@ -39,7 +39,8 @@ class WebhookEndpoint(Base, UUIDMixin):
     Allows tenants to subscribe to system events and receive
     HTTP callbacks with event data.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique UUID identifier
         tenant_id: Reference to tenant (multi-tenancy isolation)
         url: Target URL for webhook deliveries
@@ -102,7 +103,7 @@ class WebhookEndpoint(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="webhook_endpoints",
         init=False,
@@ -146,7 +147,8 @@ class WebhookDelivery(Base, UUIDMixin):
     Tracks individual webhook delivery attempts with payload,
     response status, retry information, and delivery status.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique UUID identifier
         webhook_endpoint_id: Reference to webhook endpoint
         event_type: Event type that triggered delivery
@@ -255,7 +257,7 @@ class WebhookDelivery(Base, UUIDMixin):
         back_populates="deliveries",
         init=False,
     )
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="webhook_deliveries",
         init=False,

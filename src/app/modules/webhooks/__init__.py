@@ -6,4 +6,4 @@ from .models import (
     WebhookEndpoint,
 )
 
-__all__ = ["WebhookEndpoint", "WebhookDelivery", "WebhookDeliveryStatus"]
+__all__ = ["WebhookDelivery", "WebhookDeliveryStatus", "WebhookEndpoint"]

@@ -8,22 +8,9 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 from app.core.config import settings
 from app.core.db.database import Base
-from app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
-from app.modules.api_keys.models import APIKey  # noqa: F401
-from app.modules.audit_logs.models import AuditLog  # noqa: F401
-from app.modules.auth.models import PasswordResetToken  # noqa: F401
-from app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride  # noqa: F401
-from app.modules.notifications.models import Notification  # noqa: F401
-from app.modules.posts.models import Post  # noqa: F401
-from app.modules.rate_limits.models import RateLimit  # noqa: F401
-from app.modules.rbac.models import Permission, Role  # noqa: F401
-from app.modules.tenants.models import Tenant  # noqa: F401
-from app.modules.tiers.models import Tier  # noqa: F401
 
 # Import all models for autogenerate to detect them
 # Core models
-from app.modules.users.models import User  # noqa: F401
-from app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
@@ -73,7 +60,6 @@ def do_run_migrations(connection: Connection) -> None:
 
 async def run_async_migrations() -> None:
     """In this scenario we need to create an Engine and associate a connection with the context."""
-
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section, {}),
         prefix="sqlalchemy.",
@@ -88,7 +74,6 @@ async def run_async_migrations() -> None:
 
 def run_migrations_online() -> None:
     """Run migrations in 'online' mode."""
-
     asyncio.run(run_async_migrations())
 
 

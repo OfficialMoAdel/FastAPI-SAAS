@@ -54,7 +54,8 @@ def is_ip_blocked(ip: str) -> bool:
     Args:
         ip: IP address string (IPv4 or IPv6)
 
-    Returns:
+    Returns
+    -------
         True if the IP is blocked, False otherwise
     """
     try:
@@ -79,7 +80,8 @@ def validate_webhook_url(url: str) -> None:
     Args:
         url: The URL to validate
 
-    Raises:
+    Raises
+    ------
         SSRFProtectionError: If the URL fails validation
     """
     parsed = urlparse(url)

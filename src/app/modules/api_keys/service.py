@@ -21,7 +21,8 @@ class APIKeyService:
     def _generate_key(self) -> tuple[str, str, str]:
         """Generate a new API key.
 
-        Returns:
+        Returns
+        -------
             Tuple of (full_key, prefix, hashed_key)
         """
         # Generate a secure random key

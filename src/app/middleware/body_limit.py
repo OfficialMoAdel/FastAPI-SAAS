@@ -21,6 +21,7 @@ DEFAULT_MAX_BODY_SIZE = 10 * 1024 * 1024
 
 class BodySizeLimitExceeded(Exception):
     """Raised when request body size exceeds the configured limit."""
+
     pass
 
 
@@ -58,7 +59,8 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
     1. Content-Length header check (fast path for compliant clients)
     2. Stream counting for chunked/streaming requests (security path)
 
-    Attributes:
+    Attributes
+    ----------
         max_body_size: Maximum allowed body size in bytes
     """
 

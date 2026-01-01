@@ -36,7 +36,8 @@ class CacheWarmingResult:
 async def warm_tenant_cache(session: AsyncSession) -> int:
     """Preload all active tenant slugs into Redis cache.
 
-    Returns:
+    Returns
+    -------
         Number of tenants cached.
     """
     from src.app.core.utils.cache import client as redis_client
@@ -47,7 +48,7 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 
     import json
 
-    stmt = select(Tenant).where(Tenant.is_active == True)  # noqa: E712
+    stmt = select(Tenant).where(Tenant.is_active == True)
     result = await session.execute(stmt)
     tenants = result.scalars().all()
 
@@ -71,7 +72,8 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 async def warm_tier_cache(session: AsyncSession) -> int:
     """Preload all tier names into Redis cache.
 
-    Returns:
+    Returns
+    -------
         Number of tiers cached.
     """
     from src.app.core.utils.cache import client as redis_client
@@ -99,7 +101,8 @@ async def warm_tier_cache(session: AsyncSession) -> int:
 async def warm_caches() -> CacheWarmingResult:
     """Warm all caches on application startup.
 
-    Returns:
+    Returns
+    -------
         CacheWarmingResult with counts and timing.
     """
     start_time = time.perf_counter()

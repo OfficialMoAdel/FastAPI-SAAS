@@ -19,7 +19,8 @@ class FeatureFlag(Base):
     per-tenant. Each flag has a key, description, default value,
     and metadata for UI presentation.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique integer identifier
         uuid: Unique UUID identifier
         key: Unique flag identifier (e.g., 'dark_mode', 'beta_features')
@@ -122,7 +123,8 @@ class FeatureFlagOverride(Base):
     for their specific use case. Overrides take precedence over
     the default value.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique integer identifier
         uuid: Unique UUID identifier
         tenant_id: Reference to tenant
@@ -181,7 +183,7 @@ class FeatureFlagOverride(Base):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="feature_flag_overrides",
         init=False,

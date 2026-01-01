@@ -129,7 +129,7 @@ class TestWebhookServiceRetry:
     def test_retry_schedule_values(self) -> None:
         """Test retry schedule has correct values (1m, 5m, 15m, 30m, 1h)."""
         expected = [60, 300, 900, 1800, 3600]
-        assert WEBHOOK_RETRY_DELAYS == expected
+        assert expected == WEBHOOK_RETRY_DELAYS
 
     def test_retry_schedule_count(self) -> None:
         """Test retry schedule has 5 attempts."""

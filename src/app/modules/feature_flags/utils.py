@@ -22,7 +22,8 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
         feature_name: Name of the feature flag
         default: Default value if flag is not set
 
-    Returns:
+    Returns
+    -------
         bool: True if feature is enabled, False otherwise
     """
     cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
@@ -64,7 +65,8 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         db: Database session
         tenant_id: Tenant UUID
 
-    Returns:
+    Returns
+    -------
         dict: All feature flags for the tenant
     """
     cache_key = f"tenant:{tenant_id}:features"
@@ -105,7 +107,8 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
         feature_name: Name of the feature flag
         enabled: Whether to enable or disable the feature
 
-    Returns:
+    Returns
+    -------
         Tenant: Updated tenant object
     """
     tenant = await db.get(Tenant, tenant_id)
@@ -149,7 +152,8 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
         tenant_id: Tenant UUID
         flags: Dictionary of feature flags to update
 
-    Returns:
+    Returns
+    -------
         Tenant: Updated tenant object
     """
     tenant = await db.get(Tenant, tenant_id)
@@ -178,7 +182,7 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
             await redis_client.delete(f"tenant:{tenant_id}:features")
 
             # Delete individual keys for updated flags
-            keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags.keys()]
+            keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags]
             if keys_to_delete:
                 await redis_client.delete(*keys_to_delete)
         except Exception:

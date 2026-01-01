@@ -6,6 +6,7 @@ from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
+from ...core.rbac.dependencies import invalidate_user_permissions_cache
 from .models import Permission, Role, RolePermission, UserRole
 from .schemas import RoleCreate, RoleUpdate
 
@@ -183,8 +184,6 @@ class RoleService:
         await self.db.commit()
 
         # Invalidate user permissions cache
-        from ...core.rbac.dependencies import invalidate_user_permissions_cache
-
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
@@ -203,8 +202,6 @@ class RoleService:
             await self.db.commit()
 
             # Invalidate user permissions cache
-            from ...core.rbac.dependencies import invalidate_user_permissions_cache
-
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:

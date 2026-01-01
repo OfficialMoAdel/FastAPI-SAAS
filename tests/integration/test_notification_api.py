@@ -10,10 +10,9 @@ Tests cover:
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
-from src.app.main import app
 from src.app.api.dependencies import get_current_user
+from src.app.main import app
 from src.app.modules.users.models import User
 
 
@@ -48,7 +47,7 @@ class TestNotificationListAPI:
         response = client.get("/api/v1/notifications/", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, (list, dict))
+        assert isinstance(data, list | dict)
 
     def test_list_notifications_pagination(self, client, auth_headers) -> None:
         """API should support pagination for notifications."""

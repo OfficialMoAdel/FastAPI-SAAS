@@ -33,7 +33,8 @@ class CircuitBreaker:
     Tracks failures and opens circuit to prevent repeated attempts to
     unavailable services. Automatically tests recovery after timeout.
 
-    Attributes:
+    Attributes
+    ----------
         name: Identifier for logging/metrics
         failure_threshold: Failures before opening circuit
         recovery_timeout: Seconds before testing recovery
@@ -188,3 +189,12 @@ email_circuit = CircuitBreaker(
     recovery_timeout=120.0,  # Email servers may need longer recovery
     success_threshold=1,
 )
+
+# Circuit breaker for ARQ/Redis queue operations (used by EventBus)
+arq_circuit = CircuitBreaker(
+    name="arq_queue",
+    failure_threshold=5,
+    recovery_timeout=30.0,  # Shorter timeout for Redis recovery
+    success_threshold=2,
+)
+

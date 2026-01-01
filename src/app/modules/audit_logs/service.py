@@ -51,7 +51,8 @@ class AuditLogService:
             ip_address: IP address of the request
             user_agent: User agent string
 
-        Returns:
+        Returns
+        -------
             Created audit log entry
         """
         log_entry = AuditLog(
@@ -104,7 +105,8 @@ class AuditLogService:
             limit: Maximum number of results
             offset: Number of results to skip
 
-        Returns:
+        Returns
+        -------
             List of audit log entries
         """
         query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
@@ -165,7 +167,8 @@ def audit_action(action: str, entity_type: str) -> Callable:
         action: Action name (e.g., "post.created")
         entity_type: Entity type (e.g., "post")
 
-    Returns:
+    Returns
+    -------
         Decorator function
 
     Example:

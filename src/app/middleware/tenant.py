@@ -45,7 +45,8 @@ def is_path_exempt(path: str) -> bool:
     Args:
         path: The request path to check.
 
-    Returns:
+    Returns
+    -------
         True if the path is exempt, False otherwise.
     """
     if path in TENANT_EXEMPT_PATHS:
@@ -75,7 +76,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
             request: The incoming request.
             call_next: The next middleware or route handler.
 
-        Returns:
+        Returns
+        -------
             The response object.
         """
         path = request.url.path
@@ -153,7 +155,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
         Args:
             slug: The tenant slug to look up.
 
-        Returns:
+        Returns
+        -------
             The tenant if found, None otherwise.
         """
         # Security: Prevent DoS/large payload attacks
@@ -223,7 +226,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
         Args:
             data: Cached tenant data dict with id, slug, is_active.
 
-        Returns:
+        Returns
+        -------
             Tenant object with cached fields populated.
         """
         # For middleware validation, we only need id, slug, and is_active

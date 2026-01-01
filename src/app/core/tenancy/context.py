@@ -18,7 +18,8 @@ _current_tenant: ContextVar["Tenant | None"] = ContextVar("current_tenant", defa
 def get_tenant_context() -> "Tenant | None":
     """Get the current tenant from the context.
 
-    Returns:
+    Returns
+    -------
         The current tenant if set, None otherwise.
     """
     return _current_tenant.get()

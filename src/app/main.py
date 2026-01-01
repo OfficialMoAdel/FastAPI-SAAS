@@ -16,6 +16,11 @@ admin = create_admin_interface()
 @asynccontextmanager
 async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     """Custom lifespan that includes admin initialization and pool metrics."""
+    # Initialize structured logging first
+    from .core.logger import setup_logging
+
+    setup_logging()
+
     # Get the default lifespan
     default_lifespan = lifespan_factory(
         settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP
@@ -40,10 +45,10 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
         if redis_client:
             event_bus.set_redis_client(redis_client)
-            
+
         # Initialize session manager for concurrent session limiting
         from .core.security.session_manager import session_manager
-        
+
         if redis_client:
             session_manager.set_redis_client(redis_client)
 

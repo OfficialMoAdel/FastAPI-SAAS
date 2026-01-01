@@ -69,7 +69,7 @@ class WebhookService:
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
             WebhookEndpoint.event_type == event_type,
-            WebhookEndpoint.is_active == True,  # noqa: E712
+            WebhookEndpoint.is_active == True,
         )
 
         result = await self.db.execute(stmt)
@@ -246,7 +246,7 @@ class WebhookService:
 
         except Exception as e:
             # Network/timeout error - record failure and retry
-            logger.error(f"Webhook delivery failed: {delivery_id} - {str(e)}")
+            logger.error(f"Webhook delivery failed: {delivery_id} - {e!s}")
             await webhook_circuit.record_failure(e)
             delivery.attempt_count += 1
             delivery.response_body = str(e)[:1000]

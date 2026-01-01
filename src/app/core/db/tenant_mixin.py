@@ -76,7 +76,8 @@ def create_tenant_id_column(*, init: bool = True, nullable: bool = False) -> Map
         init: Whether to include in dataclass __init__ (for MappedAsDataclass)
         nullable: Whether the column allows NULL values
 
-    Returns:
+    Returns
+    -------
         A properly configured mapped column for tenant_id
 
     Example:

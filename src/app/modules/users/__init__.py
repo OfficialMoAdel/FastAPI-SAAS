@@ -8,10 +8,10 @@ Direct imports:
 """
 
 __all__ = [
-    "users_router",
-    "user_service",
-    "crud_users",
     "User",
+    "crud_users",
+    "user_service",
+    "users_router",
 ]
 
 

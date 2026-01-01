@@ -1,3 +1,5 @@
+import os
+import secrets
 from collections.abc import Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -5,15 +7,18 @@ from unittest.mock import AsyncMock, Mock, patch
 import pytest
 from faker import Faker
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 from sqlalchemy import create_engine
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 
 from src.app.core.config import settings
-from pydantic import SecretStr
+
 # Ensure encryption key is set for tests
-settings.ENCRYPTION_KEY = SecretStr("81MXxT5OUDFQDPCXtjCkOsAFThNorA6V0J27DD_w7i0=")
+settings.ENCRYPTION_KEY = SecretStr(
+    os.getenv("TEST_ENCRYPTION_KEY", secrets.token_urlsafe(32))
+)
 
 from src.app.main import app
 
@@ -27,18 +32,6 @@ from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
-from src.app.modules.users.models import User  # noqa: F401
-from src.app.modules.tiers.models import Tier  # noqa: F401
-from src.app.modules.posts.models import Post  # noqa: F401
-from src.app.modules.auth.models import PasswordResetToken  # noqa: F401
-from src.app.modules.rbac.models import Role, Permission  # noqa: F401
-from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery  # noqa: F401
-from src.app.modules.notifications.models import Notification  # noqa: F401
-from src.app.modules.api_keys.models import APIKey  # noqa: F401
-from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride  # noqa: F401
-from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
 
 fake = Faker()
 
@@ -48,85 +41,46 @@ def setup_db():
     """Ensure fresh database schema for tests."""
     Base.metadata.drop_all(bind=sync_engine)
     Base.metadata.create_all(bind=sync_engine)
-    yield
+    return
     # Optional: drop after tests
     # Base.metadata.drop_all(bind=sync_engine)
 
 
-class MockScalarResult:
-    """Mock for SQLAlchemy ScalarResult."""
-    def all(self):
-        return []
-    
-    def first(self):
-        return None
-    
-    def one_or_none(self):
-        return None
 
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
-class MockResult:
-    """Mock for SQLAlchemy Result."""
-    def scalars(self):
-        return MockScalarResult()
-    
-    def scalar_one_or_none(self):
-        return None
-    
-    def scalar_one(self):
-        return 0
-    
-    def scalar(self):
-        return 0
-    
-    def first(self):
-        """Return the first row or None."""
-        return None
-    
-    def one_or_none(self):
-        """Return one row or None."""
-        return None
+# Setup async engine for tests (same DB as sync engine)
+test_async_engine = create_async_engine(
+    settings.POSTGRES_ASYNC_PREFIX + settings.POSTGRES_URI,
+    echo=False,
+    pool_size=5,
+    max_overflow=5,
+    pool_pre_ping=True
+)
+TestingSessionLocal = async_sessionmaker(bind=test_async_engine, class_=AsyncSession, expire_on_commit=False)
 
-
-class MockAsyncSession:
-    """Mock AsyncSession that properly simulates async database operations."""
-    
-    async def execute(self, *args, **kwargs):
-        return MockResult()
-    
-    async def commit(self):
-        pass
-    
-    async def rollback(self):
-        pass
-    
-    async def close(self):
-        pass
-    
-    async def refresh(self, obj):
-        pass
-    
-    def add(self, obj):
-        pass
-    
-    async def get(self, entity, ident, **kwargs):
-        """Get entity by primary key - returns None in mock."""
-        return None
-
+async def override_get_db() -> Generator[AsyncSession, None, None]:
+    """Override for async_get_db dependency using test async engine."""
+    async with TestingSessionLocal() as session:
+        yield session
 
 @pytest.fixture
 def client() -> Generator[TestClient, Any, None]:
     # Patch create_tables and warm_caches to avoid using the global async engine which causes loop conflicts
     # Tables are already created by the setup_db fixture
     # Patch rate_limiter.check_rate_limit to return (False, 0) tuple as expected by middleware
-    # Patch TenantMiddleware._get_tenant_by_slug to avoid async DB calls
-    
+    # Patch TenantMiddleware._get_tenant_by_slug to avoid async DB calls (middleware runs before dependency override?)
+    # Actually, middleware might use global engine.
+    # TenantMiddleware uses `request.state.db`? Or `db` dependency?
+    # Usually middleware might create its own session or rely on request scope.
+    # If middleware uses `async_get_db`, it will use our override.
+
     # Create a fake tenant object for middleware
     fake_tenant = Mock()
     fake_tenant.id = "test-tenant-id"
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
-    
+
     # Create a fake user for dependency override (must support both attribute and dict access)
     fake_user = Mock()
     fake_user.id = "test-user-id"
@@ -136,19 +90,20 @@ def client() -> Generator[TestClient, Any, None]:
     fake_user.tier_id = "test-tier-id"
     # Support dict-style access as well
     fake_user.__getitem__ = lambda self, key: getattr(self, key)
-    
+
     # Import dependencies to override
-    from src.app.api.dependencies import get_current_user, get_current_tenant, get_optional_user
+    from src.app.api.dependencies import get_current_tenant, get_current_user, get_optional_user
     from src.app.core.db.database import async_get_db
-    
-    # Override dependencies to avoid async DB calls
+
+    # Override dependencies
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_current_tenant] = lambda: fake_tenant
     app.dependency_overrides[get_optional_user] = lambda: fake_user
-    app.dependency_overrides[async_get_db] = lambda: MockAsyncSession()
-    
+    app.dependency_overrides[async_get_db] = override_get_db
+
+
     # Create a fake notification for send_email mock with all required fields for Pydantic
-    from datetime import datetime, UTC
+    from datetime import UTC, datetime
     from uuid import uuid4
     fake_notification = Mock()
     fake_notification.id = uuid4()
@@ -161,13 +116,27 @@ def client() -> Generator[TestClient, Any, None]:
     fake_notification.sent_at = datetime.now(UTC)
     fake_notification.error_message = None
     fake_notification.created_at = datetime.now(UTC)
-    
-    with patch("src.app.core.setup.create_tables", new_callable=AsyncMock), \
-         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock), \
-         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)), \
-         patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new_callable=AsyncMock, return_value=fake_tenant), \
-         patch("src.app.modules.notifications.service.NotificationService.send_email", new_callable=AsyncMock, return_value=fake_notification):
-        
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch(
+            "src.app.modules.notifications.service.NotificationService.send_email",
+            new_callable=AsyncMock,
+            return_value=fake_notification,
+        ),
+    ):
+
         with TestClient(app) as _client:
             yield _client
     app.dependency_overrides = {}
@@ -183,7 +152,7 @@ def db() -> Generator[Session, Any, None]:
 @pytest.fixture
 def client_auth() -> Generator[TestClient, Any, None]:
     """Client fixture for authentication tests - doesn't mock DB dependencies.
-    
+
     Use this for tests that need real database access for authentication,
     like login/lockout tests.
     """
@@ -192,12 +161,22 @@ def client_auth() -> Generator[TestClient, Any, None]:
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
-    
-    with patch("src.app.core.setup.create_tables", new_callable=AsyncMock), \
-         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock), \
-         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)), \
-         patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", new_callable=AsyncMock, return_value=fake_tenant):
-        
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+    ):
+
         with TestClient(app) as _client:
             yield _client
 
@@ -217,7 +196,8 @@ class FakeRedis:
         self.store = {}
 
     async def get(self, key):
-        if not key: return None
+        if not key:
+            return None
         return self.store.get(key)
 
     async def set(self, key, value, ex=None, px=None, **kwargs):
@@ -335,7 +315,6 @@ def current_user_dict():
 @pytest.fixture
 def tenant(db):
     """Create and return a sample tenant."""
-
     # Check if tenant already exists to avoid UniqueViolation
     existing = db.query(Tenant).filter(Tenant.slug == "test-tenant-integration").first()
     if existing:

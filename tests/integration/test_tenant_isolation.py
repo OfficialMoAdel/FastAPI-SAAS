@@ -1,6 +1,5 @@
 
 import pytest
-from fastapi.testclient import TestClient
 from uuid6 import uuid7
 
 from src.app.api.dependencies import get_current_user

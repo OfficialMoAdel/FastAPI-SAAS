@@ -56,7 +56,8 @@ class EmailService:
             text_content: Optional plain text content
             template_name: Optional template name for tracking
 
-        Returns:
+        Returns
+        -------
             True if sent successfully
         """
         # Prepare message
@@ -142,7 +143,8 @@ class EmailService:
                 - text_content: Optional[str]
                 - template_name: Optional[str]
 
-        Returns:
+        Returns
+        -------
             Dictionary with success/failure counts
         """
         provider = self._get_provider()
@@ -164,7 +166,7 @@ class EmailService:
         results = await provider.send_bulk_emails(email_messages)
 
         # Log all notifications
-        for msg_data, email_message in zip(messages, email_messages):
+        for msg_data, email_message in zip(messages, email_messages, strict=False):
             # Determine success
             success = results["success"] > 0
             results["success"] -= 1 if success else 0

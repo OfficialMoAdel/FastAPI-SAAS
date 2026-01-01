@@ -7,7 +7,7 @@ import base64
 import logging
 import os
 
-from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+from cryptography.fernet import Fernet, MultiFernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
@@ -82,7 +82,7 @@ def _get_fernet() -> Fernet:
 
 def _get_multi_fernet() -> MultiFernet:
     """Get MultiFernet supporting current and previous keys for rotation.
-    
+
     During key rotation:
     1. Set new key as ENCRYPTION_KEY
     2. Set old key as ENCRYPTION_KEY_PREVIOUS
@@ -91,7 +91,7 @@ def _get_multi_fernet() -> MultiFernet:
     """
     current_fernet = _get_fernet()
     fernets = [current_fernet]
-    
+
     # Check for previous key (for rotation)
     prev_key_str = getattr(settings, 'ENCRYPTION_KEY_PREVIOUS', None)
     if prev_key_str and hasattr(prev_key_str, 'get_secret_value'):
@@ -103,7 +103,7 @@ def _get_multi_fernet() -> MultiFernet:
                 logger.info("Key rotation active: using previous key as fallback for decryption")
             except Exception as e:
                 logger.warning(f"Invalid ENCRYPTION_KEY_PREVIOUS format: {e}")
-    
+
     return MultiFernet(fernets)
 
 
@@ -121,13 +121,14 @@ def decrypt_data(data: str) -> str:
 
 def rotate_encryption(encrypted_data: str) -> str:
     """Re-encrypt data with the current key.
-    
+
     Use this to migrate data from old key to new key during rotation.
-    
+
     Args:
         encrypted_data: Data encrypted with any valid key
-        
-    Returns:
+
+    Returns
+    -------
         Data re-encrypted with the current (primary) key
     """
     mf = _get_multi_fernet()

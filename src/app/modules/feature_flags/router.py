@@ -83,7 +83,6 @@ async def update_feature_flag(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-
     # Get current tenant
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
     query = select(Tenant).where(Tenant.id == tenant_id)
@@ -124,7 +123,6 @@ async def delete_feature_flag(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-
     # Get current tenant
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
     query = select(Tenant).where(Tenant.id == tenant_id)
@@ -158,7 +156,6 @@ async def bulk_update_flags(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-
     tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
     await bulk_update_feature_flags(db, tenant_id, request.feature_flags)
 

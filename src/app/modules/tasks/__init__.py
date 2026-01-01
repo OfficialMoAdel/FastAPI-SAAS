@@ -7,9 +7,9 @@ Direct imports:
 """
 
 __all__ = [
-    "tasks_router",
-    "task_service",
     "Job",
+    "task_service",
+    "tasks_router",
 ]
 
 

@@ -44,7 +44,8 @@ class RateLimiter:
             limit: Maximum count allowed
             period: Time period in seconds
 
-        Returns:
+        Returns
+        -------
             Tuple (is_limited, current_count)
         """
         client = self.get_client()

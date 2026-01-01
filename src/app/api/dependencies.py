@@ -77,10 +77,12 @@ def get_current_tenant() -> Tenant:
     This dependency retrieves the tenant that was set by TenantMiddleware.
     Should only be used on endpoints that require tenant context (non-whitelisted).
 
-    Returns:
+    Returns
+    -------
         The current tenant.
 
-    Raises:
+    Raises
+    ------
         HTTPException: 500 if tenant context is not set (middleware misconfiguration).
     """
     tenant = get_tenant_context()

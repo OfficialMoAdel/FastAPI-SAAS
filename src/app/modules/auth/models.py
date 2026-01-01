@@ -23,7 +23,8 @@ class PasswordResetToken(Base):
     - User-specific (user_id FK)
     - Securely generated (43 chars URL-safe)
 
-    Attributes:
+    Attributes
+    ----------
         id: Primary key
         user_id: Foreign key to user table
         token: Unique secure token string
@@ -77,7 +78,7 @@ class PasswordResetToken(Base):
     )
 
     # Relationship
-    user: Mapped["User"] = relationship(  # type: ignore[name-defined]  # noqa: F821
+    user: Mapped["User"] = relationship(  # type: ignore[name-defined]
         "User",
         init=False,
     )

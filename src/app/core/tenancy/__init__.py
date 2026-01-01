@@ -8,9 +8,9 @@ Direct imports:
 """
 
 __all__ = [
+    "clear_tenant_context",
     "get_tenant_context",
     "set_tenant_context",
-    "clear_tenant_context",
 ]
 
 

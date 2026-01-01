@@ -25,7 +25,7 @@ def service(mock_db):
 async def test_trigger_webhooks_enqueues_job(service, mock_db):
     """Test that trigger_webhooks eventually calls _enqueue_delivery."""
     from src.app.core.security.encryption import encrypt_data
-    
+
     tenant_id = uuid4()
     event_type = "user.created"
     payload = {"id": 123}

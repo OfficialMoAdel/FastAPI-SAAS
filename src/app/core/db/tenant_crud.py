@@ -54,7 +54,8 @@ class TenantAwareCRUD(
     The tenant context is set by TenantMiddleware at the start of each
     request and cleared in the finally block.
 
-    Attributes:
+    Attributes
+    ----------
         model: The SQLAlchemy model class this CRUD operates on.
 
     Example:
@@ -70,7 +71,8 @@ class TenantAwareCRUD(
         Args:
             kwargs: The keyword arguments to inject tenant_id into.
 
-        Returns:
+        Returns
+        -------
             The kwargs dict with tenant_id added if context is available.
         """
         if "tenant_id" not in kwargs:
@@ -86,7 +88,8 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter criteria for the query.
 
-        Returns:
+        Returns
+        -------
             The record as a dict if found, None otherwise.
         """
         kwargs = self._inject_tenant_filter(kwargs)
@@ -99,7 +102,8 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter and pagination criteria.
 
-        Returns:
+        Returns
+        -------
             A dict containing the records and pagination info.
         """
         kwargs = self._inject_tenant_filter(kwargs)
@@ -112,7 +116,8 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter criteria for the query.
 
-        Returns:
+        Returns
+        -------
             True if a matching record exists, False otherwise.
         """
         kwargs = self._inject_tenant_filter(kwargs)
@@ -125,7 +130,8 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter criteria for the query.
 
-        Returns:
+        Returns
+        -------
             The count of matching records.
         """
         kwargs = self._inject_tenant_filter(kwargs)

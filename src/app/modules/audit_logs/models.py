@@ -19,7 +19,8 @@ class AuditLog(Base):
     Immutable table - no UPDATE or DELETE operations allowed.
     Used for compliance, security monitoring, and debugging.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique UUID identifier
         tenant_id: Reference to tenant (multi-tenancy isolation)
         user_id: Reference to user who performed action (nullable)
@@ -105,7 +106,7 @@ class AuditLog(Base):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="audit_logs",
         init=False,

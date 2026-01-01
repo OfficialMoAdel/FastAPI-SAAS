@@ -10,7 +10,6 @@ Tests cover:
 from uuid import uuid4
 
 import pytest
-from fastapi.testclient import TestClient
 
 from src.app.api.dependencies import get_current_user
 from src.app.main import app
@@ -38,7 +37,6 @@ def mock_current_user():
 class TestWebhookEndpointAPI:
     """Integration tests for webhook endpoint management API."""
 
-
     def test_list_webhooks_requires_auth(self, client) -> None:
         """API should require tenant authentication."""
         response = client.get("/api/v1/webhooks/")
@@ -49,7 +47,7 @@ class TestWebhookEndpointAPI:
         response = client.get("/api/v1/webhooks/", headers=auth_headers)
         assert response.status_code in [200, 401]
         data = response.json()
-        assert isinstance(data, (list, dict))
+        assert isinstance(data, list | dict)
 
     def test_create_webhook_endpoint(self, client, auth_headers) -> None:
         """API should create webhook endpoint."""
@@ -117,7 +115,6 @@ class TestWebhookEndpointAPI:
 class TestWebhookDeliveryAPI:
     """Integration tests for webhook delivery API."""
 
-
     def test_get_delivery_history(self, client, auth_headers) -> None:
         """API should return delivery history."""
         response = client.get(
@@ -147,7 +144,6 @@ class TestWebhookDeliveryAPI:
 
 class TestWebhookTestDelivery:
     """Integration tests for webhook test delivery endpoint."""
-
 
     def test_test_webhook_requires_auth(self, client) -> None:
         """Test webhook endpoint requires authentication."""
@@ -189,7 +185,7 @@ class TestWebhookTenantIsolation:
     def test_cannot_access_other_tenant_webhook(self, client) -> None:
         """Should not be able to access webhook from another tenant."""
         tenant_a = str(uuid4())
-        tenant_b = str(uuid4())
+        str(uuid4())
         webhook_id = str(uuid4())
 
         response = client.get(

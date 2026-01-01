@@ -29,7 +29,6 @@ def register_admin_views(admin: CRUDAdmin) -> None:
     This function adds all available models to the admin interface with appropriate
     schemas and permissions.
     """
-
     password_transformer = PasswordTransformer(
         password_field="password",
         hashed_field="hashed_password",

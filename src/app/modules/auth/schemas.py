@@ -77,12 +77,12 @@ class EmailVerificationResponse(BaseModel):
 
 # Re-export all token schemas for backward compatibility
 __all__ = [
+    "LoginRequest",
+    "LogoutResponse",
+    "RefreshTokenResponse",
     "Token",
-    "TokenData",
     "TokenBlacklistBase",
     "TokenBlacklistCreate",
     "TokenBlacklistRead",
-    "LoginRequest",
-    "RefreshTokenResponse",
-    "LogoutResponse",
+    "TokenData",
 ]

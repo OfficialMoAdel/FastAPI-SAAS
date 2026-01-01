@@ -40,7 +40,8 @@ class EmailProvider(ABC):
         Args:
             message: Email message to send
 
-        Returns:
+        Returns
+        -------
             True if sent successfully
         """
         pass
@@ -53,7 +54,8 @@ class EmailProvider(ABC):
         Args:
             messages: List of email messages
 
-        Returns:
+        Returns
+        -------
             Dictionary with success/failure counts
         """
         pass

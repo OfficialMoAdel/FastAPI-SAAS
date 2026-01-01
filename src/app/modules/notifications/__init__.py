@@ -6,4 +6,4 @@ from .models import (
     NotificationStatus,
 )
 
-__all__ = ["Notification", "NotificationStatus", "EmailTemplateOverride"]
+__all__ = ["EmailTemplateOverride", "Notification", "NotificationStatus"]

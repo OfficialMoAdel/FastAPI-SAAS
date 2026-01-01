@@ -81,9 +81,7 @@ class TestFeatureFlagsIsEnabled:
         # Test the logic
         flag = await mock_crud.get(mock_db, name="disabled", tenant_id=1)
 
-        if not flag:
-            result = False
-        elif not flag.is_enabled:
+        if not flag or not flag.is_enabled:
             result = False
         else:
             result = True
@@ -105,9 +103,7 @@ class TestFeatureFlagsIsEnabled:
         # Test the logic
         flag = await mock_crud.get(mock_db, name="enabled", tenant_id=1)
 
-        if not flag:
-            result = False
-        elif not flag.is_enabled:
+        if not flag or not flag.is_enabled:
             result = False
         elif user_id is None:
             result = True

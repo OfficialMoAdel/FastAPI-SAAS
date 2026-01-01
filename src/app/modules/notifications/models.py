@@ -35,7 +35,8 @@ class Notification(Base, UUIDMixin):
     Tracks all email notifications sent through the system with
     delivery status, error messages, and retry information.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique UUID identifier
         tenant_id: Reference to tenant (multi-tenancy isolation)
         user_id: Reference to recipient user
@@ -113,12 +114,12 @@ class Notification(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="notifications",
         init=False,
     )
-    user: Mapped[Optional["User"]] = relationship(  # type: ignore  # noqa: F821
+    user: Mapped[Optional["User"]] = relationship(  # type: ignore
         "User",
         back_populates="notifications",
         init=False,
@@ -159,7 +160,8 @@ class EmailTemplateOverride(Base, UUIDMixin):
     Allows tenants to customize default email templates with
     their own subject lines and HTML content.
 
-    Attributes:
+    Attributes
+    ----------
         id: Unique UUID identifier
         tenant_id: Reference to tenant (multi-tenancy isolation)
         template_name: Name of template to override
@@ -205,7 +207,7 @@ class EmailTemplateOverride(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore  # noqa: F821
+    tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
         back_populates="email_template_overrides",
         init=False,

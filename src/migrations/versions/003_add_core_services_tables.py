@@ -7,7 +7,6 @@ Create Date: 2024-12-29
 """
 
 from collections.abc import Sequence
-from typing import Union
 
 import sqlalchemy as sa
 from alembic import op
@@ -15,14 +14,13 @@ from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
 revision: str = "003"
-down_revision: Union[str, None] = "747ee1b94759"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+down_revision: str | None = "747ee1b94759"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
     """Add core services tables and update tenants table."""
-
     # 1. Add feature_flags JSONB column to tenants table
     op.add_column(
         "tenants",
@@ -174,7 +172,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove core services tables and revert tenants table changes."""
-
     # Drop tables in reverse order (respecting FK constraints)
     op.drop_index("idx_template_override_tenant", table_name="email_template_overrides")
     op.drop_table("email_template_overrides")

@@ -8,10 +8,10 @@ Direct imports:
 """
 
 __all__ = [
-    "tenants_router",
-    "tenant_service",
-    "crud_tenants",
     "Tenant",
+    "crud_tenants",
+    "tenant_service",
+    "tenants_router",
 ]
 
 

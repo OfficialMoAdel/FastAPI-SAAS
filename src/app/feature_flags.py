@@ -38,7 +38,8 @@ class FeatureFlagsService:
             flag_name: Feature flag name
             default: Default value if flag not found
 
-        Returns:
+        Returns
+        -------
             True if flag is enabled
         """
         flags = await self._load_tenant_flags(tenant_id)
@@ -54,7 +55,8 @@ class FeatureFlagsService:
             flag_name: Feature flag name
             default: Default value if flag not found
 
-        Returns:
+        Returns
+        -------
             Flag value or default
         """
         flags = await self._load_tenant_flags(tenant_id)
@@ -70,7 +72,8 @@ class FeatureFlagsService:
             flag_name: Feature flag name
             value: Flag value
 
-        Returns:
+        Returns
+        -------
             True if successful
         """
         async with self._session_maker() as session:
@@ -96,7 +99,8 @@ class FeatureFlagsService:
         Args:
             tenant_id: Tenant ID
 
-        Returns:
+        Returns
+        -------
             Dictionary of all flags
         """
         return await self._load_tenant_flags(tenant_id)

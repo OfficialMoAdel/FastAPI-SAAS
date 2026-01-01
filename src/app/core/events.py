@@ -13,6 +13,8 @@ from typing import Any
 
 from structlog import get_logger
 
+from .utils.circuit_breaker import arq_circuit
+
 logger = get_logger(__name__)
 
 
@@ -69,19 +71,20 @@ class EventBus:
 
     async def get_next_sequence(self, event_name: str) -> int:
         """Get the next sequence number for an event type.
-        
+
         Sequence numbers are monotonically increasing per event type,
         enabling consumers to detect gaps and process events in order.
-        
+
         Args:
             event_name: Name of the event type
-            
-        Returns:
+
+        Returns
+        -------
             Next sequence number (starting from 1)
         """
         if not self._redis_client:
             return 0  # No ordering guarantee without Redis
-            
+
         seq_key = f"{self.SEQUENCE_KEY_PREFIX}{event_name}"
         return await self._redis_client.incr(seq_key)
 
@@ -91,7 +94,8 @@ class EventBus:
         Args:
             event_name: Name of event to subscribe to
 
-        Returns:
+        Returns
+        -------
             Decorator function
 
         Example:
@@ -162,7 +166,7 @@ class EventBus:
 
         # Get sequence number for ordering guarantees
         sequence = await self.get_next_sequence(event_name)
-        
+
         # Inject sequence into event data for consumers
         enriched_data = {
             **data,
@@ -246,6 +250,24 @@ class EventBus:
 
         # Enqueue each handler as a separate ARQ task
         for handler in handlers:
+            # Check circuit breaker before attempting Redis enqueue
+            if not arq_circuit.is_closed:
+                logger.warning(
+                    "ARQ circuit breaker open - falling back to sync execution",
+                    event_name=event_name,
+                    handler=handler.__name__,
+                )
+                try:
+                    await handler(data)
+                except Exception as e:
+                    logger.error(
+                        "Fallback sync handler failed",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        error=str(e),
+                    )
+                continue
+
             try:
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",
@@ -255,6 +277,7 @@ class EventBus:
                     data,
                     _queue_name="default" if priority == EventPriority.NORMAL else "low_priority",
                 )
+                await arq_circuit.record_success()
                 logger.debug(
                     "Event handler queued",
                     event_name=event_name,
@@ -262,6 +285,7 @@ class EventBus:
                     priority=priority,
                 )
             except Exception as e:
+                await arq_circuit.record_failure(e)
                 logger.error(
                     "Event handler queue failed",
                     event_name=event_name,
@@ -269,6 +293,21 @@ class EventBus:
                     error=str(e),
                     exc_info=True,
                 )
+                # Graceful degradation: try sync execution
+                try:
+                    await handler(data)
+                    logger.info(
+                        "Handler executed synchronously after queue failure",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                    )
+                except Exception as handler_error:
+                    logger.error(
+                        "Sync fallback also failed",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        error=str(handler_error),
+                    )
 
     def get_handlers(self, event_name: str) -> list[Callable[..., Coroutine[Any, Any, None]]]:
         """Get all handlers registered for an event.
@@ -276,7 +315,8 @@ class EventBus:
         Args:
             event_name: Name of event
 
-        Returns:
+        Returns
+        -------
             List of handler functions
         """
         return self._handlers.get(event_name, [])
@@ -335,7 +375,8 @@ class EventBus:
         Args:
             limit: Maximum number of entries to return
 
-        Returns:
+        Returns
+        -------
             List of failed event entries
         """
         if not self._redis_client:
@@ -347,7 +388,8 @@ class EventBus:
     async def get_dlq_size(self) -> int:
         """Get the number of entries in the DLQ.
 
-        Returns:
+        Returns
+        -------
             Number of DLQ entries
         """
         if not self._redis_client:
@@ -357,7 +399,8 @@ class EventBus:
     async def retry_dlq_entry(self) -> dict | None:
         """Remove and return the oldest DLQ entry for retry (FIFO).
 
-        Returns:
+        Returns
+        -------
             DLQ entry or None if queue is empty
         """
         if not self._redis_client:
@@ -371,7 +414,8 @@ class EventBus:
     async def clear_dlq(self) -> int:
         """Clear all DLQ entries.
 
-        Returns:
+        Returns
+        -------
             Number of entries cleared
         """
         if not self._redis_client:
