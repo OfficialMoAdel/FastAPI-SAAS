@@ -5,6 +5,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from cryptography.fernet import Fernet
 from faker import Faker
 from fastapi.testclient import TestClient
 from pydantic import SecretStr
@@ -15,10 +16,11 @@ from sqlalchemy.orm.session import Session
 
 from src.app.core.config import settings
 
-# Ensure encryption key is set for tests
-settings.ENCRYPTION_KEY = SecretStr(
-    os.getenv("TEST_ENCRYPTION_KEY", secrets.token_urlsafe(32))
-)
+# Ensure encryption key is set for tests - must be a valid Fernet key
+_test_encryption_key = os.getenv("TEST_ENCRYPTION_KEY")
+if not _test_encryption_key:
+    _test_encryption_key = Fernet.generate_key().decode()
+settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
 from src.app.main import app
 
