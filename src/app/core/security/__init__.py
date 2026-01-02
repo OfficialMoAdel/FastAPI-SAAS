@@ -12,7 +12,6 @@ from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
 from sqlalchemy.ext.asyncio import AsyncSession
 
-
 from ..config import settings
 from ..db.crud_token_blacklist import crud_token_blacklist
 from ..schemas import TokenBlacklistCreate, TokenData

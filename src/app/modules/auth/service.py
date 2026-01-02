@@ -16,8 +16,8 @@ from ...core.security import (
     blacklist_tokens,
     create_access_token,
     create_refresh_token,
-    verify_token,
     verify_password,
+    verify_token,
 )
 from ...modules.users.crud import crud_users
 
@@ -280,7 +280,7 @@ class AuthService:
 
             # Send email via event bus
             reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
-            
+
             await event_bus.publish(
                 "notification.send",
                 {
@@ -386,8 +386,6 @@ class AuthService:
         dict[str, str]
             Success message
         """
-        import secrets
-        from datetime import UTC, datetime, timedelta
 
         from ...core.events import EventPriority, event_bus
         from ...modules.users.crud import crud_users
@@ -401,12 +399,12 @@ class AuthService:
             db.add(token_model)
             await db.commit()
             await db.refresh(token_model)
-            
+
             verification_token = token_model.token
-            
+
             # Send email via event bus
             verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
-            
+
             await event_bus.publish(
                 "notification.send",
                 {
@@ -449,6 +447,7 @@ class AuthService:
             If token is invalid or expired
         """
         from sqlalchemy import select
+
         from ...modules.users.crud import crud_users
         from .models import EmailVerificationToken
 

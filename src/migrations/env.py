@@ -6,23 +6,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-from app.core.config import settings
-from app.core.db.database import Base
-
 # Import all models for autogenerate to detect them
 # Core models
-import app.modules.api_keys.models
-import app.modules.audit_logs.models
-import app.modules.auth.models
-import app.modules.feature_flags.models
-import app.modules.notifications.models
-import app.modules.posts.models
-import app.modules.rate_limits.models
-import app.modules.rbac.models
-import app.modules.tenants.models
-import app.modules.tiers.models
-import app.modules.users.models
-import app.modules.webhooks.models
+from app.core.config import settings
+from app.core.db.database import Base
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.
