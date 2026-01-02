@@ -98,6 +98,16 @@ ignore = [
 [tool.ruff.lint.mccabe]
 max-complexity = 24
 
+# Module boundary enforcement: ban internal cross-module imports
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"src.app.modules.auth.service".msg = "Import from 'src.app.modules.auth' instead of internal files"
+"src.app.modules.auth.router".msg = "Import from 'src.app.modules.auth' instead of internal files"
+"src.app.modules.users.service".msg = "Import from 'src.app.modules.users' instead of internal files"
+"src.app.modules.users.router".msg = "Import from 'src.app.modules.users' instead of internal files"
+"src.app.modules.tenants.service".msg = "Import from 'src.app.modules.tenants' instead of internal files"
+"src.app.modules.posts.service".msg = "Import from 'src.app.modules.posts' instead of internal files"
+
+
 [tool.ruff.lint.pydocstyle]
 convention = "numpy"
 

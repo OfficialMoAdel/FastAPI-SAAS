@@ -1,9 +1,8 @@
 import asyncio
 import logging
-import os
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any, Literal
+from typing import Any
 
 import bcrypt
 import jwt
@@ -24,10 +23,22 @@ REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 # JWT Audience for token validation
 JWT_AUDIENCE = "fastapi-saas-api"
 
-# Grace period for JWT migration - configurable via env var
-MIGRATION_CUTOFF = datetime.fromisoformat(os.getenv("JWT_MIGRATION_CUTOFF", "2026-01-08T23:59:59+00:00"))
-
 _jwt_logger = logging.getLogger(__name__)
+
+
+def _get_signing_key() -> str:
+    """Get the key for signing tokens (private key for RS256, secret for HS256)."""
+    if ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
+        return settings.JWT_PRIVATE_KEY.get_secret_value()
+    return SECRET_KEY.get_secret_value()
+
+
+def _get_verification_key() -> str:
+    """Get the key for verifying tokens (public key for RS256, secret for HS256)."""
+    if ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
+        return settings.JWT_PUBLIC_KEY
+    return SECRET_KEY.get_secret_value()
+
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
 
@@ -59,7 +70,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
     else:
         expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire, "token_type": TokenType.ACCESS, "aud": JWT_AUDIENCE})
-    encoded_jwt: str = jwt.encode(to_encode, SECRET_KEY.get_secret_value(), algorithm=ALGORITHM)
+    encoded_jwt: str = jwt.encode(to_encode, _get_signing_key(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -70,7 +81,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     else:
         expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "token_type": TokenType.REFRESH, "aud": JWT_AUDIENCE})
-    encoded_jwt: str = jwt.encode(to_encode, SECRET_KEY.get_secret_value(), algorithm=ALGORITHM)
+    encoded_jwt: str = jwt.encode(to_encode, _get_signing_key(), algorithm=ALGORITHM)
     return encoded_jwt
 
 
@@ -96,23 +107,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         return None
 
     try:
-        payload = jwt.decode(token, SECRET_KEY.get_secret_value(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
-    except jwt.InvalidAudienceError:
-        # Grace period: accept old tokens without aud claim until MIGRATION_CUTOFF
-        if datetime.now(UTC) < MIGRATION_CUTOFF:
-            _jwt_logger.warning(
-                "Token without aud claim accepted (grace period)",
-                extra={"migration_cutoff": MIGRATION_CUTOFF.isoformat()},
-            )
-            try:
-                payload = jwt.decode(
-                    token, SECRET_KEY.get_secret_value(), algorithms=[ALGORITHM], options={"verify_aud": False}
-                )
-            except JWTError:
-                return None
-        else:
-            _jwt_logger.info("Token rejected: missing aud claim after grace period")
-            return None
+        payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
     except JWTError:
         return None
 
@@ -131,6 +126,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
 async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSession) -> None:
     """Blacklist both access and refresh tokens.
 
+    Validates token signature before blacklisting to prevent database pollution.
+
     Parameters
     ----------
     access_token: str
@@ -141,16 +138,23 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
         Database session for performing database operations.
     """
     for token in [access_token, refresh_token]:
-        payload = jwt.decode(token, SECRET_KEY.get_secret_value(), algorithms=[ALGORITHM])
+        try:
+            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            exp_timestamp = payload.get("exp")
+            if exp_timestamp is not None:
+                expires_at = datetime.fromtimestamp(exp_timestamp)
+                await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
+        except JWTError as e:
+            _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
+
+
+async def blacklist_token(token: str, db: AsyncSession) -> None:
+    """Blacklist a single token after validating its signature."""
+    try:
+        payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
-
-
-async def blacklist_token(token: str, db: AsyncSession) -> None:
-    payload = jwt.decode(token, SECRET_KEY.get_secret_value(), algorithms=[ALGORITHM])
-    exp_timestamp = payload.get("exp")
-    if exp_timestamp is not None:
-        expires_at = datetime.fromtimestamp(exp_timestamp)
-        await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
+    except JWTError as e:
+        _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)

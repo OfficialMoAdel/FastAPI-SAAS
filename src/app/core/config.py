@@ -18,26 +18,39 @@ class AppSettings(BaseSettings):
 
 class CryptSettings(BaseSettings):
     SECRET_KEY: SecretStr  # REQUIRED: Must be set via environment variable
-    ALGORITHM: str = "HS256"
+    ALGORITHM: str = "HS256"  # Options: HS256 (symmetric), RS256 (asymmetric)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
     ENCRYPTION_KEY: SecretStr | None = None
     # SECURITY: Set unique salt per deployment for key derivation
     ENCRYPTION_SALT: SecretStr | None = None
+    # RS256 asymmetric keys (optional, required if ALGORITHM=RS256)
+    JWT_PRIVATE_KEY: SecretStr | None = None  # PEM-encoded private key
+    JWT_PUBLIC_KEY: str | None = None  # PEM-encoded public key
 
     @model_validator(mode="after")
     def validate_secrets(self) -> "CryptSettings":
         """Validate required secrets are set and meet security requirements."""
-        MIN_SECRET_KEY_LENGTH = 32  # Minimum for HS256 algorithm
         key = self.SECRET_KEY.get_secret_value()
         if not key:
             raise ValueError("SECRET_KEY must be set and non-empty")
-        if len(key) < MIN_SECRET_KEY_LENGTH:
-            raise ValueError(
-                f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters for HS256. "
-                "Generate with: openssl rand -hex 32"
-            )
+
+        if self.ALGORITHM == "RS256":
+            # For RS256, we need both private and public keys
+            if not self.JWT_PRIVATE_KEY or not self.JWT_PUBLIC_KEY:
+                raise ValueError(
+                    "RS256 algorithm requires JWT_PRIVATE_KEY and JWT_PUBLIC_KEY. "
+                    "Generate with: openssl genrsa -out private.pem 2048 && openssl rsa -in private.pem -pubout -out public.pem"
+                )
+        else:
+            # For HS256, validate SECRET_KEY length
+            MIN_SECRET_KEY_LENGTH = 32
+            if len(key) < MIN_SECRET_KEY_LENGTH:
+                raise ValueError(
+                    f"SECRET_KEY must be at least {MIN_SECRET_KEY_LENGTH} characters for HS256. "
+                    "Generate with: openssl rand -hex 32"
+                )
         return self
 
 
