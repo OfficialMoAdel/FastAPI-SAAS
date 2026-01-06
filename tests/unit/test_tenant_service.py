@@ -71,17 +71,18 @@ class TestTenantServiceCreate:
 
     @pytest.mark.asyncio
     async def test_create_tenant_duplicate_slug_raises_conflict(self, mock_db, tenant_create):
-        """Test that duplicate slug raises DuplicateValueException."""
-        from src.app.core.exceptions.http_exceptions import DuplicateValueException
+        """Test that duplicate slug raises DuplicateError."""
+        from src.app.modules._base.exceptions import DuplicateError
         from src.app.modules.tenants.service import tenant_service
 
         with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.exists.return_value = True
 
-            with pytest.raises(DuplicateValueException) as exc_info:
+            with pytest.raises(DuplicateError) as exc_info:
                 await tenant_service.create_tenant(tenant_create, mock_db)
 
-            assert "slug" in str(exc_info.value.detail).lower()
+            assert exc_info.value.field == "slug"
+            assert exc_info.value.value == "acme-corp"
 
 
 class TestTenantServiceGet:
@@ -102,15 +103,18 @@ class TestTenantServiceGet:
 
     @pytest.mark.asyncio
     async def test_get_tenant_not_found_raises_404(self, mock_db):
-        """Test that non-existent tenant raises NotFoundException."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        """Test that non-existent tenant raises ModelNotFoundError."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.tenants.service import tenant_service
 
         with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = None
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError) as exc_info:
                 await tenant_service.get_tenant(999, mock_db)
+
+            assert exc_info.value.model_name == "Tenant"
+            assert exc_info.value.identifier == 999
 
     @pytest.mark.asyncio
     async def test_get_tenant_by_slug_success(self, mock_db, mock_tenant):
@@ -147,15 +151,18 @@ class TestTenantServiceUpdate:
 
     @pytest.mark.asyncio
     async def test_update_tenant_not_found_raises_404(self, mock_db, tenant_update):
-        """Test that updating non-existent tenant raises NotFoundException."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        """Test that updating non-existent tenant raises ModelNotFoundError."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.tenants.service import tenant_service
 
         with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = None
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError) as exc_info:
                 await tenant_service.update_tenant(999, tenant_update, mock_db)
+
+            assert exc_info.value.model_name == "Tenant"
+            assert exc_info.value.identifier == 999
 
 
 class TestTenantServiceDeactivate:

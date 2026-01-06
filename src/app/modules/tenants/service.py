@@ -6,7 +6,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
+from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .crud import crud_tenants
 from .schemas import TenantCreate, TenantResponse, TenantUpdate
 
@@ -36,7 +36,7 @@ class TenantService:
 
         Raises
         ------
-        DuplicateValueException
+        DuplicateError
             If slug already exists
         """
         slug_exists = await self.crud.exists(db=db, slug=tenant.slug)
@@ -45,7 +45,7 @@ class TenantService:
                 "Tenant creation failed: duplicate_slug | slug=%s",
                 tenant.slug,
             )
-            raise DuplicateValueException(f"Tenant with slug '{tenant.slug}' already exists")
+            raise DuplicateError("slug", tenant.slug)
 
         created_tenant = await self.crud.create(
             db=db,
@@ -79,12 +79,12 @@ class TenantService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tenant not found
         """
         tenant = await self.crud.get(db=db, id=tenant_id, schema_to_select=TenantResponse)
         if tenant is None:
-            raise NotFoundException("Tenant not found")
+            raise ModelNotFoundError("Tenant", tenant_id)
         return tenant
 
     async def get_tenant_by_slug(self, slug: str, db: AsyncSession) -> dict[str, Any] | None:
@@ -169,12 +169,12 @@ class TenantService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tenant not found
         """
         tenant = await self.crud.get(db=db, id=tenant_id)
         if tenant is None:
-            raise NotFoundException("Tenant not found")
+            raise ModelNotFoundError("Tenant", tenant_id)
 
         update_data = values.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
@@ -206,12 +206,12 @@ class TenantService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tenant not found
         """
         tenant = await self.crud.get(db=db, id=tenant_id)
         if tenant is None:
-            raise NotFoundException("Tenant not found")
+            raise ModelNotFoundError("Tenant", tenant_id)
 
         update_data = {
             "is_active": False,
@@ -241,12 +241,12 @@ class TenantService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tenant not found
         """
         tenant = await self.crud.get(db=db, id=tenant_id)
         if tenant is None:
-            raise NotFoundException("Tenant not found")
+            raise ModelNotFoundError("Tenant", tenant_id)
 
         update_data = {
             "is_active": True,

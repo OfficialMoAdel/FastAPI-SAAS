@@ -5,7 +5,7 @@ from typing import Any
 from fastcrud import paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
+from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .crud import crud_tiers
 from .schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 
@@ -30,21 +30,21 @@ class TierService:
 
         Raises
         ------
-        DuplicateValueException
+        DuplicateError
             If tier name already exists
-        NotFoundException
+        ModelNotFoundError
             If tier creation fails
         """
         tier_dict = tier.model_dump()
         tier_exists = await crud_tiers.exists(db=db, name=tier_dict["name"])
         if tier_exists:
-            raise DuplicateValueException("Tier Name not available")
+            raise DuplicateError("name", tier_dict["name"])
 
         tier_internal = TierCreateInternal(**tier_dict)
         created_tier = await crud_tiers.create(db=db, object=tier_internal, schema_to_select=TierRead)
 
         if created_tier is None:
-            raise NotFoundException("Failed to create tier")
+            raise ModelNotFoundError("Tier", "new")
 
         return created_tier
 
@@ -88,12 +88,12 @@ class TierService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier not found
         """
         db_tier = await crud_tiers.get(db=db, id=tier_id, schema_to_select=TierRead)
         if db_tier is None:
-            raise NotFoundException("Tier not found")
+            raise ModelNotFoundError("Tier", tier_id)
         return db_tier
 
     async def get_tier(self, name: str, db: AsyncSession) -> dict[str, Any]:
@@ -113,12 +113,12 @@ class TierService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier not found
         """
         db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
         if db_tier is None:
-            raise NotFoundException("Tier not found")
+            raise ModelNotFoundError("Tier", name)
         return db_tier
 
     async def update_tier(self, name: str, values: TierUpdate, db: AsyncSession) -> dict[str, str]:
@@ -140,12 +140,12 @@ class TierService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier not found
         """
         db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
         if db_tier is None:
-            raise NotFoundException("Tier not found")
+            raise ModelNotFoundError("Tier", name)
 
         await crud_tiers.update(db=db, object=values, name=name)
         return {"message": "Tier updated"}
@@ -167,12 +167,12 @@ class TierService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier not found
         """
         db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
         if db_tier is None:
-            raise NotFoundException("Tier not found")
+            raise ModelNotFoundError("Tier", name)
 
         await crud_tiers.delete(db=db, name=name)
         return {"message": "Tier deleted"}

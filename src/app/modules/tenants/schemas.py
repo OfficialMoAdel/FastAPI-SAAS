@@ -4,6 +4,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
+
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 RESERVED_SLUGS = frozenset({"host", "admin", "api"})
 
@@ -14,7 +16,7 @@ class TenantBase(BaseModel):
     name: Annotated[str, Field(min_length=1, max_length=100, examples=["Acme Corporation"])]
 
 
-class TenantCreate(TenantBase):
+class TenantCreate(TenantBase, BaseCreate):
     """Schema for creating a new tenant."""
 
     model_config = ConfigDict(extra="forbid")
@@ -51,7 +53,7 @@ class TenantCreate(TenantBase):
         return v
 
 
-class TenantUpdate(BaseModel):
+class TenantUpdate(BaseUpdate):
     """Schema for updating an existing tenant."""
 
     model_config = ConfigDict(extra="forbid")
@@ -76,17 +78,14 @@ class TenantUpdateInternal(TenantUpdate):
     updated_at: datetime
 
 
-class TenantResponse(BaseModel):
+class TenantResponse(BaseRead):
     """Schema for tenant response."""
 
     model_config = ConfigDict(from_attributes=True)
 
-    id: int
     name: str
     slug: str
     is_active: bool
-    created_at: datetime
-    updated_at: datetime | None
 
 
 class TenantListResponse(BaseModel):
