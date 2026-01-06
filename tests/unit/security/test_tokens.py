@@ -4,8 +4,9 @@ Tests follow TDD approach - these tests define the expected behavior
 for the TokenGenerator class implementation.
 """
 
+from unittest.mock import AsyncMock
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 
 class TestTokenGenerator:
@@ -168,8 +169,9 @@ class TestSSOStateAsync:
     @pytest.mark.asyncio
     async def test_sso_state_stores_metadata(self):
         """Test that SSO state stores provider and redirect metadata."""
-        from src.app.core.security.tokens import SSOStateManager
         import json
+
+        from src.app.core.security.tokens import SSOStateManager
 
         mock_redis = AsyncMock()
         manager = SSOStateManager(redis=mock_redis)
@@ -272,7 +274,7 @@ class TestDependencyInjection:
     @pytest.mark.asyncio
     async def test_get_sso_state_manager(self):
         """Test that get_sso_state_manager returns proper instance."""
-        from src.app.core.security.tokens import get_sso_state_manager, SSOStateManager
+        from src.app.core.security.tokens import SSOStateManager, get_sso_state_manager
 
         # Mock Redis dependency
         mock_redis = AsyncMock()
@@ -284,7 +286,7 @@ class TestDependencyInjection:
     @pytest.mark.asyncio
     async def test_get_magic_link_manager(self):
         """Test that get_magic_link_manager returns proper instance."""
-        from src.app.core.security.tokens import get_magic_link_manager, MagicLinkManager
+        from src.app.core.security.tokens import MagicLinkManager, get_magic_link_manager
 
         mock_redis = AsyncMock()
 
@@ -300,6 +302,7 @@ class TestTokenAuditLogging:
     async def test_sso_state_creation_logged(self, caplog):
         """Test that SSO state creation is logged."""
         import logging
+
         from src.app.core.security.tokens import SSOStateManager
 
         mock_redis = AsyncMock()
@@ -315,6 +318,7 @@ class TestTokenAuditLogging:
     async def test_sso_state_validation_logged(self, caplog):
         """Test that SSO state validation is logged."""
         import logging
+
         from src.app.core.security.tokens import SSOStateManager
 
         mock_redis = AsyncMock()

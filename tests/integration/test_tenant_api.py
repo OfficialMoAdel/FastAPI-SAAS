@@ -7,7 +7,11 @@ Tests all 6 tenant endpoints from the API contract:
 - PATCH /tenants/{id} - Update tenant
 - POST /tenants/{id}/deactivate - Deactivate tenant
 - POST /tenants/{id}/reactivate - Reactivate tenant
+
+NOTE: Tests that require database access are skipped when PostgreSQL is unavailable.
 """
+
+import os
 
 import pytest
 import pytest_asyncio
@@ -20,10 +24,20 @@ from sqlalchemy.orm import sessionmaker
 from src.app.core.config import settings
 from src.app.main import app
 
+# Check if we should use SQLite or PostgreSQL
+_use_sqlite = settings.SQLITE_ASYNC_PREFIX is not None and "sqlite" in str(settings.SQLITE_ASYNC_PREFIX).lower()
+
 
 @pytest_asyncio.fixture
 async def db_session():
-    """Get database session for tests."""
+    """Get database session for tests.
+    
+    NOTE: This fixture requires PostgreSQL and will fail with SQLite.
+    Tests using this fixture should be marked or skipped appropriately.
+    """
+    if _use_sqlite:
+        pytest.skip("This fixture requires PostgreSQL")
+    
     engine = create_async_engine(
         f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
         f"@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}",

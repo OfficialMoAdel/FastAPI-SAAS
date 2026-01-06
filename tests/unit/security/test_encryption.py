@@ -4,10 +4,10 @@ Tests follow TDD approach - these tests define the expected behavior
 for the CredentialEncryption class implementation.
 """
 
-import pytest
-from cryptography.fernet import Fernet, InvalidToken
-from unittest.mock import patch, MagicMock
 import logging
+
+import pytest
+from cryptography.fernet import Fernet
 
 
 class TestCredentialEncryption:
@@ -120,7 +120,7 @@ class TestEncryptionKeyGeneration:
 
     def test_different_keys_produce_different_encryption(self):
         """Test that different keys produce different encrypted outputs."""
-        from src.app.core.security.encryption import generate_fernet_key, CredentialEncryption
+        from src.app.core.security.encryption import CredentialEncryption, generate_fernet_key
 
         key1 = generate_fernet_key()
         key2 = generate_fernet_key()
@@ -240,7 +240,7 @@ class TestDependencyInjection:
 
     def test_get_encryption_returns_instance(self):
         """Test that get_encryption factory returns CredentialEncryption."""
-        from src.app.core.security.encryption import get_encryption, CredentialEncryption
+        from src.app.core.security.encryption import CredentialEncryption, get_encryption
 
         encryption = get_encryption()
 
@@ -262,7 +262,7 @@ class TestBackwardCompatibility:
 
     def test_encrypt_data_function(self):
         """Test that encrypt_data function still works."""
-        from src.app.core.security.encryption import encrypt_data, decrypt_data
+        from src.app.core.security.encryption import decrypt_data, encrypt_data
 
         original = "test string"
         encrypted = encrypt_data(original)
@@ -289,8 +289,9 @@ class TestKeyRotation:
 
     def test_decrypt_with_previous_key(self):
         """Test that data encrypted with previous key can still be decrypted."""
-        from src.app.core.security.encryption import CredentialEncryption
         from cryptography.fernet import Fernet
+
+        from src.app.core.security.encryption import CredentialEncryption
 
         # Create two different keys
         old_key = Fernet.generate_key()
@@ -310,8 +311,9 @@ class TestKeyRotation:
 
     def test_new_encryption_uses_current_key(self):
         """Test that new encryption always uses current key."""
-        from src.app.core.security.encryption import CredentialEncryption
         from cryptography.fernet import Fernet
+
+        from src.app.core.security.encryption import CredentialEncryption
 
         old_key = Fernet.generate_key()
         new_key = Fernet.generate_key()

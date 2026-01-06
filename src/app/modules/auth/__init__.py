@@ -4,12 +4,14 @@ This module provides authentication services including:
 - Login/logout functionality
 - Token refresh
 - Token blacklisting
+- Authentication audit logging
 
 Components are imported lazily to avoid circular imports.
 Direct imports:
     from src.app.modules.auth.service import auth_service
     from src.app.modules.auth.router import router as auth_router
     from src.app.modules.auth.schemas import Token, TokenData
+    from src.app.modules.auth.audit import auth_audit
 """
 
 # Lazy imports - do not eagerly import router to avoid circular imports
@@ -18,6 +20,7 @@ Direct imports:
 __all__ = [
     "auth_router",
     "auth_service",
+    "auth_audit",
 ]
 
 
@@ -31,4 +34,9 @@ def __getattr__(name: str):
         from .service import auth_service
 
         return auth_service
+    if name == "auth_audit":
+        from .audit import auth_audit
+
+        return auth_audit
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+

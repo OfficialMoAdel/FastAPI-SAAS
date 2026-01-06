@@ -84,3 +84,32 @@ class TokenBlacklistCreate(TokenBlacklistBase):
 
 class TokenBlacklistUpdate(TokenBlacklistBase):
     pass
+
+
+# -------------- error response --------------
+class ErrorDetail(BaseModel):
+    """Detailed error information for API responses."""
+
+    code: str = Field(..., description="Error code from ErrorCode class")
+    message: str = Field(..., description="Human-readable error message")
+    details: dict | None = Field(default=None, description="Optional additional context")
+    request_id: str | None = Field(default=None, description="Request ID for tracing")
+
+
+class ErrorResponse(BaseModel):
+    """Standardized error response schema for OpenAPI documentation.
+
+    Example:
+        {
+            "error": {
+                "code": "VALIDATION_ERROR",
+                "message": "Request validation failed",
+                "details": {"fields": [...]},
+                "request_id": "uuid"
+            },
+            "detail": "Request validation failed"
+        }
+    """
+
+    error: ErrorDetail
+    detail: str = Field(..., description="Backward-compatible detail message")

@@ -27,12 +27,13 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 @router.post("/login", response_model=Token)
 async def login_for_access_token(
     response: Response,
+    request: Request,
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> dict[str, str]:
     """Authenticate user and return access token."""
-    return await auth_service.login(form_data.username, form_data.password, response, db, redis)
+    return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
 
 
 @router.post("/refresh")
@@ -47,12 +48,13 @@ async def refresh_access_token(
 @router.post("/logout")
 async def logout(
     response: Response,
+    request: Request,
     access_token: str = Depends(oauth2_scheme),
     refresh_token: str | None = Cookie(None, alias="refresh_token"),
     db: AsyncSession = Depends(async_get_db),
 ) -> dict[str, str]:
     """Logout user by blacklisting tokens."""
-    return await auth_service.logout(access_token, refresh_token, response, db)
+    return await auth_service.logout(access_token, refresh_token, response, request, db)
 
 
 @router.patch("/password")

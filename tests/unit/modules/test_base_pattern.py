@@ -4,10 +4,9 @@ Tests follow TDD approach - these tests define the expected behavior
 for the base module classes that all feature modules inherit from.
 """
 
-import pytest
-from datetime import datetime
-from typing import Optional
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 
 class TestBaseModel:
@@ -15,8 +14,9 @@ class TestBaseModel:
 
     def test_base_model_defined(self):
         """Test that Base class is properly defined."""
-        from src.app.modules._base.models import Base
         from sqlalchemy.orm import DeclarativeBase
+
+        from src.app.modules._base.models import Base
 
         assert issubclass(Base, DeclarativeBase)
 
@@ -29,8 +29,8 @@ class TestBaseModel:
 
     def test_base_extends_existing(self):
         """Test that Base is the same as core db Base."""
-        from src.app.modules._base.models import Base
         from src.app.core.db.database import Base as CoreBase
+        from src.app.modules._base.models import Base
 
         # Should be the same class for consistency
         assert Base is CoreBase
@@ -247,10 +247,10 @@ class TestBaseModuleExports:
         """Test that _base module exports all schema classes."""
         from src.app.modules._base import (
             BaseCreate,
-            BaseRead,
-            BaseUpdate,
             BaseList,
             BasePagination,
+            BaseRead,
+            BaseUpdate,
         )
 
         assert BaseCreate is not None
@@ -268,9 +268,9 @@ class TestBaseModuleExports:
     def test_base_module_exports_exceptions(self):
         """Test that _base module exports all exception classes."""
         from src.app.modules._base import (
+            DuplicateError,
             ModelNotFoundError,
             ValidationError,
-            DuplicateError,
         )
 
         assert ModelNotFoundError is not None

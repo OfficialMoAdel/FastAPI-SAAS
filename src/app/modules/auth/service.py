@@ -2,12 +2,14 @@
 
 from datetime import timedelta
 
-from fastapi import Response
+from fastapi import Request, Response
 from jose import JWTError
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+from structlog import get_logger
 
 from ...core.config import EnvironmentOption, settings
+from ...core.events import EventPriority, event_bus
 from ...core.exceptions.http_exceptions import UnauthorizedException
 from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
@@ -20,6 +22,8 @@ from ...core.security import (
     verify_token,
 )
 from ...modules.users.crud import crud_users
+
+logger = get_logger(__name__)
 
 
 class AuthService:
@@ -43,11 +47,50 @@ class AuthService:
 
         return db_user
 
+    async def _publish_login_audit(
+        self,
+        request: Request,
+        username: str,
+        success: bool,
+        tenant_id: int | None = None,
+        user_id: int | None = None,
+        reason: str | None = None,
+    ) -> None:
+        """Publish audit log for login attempt."""
+        try:
+            if not tenant_id:
+                from ...core.tenancy.context import get_tenant_context
+                tenant = get_tenant_context()
+                if tenant:
+                    tenant_id = tenant.id
+
+            await event_bus.publish(
+                "audit.log",
+                {
+                    "action": "auth.login",
+                    "entity_type": "user",
+                    "entity_id": str(user_id) if user_id else None,
+                    "tenant_id": str(tenant_id) if tenant_id else "0",  # 0 or system tenant if unknown
+                    "user_id": str(user_id) if user_id else None,
+                    "details": {
+                        "username": username,
+                        "success": success,
+                        "reason": reason,
+                    },
+                    "ip_address": request.client.host if request.client else None,
+                    "user_agent": request.headers.get("user-agent"),
+                },
+                priority=EventPriority.NORMAL,
+            )
+        except Exception as e:
+            logger.error("failed_to_publish_audit_log", error=str(e))
+
     async def login(
         self,
         username: str,
         password: str,
         response: Response,
+        request: Request,
         db: AsyncSession,
         redis: Redis,
     ) -> dict[str, str]:
@@ -61,6 +104,8 @@ class AuthService:
             User password
         response : Response
             FastAPI response object for setting cookies
+        request : Request
+            FastAPI request object for audit logging
         db : AsyncSession
             Database session
         redis : Redis
@@ -81,6 +126,7 @@ class AuthService:
         attempts = await redis.get(login_attempts_key)
         if attempts and int(attempts) >= settings.AUTH_MAX_LOGIN_ATTEMPTS:
             lockout_minutes = settings.AUTH_LOCKOUT_DURATION_SECONDS // 60
+            await self._publish_login_audit(request, username, False, reason="account_locked")
             raise UnauthorizedException(
                 f"Account locked due to too many failed attempts. Please try again in {lockout_minutes} minutes."
             )
@@ -92,6 +138,7 @@ class AuthService:
             if new_attempts == 1:
                 await redis.expire(login_attempts_key, settings.AUTH_LOCKOUT_DURATION_SECONDS)
 
+            await self._publish_login_audit(request, username, False, reason="invalid_credentials")
             raise UnauthorizedException("Wrong username, email or password.")
 
         # Clear failed attempts on success
@@ -112,6 +159,15 @@ class AuthService:
             secure=is_production,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
+        )
+
+        # Audit log success
+        await self._publish_login_audit(
+            request,
+            username,
+            True,
+            tenant_id=user["tenant_id"],
+            user_id=user["id"]
         )
 
         return {"access_token": access_token, "token_type": "bearer"}
@@ -156,6 +212,7 @@ class AuthService:
         access_token: str,
         refresh_token: str | None,
         response: Response,
+        request: Request,
         db: AsyncSession,
     ) -> dict[str, str]:
         """Logout user by blacklisting tokens.
@@ -168,6 +225,8 @@ class AuthService:
             Refresh token from cookie
         response : Response
             FastAPI response object for deleting cookies
+        request : Request
+            FastAPI request object for audit logging
         db : AsyncSession
             Database session
 
@@ -185,8 +244,44 @@ class AuthService:
             if not refresh_token:
                 raise UnauthorizedException("Refresh token not found.")
 
+            # Try to get user info from token before blacklisting to log who logged out
+            user_data = None
+            try:
+                user_data = await verify_token(access_token, TokenType.ACCESS, db)
+            except Exception:
+                pass # Token might be expired, proceed with logout anyway
+
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
+
+            # Audit log logout
+            try:
+                username = user_data.username_or_email if user_data else "unknown"
+                # We might not have tenant_id/user_id easily if we don't fetch the user,
+                # but verify_token returns TokenData.
+                # Ideally we would fetch the user to get ID and Tenant ID, but let's keep it lightweight.
+                # If we really need tenant/user ID we'd need to fetch user.
+
+                await event_bus.publish(
+                    "audit.log",
+                    {
+                        "action": "auth.logout",
+                        "entity_type": "user",
+                        "entity_id": None,
+                        "tenant_id": "0", # We might not know without DB lookup
+                        "user_id": None,
+                        "details": {
+                            "username": username,
+                            "success": True,
+                        },
+                        "ip_address": request.client.host if request.client else None,
+                        "user_agent": request.headers.get("user-agent"),
+                    },
+                    priority=EventPriority.NORMAL,
+                )
+            except Exception as e:
+                logger.error("failed_to_publish_audit_log", error=str(e))
+
             return {"message": "Logged out successfully"}
 
         except JWTError:

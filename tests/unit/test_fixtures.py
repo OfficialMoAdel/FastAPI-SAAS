@@ -4,10 +4,11 @@ This module tests the test infrastructure itself - verifying that
 fixtures work correctly and handling edge cases.
 """
 
-import pytest
-from unittest.mock import Mock, patch, AsyncMock
-from datetime import datetime, timedelta, UTC
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import uuid4
+
+import pytest
 
 
 class TestFakeRedisFixture:
@@ -293,8 +294,8 @@ class TestConftestImports:
 
     def test_override_dependency_function(self):
         """Test that override_dependency helper works."""
-        from tests.conftest import override_dependency
         from src.app.main import app
+        from tests.conftest import override_dependency
 
         mock_response = Mock()
         test_dependency = lambda: mock_response
@@ -339,7 +340,6 @@ class TestSessionCleanup:
 
     def test_client_cleanup_after_test(self):
         """Test that client is cleaned up after test."""
-        from src.app.main import app
         # After the test, dependency_overrides should be cleared
         # This is handled by the fixture autouse
 
@@ -443,7 +443,7 @@ class TestNotificationMock:
 
     def test_notification_service_can_be_patched(self):
         """Test that notification service can be mocked."""
-        from unittest.mock import patch, AsyncMock
+        from unittest.mock import AsyncMock
 
         fake_notification = Mock()
         fake_notification.id = uuid4()

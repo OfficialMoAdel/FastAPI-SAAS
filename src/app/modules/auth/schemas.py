@@ -4,10 +4,23 @@ Note: Token and TokenData are kept in core/schemas.py to avoid circular imports.
 This module re-exports them for module-internal use and adds auth-specific schemas.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 # Re-export from core for convenience (these are the canonical definitions)
 from ...core.schemas import Token, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead, TokenData
+
+
+class AuthTokenResponse(BaseModel):
+    """Full authentication token response for new auth flows.
+
+    Used by Magic Link, SSO, and Passkey authentication to return
+    complete token information including refresh token and expiration.
+    """
+
+    access_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="Refresh token for obtaining new access tokens")
+    token_type: str = Field(default="bearer", description="Token type (always 'bearer')")
+    expires_in: int = Field(..., description="Access token expiration time in seconds")
 
 
 class LoginRequest(BaseModel):
@@ -76,6 +89,7 @@ class EmailVerificationResponse(BaseModel):
 
 # Re-export all token schemas for backward compatibility
 __all__ = [
+    "AuthTokenResponse",
     "LoginRequest",
     "LogoutResponse",
     "RefreshTokenResponse",

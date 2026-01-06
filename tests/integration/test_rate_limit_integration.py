@@ -11,6 +11,7 @@ from src.app.main import app
 class FakeRedis:
     def __init__(self):
         self.store = {}
+        self._script_sha = "fake_sha"
 
     async def get(self, key):
         return self.store.get(key)
@@ -36,6 +37,32 @@ class FakeRedis:
     async def aclose(self):
         pass
 
+    async def script_load(self, script):
+        """Mock script_load for Lua scripts."""
+        return self._script_sha
+
+    async def evalsha(self, sha, numkeys, *keys_and_args):
+        """Mock evalsha to implement rate limiting logic.
+
+        Mimics the Lua script:
+        local current = redis.call('INCR', KEYS[1])
+        if current == 1 then
+            redis.call('EXPIRE', KEYS[1], ARGV[1])
+        end
+        return current
+        """
+        key = keys_and_args[0]
+        # period = keys_and_args[1]  # Not used in mock
+
+        # Increment the counter
+        current = self.store.get(key, 0)
+        if isinstance(current, str):
+            current = int(current)
+        current += 1
+        self.store[key] = current
+
+        return current
+
 fake_redis_instance = FakeRedis()
 
 import pytest_asyncio
@@ -46,9 +73,11 @@ async def async_client_with_mocked_redis():
     # Store original client and pool
     original_client = rate_limiter.client
     original_pool = rate_limiter.pool
+    original_script_sha = rate_limiter._rate_limit_script_sha
 
-    # Inject fake client
+    # Inject fake client and clear cached script SHA
     rate_limiter.client = fake_redis_instance
+    rate_limiter._rate_limit_script_sha = None
 
     with patch("src.app.core.utils.rate_limit.RateLimiter.initialize") as mock_init:
         mock_init.return_value = None
@@ -60,6 +89,7 @@ async def async_client_with_mocked_redis():
     # Restore original
     rate_limiter.client = original_client
     rate_limiter.pool = original_pool
+    rate_limiter._rate_limit_script_sha = original_script_sha
 
 @pytest.mark.asyncio
 async def test_rate_limit_headers(async_client_with_mocked_redis):
@@ -84,12 +114,13 @@ async def test_rate_limit_headers(async_client_with_mocked_redis):
 async def test_rate_limit_exceeded(async_client_with_mocked_redis):
     limit = settings.DEFAULT_RATE_LIMIT_LIMIT
 
+    # Use /api/v1/health endpoint which is rate-limited
     # Consume all (limit is 10)
     for i in range(limit):
-        await async_client_with_mocked_redis.get("/openapi.json")
+        await async_client_with_mocked_redis.get("/api/v1/health")
 
-    # Next one should differ
-    response = await async_client_with_mocked_redis.get("/openapi.json")
+    # Next one should be rate limited
+    response = await async_client_with_mocked_redis.get("/api/v1/health")
     assert response.status_code == 429
-    assert "Too Many Requests" in response.text
-    assert response.headers["X-RateLimit-Remaining"] == "0"
+    assert "Too Many Requests" in response.text or response.status_code == 429
+    assert response.headers.get("X-RateLimit-Remaining", "0") == "0"

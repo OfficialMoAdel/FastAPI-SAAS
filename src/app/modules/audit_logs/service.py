@@ -33,7 +33,7 @@ class AuditLogService:
         tenant_id: int,
         action: str,
         entity_type: str | None = None,
-        entity_id: UUID | None = None,
+        entity_id: str | None = None,
         user_id: int | None = None,
         details: dict[str, Any] | None = None,
         ip_address: str | None = None,
@@ -147,7 +147,7 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
                 tenant_id=int(data["tenant_id"]),
                 action=data["action"],
                 entity_type=data.get("entity_type"),
-                entity_id=UUID(data["entity_id"]) if data.get("entity_id") else None,
+                entity_id=str(data["entity_id"]) if data.get("entity_id") else None,
                 user_id=int(data["user_id"]) if data.get("user_id") else None,
                 details=data.get("details", {}),
                 ip_address=data.get("ip_address"),
@@ -190,6 +190,16 @@ def audit_action(action: str, entity_type: str) -> Callable:
             tenant_id = kwargs.get("tenant_id") or getattr(result, "tenant_id", None)
             user_id = kwargs.get("current_user_id") or kwargs.get("user_id")
             entity_id = getattr(result, "id", None)
+
+            # Resolve tenant_id from context if missing
+            if not tenant_id:
+                try:
+                    from ...core.tenancy.context import get_tenant_context
+                    tenant = get_tenant_context()
+                    if tenant:
+                        tenant_id = tenant.id
+                except ImportError:
+                    pass
 
             # Publish audit event with error handling
             if tenant_id:

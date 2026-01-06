@@ -212,6 +212,16 @@ class EnvironmentSettings(BaseSettings):
     ENVIRONMENT: EnvironmentOption = EnvironmentOption.LOCAL
 
 
+class StorageSettings(BaseSettings):
+    STORAGE_PROVIDER: str = "s3"  # Options: s3, local (future)
+    STORAGE_BUCKET: str = "fastapi-saas-user-content"
+    STORAGE_REGION: str = "us-east-1"
+    AWS_ACCESS_KEY_ID: str | None = None
+    AWS_SECRET_ACCESS_KEY: str | None = None
+    AWS_ENDPOINT_URL: str | None = None  # For localstack or MinIO
+
+
+
 class CORSSettings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]  # SECURITY: Restrict to specific origins
     CORS_METHODS: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
@@ -266,6 +276,7 @@ class Settings(
     EmailSettings,
     WebhookSettings,
     EnvironmentSettings,
+    StorageSettings,
     CORSSettings,
 ):
     model_config = SettingsConfigDict(

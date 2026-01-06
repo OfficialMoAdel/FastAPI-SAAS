@@ -4,9 +4,10 @@ Tests follow TDD approach - these tests define the expected behavior
 for storage providers that feature modules can use.
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 from io import BytesIO
+from unittest.mock import MagicMock
+
+import pytest
 
 
 class MockClientError(Exception):
@@ -23,8 +24,9 @@ class TestStorageProviderInterface:
 
     def test_storage_provider_is_abc(self):
         """Test that StorageProvider is properly defined."""
-        from src.app.modules.storage.interfaces import StorageProvider, StorageResult
         from abc import ABC
+
+        from src.app.modules.storage.interfaces import StorageProvider
 
         # Verify it's an ABC
         assert issubclass(StorageProvider, ABC)
@@ -95,8 +97,8 @@ class TestS3Storage:
 
     def test_s3_storage_implements_interface(self, mock_s3_client):
         """Test that S3Storage implements StorageProvider."""
-        from src.app.modules.storage.s3_storage import S3Storage
         from src.app.modules.storage.interfaces import StorageProvider
+        from src.app.modules.storage.s3_storage import S3Storage
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
 

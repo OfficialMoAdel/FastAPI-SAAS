@@ -1,6 +1,5 @@
 import os
-import secrets
-from collections.abc import Callable, Generator
+from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -8,8 +7,67 @@ import pytest
 from cryptography.fernet import Fernet
 from faker import Faker
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy import create_engine
+from sqlalchemy import Engine, String, create_engine, event
+from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, INET, JSONB, UUID
+from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.sql.expression import TextClause
+
+
+@compiles(JSONB, "sqlite")
+def compile_jsonb(type_, compiler, **kw):
+    return compiler.visit_JSON(type_, **kw)
+
+
+@compiles(UUID, "sqlite")
+def compile_uuid(type_, compiler, **kw):
+    return compiler.visit_VARCHAR(type_, **kw)
+
+
+@compiles(BYTEA, "sqlite")
+def compile_bytea(type_, compiler, **kw):
+    return compiler.visit_large_binary(type_, **kw)
+
+
+@compiles(INET, "sqlite")
+def compile_inet(type_, compiler, **kw):
+    return compiler.visit_VARCHAR(String(45), **kw)
+
+
+@compiles(ARRAY, "sqlite")
+def compile_array(type_, compiler, **kw):
+    return compiler.visit_JSON(type_, **kw)
+
+
+@compiles(TextClause, "sqlite")
+def compile_text_clause(element, compiler, **kw):
+    text = element.text
+    if "current_timestamp(0)" in text:
+        text = text.replace("current_timestamp(0)", "CURRENT_TIMESTAMP")
+    return text
+
+
+def gen_random_uuid():
+    return str(uuid.uuid4())
+
+
+@event.listens_for(Engine, "connect")
+def do_connect(dbapi_connection, connection_record):
+    try:
+        dbapi_connection.create_function("gen_random_uuid", 0, gen_random_uuid)
+    except Exception:
+        pass
+    try:
+        # Enable Write-Ahead Logging (WAL) for better concurrency
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL")
+        cursor.execute("PRAGMA synchronous=NORMAL")
+        cursor.close()
+    except Exception:
+        pass
+
+
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
@@ -24,15 +82,16 @@ settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
 from src.app.main import app
 
-DATABASE_URI = settings.POSTGRES_URI
-DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
+# DATABASE_URI = settings.POSTGRES_URI
+# DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
+DATABASE_URI = settings.SQLITE_URI
+DATABASE_PREFIX = settings.SQLITE_SYNC_PREFIX
 
-sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI)
+sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI, connect_args={"check_same_thread": False})
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
 from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
-from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 
@@ -51,65 +110,60 @@ def setup_db():
     # Base.metadata.drop_all(bind=sync_engine)
 
 
-
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
 
 # Setup async engine for tests (same DB as sync engine)
+# test_async_engine = create_async_engine(
+#     settings.POSTGRES_ASYNC_PREFIX + settings.POSTGRES_URI, echo=False, pool_size=5, max_overflow=5, pool_pre_ping=True
+# )
 test_async_engine = create_async_engine(
-    settings.POSTGRES_ASYNC_PREFIX + settings.POSTGRES_URI,
+    settings.SQLITE_ASYNC_PREFIX + settings.SQLITE_URI,
     echo=False,
-    pool_size=5,
-    max_overflow=5,
-    pool_pre_ping=True
+    poolclass=NullPool,
+    # pool_pre_ping=True, # Not needed with NullPool usually, but harmless
 )
 TestingSessionLocal = async_sessionmaker(bind=test_async_engine, class_=AsyncSession, expire_on_commit=False)
+
 
 async def override_get_db() -> Generator[AsyncSession, None, None]:
     """Override for async_get_db dependency using test async engine."""
     async with TestingSessionLocal() as session:
         yield session
 
-@pytest.fixture
-def client() -> Generator[TestClient, Any, None]:
-    # Patch create_tables and warm_caches to avoid using the global async engine which causes loop conflicts
-    # Tables are already created by the setup_db fixture
-    # Patch rate_limiter.check_rate_limit to return (False, 0) tuple as expected by middleware
-    # Patch TenantMiddleware._get_tenant_by_slug to avoid async DB calls (middleware runs before dependency override?)
-    # Actually, middleware might use global engine.
-    # TenantMiddleware uses `request.state.db`? Or `db` dependency?
-    # Usually middleware might create its own session or rely on request scope.
-    # If middleware uses `async_get_db`, it will use our override.
 
-    # Create a fake tenant object for middleware
+@pytest.fixture
+def full_mock_context() -> Generator[None, None, None]:
+    """Setup mock context including overrides and patches."""
+    # Create valid fake data
     fake_tenant = Mock()
-    fake_tenant.id = "test-tenant-id"
+    fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
-    # Create a fake user for dependency override (must support both attribute and dict access)
     fake_user = Mock()
-    fake_user.id = "test-user-id"
+    fake_user.id = 1
     fake_user.username = "testuser"
     fake_user.email = "test@example.com"
     fake_user.is_superuser = False
     fake_user.tier_id = "test-tier-id"
-    # Support dict-style access as well
+    fake_user.name = "Test User"
     fake_user.__getitem__ = lambda self, key: getattr(self, key)
+    fake_user.get = lambda key, default=None: getattr(fake_user, key, default)
 
-    # Import dependencies to override
     from src.app.api.dependencies import get_current_tenant, get_current_user, get_optional_user
     from src.app.core.db.database import async_get_db
 
-    # Override dependencies
+    # Apply Overrides
     app.dependency_overrides[get_current_user] = lambda: fake_user
     app.dependency_overrides[get_current_tenant] = lambda: fake_tenant
     app.dependency_overrides[get_optional_user] = lambda: fake_user
     app.dependency_overrides[async_get_db] = override_get_db
 
-
-    # Create a fake notification for send_email mock with all required fields for Pydantic
+    # Create fake notification
     from datetime import UTC, datetime
     from uuid import uuid4
+
     fake_notification = Mock()
     fake_notification.id = uuid4()
     fake_notification.tenant_id = uuid4()
@@ -122,6 +176,7 @@ def client() -> Generator[TestClient, Any, None]:
     fake_notification.error_message = None
     fake_notification.created_at = datetime.now(UTC)
 
+    # Apply Patches
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
@@ -140,11 +195,19 @@ def client() -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_notification,
         ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
     ):
+        yield
 
-        with TestClient(app) as _client:
-            yield _client
+    # Cleanup overrides
     app.dependency_overrides = {}
+
+
+@pytest.fixture
+def client(full_mock_context) -> Generator[TestClient, Any, None]:
+    """Sync TestClient reusing full_mock_context."""
+    with TestClient(app) as _client:
+        yield _client
 
 
 @pytest.fixture
@@ -156,16 +219,16 @@ def db() -> Generator[Session, Any, None]:
 
 @pytest.fixture
 def client_auth() -> Generator[TestClient, Any, None]:
-    """Client fixture for authentication tests - doesn't mock DB dependencies.
-
-    Use this for tests that need real database access for authentication,
-    like login/lockout tests.
-    """
-    # Create a fake tenant object for middleware
+    """Client fixture for authentication tests - patches tenant and uses SQLite DB."""
     fake_tenant = Mock()
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
+
+    from src.app.core.db.database import async_get_db
+
+    # Override DB to use SQLite
+    app.dependency_overrides[async_get_db] = override_get_db
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
@@ -180,10 +243,13 @@ def client_auth() -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
     ):
-
         with TestClient(app) as _client:
             yield _client
+
+    # Cleanup
+    app.dependency_overrides.pop(async_get_db, None)
 
 
 def override_dependency(dependency: Callable[..., Any], mocked_response: Any) -> None:
@@ -194,6 +260,64 @@ def override_dependency(dependency: Callable[..., Any], mocked_response: Any) ->
 def mock_db():
     """Mock database session for unit tests."""
     return Mock(spec=AsyncSession)
+
+
+@pytest.fixture
+async def db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Async database session fixture."""
+    async with TestingSessionLocal() as session:
+        yield session
+
+
+@pytest.fixture
+async def async_client(full_mock_context) -> AsyncGenerator[AsyncClient, None]:
+    """Async client fixture."""
+    # Note: ASGITransport(app=app) handles lifespan automatically.
+    # We rely on full_mock_context for dependencies/patches, but avoid Nested TestClient usage.
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-ID": "test-tenant-integration"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+def superuser_token_headers(full_mock_context):
+    """Headers for superuser requests (overrides get_current_user)."""
+    from src.app.api.dependencies import get_current_user
+
+    # Create superuser mock
+    fake_superuser = Mock()
+    fake_superuser.id = 1
+    fake_superuser.is_superuser = True
+    fake_superuser.username = "admin"
+    fake_superuser.email = "admin@example.com"
+    fake_superuser.is_active = True
+    fake_superuser.__getitem__ = lambda self, key: getattr(self, key)
+    fake_superuser.get = lambda key, default=None: getattr(fake_superuser, key, default)
+
+    # Override dependency (updates existing overrides from full_mock_context)
+    app.dependency_overrides[get_current_user] = lambda: fake_superuser
+    return {
+        "Authorization": "Bearer superuser",
+        "X-Tenant-ID": "test-tenant-integration",
+    }
+
+
+@pytest.fixture
+def regular_user_token_headers(full_mock_context):
+    """Headers for regular user requests."""
+    return {
+        "Authorization": "Bearer regular",
+        "X-Tenant-ID": "test-tenant-integration",
+    }
+
+
+@pytest.fixture
+def auth_headers(tenant):
+    """Authentication headers for tenant context."""
+    return {"X-Tenant-ID": tenant.slug}
 
 
 class FakeRedis:
@@ -238,6 +362,7 @@ class FakeRedis:
 
     async def scan(self, cursor=0, match=None, count=None):
         import fnmatch
+
         if cursor != 0:
             return 0, []
         keys = list(self.store.keys())
@@ -255,22 +380,78 @@ class FakeRedis:
     async def enqueue_job(self, function, *args, **kwargs):
         return Mock(job_id="job_mock_123")
 
+    async def script_load(self, script: str):
+        return "mock_script_sha"
+
+    async def evalsha(self, sha, numkeys, *keys_and_args):
+        """Simulate rate limit Lua script - properly increments counter.
+
+        Mimics the Lua script:
+        local current = redis.call('INCR', KEYS[1])
+        if current == 1 then
+            redis.call('EXPIRE', KEYS[1], ARGV[1])
+        end
+        return current
+        """
+        key = keys_and_args[0] if keys_and_args else "default_key"
+        current = self.store.get(key, 0)
+        if isinstance(current, str):
+            current = int(current)
+        current += 1
+        self.store[key] = current
+        return current
+
+
 @pytest.fixture(autouse=True)
 def mock_redis():
     """Mock Redis client globally with in-memory state."""
     fake_redis = FakeRedis()
 
-    with patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()), \
-         patch("src.app.core.setup.create_redis_queue_pool", new=AsyncMock()), \
-         patch("src.app.core.setup.create_redis_rate_limit_pool", new=AsyncMock()), \
-         patch("src.app.core.setup.close_redis_cache_pool", new=AsyncMock()), \
-         patch("src.app.core.setup.close_redis_queue_pool", new=AsyncMock()), \
-         patch("src.app.core.setup.close_redis_rate_limit_pool", new=AsyncMock()), \
-         patch("src.app.core.utils.cache.client", new=fake_redis), \
-         patch("src.app.core.utils.rate_limit.rate_limiter.client", new=fake_redis), \
-         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis), \
-         patch("src.app.core.utils.queue.pool", new=fake_redis):
+    with (
+        patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
+        patch("src.app.core.setup.create_redis_queue_pool", new=AsyncMock()),
+        patch("src.app.core.setup.create_redis_rate_limit_pool", new=AsyncMock()),
+        patch("src.app.core.setup.close_redis_cache_pool", new=AsyncMock()),
+        patch("src.app.core.setup.close_redis_queue_pool", new=AsyncMock()),
+        patch("src.app.core.setup.close_redis_rate_limit_pool", new=AsyncMock()),
+        patch("src.app.core.utils.cache.client", new=fake_redis),
+        patch("src.app.core.utils.rate_limit.rate_limiter.client", new=fake_redis),
+        patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
+        patch("src.app.core.utils.queue.pool", new=fake_redis),
+    ):
         yield fake_redis
+
+
+@pytest.fixture
+def mock_user(current_user_dict):
+    """Fixture to mock current user dependency."""
+    return current_user_dict
+
+
+@pytest.fixture
+async def create_test_user(db_session, tenant):
+    """Factory fixture to create a test user."""
+    from src.app.core.security import get_password_hash
+    from src.app.modules.users.models import User
+
+    async def _create_user(email: str = "test@example.com", is_superuser: bool = False, **kwargs):
+        kwargs.pop("is_active", None)
+        hashed_password = await get_password_hash("password")
+        user = User(
+            email=email,
+            username=email.split("@")[0],
+            hashed_password=hashed_password,
+            is_superuser=is_superuser,
+            tenant_id=tenant.id,
+            name="Test User",
+            **kwargs,
+        )
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+        return user
+
+    return _create_user
 
 
 @pytest.fixture
@@ -335,9 +516,3 @@ def tenant(db):
     db.commit()
     db.refresh(tenant)
     return tenant
-
-
-@pytest.fixture
-def auth_headers(tenant):
-    """Authentication headers for tenant context."""
-    return {"X-Tenant-ID": tenant.slug}

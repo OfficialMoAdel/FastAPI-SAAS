@@ -39,6 +39,17 @@ def mock_response():
 
 
 @pytest.fixture
+def mock_request():
+    """Mock FastAPI request for audit logging."""
+    request = MagicMock()
+    request.client = MagicMock()
+    request.client.host = "127.0.0.1"
+    request.headers = MagicMock()
+    request.headers.get = MagicMock(return_value="test-user-agent")
+    return request
+
+
+@pytest.fixture
 def mock_user():
     """Mock authenticated user."""
     return {
@@ -46,6 +57,7 @@ def mock_user():
         "username": "testuser",
         "email": "test@example.com",
         "is_superuser": False,
+        "tenant_id": 1,
     }
 
 
@@ -53,7 +65,7 @@ class TestAuthServiceLockout:
     """Tests for account lockout (brute force protection)."""
 
     @pytest.mark.asyncio
-    async def test_account_locked_after_5_failed_attempts(self, mock_db, mock_redis, mock_response):
+    async def test_account_locked_after_5_failed_attempts(self, mock_db, mock_redis, mock_response, mock_request):
         """Test that account is locked after 5 failed login attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -62,13 +74,13 @@ class TestAuthServiceLockout:
         mock_redis.get = AsyncMock(return_value=b"5")
 
         with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.login("testuser", "wrongpassword", mock_response, mock_db, mock_redis)
+            await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
 
         assert "Account locked" in str(exc_info.value.detail)
         assert "15 minutes" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_failed_attempt_increments_counter(self, mock_db, mock_redis, mock_response):
+    async def test_failed_attempt_increments_counter(self, mock_db, mock_redis, mock_response, mock_request):
         """Test that failed login increments the attempt counter."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -84,14 +96,14 @@ class TestAuthServiceLockout:
             mock_auth.return_value = None  # Authentication fails
 
             with pytest.raises(UnauthorizedException):
-                await auth_service.login("testuser", "wrongpassword", mock_response, mock_db, mock_redis)
+                await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
 
             mock_redis.incr.assert_called_once()
             # First attempt sets expiration
             mock_redis.expire.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_lockout_counter_expires_after_15_minutes(self, mock_db, mock_redis, mock_response):
+    async def test_lockout_counter_expires_after_15_minutes(self, mock_db, mock_redis, mock_response, mock_request):
         """Test that lockout counter expiration is set to 15 minutes (900 seconds)."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -105,14 +117,14 @@ class TestAuthServiceLockout:
             mock_auth.return_value = None
 
             with pytest.raises(UnauthorizedException):
-                await auth_service.login("testuser", "wrong", mock_response, mock_db, mock_redis)
+                await auth_service.login("testuser", "wrong", mock_response, mock_request, mock_db, mock_redis)
 
             # Check 900 seconds (15 minutes) expiration
             mock_redis.expire.assert_called_with("login_attempts:testuser", 900)
 
     @pytest.mark.asyncio
     async def test_successful_login_clears_lockout_counter(
-        self, mock_db, mock_redis, mock_response, mock_user
+        self, mock_db, mock_redis, mock_response, mock_request, mock_user
     ):
         """Test that successful login clears the failed attempt counter."""
         from src.app.modules.auth.service import auth_service
@@ -134,13 +146,13 @@ class TestAuthServiceLockout:
             mock_access.return_value = "access_token"
             mock_refresh.return_value = "refresh_token"
 
-            await auth_service.login("testuser", "correct_password", mock_response, mock_db, mock_redis)
+            await auth_service.login("testuser", "correct_password", mock_response, mock_request, mock_db, mock_redis)
 
             # Verify counter was cleared
             mock_redis.delete.assert_called_once_with("login_attempts:testuser")
 
     @pytest.mark.asyncio
-    async def test_lockout_at_exactly_5_attempts(self, mock_db, mock_redis, mock_response):
+    async def test_lockout_at_exactly_5_attempts(self, mock_db, mock_redis, mock_response, mock_request):
         """Test that lockout triggers at exactly 5 attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -155,7 +167,7 @@ class TestAuthServiceLockout:
 
             # This is the 5th attempt - should fail but not be locked yet
             with pytest.raises(UnauthorizedException) as exc_info:
-                await auth_service.login("testuser", "wrong", mock_response, mock_db, mock_redis)
+                await auth_service.login("testuser", "wrong", mock_response, mock_request, mock_db, mock_redis)
 
             # Should show "wrong password" not "locked" (becomes locked AFTER this attempt)
             assert "Wrong username" in str(exc_info.value.detail)
@@ -261,25 +273,25 @@ class TestAuthServiceLogout:
     """Tests for logout edge cases."""
 
     @pytest.mark.asyncio
-    async def test_logout_without_refresh_token_raises_error(self, mock_db, mock_response):
+    async def test_logout_without_refresh_token_raises_error(self, mock_db, mock_response, mock_request):
         """Test that logout without refresh token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.logout("access_token", None, mock_response, mock_db)
+            await auth_service.logout("access_token", None, mock_response, mock_request, mock_db)
 
         assert "Refresh token not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_logout_success_blacklists_tokens(self, mock_db, mock_response):
+    async def test_logout_success_blacklists_tokens(self, mock_db, mock_response, mock_request):
         """Test successful logout blacklists both tokens and clears cookie."""
         from src.app.modules.auth.service import auth_service
 
         with patch(
             "src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock
         ) as mock_blacklist:
-            result = await auth_service.logout("access_token", "refresh_token", mock_response, mock_db)
+            result = await auth_service.logout("access_token", "refresh_token", mock_response, mock_request, mock_db)
 
             mock_blacklist.assert_called_once_with(
                 access_token="access_token", refresh_token="refresh_token", db=mock_db
@@ -288,7 +300,7 @@ class TestAuthServiceLogout:
             assert result["message"] == "Logged out successfully"
 
     @pytest.mark.asyncio
-    async def test_logout_with_invalid_jwt_raises_error(self, mock_db, mock_response):
+    async def test_logout_with_invalid_jwt_raises_error(self, mock_db, mock_response, mock_request):
         """Test that logout with JWT decode error raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.auth.service import auth_service
@@ -299,7 +311,7 @@ class TestAuthServiceLogout:
             mock_blacklist.side_effect = JWTError("Invalid token")
 
             with pytest.raises(UnauthorizedException) as exc_info:
-                await auth_service.logout("invalid_token", "refresh_token", mock_response, mock_db)
+                await auth_service.logout("invalid_token", "refresh_token", mock_response, mock_request, mock_db)
 
             assert "Invalid token" in str(exc_info.value.detail)
 
@@ -314,7 +326,6 @@ class TestAuthServiceEmailFlows:
     async def test_request_password_reset_sends_email(self, mock_db):
         """Test that requesting password reset triggers email event."""
         from src.app.modules.auth.service import auth_service
-        from src.app.core.events import EventPriority
 
         mock_user = {
             "id": 1,
@@ -331,12 +342,12 @@ class TestAuthServiceEmailFlows:
         ):
             mock_get_user.return_value = mock_user
             mock_settings.FRONTEND_URL = "http://test-frontend"
-            
+
             # Mock the session.add and commit behavior
             mock_db.add = MagicMock()
             mock_db.commit = AsyncMock()
             mock_db.refresh = AsyncMock()
-            
+
             # Mock token creation
             mock_token = MagicMock()
             mock_token.token = "reset_token_123"
@@ -365,7 +376,6 @@ class TestAuthServiceEmailFlows:
     async def test_send_verification_email_creates_token_and_event(self, mock_db):
         """Test sending verification email creates token and triggers event."""
         from src.app.modules.auth.service import auth_service
-        from src.app.core.events import EventPriority
 
         mock_user = {
             "id": 1,
@@ -383,7 +393,7 @@ class TestAuthServiceEmailFlows:
         ):
             mock_get_user.return_value = mock_user
             mock_settings.FRONTEND_URL = "http://test-frontend"
-            
+
             mock_token_instance = MagicMock()
             mock_token_instance.token = "verify_token_123"
             mock_token_cls.return_value = mock_token_instance
@@ -410,7 +420,6 @@ class TestAuthServiceEmailFlows:
     async def test_verify_email_validates_and_updates_user(self, mock_db):
         """Test verification logic updates user and deletes token."""
         from src.app.modules.auth.service import auth_service
-        from src.app.modules.auth.models import EmailVerificationToken
 
         mock_user = {"id": 99, "is_email_verified": False}
 
@@ -428,7 +437,7 @@ class TestAuthServiceEmailFlows:
             # Mock DB Query results
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = mock_token
-            
+
             mock_db.execute = AsyncMock(return_value=mock_result)
             mock_db.delete = AsyncMock()
             mock_db.commit = AsyncMock()
@@ -454,5 +463,5 @@ class TestAuthServiceEmailFlows:
 
         with pytest.raises(UnauthorizedException) as exc_info:
             await auth_service.verify_email("invalid_token", mock_db)
-        
+
         assert "Invalid verification token" in str(exc_info.value.detail)

@@ -167,8 +167,13 @@ specs
 claudedocs
 geminidocs
 env.txt
+Constitution.txt
 .serena
 1claudedocs
 IMPLEMENTATION_WORKFLOW.md
 MIGRATION_PLAN.md
 IMPLEMENTATION_TASKS
+routes.txt
+coverage_report.txt
+IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
+REFACTOR_PLAN_BASE_PATTERN_MIGRATION.md

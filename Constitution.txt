@@ -34,6 +34,17 @@ We are porting features from a reference project `sajanv88full_stack_fastapi_rea
 3. Implement the changes in the Target file structure.
 4. Generate Migration scripts for any DB changes.
 
+## Quality Standards ✨ NEW
+- Test Coverage: Minimum 80%
+- TDD Approach: Write tests first, then implement
+- Test Structure: Arrange-Act-Assert pattern
+- Pytest for all tests
+
+## Documentation Standards ✨ NEW
+- Docstrings: Google style
+- API Docs: Auto-generated from OpenAPI
+- Inline comments: Explain WHY, not WHAT
+
 ## External Documentation References
 The following content describes the business logic we want to mimic. Use this as a logical guide only (ignore code implementation details if they conflict with our Stack):
 
@@ -50,7 +61,7 @@ Get Started
 
 [Docker Development Environment](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/4-docker-development-environment "Docker Development Environment") 
 
-[Frontend Development Workflow](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/5-frontend-development-workflow "Frontend Development Workflow")
+[Frontend Development Workflow](https://r.jina.ai/https://zread.ai/sajanv88/full_stack_fastapi_react_template/3-environment-configuration "Frontend Development Workflow")
 
 Deep Dive
 

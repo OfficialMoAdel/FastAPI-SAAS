@@ -71,9 +71,10 @@ class AuditLog(Base):
         index=True,
         comment="Type of entity affected",
     )
-    entity_id: Mapped[UUID | None] = mapped_column(
+    entity_id: Mapped[str | None] = mapped_column(
+        String(36),
         nullable=True,
-        comment="UUID of affected entity",
+        comment="ID of affected entity (UUID or String)",
     )
 
     # Request Context (nullable fields)
@@ -99,7 +100,7 @@ class AuditLog(Base):
 
     # Timestamp (with init=False, must come after fields with defaults)
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
