@@ -152,8 +152,8 @@ class TestPostServiceGet:
 
     @pytest.mark.asyncio
     async def test_get_post_not_found_raises_404(self, mock_db, mock_user):
-        """Test that non-existent post raises NotFoundException."""
-        from src.app.core.exceptions.http_exceptions import NotFoundException
+        """Test that non-existent post raises ModelNotFoundError."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
         from src.app.modules.posts.service import post_service
 
         with (
@@ -163,7 +163,7 @@ class TestPostServiceGet:
             mock_get_user.return_value = mock_user
             mock_crud.get.return_value = None
 
-            with pytest.raises(NotFoundException):
+            with pytest.raises(ModelNotFoundError):
                 await post_service.get_post(username="testuser", post_id=999, db=mock_db)
 
     @pytest.mark.asyncio
@@ -221,9 +221,7 @@ class TestPostServiceUpdate:
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_post_forbidden_for_other_user(
-        self, mock_db, mock_user, mock_post, post_update
-    ):
+    async def test_update_post_forbidden_for_other_user(self, mock_db, mock_user, mock_post, post_update):
         """Test that updating another user's post raises ForbiddenException."""
         from src.app.core.exceptions.http_exceptions import ForbiddenException
         from src.app.modules.posts.service import post_service
