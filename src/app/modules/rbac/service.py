@@ -5,8 +5,8 @@ from collections.abc import Sequence
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
 from ...core.rbac.dependencies import invalidate_user_permissions_cache
+from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .models import Permission, Role, RolePermission, UserRole
 from .schemas import RoleCreate, RoleUpdate
 
@@ -30,7 +30,7 @@ class RoleService:
         result = await self.db.execute(stmt)
         role = result.scalar_one_or_none()
         if not role:
-            raise NotFoundException(detail=f"Role with id {role_id} not found")
+            raise ModelNotFoundError("Role", role_id)
         return role
 
     async def get_role_by_name(self, name: str) -> Role | None:
@@ -44,7 +44,7 @@ class RoleService:
         # Check for duplicate name
         existing = await self.get_role_by_name(role_in.name)
         if existing:
-            raise DuplicateValueException(detail=f"Role with name '{role_in.name}' already exists")
+            raise DuplicateError("name", role_in.name)
 
         role = Role(
             tenant_id=self.tenant_id,
@@ -62,13 +62,13 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateValueException(detail="System roles cannot be modified")
+            raise DuplicateError("is_system", "System roles cannot be modified")
 
         # Check for duplicate name if name is being changed
         if role_in.name != role.name:
             existing = await self.get_role_by_name(role_in.name)
             if existing:
-                raise DuplicateValueException(detail=f"Role with name '{role_in.name}' already exists")
+                raise DuplicateError("name", role_in.name)
 
         role.name = role_in.name
         if role_in.description is not None:
@@ -83,7 +83,7 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateValueException(detail="System roles cannot be deleted")
+            raise DuplicateError("is_system", "System roles cannot be deleted")
 
         await self.db.delete(role)
         await self.db.commit()
@@ -105,14 +105,14 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateValueException(detail="System role permissions cannot be modified")
+            raise DuplicateError("is_system", "System role permissions cannot be modified")
 
         # Get permission by slug
         stmt = select(Permission).where(Permission.slug == permission_slug)
         result = await self.db.execute(stmt)
         permission = result.scalar_one_or_none()
         if not permission:
-            raise NotFoundException(detail=f"Permission '{permission_slug}' not found")
+            raise ModelNotFoundError("Permission", permission_slug)
 
         # Check if already assigned
         stmt = select(RolePermission).where(
@@ -137,14 +137,14 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateValueException(detail="System role permissions cannot be modified")
+            raise DuplicateError("is_system", "System role permissions cannot be modified")
 
         # Get permission by slug
         stmt = select(Permission).where(Permission.slug == permission_slug)
         result = await self.db.execute(stmt)
         permission = result.scalar_one_or_none()
         if not permission:
-            raise NotFoundException(detail=f"Permission '{permission_slug}' not found")
+            raise ModelNotFoundError("Permission", permission_slug)
 
         # Find and delete the role permission
         stmt = select(RolePermission).where(

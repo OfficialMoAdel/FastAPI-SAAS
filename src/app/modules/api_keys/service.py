@@ -7,7 +7,8 @@ from datetime import UTC, datetime
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
+from ...core.exceptions.http_exceptions import ForbiddenException
+from .._base.exceptions import ModelNotFoundError
 from .crud import crud_api_keys
 from .schemas import APIKeyCreate, APIKeyResponse
 
@@ -157,7 +158,7 @@ class APIKeyService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If key not found
         ForbiddenException
             If user doesn't own the key
@@ -165,7 +166,7 @@ class APIKeyService:
         key = await crud_api_keys.get(db=db, id=key_id, is_deleted=False)
 
         if not key:
-            raise NotFoundException("API key not found")
+            raise ModelNotFoundError("APIKey", key_id)
 
         if key["user_id"] != user_id or key["tenant_id"] != tenant_id:
             raise ForbiddenException("You don't have permission to revoke this key")

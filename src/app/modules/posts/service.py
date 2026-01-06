@@ -5,8 +5,9 @@ from typing import Any
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import ForbiddenException, NotFoundException
+from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.tenancy.context import get_tenant_context
+from .._base.exceptions import ModelNotFoundError
 from .crud import crud_posts
 from .schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
@@ -55,7 +56,7 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found or post creation fails
         ForbiddenException
             If current user doesn't own this account
@@ -75,7 +76,7 @@ class PostService:
         created_post = await crud_posts.create(db=db, object=post_internal, schema_to_select=PostRead)
 
         if created_post is None:
-            raise NotFoundException("Failed to create post")
+            raise ModelNotFoundError("Post", "new")
 
         return created_post
 
@@ -106,7 +107,7 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found
         """
         db_user = await self._get_user_or_404(username, db)
@@ -141,7 +142,7 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or post not found
         """
         db_user = await self._get_user_or_404(username, db)
@@ -150,7 +151,7 @@ class PostService:
             db=db, id=post_id, created_by_user_id=db_user["id"], is_deleted=False, schema_to_select=PostRead
         )
         if db_post is None:
-            raise NotFoundException("Post not found")
+            raise ModelNotFoundError("Post", post_id)
 
         return db_post
 
@@ -184,7 +185,7 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or post not found
         ForbiddenException
             If current user doesn't own this account
@@ -194,7 +195,7 @@ class PostService:
 
         db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
-            raise NotFoundException("Post not found")
+            raise ModelNotFoundError("Post", post_id)
 
         await crud_posts.update(db=db, object=values, id=post_id)
         return {"message": "Post updated"}
@@ -226,7 +227,7 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or post not found
         ForbiddenException
             If current user doesn't own this account
@@ -236,7 +237,7 @@ class PostService:
 
         db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
-            raise NotFoundException("Post not found")
+            raise ModelNotFoundError("Post", post_id)
 
         await crud_posts.delete(db=db, id=post_id)
         return {"message": "Post deleted"}
@@ -260,15 +261,15 @@ class PostService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or post not found
         """
-        # Validate user exists (raises NotFoundException if not found)
+        # Validate user exists (raises ModelNotFoundError if not found)
         await self._get_user_or_404(username, db)
 
         db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
-            raise NotFoundException("Post not found")
+            raise ModelNotFoundError("Post", post_id)
 
         await crud_posts.db_delete(db=db, id=post_id)
         return {"message": "Post deleted from the database"}

@@ -5,6 +5,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .._base.schemas import BaseCreate, BaseRead
+
 
 class APIKeyBase(BaseModel):
     """Base schema for API key."""
@@ -14,22 +16,23 @@ class APIKeyBase(BaseModel):
     expires_at: datetime | None = Field(default=None, description="Optional expiration date")
 
 
-class APIKeyCreate(APIKeyBase):
+class APIKeyCreate(APIKeyBase, BaseCreate):
     """Schema for creating an API key."""
 
     model_config = ConfigDict(extra="forbid")
 
 
-class APIKeyRead(APIKeyBase):
+class APIKeyRead(BaseRead):
     """Schema for reading an API key (without the actual key)."""
 
-    id: int
+    name: str
     key_prefix: str
     user_id: int
     tenant_id: int
     is_active: bool
-    last_used_at: datetime | None
-    created_at: datetime
+    scopes: list[str] | None = None
+    expires_at: datetime | None = None
+    last_used_at: datetime | None = None
 
     model_config = ConfigDict(from_attributes=True)
 

@@ -4,6 +4,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field
 
 from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
+from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
 
 class PostBase(BaseModel):
@@ -19,8 +20,7 @@ class Post(TimestampSchema, PostBase, UUIDSchema, PersistentDeletion):
     created_by_user_id: int
 
 
-class PostRead(BaseModel):
-    id: int
+class PostRead(BaseRead):
     title: Annotated[str, Field(min_length=2, max_length=30, examples=["This is my post"])]
     text: Annotated[str, Field(min_length=1, max_length=63206, examples=["This is the content of my post."])]
     media_url: Annotated[
@@ -28,10 +28,9 @@ class PostRead(BaseModel):
         Field(examples=["https://www.postimageurl.com"], default=None),
     ]
     created_by_user_id: int
-    created_at: datetime
 
 
-class PostCreate(PostBase):
+class PostCreate(PostBase, BaseCreate):
     model_config = ConfigDict(extra="forbid")
 
     media_url: Annotated[
@@ -45,7 +44,7 @@ class PostCreateInternal(PostCreate):
     tenant_id: int | None = None
 
 
-class PostUpdate(BaseModel):
+class PostUpdate(BaseUpdate):
     model_config = ConfigDict(extra="forbid")
 
     title: Annotated[str | None, Field(min_length=2, max_length=30, examples=["This is my updated post"], default=None)]

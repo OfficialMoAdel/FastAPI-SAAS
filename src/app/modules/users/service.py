@@ -4,13 +4,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import (
-    DuplicateValueException,
-    ForbiddenException,
-    NotFoundException,
-)
+from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.security import blacklist_token, get_password_hash
 from ...core.tenancy.context import get_tenant_context
+from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .crud import crud_users
 from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
@@ -35,9 +32,9 @@ class UserService:
 
         Raises
         ------
-        DuplicateValueException
+        DuplicateError
             If email or username already exists
-        NotFoundException
+        ModelNotFoundError
             If user creation fails
         """
         # Check for duplicate email or username in single query (N+1 optimization)
@@ -46,9 +43,9 @@ class UserService:
         username_exists = await crud_users.exists(db=db, username=user.username)
 
         if email_exists:
-            raise DuplicateValueException("Email is already registered")
+            raise DuplicateError("email", user.email)
         if username_exists:
-            raise DuplicateValueException("Username not available")
+            raise DuplicateError("username", user.username)
 
         # Hash password and create internal user object
         user_dict = user.model_dump()
@@ -64,7 +61,7 @@ class UserService:
         created_user = await crud_users.create(db=db, object=user_internal, schema_to_select=UserRead)
 
         if created_user is None:
-            raise NotFoundException("Failed to create user")
+            raise ModelNotFoundError("User", "creation failed")
 
         return created_user
 
@@ -85,12 +82,12 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found
         """
         db_user = await crud_users.get(db=db, username=username, is_deleted=False, schema_to_select=UserRead)
         if db_user is None:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
         return db_user
 
     async def update_user(
@@ -120,16 +117,16 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found
         ForbiddenException
             If current user doesn't own this account
-        DuplicateValueException
+        DuplicateError
             If new email/username already taken
         """
         db_user = await crud_users.get(db=db, username=username)
         if db_user is None:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         db_username = db_user["username"]
         db_email = db_user["email"]
@@ -141,12 +138,12 @@ class UserService:
         # Check for duplicate email if changing
         if values.email is not None and values.email != db_email:
             if await crud_users.exists(db=db, email=values.email):
-                raise DuplicateValueException("Email is already registered")
+                raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing
         if values.username is not None and values.username != db_username:
             if await crud_users.exists(db=db, username=values.username):
-                raise DuplicateValueException("Username not available")
+                raise DuplicateError("username", values.username)
 
         await crud_users.update(db=db, object=values, username=username)
         return {"message": "User updated"}
@@ -178,14 +175,14 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found
         ForbiddenException
             If current user doesn't own this account
         """
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if not db_user:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         if username != current_user["username"]:
             raise ForbiddenException()
@@ -213,12 +210,12 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user not found
         """
         db_user = await crud_users.exists(db=db, username=username)
         if not db_user:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         await crud_users.db_delete(db=db, username=username)
         await blacklist_token(token=token, db=db)
@@ -243,7 +240,7 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or tier not found
         """
         # Use lazy import to avoid circular dependencies while maintaining module boundaries
@@ -251,13 +248,13 @@ class UserService:
 
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if db_user is None:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         # Validate tier exists by using service layer instead of direct crud access
         try:
             await tier_service.get_tier_by_id(values.tier_id, db)
-        except NotFoundException:
-            raise NotFoundException("Tier not found")
+        except ModelNotFoundError:
+            raise ModelNotFoundError("Tier", values.tier_id)
 
         await crud_users.update(db=db, object=values.model_dump(), username=username)
         return {"message": f"User {db_user['name']} Tier updated"}
@@ -279,7 +276,7 @@ class UserService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If user or tier not found
         """
         from ...modules.rate_limits.service import rate_limit_service
@@ -287,7 +284,7 @@ class UserService:
 
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if db_user is None:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         user_dict = dict(db_user)
         if db_user["tier_id"] is None:
@@ -309,7 +306,7 @@ class UserService:
         user_with_tier = await crud_users.get_user_with_tier_eager(db=db, username=username)
 
         if not user_with_tier:
-            raise NotFoundException("User not found")
+            raise ModelNotFoundError("User", username)
 
         if not user_with_tier.get("tier"):
             return None
