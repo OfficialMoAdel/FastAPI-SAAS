@@ -5,7 +5,7 @@ from typing import Any
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import DuplicateValueException, NotFoundException
+from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .crud import crud_rate_limits
 from .schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
 
@@ -59,9 +59,9 @@ class RateLimitService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier not found or creation fails
-        DuplicateValueException
+        DuplicateError
             If rate limit name already exists
         """
         db_tier = await self._get_tier_or_404(tier_name, db)
@@ -71,7 +71,7 @@ class RateLimitService:
 
         rate_limit_exists = await crud_rate_limits.exists(db=db, name=rate_limit_dict["name"])
         if rate_limit_exists:
-            raise DuplicateValueException("Rate Limit Name not available")
+            raise DuplicateError("name", rate_limit_dict["name"])
 
         rate_limit_internal = RateLimitCreateInternal(**rate_limit_dict)
         created_rate_limit = await crud_rate_limits.create(
@@ -79,7 +79,7 @@ class RateLimitService:
         )
 
         if created_rate_limit is None:
-            raise NotFoundException("Failed to create rate limit")
+            raise ModelNotFoundError("RateLimit", "new")
 
         return created_rate_limit
 
@@ -142,7 +142,7 @@ class RateLimitService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier or rate limit not found
         """
         db_tier = await self._get_tier_or_404(tier_name, db)
@@ -151,7 +151,7 @@ class RateLimitService:
             db=db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
-            raise NotFoundException("Rate Limit not found")
+            raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         return db_rate_limit
 
@@ -178,7 +178,7 @@ class RateLimitService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier or rate limit not found
         """
         db_tier = await self._get_tier_or_404(tier_name, db)
@@ -187,7 +187,7 @@ class RateLimitService:
             db=db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
-            raise NotFoundException("Rate Limit not found")
+            raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         await crud_rate_limits.update(db=db, object=values, id=rate_limit_id)
         return {"message": "Rate Limit updated"}
@@ -211,7 +211,7 @@ class RateLimitService:
 
         Raises
         ------
-        NotFoundException
+        ModelNotFoundError
             If tier or rate limit not found
         """
         db_tier = await self._get_tier_or_404(tier_name, db)
@@ -220,7 +220,7 @@ class RateLimitService:
             db=db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
-            raise NotFoundException("Rate Limit not found")
+            raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         await crud_rate_limits.delete(db=db, id=rate_limit_id)
         return {"message": "Rate Limit deleted"}

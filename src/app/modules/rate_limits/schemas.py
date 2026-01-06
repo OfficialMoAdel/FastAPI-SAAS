@@ -4,6 +4,7 @@ from typing import Annotated
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from ...core.schemas import TimestampSchema
+from .._base.schemas import BaseCreate, BaseUpdate
 
 
 def sanitize_path(path: str) -> str:
@@ -31,7 +32,7 @@ class RateLimitRead(RateLimitBase):
     name: str
 
 
-class RateLimitCreate(RateLimitBase):
+class RateLimitCreate(RateLimitBase, BaseCreate):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str | None, Field(default=None, examples=["api_v1_users:5:60"])]
@@ -41,7 +42,7 @@ class RateLimitCreateInternal(RateLimitCreate):
     tier_id: int
 
 
-class RateLimitUpdate(BaseModel):
+class RateLimitUpdate(BaseUpdate):
     path: str | None = Field(default=None)
     limit: int | None = None
     period: int | None = None
