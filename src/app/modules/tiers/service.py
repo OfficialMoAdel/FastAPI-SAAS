@@ -6,22 +6,32 @@ from fastcrud import paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .._base.exceptions import DuplicateError, ModelNotFoundError
+from .._base.service import BaseService
 from .crud import crud_tiers
+from .models import Tier
 from .schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 
 
-class TierService:
+class TierService(BaseService[Tier]):
     """Service class for tier-related business logic."""
 
-    async def create_tier(self, tier: TierCreate, db: AsyncSession) -> dict[str, Any]:
+    def __init__(self, db: AsyncSession):
+        """Initialize TierService with database session.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Database session
+        """
+        super().__init__(Tier, db)
+
+    async def create_tier(self, tier: TierCreate) -> dict[str, Any]:
         """Create a new tier with validation.
 
         Parameters
         ----------
         tier : TierCreate
             Tier creation data
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -36,25 +46,23 @@ class TierService:
             If tier creation fails
         """
         tier_dict = tier.model_dump()
-        tier_exists = await crud_tiers.exists(db=db, name=tier_dict["name"])
+        tier_exists = await crud_tiers.exists(db=self.db, name=tier_dict["name"])
         if tier_exists:
             raise DuplicateError("name", tier_dict["name"])
 
         tier_internal = TierCreateInternal(**tier_dict)
-        created_tier = await crud_tiers.create(db=db, object=tier_internal, schema_to_select=TierRead)
+        created_tier = await crud_tiers.create(db=self.db, object=tier_internal, schema_to_select=TierRead)
 
         if created_tier is None:
             raise ModelNotFoundError("Tier", "new")
 
         return created_tier
 
-    async def get_tiers(self, db: AsyncSession, page: int = 1, items_per_page: int = 10) -> dict[str, Any]:
+    async def get_tiers(self, page: int = 1, items_per_page: int = 10) -> dict[str, Any]:
         """Get paginated list of tiers.
 
         Parameters
         ----------
-        db : AsyncSession
-            Database session
         page : int
             Page number
         items_per_page : int
@@ -65,11 +73,11 @@ class TierService:
         dict[str, Any]
             Paginated tiers response
         """
-        tiers_data = await crud_tiers.get_multi(db=db, offset=(page - 1) * items_per_page, limit=items_per_page)
+        tiers_data = await crud_tiers.get_multi(db=self.db, offset=(page - 1) * items_per_page, limit=items_per_page)
         response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
         return response
 
-    async def get_tier_by_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
+    async def get_tier_by_id(self, tier_id: int) -> dict[str, Any]:
         """Get a tier by ID.
 
         This is an interface method for cross-module access.
@@ -78,8 +86,6 @@ class TierService:
         ----------
         tier_id : int
             Tier ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -91,20 +97,18 @@ class TierService:
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=db, id=tier_id, schema_to_select=TierRead)
+        db_tier = await crud_tiers.get(db=self.db, id=tier_id, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", tier_id)
         return db_tier
 
-    async def get_tier(self, name: str, db: AsyncSession) -> dict[str, Any]:
+    async def get_tier(self, name: str) -> dict[str, Any]:
         """Get a tier by name.
 
         Parameters
         ----------
         name : str
             Tier name
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -116,12 +120,12 @@ class TierService:
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
+        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
         return db_tier
 
-    async def update_tier(self, name: str, values: TierUpdate, db: AsyncSession) -> dict[str, str]:
+    async def update_tier(self, name: str, values: TierUpdate) -> dict[str, str]:
         """Update a tier.
 
         Parameters
@@ -130,8 +134,6 @@ class TierService:
             Tier name to update
         values : TierUpdate
             Update values
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -143,22 +145,20 @@ class TierService:
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
+        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
 
-        await crud_tiers.update(db=db, object=values, name=name)
+        await crud_tiers.update(db=self.db, object=values, name=name)
         return {"message": "Tier updated"}
 
-    async def delete_tier(self, name: str, db: AsyncSession) -> dict[str, str]:
+    async def delete_tier(self, name: str) -> dict[str, str]:
         """Delete a tier.
 
         Parameters
         ----------
         name : str
             Tier name to delete
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -170,13 +170,39 @@ class TierService:
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=db, name=name, schema_to_select=TierRead)
+        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
 
-        await crud_tiers.delete(db=db, name=name)
+        await crud_tiers.delete(db=self.db, name=name)
         return {"message": "Tier deleted"}
 
 
-# Singleton instance for import convenience
-tier_service = TierService()
+def get_tier_service(db: AsyncSession) -> TierService:
+    """Dependency injection factory for TierService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    TierService
+        Service instance with database session
+    """
+    return TierService(db)
+
+
+# Legacy singleton for backward compatibility with cross-module imports
+# TODO: Remove after all cross-module calls are updated to use DI
+class _LegacyTierService:
+    """Legacy wrapper that accepts db in method calls for backward compatibility."""
+
+    async def get_tier_by_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
+        """Get tier by ID - legacy interface."""
+        service = TierService(db)
+        return await service.get_tier_by_id(tier_id)
+
+
+tier_service = _LegacyTierService()

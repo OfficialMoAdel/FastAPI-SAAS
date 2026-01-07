@@ -7,27 +7,35 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .._base.exceptions import DuplicateError, ModelNotFoundError
+from .._base.service import BaseService
 from .crud import crud_tenants
+from .models import Tenant
 from .schemas import TenantCreate, TenantResponse, TenantUpdate
 
 logger = logging.getLogger(__name__)
 
 
-class TenantService:
+class TenantService(BaseService[Tenant]):
     """Service class for tenant-related business logic."""
 
-    def __init__(self) -> None:
+    def __init__(self, db: AsyncSession) -> None:
+        """Initialize TenantService with database session.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Database session
+        """
+        super().__init__(Tenant, db)
         self.crud = crud_tenants
 
-    async def create_tenant(self, tenant: TenantCreate, db: AsyncSession) -> dict[str, Any]:
+    async def create_tenant(self, tenant: TenantCreate) -> dict[str, Any]:
         """Create a new tenant with validation.
 
         Parameters
         ----------
         tenant : TenantCreate
             Tenant creation data
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -39,7 +47,7 @@ class TenantService:
         DuplicateError
             If slug already exists
         """
-        slug_exists = await self.crud.exists(db=db, slug=tenant.slug)
+        slug_exists = await self.crud.exists(db=self.db, slug=tenant.slug)
         if slug_exists:
             logger.warning(
                 "Tenant creation failed: duplicate_slug | slug=%s",
@@ -48,7 +56,7 @@ class TenantService:
             raise DuplicateError("slug", tenant.slug)
 
         created_tenant = await self.crud.create(
-            db=db,
+            db=self.db,
             object=tenant,
             schema_to_select=TenantResponse,
         )
@@ -62,15 +70,13 @@ class TenantService:
 
         return created_tenant
 
-    async def get_tenant(self, tenant_id: int, db: AsyncSession) -> dict[str, Any]:
+    async def get_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Get a tenant by ID.
 
         Parameters
         ----------
         tenant_id : int
             Tenant ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -82,31 +88,28 @@ class TenantService:
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=db, id=tenant_id, schema_to_select=TenantResponse)
+        tenant = await self.crud.get(db=self.db, id=tenant_id, schema_to_select=TenantResponse)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
         return tenant
 
-    async def get_tenant_by_slug(self, slug: str, db: AsyncSession) -> dict[str, Any] | None:
+    async def get_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
         """Get a tenant by slug.
 
         Parameters
         ----------
         slug : str
             Tenant slug
-        db : AsyncSession
-            Database session
 
         Returns
         -------
         dict[str, Any] | None
             Tenant data or None if not found
         """
-        return await self.crud.get(db=db, slug=slug, schema_to_select=TenantResponse)
+        return await self.crud.get(db=self.db, slug=slug, schema_to_select=TenantResponse)
 
     async def list_tenants(
         self,
-        db: AsyncSession,
         page: int = 1,
         items_per_page: int = 10,
         is_active: bool | None = None,
@@ -115,8 +118,6 @@ class TenantService:
 
         Parameters
         ----------
-        db : AsyncSession
-            Database session
         page : int
             Page number (1-indexed)
         items_per_page : int
@@ -134,7 +135,7 @@ class TenantService:
         offset = compute_offset(page, items_per_page)
 
         kwargs: dict[str, Any] = {
-            "db": db,
+            "db": self.db,
             "offset": offset,
             "limit": items_per_page,
             "schema_to_select": TenantResponse,
@@ -149,7 +150,6 @@ class TenantService:
         self,
         tenant_id: int,
         values: TenantUpdate,
-        db: AsyncSession,
     ) -> dict[str, Any]:
         """Update a tenant.
 
@@ -159,8 +159,6 @@ class TenantService:
             Tenant ID
         values : TenantUpdate
             Update values
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -172,14 +170,14 @@ class TenantService:
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=db, id=tenant_id)
+        tenant = await self.crud.get(db=self.db, id=tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
         update_data = values.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 
-        await self.crud.update(db=db, object=update_data, id=tenant_id)
+        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
 
         logger.info(
             "Tenant updated | id=%s | fields=%s",
@@ -187,17 +185,15 @@ class TenantService:
             list(update_data.keys()),
         )
 
-        return await self.get_tenant(tenant_id, db)
+        return await self.get_tenant(tenant_id)
 
-    async def deactivate_tenant(self, tenant_id: int, db: AsyncSession) -> dict[str, Any]:
+    async def deactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Deactivate a tenant (soft delete).
 
         Parameters
         ----------
         tenant_id : int
             Tenant ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -209,7 +205,7 @@ class TenantService:
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=db, id=tenant_id)
+        tenant = await self.crud.get(db=self.db, id=tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
@@ -218,21 +214,19 @@ class TenantService:
             "updated_at": datetime.now(UTC),
         }
 
-        await self.crud.update(db=db, object=update_data, id=tenant_id)
+        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
 
         logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant["slug"])
 
-        return await self.get_tenant(tenant_id, db)
+        return await self.get_tenant(tenant_id)
 
-    async def reactivate_tenant(self, tenant_id: int, db: AsyncSession) -> dict[str, Any]:
+    async def reactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
 
         Parameters
         ----------
         tenant_id : int
             Tenant ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -244,7 +238,7 @@ class TenantService:
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=db, id=tenant_id)
+        tenant = await self.crud.get(db=self.db, id=tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
@@ -253,12 +247,24 @@ class TenantService:
             "updated_at": datetime.now(UTC),
         }
 
-        await self.crud.update(db=db, object=update_data, id=tenant_id)
+        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
 
         logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant["slug"])
 
-        return await self.get_tenant(tenant_id, db)
+        return await self.get_tenant(tenant_id)
 
 
-# Singleton instance for import convenience
-tenant_service = TenantService()
+def get_tenant_service(db: AsyncSession) -> TenantService:
+    """Dependency injection factory for TenantService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    TenantService
+        Service instance with database session
+    """
+    return TenantService(db)
