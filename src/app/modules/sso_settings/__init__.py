@@ -2,13 +2,18 @@
 
 Provides tenant-level SSO provider configuration management.
 
-Exports:
-    - SSOSettings: SQLAlchemy model for SSO provider settings
-    - SSOSettingsService: Service layer for SSO settings operations
-    - router: FastAPI router with SSO settings endpoints
+Components are imported lazily to avoid circular imports.
+Direct imports:
+    from src.app.modules.sso_settings.models import SSOSettings
+    from src.app.modules.sso_settings.service import sso_settings_service
+    from src.app.modules.sso_settings.router import router as sso_settings_router
 """
 
-__all__ = ["router"]
+__all__ = [
+    "SSOSettings",
+    "sso_settings_service",
+    "router",
+]
 
 
 def __getattr__(name: str):
@@ -17,4 +22,12 @@ def __getattr__(name: str):
         from .router import router
 
         return router
+    if name == "sso_settings_service":
+        from .service import sso_settings_service
+
+        return sso_settings_service
+    if name == "SSOSettings":
+        from .models import SSOSettings
+
+        return SSOSettings
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

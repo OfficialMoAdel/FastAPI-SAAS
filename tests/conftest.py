@@ -114,21 +114,23 @@ fake = Faker()
 def setup_db():
     """Ensure fresh database schema for tests."""
     import os
+    import sys
 
     # Remove existing test database file if it exists
     if os.path.exists("./test.db"):
         try:
             os.remove("./test.db")
         except Exception as e:
-            print(f"Warning: Could not remove test.db: {e}")
+            sys.stdout.write(f"Warning: Could not remove test.db: {e}\n")
 
     try:
         Base.metadata.drop_all(bind=sync_engine)
     except Exception as e:
-        print(f"Warning: drop_all failed: {e}")
+        sys.stdout.write(f"Warning: drop_all failed: {e}\n")
 
     # Debug: Print registered tables
-    print(f"DEBUG: Creating tables: {list(Base.metadata.tables.keys())}")
+    tables = list(Base.metadata.tables.keys())
+    sys.stdout.write(f"\nDEBUG: Creating tables: {tables}\n")
 
     Base.metadata.create_all(bind=sync_engine)
     yield
@@ -136,14 +138,14 @@ def setup_db():
     try:
         Base.metadata.drop_all(bind=sync_engine)
     except Exception as e:
-        print(f"Warning: drop_all failed at teardown: {e}")
+        sys.stdout.write(f"Warning: drop_all failed at teardown: {e}\n")
 
     # Cleanup file after tests
     if os.path.exists("./test.db"):
         try:
             os.remove("./test.db")
         except Exception as e:
-            print(f"Warning: Could not remove test.db at teardown: {e}")
+            sys.stdout.write(f"Warning: Could not remove test.db at teardown: {e}\n")
 
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine

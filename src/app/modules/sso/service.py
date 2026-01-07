@@ -14,9 +14,8 @@ from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users.crud import crud_users
+from src.app.modules.users import crud_users, user_service
 from src.app.modules.users.schemas import UserCreate
-from src.app.modules.users.service import user_service
 
 from .crud import crud_user_sso_connections
 from .providers.apple import AppleProvider

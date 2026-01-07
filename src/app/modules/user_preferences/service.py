@@ -22,7 +22,7 @@ from src.app.modules.storage import get_storage
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
-from src.app.modules.users.crud import crud_users
+from src.app.modules.users import crud_users
 
 logger = logging.getLogger(__name__)
 

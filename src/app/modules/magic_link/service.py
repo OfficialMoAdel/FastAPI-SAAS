@@ -19,7 +19,7 @@ from src.app.core.security import (
 )
 from src.app.core.security.tokens import MagicLinkManager
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users.crud import crud_users
+from src.app.modules.users import crud_users
 
 from .exceptions import (
     InvalidMagicLinkError,

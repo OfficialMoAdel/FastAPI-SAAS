@@ -22,8 +22,8 @@ from src.app.modules.storage_settings.service import (
     StorageNotConfiguredError,
     StorageSettingsService,
 )
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
+from src.app.modules.tenants import Tenant
+from src.app.modules.users import User
 
 router = APIRouter(prefix="/storage-settings", tags=["Storage Settings"])
 

@@ -18,7 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
 from src.app.modules.storage.metrics import storage_metrics
-from src.app.modules.storage_settings.service import (
+from src.app.modules.storage_settings import (
     StorageSettingsService,
 )
 
