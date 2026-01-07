@@ -11,11 +11,21 @@ Provides consistent error response format across all endpoints:
 }
 """
 
+from typing import Any
+
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from structlog import get_logger
+
+from ..modules._base.exceptions import (
+    DuplicateError,
+    ModelNotFoundError,
+)
+from ..modules._base.exceptions import (
+    ValidationError as BaseValidationError,
+)
 
 logger = get_logger(__name__)
 
@@ -74,21 +84,22 @@ def create_error_response(
     Note:
         Includes 'detail' key for backward compatibility with FastAPI's default format
     """
-    error_body = {
-        # Standard format
-        "error": {
-            "code": code,
-            "message": message,
-        },
-        # Backward compatibility with FastAPI's default HTTPException format
-        "detail": message,
+    error_inner: dict[str, Any] = {
+        "code": code,
+        "message": message,
     }
 
     if details:
-        error_body["error"]["details"] = details
+        error_inner["details"] = details
 
     if request_id:
-        error_body["error"]["request_id"] = request_id
+        error_inner["request_id"] = request_id
+
+    error_body: dict[str, Any] = {
+        "error": error_inner,
+        # Backward compatibility with FastAPI's default HTTPException format
+        "detail": message,
+    }
 
     return JSONResponse(status_code=status_code, content=error_body)
 
@@ -120,6 +131,67 @@ def setup_exception_handlers(app: FastAPI) -> None:
             code=code,
             message=str(exc.detail) if exc.detail else "An error occurred",
             status_code=exc.status_code,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(ModelNotFoundError)
+    async def model_not_found_handler(request: Request, exc: ModelNotFoundError) -> JSONResponse:
+        """Handle ModelNotFoundError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Resource not found",
+            model=exc.model_name,
+            identifier=str(exc.identifier),
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.NOT_FOUND,
+            message=str(exc),
+            status_code=404,
+            details={"model": exc.model_name, "identifier": str(exc.identifier)},
+            request_id=request_id,
+        )
+
+    @app.exception_handler(DuplicateError)
+    async def duplicate_error_handler(request: Request, exc: DuplicateError) -> JSONResponse:
+        """Handle DuplicateError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Duplicate resource",
+            field=exc.field,
+            value=str(exc.value),
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.ALREADY_EXISTS,
+            message=str(exc),
+            status_code=409,
+            details={"field": exc.field, "value": str(exc.value)},
+            request_id=request_id,
+        )
+
+    @app.exception_handler(BaseValidationError)
+    async def base_validation_error_handler(request: Request, exc: BaseValidationError) -> JSONResponse:
+        """Handle ValidationError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Validation error",
+            message=exc.message,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.VALIDATION_ERROR,
+            message=str(exc),
+            status_code=400,
             request_id=request_id,
         )
 
