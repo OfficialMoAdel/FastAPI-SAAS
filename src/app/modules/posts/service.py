@@ -8,21 +8,34 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.tenancy.context import get_tenant_context
 from .._base.exceptions import ModelNotFoundError
+from .._base.service import BaseService
 from .crud import crud_posts
+from .models import Post
 from .schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
 
-class PostService:
+class PostService(BaseService[Post]):
     """Service class for post-related business logic."""
 
-    async def _get_user_or_404(self, username: str, db: AsyncSession) -> dict[str, Any]:
-        """Get user by username or raise NotFoundException.
+    def __init__(self, db: AsyncSession):
+        """Initialize PostService with database session.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Database session
+        """
+        super().__init__(Post, db)
+
+    async def _get_user_or_404(self, username: str) -> dict[str, Any]:
+        """Get user by username or raise ModelNotFoundError.
 
         Uses UserService for cross-module access instead of direct CRUD import.
         """
-        from ...modules.users.service import user_service
+        from ...modules.users.service import UserService
 
-        return await user_service.get_user(username, db)
+        user_service = UserService(self.db)
+        return await user_service.get_user(username)
 
     async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
         """Check if current user owns the resource."""
@@ -34,7 +47,6 @@ class PostService:
         username: str,
         post: PostCreate,
         current_user: dict[str, Any],
-        db: AsyncSession,
     ) -> dict[str, Any]:
         """Create a new post with ownership validation.
 
@@ -46,8 +58,6 @@ class PostService:
             Post creation data
         current_user : dict[str, Any]
             Currently authenticated user
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -61,7 +71,7 @@ class PostService:
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await self._get_user_or_404(username, db)
+        db_user = await self._get_user_or_404(username)
         await self._check_ownership(current_user["id"], db_user["id"])
 
         post_dict = post.model_dump()
@@ -73,7 +83,7 @@ class PostService:
             post_dict["tenant_id"] = tenant.id
 
         post_internal = PostCreateInternal(**post_dict)
-        created_post = await crud_posts.create(db=db, object=post_internal, schema_to_select=PostRead)
+        created_post = await crud_posts.create(db=self.db, object=post_internal, schema_to_select=PostRead)
 
         if created_post is None:
             raise ModelNotFoundError("Post", "new")
@@ -83,7 +93,6 @@ class PostService:
     async def get_posts(
         self,
         username: str,
-        db: AsyncSession,
         page: int = 1,
         items_per_page: int = 10,
     ) -> dict[str, Any]:
@@ -93,8 +102,6 @@ class PostService:
         ----------
         username : str
             Username to get posts for
-        db : AsyncSession
-            Database session
         page : int
             Page number
         items_per_page : int
@@ -110,10 +117,10 @@ class PostService:
         ModelNotFoundError
             If user not found
         """
-        db_user = await self._get_user_or_404(username, db)
+        db_user = await self._get_user_or_404(username)
 
         posts_data = await crud_posts.get_multi(
-            db=db,
+            db=self.db,
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
             created_by_user_id=db_user["id"],
@@ -123,7 +130,7 @@ class PostService:
         response: dict[str, Any] = paginated_response(crud_data=posts_data, page=page, items_per_page=items_per_page)
         return response
 
-    async def get_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, Any]:
+    async def get_post(self, username: str, post_id: int) -> dict[str, Any]:
         """Get a single post by ID.
 
         Parameters
@@ -132,8 +139,6 @@ class PostService:
             Username of post author
         post_id : int
             Post ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -145,10 +150,10 @@ class PostService:
         ModelNotFoundError
             If user or post not found
         """
-        db_user = await self._get_user_or_404(username, db)
+        db_user = await self._get_user_or_404(username)
 
         db_post = await crud_posts.get(
-            db=db, id=post_id, created_by_user_id=db_user["id"], is_deleted=False, schema_to_select=PostRead
+            db=self.db, id=post_id, created_by_user_id=db_user["id"], is_deleted=False, schema_to_select=PostRead
         )
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
@@ -161,7 +166,6 @@ class PostService:
         post_id: int,
         values: PostUpdate,
         current_user: dict[str, Any],
-        db: AsyncSession,
     ) -> dict[str, str]:
         """Update a post with ownership validation.
 
@@ -175,8 +179,6 @@ class PostService:
             Update values
         current_user : dict[str, Any]
             Currently authenticated user
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -190,14 +192,14 @@ class PostService:
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await self._get_user_or_404(username, db)
+        db_user = await self._get_user_or_404(username)
         await self._check_ownership(current_user["id"], db_user["id"])
 
-        db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
-        await crud_posts.update(db=db, object=values, id=post_id)
+        await crud_posts.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
 
     async def delete_post(
@@ -205,7 +207,6 @@ class PostService:
         username: str,
         post_id: int,
         current_user: dict[str, Any],
-        db: AsyncSession,
     ) -> dict[str, str]:
         """Soft delete a post with ownership validation.
 
@@ -217,8 +218,6 @@ class PostService:
             Post ID
         current_user : dict[str, Any]
             Currently authenticated user
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -232,17 +231,17 @@ class PostService:
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await self._get_user_or_404(username, db)
+        db_user = await self._get_user_or_404(username)
         await self._check_ownership(current_user["id"], db_user["id"])
 
-        db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
-        await crud_posts.delete(db=db, id=post_id)
+        await crud_posts.delete(db=self.db, id=post_id)
         return {"message": "Post deleted"}
 
-    async def hard_delete_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, str]:
+    async def hard_delete_post(self, username: str, post_id: int) -> dict[str, str]:
         """Permanently delete a post from database (superuser only).
 
         Parameters
@@ -251,8 +250,6 @@ class PostService:
             Username of post author
         post_id : int
             Post ID
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -265,15 +262,68 @@ class PostService:
             If user or post not found
         """
         # Validate user exists (raises ModelNotFoundError if not found)
-        await self._get_user_or_404(username, db)
+        await self._get_user_or_404(username)
 
-        db_post = await crud_posts.get(db=db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
-        await crud_posts.db_delete(db=db, id=post_id)
+        await crud_posts.db_delete(db=self.db, id=post_id)
         return {"message": "Post deleted from the database"}
 
 
-# Singleton instance for import convenience
-post_service = PostService()
+def get_post_service(db: AsyncSession) -> PostService:
+    """Dependency injection factory for PostService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    PostService
+        Service instance with database session
+    """
+    return PostService(db)
+
+
+# Legacy singleton for backward compatibility with cross-module imports
+# TODO: Remove after all cross-module calls are updated to use DI
+class _LegacyPostService:
+    """Legacy wrapper that accepts db in method calls for backward compatibility."""
+
+    async def create_post(
+        self, username: str, post: PostCreate, current_user: dict[str, Any], db: AsyncSession
+    ) -> dict[str, Any]:
+        service = PostService(db)
+        return await service.create_post(username, post, current_user)
+
+    async def get_posts(
+        self, username: str, db: AsyncSession, page: int = 1, items_per_page: int = 10
+    ) -> dict[str, Any]:
+        service = PostService(db)
+        return await service.get_posts(username, page, items_per_page)
+
+    async def get_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, Any]:
+        service = PostService(db)
+        return await service.get_post(username, post_id)
+
+    async def update_post(
+        self, username: str, post_id: int, values: PostUpdate, current_user: dict[str, Any], db: AsyncSession
+    ) -> dict[str, str]:
+        service = PostService(db)
+        return await service.update_post(username, post_id, values, current_user)
+
+    async def delete_post(
+        self, username: str, post_id: int, current_user: dict[str, Any], db: AsyncSession
+    ) -> dict[str, str]:
+        service = PostService(db)
+        return await service.delete_post(username, post_id, current_user)
+
+    async def hard_delete_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, str]:
+        service = PostService(db)
+        return await service.hard_delete_post(username, post_id)
+
+
+post_service = _LegacyPostService()

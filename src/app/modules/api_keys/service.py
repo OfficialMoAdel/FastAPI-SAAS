@@ -4,20 +4,33 @@ import hashlib
 import json
 import secrets
 from datetime import UTC, datetime
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException
 from .._base.exceptions import ModelNotFoundError
+from .._base.service import BaseService
 from .crud import crud_api_keys
+from .models import APIKey
 from .schemas import APIKeyCreate, APIKeyResponse
 
 
-class APIKeyService:
+class APIKeyService(BaseService[APIKey]):
     """Service class for API key-related business logic."""
 
     KEY_PREFIX_LENGTH = 8
     KEY_LENGTH = 32  # 256 bits of entropy
+
+    def __init__(self, db: AsyncSession):
+        """Initialize APIKeyService with database session.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Database session
+        """
+        super().__init__(APIKey, db)
 
     def _generate_key(self) -> tuple[str, str, str]:
         """Generate a new API key.
@@ -44,7 +57,6 @@ class APIKeyService:
         api_key_data: APIKeyCreate,
         user_id: int,
         tenant_id: int,
-        db: AsyncSession,
     ) -> APIKeyResponse:
         """Create a new API key for a user.
 
@@ -56,8 +68,6 @@ class APIKeyService:
             ID of the user creating the key
         tenant_id : int
             ID of the tenant
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -72,7 +82,7 @@ class APIKeyService:
 
         # Create the API key record
         key_record = await crud_api_keys.create(
-            db=db,
+            db=self.db,
             object={
                 "name": api_key_data.name,
                 "key_prefix": prefix,
@@ -98,10 +108,9 @@ class APIKeyService:
         self,
         user_id: int,
         tenant_id: int,
-        db: AsyncSession,
         page: int = 1,
         items_per_page: int = 10,
-    ) -> dict:
+    ) -> dict[str, Any]:
         """List API keys for a user.
 
         Parameters
@@ -110,8 +119,6 @@ class APIKeyService:
             ID of the user
         tenant_id : int
             ID of the tenant
-        db : AsyncSession
-            Database session
         page : int
             Page number
         items_per_page : int
@@ -123,7 +130,7 @@ class APIKeyService:
             Paginated list of API keys (without actual keys)
         """
         return await crud_api_keys.get_multi(
-            db=db,
+            db=self.db,
             user_id=user_id,
             tenant_id=tenant_id,
             is_deleted=False,
@@ -136,7 +143,6 @@ class APIKeyService:
         key_id: int,
         user_id: int,
         tenant_id: int,
-        db: AsyncSession,
     ) -> dict[str, str]:
         """Revoke an API key.
 
@@ -148,8 +154,6 @@ class APIKeyService:
             ID of the user making the request
         tenant_id : int
             ID of the tenant
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -163,7 +167,7 @@ class APIKeyService:
         ForbiddenException
             If user doesn't own the key
         """
-        key = await crud_api_keys.get(db=db, id=key_id, is_deleted=False)
+        key = await crud_api_keys.get(db=self.db, id=key_id, is_deleted=False)
 
         if not key:
             raise ModelNotFoundError("APIKey", key_id)
@@ -172,7 +176,7 @@ class APIKeyService:
             raise ForbiddenException("You don't have permission to revoke this key")
 
         await crud_api_keys.update(
-            db=db,
+            db=self.db,
             id=key_id,
             object={"is_active": False},
         )
@@ -182,8 +186,7 @@ class APIKeyService:
     async def validate_api_key(
         self,
         api_key: str,
-        db: AsyncSession,
-    ) -> dict | None:
+    ) -> dict[str, Any] | None:
         """Validate an API key and return the associated user info.
 
         Security: Verifies tenant is active to prevent suspended tenant access.
@@ -192,8 +195,6 @@ class APIKeyService:
         ----------
         api_key : str
             The API key to validate
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -218,7 +219,7 @@ class APIKeyService:
             )
         )
 
-        result = await db.execute(stmt)
+        result = await self.db.execute(stmt)
         key = result.scalar_one_or_none()
 
         if not key:
@@ -230,7 +231,7 @@ class APIKeyService:
 
         # Update last used timestamp
         await crud_api_keys.update(
-            db=db,
+            db=self.db,
             id=key.id,
             object={"last_used_at": datetime.now(UTC)},
         )
@@ -244,5 +245,58 @@ class APIKeyService:
         }
 
 
-# Singleton instance
-api_key_service = APIKeyService()
+def get_api_key_service(db: AsyncSession) -> APIKeyService:
+    """Dependency injection factory for APIKeyService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    APIKeyService
+        Service instance with database session
+    """
+    return APIKeyService(db)
+
+
+# Legacy singleton for backward compatibility with cross-module imports
+# TODO: Remove after all cross-module calls are updated to use DI
+class _LegacyAPIKeyService:
+    """Legacy wrapper that accepts db in method calls for backward compatibility."""
+
+    KEY_PREFIX_LENGTH = 8
+    KEY_LENGTH = 32
+
+    def _generate_key(self) -> tuple[str, str, str]:
+        raw_key = secrets.token_urlsafe(self.KEY_LENGTH)
+        prefix = raw_key[: self.KEY_PREFIX_LENGTH]
+        hashed = hashlib.sha256(raw_key.encode()).hexdigest()
+        return raw_key, prefix, hashed
+
+    def _hash_key(self, key: str) -> str:
+        return hashlib.sha256(key.encode()).hexdigest()
+
+    async def create_api_key(
+        self, api_key_data: APIKeyCreate, user_id: int, tenant_id: int, db: AsyncSession
+    ) -> APIKeyResponse:
+        service = APIKeyService(db)
+        return await service.create_api_key(api_key_data, user_id, tenant_id)
+
+    async def list_api_keys(
+        self, user_id: int, tenant_id: int, db: AsyncSession, page: int = 1, items_per_page: int = 10
+    ) -> dict[str, Any]:
+        service = APIKeyService(db)
+        return await service.list_api_keys(user_id, tenant_id, page, items_per_page)
+
+    async def revoke_api_key(self, key_id: int, user_id: int, tenant_id: int, db: AsyncSession) -> dict[str, str]:
+        service = APIKeyService(db)
+        return await service.revoke_api_key(key_id, user_id, tenant_id)
+
+    async def validate_api_key(self, api_key: str, db: AsyncSession) -> dict[str, Any] | None:
+        service = APIKeyService(db)
+        return await service.validate_api_key(api_key)
+
+
+api_key_service = _LegacyAPIKeyService()
