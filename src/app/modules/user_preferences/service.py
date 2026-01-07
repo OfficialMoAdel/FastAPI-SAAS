@@ -191,7 +191,7 @@ class PreferencesService:
             raise HTTPException(status_code=404, detail="User not found")
 
         # Update user.profile_image_url
-        await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user["id"])
+        await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
 
         return {"image_url": image_url}
 
