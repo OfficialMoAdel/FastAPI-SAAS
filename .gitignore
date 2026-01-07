@@ -154,7 +154,7 @@ src/.env
 repomix-output.md
 AGENT.md
 speckit.txt
-.specify
+#.specify
 .beads
 docs.md
 .opencode
@@ -163,7 +163,8 @@ Specify.txt
 Specify.md
 .agent
 .claude
-specs
+#specs
+.specify
 claudedocs
 geminidocs
 env.txt
@@ -175,5 +176,7 @@ MIGRATION_PLAN.md
 IMPLEMENTATION_TASKS
 routes.txt
 coverage_report.txt
-IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
-REFACTOR_PLAN_BASE_PATTERN_MIGRATION.md
+#IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
+#REFACTOR_PLAN_BASE_PATTERN_MIGRATION.md
+specs/004-auth-user-management
+specs/006-migrate-base-pattern

@@ -39,6 +39,10 @@ dependencies = [
     # "py_webauthn>=2.0.0",
     "authlib>=1.3.0",
     "webauthn>=2.0.0",
+    # Storage & Observability (Phase 4/7)
+    "azure-storage-blob>=12.0.0",
+    "aiofiles>=23.0.0",
+    "opentelemetry-api>=1.20.0",
 ]
 
 [project.optional-dependencies]
