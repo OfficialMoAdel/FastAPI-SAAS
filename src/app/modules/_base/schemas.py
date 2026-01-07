@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Generic, TypeVar
+from uuid import UUID
 
 from pydantic import BaseModel, Field
 
@@ -36,13 +37,27 @@ class BaseCreate(BaseModel):
 
 
 class BaseRead(BaseModel):
-    """Base schema for reading resources.
+    """Base schema for reading resources with integer primary key.
 
-    All read/response schemas should inherit from this class.
+    All read/response schemas with int PK should inherit from this class.
     Includes id and timestamps for audit purposes.
     """
 
     id: int
+    created_at: datetime
+    updated_at: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
+class BaseReadUUID(BaseModel):
+    """Base schema for reading resources with UUID primary key.
+
+    All read/response schemas with UUID PK should inherit from this class.
+    Use for modules like audit_logs, webhooks, notifications.
+    """
+
+    id: UUID
     created_at: datetime
     updated_at: datetime | None = None
 
@@ -86,14 +101,13 @@ class BasePagination(BaseModel):
     """
 
     page: int = Field(default=1, ge=1, description="Page number (1-indexed)")
-    per_page: int = Field(
-        default=20, ge=1, le=100, description="Items per page (max 100)"
-    )
+    per_page: int = Field(default=20, ge=1, le=100, description="Items per page (max 100)")
 
 
 __all__ = [
     "BaseCreate",
     "BaseRead",
+    "BaseReadUUID",
     "BaseUpdate",
     "BaseList",
     "BasePagination",

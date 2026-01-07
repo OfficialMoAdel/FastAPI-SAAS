@@ -1,6 +1,6 @@
 """Feature Flags API Router."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -10,6 +10,7 @@ from ...core.rbac.dependencies import requires_permission
 from ...core.rbac.permissions import Permission
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
+from .._base.exceptions import ModelNotFoundError
 from .schemas import (
     FeatureFlagBulkUpdateRequest,
     FeatureFlagCheckResponse,
@@ -130,7 +131,7 @@ async def delete_feature_flag(
     tenant = result.scalar_one()
 
     if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
-        raise HTTPException(status_code=404, detail="Feature flag not found")
+        raise ModelNotFoundError("FeatureFlag", flag_name)
 
     # Remove flag
     flags = dict(tenant.feature_flags)

@@ -34,7 +34,7 @@ Usage:
 
 from .exceptions import DuplicateError, ModelNotFoundError, ValidationError
 from .models import Base
-from .schemas import BaseCreate, BaseList, BasePagination, BaseRead, BaseUpdate
+from .schemas import BaseCreate, BaseList, BasePagination, BaseRead, BaseReadUUID, BaseUpdate
 from .service import BaseService, get_base_service
 
 __all__ = [
@@ -43,6 +43,7 @@ __all__ = [
     # Schemas
     "BaseCreate",
     "BaseRead",
+    "BaseReadUUID",
     "BaseUpdate",
     "BaseList",
     "BasePagination",
