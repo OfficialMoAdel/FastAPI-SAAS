@@ -9,7 +9,6 @@ Tests the file CRUD operations:
 
 import io
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

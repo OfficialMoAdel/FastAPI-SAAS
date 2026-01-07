@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 class Permission(Base):
     __tablename__ = "permissions"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, init=False)
     slug: Mapped[str] = mapped_column(String, unique=True, index=True)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
 
@@ -20,7 +20,7 @@ class Permission(Base):
 class Role(Base):
     __tablename__ = "roles"
 
-    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, init=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)

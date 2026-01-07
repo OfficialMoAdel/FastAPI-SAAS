@@ -2,12 +2,32 @@
 
 Provides OAuth2 authentication via external identity providers.
 
-Exports:
-    - UserSSOConnection: SQLAlchemy model for SSO connections
-    - SSOService: Service layer for SSO operations
-    - router: FastAPI router with SSO endpoints
+Components are imported lazily to avoid circular imports.
+Direct imports:
+    from src.app.modules.sso.models import UserSSOConnection
+    from src.app.modules.sso.service import SSOService
+    from src.app.modules.sso.router import router as sso_router
 """
 
-from src.app.modules.sso.router import router
+__all__ = [
+    "UserSSOConnection",
+    "SSOService",
+    "router",
+]
 
-__all__ = ["router"]
+
+def __getattr__(name: str):
+    """Lazy import to avoid circular imports."""
+    if name == "router":
+        from .router import router
+
+        return router
+    if name == "SSOService":
+        from .service import SSOService
+
+        return SSOService
+    if name == "UserSSOConnection":
+        from .models import UserSSOConnection
+
+        return UserSSOConnection
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

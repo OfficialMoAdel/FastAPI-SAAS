@@ -84,7 +84,8 @@ from src.app.main import app
 
 # DATABASE_URI = settings.POSTGRES_URI
 # DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
-DATABASE_URI = settings.SQLITE_URI
+# Use test.db specifically for tests to avoid conflicts with sql_app.db
+DATABASE_URI = "./test.db"
 DATABASE_PREFIX = settings.SQLITE_SYNC_PREFIX
 
 sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI, connect_args={"check_same_thread": False})
@@ -92,6 +93,17 @@ local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine
 
 from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
+from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
+from src.app.modules.posts.models import Post
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.files.models import File
+from src.app.modules.notifications.models import Notification
+from src.app.modules.rbac.models import Role, Permission, UserRole, RolePermission
+from src.app.modules.storage_settings.models import StorageSettings
+from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
+from src.app.modules.feature_flags.models import FeatureFlag
+# Import all other models here to ensure they are registered in Base.metadata
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 
@@ -101,13 +113,37 @@ fake = Faker()
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """Ensure fresh database schema for tests."""
+    import os
+
+    # Remove existing test database file if it exists
+    if os.path.exists("./test.db"):
+        try:
+            os.remove("./test.db")
+        except Exception as e:
+            print(f"Warning: Could not remove test.db: {e}")
+
     try:
         Base.metadata.drop_all(bind=sync_engine)
     except Exception as e:
         print(f"Warning: drop_all failed: {e}")
+
+    # Debug: Print registered tables
+    print(f"DEBUG: Creating tables: {list(Base.metadata.tables.keys())}")
+
     Base.metadata.create_all(bind=sync_engine)
-    # Optional: drop after tests
-    # Base.metadata.drop_all(bind=sync_engine)
+    yield
+
+    try:
+        Base.metadata.drop_all(bind=sync_engine)
+    except Exception as e:
+        print(f"Warning: drop_all failed at teardown: {e}")
+
+    # Cleanup file after tests
+    if os.path.exists("./test.db"):
+        try:
+            os.remove("./test.db")
+        except Exception as e:
+            print(f"Warning: Could not remove test.db at teardown: {e}")
 
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -118,7 +154,7 @@ from sqlalchemy.pool import NullPool
 #     settings.POSTGRES_ASYNC_PREFIX + settings.POSTGRES_URI, echo=False, pool_size=5, max_overflow=5, pool_pre_ping=True
 # )
 test_async_engine = create_async_engine(
-    settings.SQLITE_ASYNC_PREFIX + settings.SQLITE_URI,
+    settings.SQLITE_ASYNC_PREFIX + "./test.db",
     echo=False,
     poolclass=NullPool,
     # pool_pre_ping=True, # Not needed with NullPool usually, but harmless

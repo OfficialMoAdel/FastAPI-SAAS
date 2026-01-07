@@ -9,11 +9,12 @@ Here's how to create a typical endpoint using the boilerplate's patterns:
 ```python
 from fastapi import APIRouter, Depends, HTTPException
 from typing import Annotated
+from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.core.db.database import async_get_db
-from app.crud.crud_users import crud_users
-from app.schemas.user import UserRead, UserCreate
-from app.api.dependencies import get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.modules.users.service import UserService
+from src.app.modules.users.schemas import UserRead, UserCreate
+from src.app.api.dependencies import get_current_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -23,7 +24,8 @@ async def get_user(
     db: Annotated[AsyncSession, Depends(async_get_db)]
 ):
     """Get a user by ID."""
-    user = await crud_users.get(db=db, id=user_id, schema_to_select=UserRead)
+    user_service = UserService(db)
+    user = await user_service.get(id=user_id)
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
     return user

@@ -1,8 +1,8 @@
 [project]
-name = "fastapi-boilerplate"
+name = "fastapi-saas"
 version = "0.1.0"
-description = "Batteries-included FastAPI starter with production-ready defaults, optional modules, and clear docs."
-authors = [{ name = "Benav Labs", email = "contact@benav.io" }]
+description = "Production-ready, modular FastAPI SaaS  with async support, multi-tenancy, and standardized patterns."
+authors = [{ name = "SaaS Framework Maintainers", email = "maintainers@example.com" }]
 license = { text = "MIT" }
 readme = "README.md"
 requires-python = ">=3.11, <4"
@@ -128,8 +128,11 @@ asyncio_mode = "auto"
 dev = [
     "aiosqlite>=0.21.0",
     "faker>=37.3.0",
+    "mkdocs-material>=9.7.1",
+    "mkdocstrings[python]>=1.0.0",
     "pre-commit>=4.3.0",
     "pytest-asyncio>=1.0.0",
+    "pytest-cov>=4.1.0",
     "structlog>=25.5.0",
 ]
 

@@ -4,41 +4,8 @@ This guide covers database migrations using Alembic, the migration tool for SQLA
 
 ## Overview
 
-The FastAPI Boilerplate uses [Alembic](https://alembic.sqlalchemy.org/) for database migrations. Alembic provides:
-
-- **Version-controlled schema changes** - Track every database modification
-- **Automatic migration generation** - Generate migrations from model changes  
-- **Reversible migrations** - Upgrade and downgrade database versions
-- **Environment-specific configurations** - Different settings for dev/staging/production
-- **Safe schema evolution** - Apply changes incrementally
-
-## Simple Setup: Automatic Table Creation
-
-For simple projects or development, the boilerplate includes `create_tables_on_start` parameter that automatically creates all tables on application startup:
-
-```python
-# This is enabled by default in create_application()
-app = create_application(
-    router=router, 
-    settings=settings, 
-    create_tables_on_start=True  # Default: True
-)
-```
-
-**When to use:**
-
-- ✅ **Development** - Quick setup without migration management
-- ✅ **Simple projects** - When you don't need migration history  
-- ✅ **Prototyping** - Fast iteration without migration complexity
-- ✅ **Testing** - Clean database state for each test run
-
-**When NOT to use:**
-
-- ❌ **Production** - No migration history or rollback capability
-- ❌ **Team development** - Can't track schema changes between developers
-- ❌ **Data migrations** - Only handles schema, not data transformations
-- ❌ **Complex deployments** - No control over when/how schema changes apply
-
+The FastAPI SaaS  uses [Alembic](https://alembic.sqlalchemy.org/) for database migrations. Alembic provides:
+...
 ```python
 # Disable for production environments
 app = create_application(
@@ -49,6 +16,7 @@ app = create_application(
 ```
 
 For production deployments and team development, use proper Alembic migrations as described below.
+
 
 ## Configuration
 
@@ -77,18 +45,12 @@ Migration environment is configured in `src/migrations/env.py`:
 # src/migrations/env.py
 from alembic import context
 from sqlalchemy import engine_from_config, pool
-from app.core.db.database import Base
-from app.core.config import settings
+from src.app.core.db.database import Base
+from src.app.core.config import settings
 
 # Import all models to ensure they're registered
-from app.models import *  # This imports all models
-
-config = context.config
-
-# Override database URL from environment
-config.set_main_option("sqlalchemy.url", settings.DATABASE_URL)
-
-target_metadata = Base.metadata
+from src.app.core.db.models import *  # This imports all models registered for discovery
+...
 ```
 
 ## Migration Workflow
@@ -179,25 +141,30 @@ uv run alembic show head
 
 ## Common Migration Scenarios
 
-### Adding New Model
+### 1. Adding New Model
 
-1. **Create the model** in `src/app/models/`:
+1. **Create the model** in `src/app/modules/your_module/models.py`:
 
 ```python
-# src/app/models/category.py
+# src/app/modules/category/models.py
 from sqlalchemy import String, DateTime
 from sqlalchemy.orm import Mapped, mapped_column
 from datetime import datetime
-from app.core.db.database import Base
+from src.app.core.db.database import Base
 
 class Category(Base):
-    __tablename__ = "category"
-    
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
-    name: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    slug: Mapped[str] = mapped_column(String(50), unique=True, nullable=False)
-    description: Mapped[str] = mapped_column(String(255), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+...
+```
+
+2. **Register in `src/app/core/db/models.py`**:
+
+```python
+# src/app/core/db/models.py
+from src.app.modules.users.models import User
+from src.app.modules.posts.models import Post
+from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.category.models import Category  # Add new import
 ```
 
 2. **Import in __init__.py**:

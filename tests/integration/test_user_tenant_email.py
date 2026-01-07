@@ -8,7 +8,6 @@ Tests that after migration:
 NOTE: These tests require PostgreSQL and are skipped when running with SQLite.
 """
 
-import os
 
 import pytest
 import pytest_asyncio
@@ -33,7 +32,7 @@ async def db_session():
     """Get database session for tests."""
     if _use_sqlite:
         pytest.skip("This fixture requires PostgreSQL")
-    
+
     engine = create_async_engine(
         f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
         f"@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}",

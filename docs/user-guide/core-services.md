@@ -1,6 +1,6 @@
 # Core Services
 
-This guide provides an overview of the core services available in the FastAPI SaaS Boilerplate, including Audit Logging, Notifications (Email), Webhooks, Feature Flags, and the Event Bus.
+This guide provides an overview of the core services available in the FastAPI SaaS , including Audit Logging, Notifications (Email), Webhooks, Feature Flags, and the Event Bus.
 
 ## Table of Contents
 

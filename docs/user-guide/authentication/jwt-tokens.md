@@ -22,12 +22,13 @@ The authentication system uses a **dual-token approach** for maximum security an
 
 ### Access Tokens
 
-Access tokens are short-lived credentials that prove a user's identity for API requests. Think of them as temporary keys that grant access to protected resources.
+Access tokens are short-lived credentials that prove a user's identity for API requests.
 
 - **Purpose**: Authenticate API requests and authorize actions
-- **Lifetime**: 30 minutes (configurable) - short enough to limit damage if compromised
-- **Storage**: Authorization header (`Bearer <token>`) - sent with each API request
+- **Lifetime**: 30 minutes (configurable via `ACCESS_TOKEN_EXPIRE_MINUTES`)
+- **Storage**: Authorization header (`Bearer <token>`)
 - **Usage**: Include in every call to protected endpoints
+
 
 **Why Short-Lived?** If an access token is stolen (e.g., through XSS), the damage window is limited to 30 minutes before it expires naturally.
 

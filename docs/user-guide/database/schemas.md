@@ -10,23 +10,35 @@ Schemas serve three main purposes:
 2. **Output Serialization** - Format database data for API responses  
 3. **API Contracts** - Define clear interfaces between frontend and backend
 
-### Schema File Organization
+## Schema Organization
 
-Schemas are organized in `src/app/schemas/` with one file per model:
+Schemas are defined within their respective module directories in `src/app/modules/` using Pydantic v2.
+
+### Modular Schema Structure
 
 ```text
-src/app/schemas/
-├── __init__.py       # Imports for easy access
-├── user.py          # User-related schemas
-├── post.py          # Post-related schemas
-├── tier.py          # Tier schemas
-├── rate_limit.py    # Rate limit schemas
-└── job.py           # Background job schemas
+src/app/modules/
+├── users/
+│   ├── schemas.py      # User authentication schemas
+├── posts/
+│   ├── schemas.py      # Content schemas
+└── tiers/
+    ├── schemas.py      # Subscription tier schemas
 ```
+
+### The `_base` Pattern
+
+Most schemas inherit from standardized base classes in `src.app.modules._base.schemas`:
+
+- **`BaseCreate`**: For POST requests (creation).
+- **`BaseRead`**: For GET responses (single/multi retrieval).
+- **`BaseReadUUID`**: For response models using UUID primary keys.
+- **`BaseUpdate`**: For PATCH requests (partial updates).
+
 
 ## User Schema Implementation
 
-The User schemas (`src/app/schemas/user.py`) demonstrate common validation patterns:
+The User schemas (`src/app/modules/users/schemas.py`) demonstrate common validation patterns:
 
 ```python
 from datetime import datetime
@@ -34,147 +46,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field
 
-from ..core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
-
-
-# Base schema with common fields
-class UserBase(BaseModel):
-    name: Annotated[
-        str, 
-        Field(
-            min_length=2,
-            max_length=30,
-            examples=["User Userson"]
-        )
-    ]
-    username: Annotated[
-        str,
-        Field(
-            min_length=2,
-            max_length=20,
-            pattern=r"^[a-z0-9]+$",
-            examples=["userson"]
-        )
-    ]
-    email: Annotated[EmailStr, Field(examples=["user.userson@example.com"])]
-
-
-# Full User data
-class User(TimestampSchema, UserBase, UUIDSchema, PersistentDeletion):
-    profile_image_url: Annotated[
-        str,
-        Field(default="https://www.profileimageurl.com")
-    ]
-    hashed_password: str
-    is_superuser: bool = False
-    tier_id: int | None = None
-
-
-# Schema for reading user data (API output)
-class UserRead(BaseModel):
-    id: int
-
-    name: Annotated[
-        str,
-        Field(
-            min_length=2, 
-            max_length=30, 
-            examples=["User Userson"]
-        )
-    ]
-    username: Annotated[
-        str, 
-        Field(
-            min_length=2, 
-            max_length=20, 
-            pattern=r"^[a-z0-9]+$", 
-            examples=["userson"]
-        )
-    ]
-    email: Annotated[EmailStr, Field(examples=["user.userson@example.com"])]
-    profile_image_url: str
-    tier_id: int | None
-
-
-# Schema for creating new users (API input)
-class UserCreate(UserBase): # Inherits from UserBase
-    model_config = ConfigDict(extra="forbid")
-
-    password: Annotated[
-        str,
-        Field(
-            pattern=r"^.{8,}|[0-9]+|[A-Z]+|[a-z]+|[^a-zA-Z0-9]+$",
-            examples=["Str1ngst!"]
-        )
-    ]
-
-
-# Schema that FastCRUD will use to store just the hash
-class UserCreateInternal(UserBase):
-    hashed_password: str
-
-
-# Schema for updating users
-class UserUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    name: Annotated[
-        str | None,
-        Field(
-            min_length=2, 
-            max_length=30, 
-            examples=["User Userberg"],
-            default=None
-        )
-    ]
-    username: Annotated[
-        str | None, 
-        Field(
-            min_length=2,
-            max_length=20, 
-            pattern=r"^[a-z0-9]+$", 
-            examples=["userberg"], 
-            default=None
-        )
-    ]
-    email: Annotated[
-        EmailStr | None, 
-        Field(
-            examples=["user.userberg@example.com"],
-            default=None
-        )
-    ]
-    profile_image_url: Annotated[
-        str | None,
-        Field(
-            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
-            examples=["https://www.profileimageurl.com"],
-            default=None
-        ),
-    ]
-
-
-# Internal update schema
-class UserUpdateInternal(UserUpdate):
-    updated_at: datetime
-
-
-# Schema to update tier id
-class UserTierUpdate(BaseModel):
-    tier_id: int
-
-
-# Schema for user deletion (soft delete timestamps)
-class UserDelete(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-    is_deleted: bool
-    deleted_at: datetime
-
-
-# User specific schema
-class UserRestoreDeleted(BaseModel):
-    is_deleted: bool
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
+...
 ```
 
 ### Key Implementation Details
@@ -378,7 +251,7 @@ class UserResponse(BaseModel):
 
 ### Multi-Record Responses
 
-[FastCRUD's](https://benavlabs.github.io/fastcrud/) `get_multi` method returns a `GetMultiResponse`:
+[FastCRUD's](https://igorbenav.github.io/fastcrud/) `get_multi` method returns a `GetMultiResponse`:
 
 ```python
 # Using get_multi directly
@@ -528,10 +401,9 @@ class CategoryWithPosts(CategoryRead):
 ### Import in __init__.py
 
 ```python
-# src/app/schemas/__init__.py
-from .user import UserCreate, UserRead, UserUpdate
-from .post import PostCreate, PostRead, PostUpdate
-from .category import CategoryCreate, CategoryRead, CategoryUpdate
+# src/app/modules/posts/schemas.py
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
+...
 ```
 
 ## Schema Testing

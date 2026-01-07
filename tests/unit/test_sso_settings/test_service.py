@@ -5,7 +5,7 @@ TDD: These tests validate the SSOSettingsService encryption and CRUD logic.
 Task: T099 [US11] Write unit tests for SSOSettingsService
 """
 
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -44,12 +44,12 @@ class TestSSOSettingsServiceCreate:
         """Verify client_id and client_secret are encrypted before storage."""
         service = SSOSettingsService()
         mock_db = AsyncMock()
-        
+
         # Mock refresh to set DB fields on the object
         async def mock_refresh(obj):
             obj.id = 1
-            obj.created_at = datetime.now(timezone.utc)
-            obj.updated_at = datetime.now(timezone.utc)
+            obj.created_at = datetime.now(UTC)
+            obj.updated_at = datetime.now(UTC)
         mock_db.refresh = mock_refresh
 
         mock_encryption = MagicMock()
@@ -151,15 +151,15 @@ class TestSSOSettingsServiceUpdate:
         mock_current = MagicMock()
         mock_current.id = 1
         mock_current.provider = "google"
-        
+
         # Second get returns updated settings (after update)
         mock_updated = MagicMock()
         mock_updated.id = 1
         mock_updated.provider = "google"
         mock_updated.additional_config = {}
         mock_updated.is_enabled = True
-        mock_updated.created_at = datetime.now(timezone.utc)
-        mock_updated.updated_at = datetime.now(timezone.utc)
+        mock_updated.created_at = datetime.now(UTC)
+        mock_updated.updated_at = datetime.now(UTC)
 
         mock_encryption = MagicMock()
         mock_encryption.encrypt_column.return_value = "new_encrypted_value"
@@ -190,15 +190,15 @@ class TestSSOSettingsServiceUpdate:
         mock_current = MagicMock()
         mock_current.id = 1
         mock_current.provider = "google"
-        
+
         # Second get returns updated settings
         mock_updated = MagicMock()
         mock_updated.id = 1
         mock_updated.provider = "google"
         mock_updated.additional_config = {}
         mock_updated.is_enabled = False
-        mock_updated.created_at = datetime.now(timezone.utc)
-        mock_updated.updated_at = datetime.now(timezone.utc)
+        mock_updated.created_at = datetime.now(UTC)
+        mock_updated.updated_at = datetime.now(UTC)
 
         with patch("src.app.modules.sso_settings.service.crud_sso_settings") as mock_crud:
             mock_crud.get = AsyncMock(side_effect=[mock_current, mock_updated])

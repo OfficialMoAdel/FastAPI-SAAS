@@ -1,10 +1,10 @@
 # API Reference Documentation
 
-Comprehensive API documentation for the Benav Labs FastAPI SaaS boilerplate, including endpoints, request/response schemas, authentication requirements, and integration patterns. This documentation enables developers to understand and integrate with the API effectively.
+Comprehensive API documentation for the FastAPI SaaS , including endpoints, request/response schemas, authentication requirements, and integration patterns. This documentation enables developers to understand and integrate with the API effectively.
 
 ## API Overview
 
-The FastAPI SaaS boilerplate exposes a RESTful API organized under the `/api/v1/` prefix for clear versioning. All endpoints return JSON responses and accept JSON request bodies where applicable. The API implements standard HTTP methods (GET, POST, PUT, PATCH, DELETE) with semantic meaning: GET for retrieval, POST for creation, PUT for full updates, PATCH for partial updates, and DELETE for removal.
+The FastAPI SaaS  exposes a RESTful API organized under the `/api/v1/` prefix for clear versioning. All endpoints return JSON responses and accept JSON request bodies where applicable. The API implements standard HTTP methods (GET, POST, PUT, PATCH, DELETE) with semantic meaning: GET for retrieval, POST for creation, PUT for full updates, PATCH for partial updates, and DELETE for removal.
 
 Authentication is handled through JWT tokens with support for both header-based and cookie-based token delivery. The API implements role-based access control (RBAC) with permission checks at both the route level and operation level. Multi-tenancy is enforced through the TenantMiddleware, which scopes all operations to the authenticated user's tenant context.
 
@@ -2335,6 +2335,6 @@ def verify_webhook_signature(payload: bytes, signature: str, secret: str) -> boo
 
 ## Summary
 
-This API reference provides comprehensive documentation for all endpoints in the FastAPI SaaS boilerplate. The API follows RESTful conventions with consistent response formats, proper authentication mechanisms, and comprehensive error handling. All endpoints are versioned under `/api/v1/` to enable future API evolution without breaking existing integrations.
+This API reference provides comprehensive documentation for all endpoints in the FastAPI SaaS . The API follows RESTful conventions with consistent response formats, proper authentication mechanisms, and comprehensive error handling. All endpoints are versioned under `/api/v1/` to enable future API evolution without breaking existing integrations.
 
 Key integration points include JWT authentication for user-facing applications, API key authentication for service-to-service integrations, webhook delivery for event notifications, and feature flags for progressive feature rollout. The multi-tenancy architecture ensures data isolation between tenants while providing a seamless developer experience.

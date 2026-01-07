@@ -158,13 +158,15 @@ speckit.txt
 .beads
 docs.md
 .opencode
+.factory
 Analysis Report.md
 Specify.txt
 Specify.md
 .agent
 .claude
-#specs
+specs
 .specify
+.archived
 claudedocs
 geminidocs
 env.txt
@@ -175,8 +177,8 @@ IMPLEMENTATION_WORKFLOW.md
 MIGRATION_PLAN.md
 IMPLEMENTATION_TASKS
 routes.txt
-coverage_report.txt
+Constitution.txt
+coverage_report*
 #IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
-#REFACTOR_PLAN_BASE_PATTERN_MIGRATION.md
-specs/004-auth-user-management
-specs/006-migrate-base-pattern
+IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
+sql_app.db*

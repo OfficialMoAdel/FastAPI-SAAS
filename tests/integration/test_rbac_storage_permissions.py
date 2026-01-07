@@ -5,7 +5,6 @@ Tests permission enforcement on storage settings endpoints:
 - Unauthorized users receive 403 Forbidden
 """
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

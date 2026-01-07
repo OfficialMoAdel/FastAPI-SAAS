@@ -6,7 +6,6 @@ Tests the storage settings CRUD operations:
 - PATCH /storage-settings - Update storage settings
 """
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

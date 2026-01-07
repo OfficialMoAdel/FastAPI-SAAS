@@ -22,7 +22,7 @@ Start by using this template for your new project:
 3. Clone your new repository:
 
 ```bash
-git clone https://github.com/yourusername/your-project-name
+git clone https://github.com/OfficialMoAdel/FastAPI_SAAS
 cd your-project-name
 ```
 

@@ -18,10 +18,10 @@ The boilerplate uses [FastCRUD](https://github.com/igorbenav/fastcrud) for all d
 Each model has a corresponding CRUD class that defines the available operations:
 
 ```python
-# src/app/crud/crud_users.py
+# src/app/modules/users/crud.py
 from fastcrud import FastCRUD
-from app.models.user import User
-from app.schemas.user import (
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import (
     UserCreateInternal, UserUpdate, UserUpdateInternal, 
     UserDelete, UserRead
 )

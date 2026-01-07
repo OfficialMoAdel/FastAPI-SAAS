@@ -8,7 +8,6 @@ Tests cover:
 """
 
 
-import pytest
 
 
 class TestFeatureFlagListAPI:

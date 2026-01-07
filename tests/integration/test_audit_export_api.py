@@ -5,7 +5,6 @@ Tests the audit export functionality:
 - GET /audit-logs/export - Export audit logs (CSV/JSON/JSONL)
 """
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

@@ -35,7 +35,7 @@ This guide covers all aspects of working with the FastAPI Boilerplate:
 - **[Permissions](authentication/permissions.md)** - Implement role-based access control
 
 ### Admin Panel
-Powered by [CRUDAdmin](https://github.com/benavlabs/crudadmin) - a modern admin interface generator for FastAPI.
+Powered by [SQLAlchemy Admin](https://aminalaee.dev/sqlalchemy-admin/) - a modern admin interface generator for FastAPI.
 
 - **[Admin Panel Overview](admin-panel/index.md)** - Web-based database management interface
 - **[Configuration](admin-panel/configuration.md)** - Setup, session backends, and environment variables

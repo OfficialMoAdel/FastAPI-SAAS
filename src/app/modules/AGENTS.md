@@ -1,73 +1,98 @@
 # FastAPI SaaS Modules - Agent Guidance
 
 ## Package Identity
-Core business logic modules for the FastAPI SaaS application. Each module follows the router → service → CRUD → models → schemas pattern with async/await throughout.
-
-## Setup & Run
-```bash
-# No module-specific setup - uses root project configuration
-# All modules are auto-imported via src.app.main
-
-# Test specific module
-uv run pytest tests/test_{module_name}.py
-
-# Type check module
-uv run mypy src/app/modules/{module_name}/
-```
+Contains the domain-specific business logic of the SaaS platform. Each module is a self-contained unit with standardized patterns.
 
 ## Patterns & Conventions
 
-### Module Structure (CRITICAL)
-Each module MUST follow this exact file structure:
+### The Module Structure (CRITICAL)
+Every module MUST follow this standardized structure:
 ```
 src/app/modules/{module_name}/
 ├── __init__.py          # Empty file
-├── router.py            # FastAPI routes (delegates to service)
+├── models.py            # SQLAlchemy database models
+├── schemas.py           # Pydantic data models
 ├── service.py           # Business logic layer
-├── crud.py              # FastCRUD operations (8 lines max)
-├── models.py            # SQLAlchemy models
-└── schemas.py           # Pydantic schemas
+├── router.py            # API endpoint definitions
+└── crud.py              # (Optional) Custom CRUD operations if FastCRUD isn't enough
 ```
 
-### Router Pattern
-✅ DO: Delegate all business logic to service layer
-```python
-# src/app/modules/users/router.py (lines 20-30)
-@router.post("/", response_model=UserRead)
-async def create_user(user: UserCreate, db: Annotated[AsyncSession, Depends(get_db_session)]) -> dict[str, Any]:
-    return await user_service.create_user(user=user, db=db)
-```
+### The `_base` Pattern
+Most modules should inherit from standardized base classes in `src/app/modules/_base/`:
 
-❌ DON'T: Put business logic in router
-```python
-# Never do database operations or validation in router
-```
+- **`BaseService`**: Provides standard CRUD orchestration, logging, and exceptions.
+- **`BaseCreate`**: For POST requests (creation).
+- **`BaseRead`**: For GET responses (single/multi retrieval).
+- **`BaseReadUUID`**: For response models using UUID primary keys.
+- **`BaseUpdate`**: For PATCH requests (partial updates).
 
 ### Service Layer Pattern
-✅ DO: All business logic, validation, and error handling
+✅ DO: Inherit from `BaseService` for standardized CRUD
 ```python
-# src/app/modules/users/service.py (lines 20-63)
-async def create_user(self, user: UserCreate, db: AsyncSession) -> dict[str, Any]:
+# src/app/modules/users/service.py (lines 1-20)
+from src.app.modules._base.service import BaseService
+
+class UserService(BaseService[User]):
+    def __init__(self, db: AsyncSession):
+        super().__init__(User, db)
+```
+
+✅ DO: Use service layer for business logic, validation, and error handling
+```python
+# src/app/modules/users/service.py (lines 20-40)
+async def create_user(self, user: UserCreate) -> UserRead:
     # Validation
-    email_exists = await crud_users.exists(db=db, email=user.email)
+    email_exists = await self.crud.exists(email=user.email)
     if email_exists:
-        raise DuplicateValueException("Email is already registered")
-    
-    # Business logic
+        raise DuplicateError("Email is already registered")
+
+    # Business logic (hashing, etc.)
     user_dict = user.model_dump()
     user_dict["hashed_password"] = get_password_hash(password=user_dict["password"])
-    
-    # Database operation via CRUD
-    return await crud_users.create(db=db, object=user_internal, schema_to_select=UserRead)
+
+    # Create via CRUD
+    return await self.crud.create(object=UserCreateInternal(**user_dict))
+```
+
+❌ DON'T: Put business logic in the router
+```python
+# Wrong - router should be thin
+@router.post("/")
+async def create_user(user: UserCreate, db: AsyncSession):
+    # No validation or hashing here!
+    return await crud.create(db=db, object=user)
+```
+
+### Cross-Module Communication
+✅ DO: Use the Event Bus for cross-module actions
+```python
+# src/app/modules/users/service.py
+from src.app.core.events import event_bus
+
+async def create_user(self, user: UserCreate) -> UserRead:
+    # ... create user ...
+
+    # Emit event for other modules to listen for
+    await event_bus.publish("user_registered", {"user_id": user.id})
+```
+
+❌ DON'T: Directly import other modules' services
+```python
+# Wrong - creates tight coupling
+from src.app.modules.notifications.service import NotificationService
+await NotificationService.send_welcome_email(user.email)
 ```
 
 ### CRUD Pattern
-✅ DO: Use FastCRUD with minimal wrapper
+✅ DO: Use FastCRUD with minimal wrapper (handled by `BaseService`)
 ```python
 # src/app/modules/users/crud.py (lines 1-8)
 from fastcrud import FastCRUD
-from .models import User
-from .schemas import UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import (
+    UserCreateInternal, UserUpdate, UserUpdateInternal,
+    UserDelete, UserRead
+)
 
 CRUDUser = FastCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]
 crud_users = CRUDUser(User)
@@ -77,37 +102,41 @@ crud_users = CRUDUser(User)
 ✅ DO: All database operations must be async
 ```python
 # Service methods always async
-async def get_user(self, username: str, db: AsyncSession) -> dict[str, Any]:
-    return await crud_users.get(db=db, username=username, is_deleted=False)
+async def get_user(self, id: int) -> UserRead:
+    return await self.crud.get(id=id)
 ```
 
 ### Error Handling Pattern
-✅ DO: Use custom HTTP exceptions from core.exceptions
+✅ DO: Use standardized exceptions
 ```python
-# src/app/modules/users/service.py (lines 44-45)
+# src/app/core/exceptions/http_exceptions.py
+from fastapi import HTTPException
+
+class DuplicateError(HTTPException):
+    def __init__(self, detail: str = "Duplicate value found"):
+        super().__init__(status_code=409, detail=detail)
+
+class ModelNotFoundError(HTTPException):
+    def __init__(self, detail: str = "Resource not found"):
+        super().__init__(status_code=404, detail=detail)
+
+# In service
 if email_exists:
-    raise DuplicateValueException("Email is already registered")
+    raise DuplicateError("Email is already registered")
 ```
 
 ## Touch Points / Key Files
 
-### User Module (Reference Implementation)
-- Router: `src/app/modules/users/router.py` - Route definitions
-- Service: `src/app/modules/users/service.py` - Business logic patterns
-- CRUD: `src/app/modules/users/crud.py` - FastCRUD setup
-- Models: `src/app/modules/users/models.py` - SQLAlchemy models
-- Schemas: `src/app/modules/users/schemas.py` - Pydantic schemas
+### The Base Pattern
+- Base Service: `src/app/modules/_base/service.py` - Template for all services
+- Base Schemas: `src/app/modules/_base/schemas.py` - Template for all schemas
+- Base Models: `src/app/modules/_base/models.py` - Common model mixins
 
-### Auth Module
-- Router: `src/app/modules/auth/router.py` - JWT token endpoints
-- Service: `src/app/modules/auth/service.py` - Authentication logic
-- Logout: `src/app/modules/auth/logout.py` - Token blacklisting
-
-### Other Modules
-- Posts: `src/app/modules/posts/` - Content management
-- Tasks: `src/app/modules/tasks/` - Background job management
-- Tiers: `src/app/modules/tiers/` - Subscription tier logic
-- Rate Limits: `src/app/modules/rate_limits/` - Rate limiting rules
+### Module Examples
+- Users Module: `src/app/modules/users/` - Authentication and profile logic
+- Tenants Module: `src/app/modules/tenants/` - Multi-tenancy logic
+- Tiers Module: `src/app/modules/tiers/` - Subscription tiers
+- Feature Flags: `src/app/modules/feature_flags/` - System and tenant flags
 
 ## JIT Index Hints
 
@@ -119,83 +148,68 @@ ls src/app/modules/
 # Find service classes
 rg -n "class.*Service" src/app/modules/
 
-# Find CRUD operations
-rg -n "FastCRUD" src/app/modules/
-
-# Find router endpoints
-rg -n "router\.(get|post|put|delete)" src/app/modules/
+# Find routers
+rg -n "router = APIRouter" src/app/modules/
 
 # Find database models
-rg -n "class.*Base" src/app/modules/
+rg -n "__tablename__" src/app/modules/
 
 # Find Pydantic schemas
 rg -n "class.*Schema" src/app/modules/
 ```
 
-### Module-Specific Searches
+### Find Base Patterns
 ```bash
-# User module patterns
-rg -n "user_service" src/app/modules/
-rg -n "crud_users" src/app/modules/
+# See base service implementation
+rg -n "class BaseService" src/app/modules/_base/
 
-# Auth module patterns  
-rg -n "authenticate_user" src/app/modules/
-rg -n "create_access_token" src/app/modules/
+# See base schemas
+ls src/app/modules/_base/schemas.py
 ```
 
 ## Common Gotchas
 
-### Database Session Handling
-✅ DO: Always accept `db: AsyncSession` as parameter
-❌ DON'T: Create database sessions in service layer
-
-### Import Patterns
-✅ DO: Use absolute imports from service layer
+### Module Imports
+✅ DO: Use absolute imports starting with `src.app.`
 ```python
-from ...core.exceptions.http_exceptions import DuplicateValueException
-from ...core.security import get_password_hash
+from src.app.modules.users.schemas import UserCreate
 ```
 
 ❌ DON'T: Use relative imports
 ```python
-from ..core.exceptions import DuplicateValueException
+from ..schemas import UserCreate
 ```
 
-### Schema Selection
-✅ DO: Always specify `schema_to_select` in CRUD operations
+### Service Initialization
+✅ DO: Pass the model class to `BaseService`
 ```python
-await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+class UserService(BaseService[User]):
+    def __init__(self, db: AsyncSession):
+        super().__init__(User, db)
 ```
 
-❌ DON'T: Let CRUD return full model objects
-
-### Soft Deletes
-✅ DO: Use `is_deleted=False` for reads
+### Cross-Module Imports
+❌ DON'T: Import services from other modules directly
 ```python
-await crud_users.get(db=db, username=username, is_deleted=False)
-```
+# Wrong - creates tight coupling
+from src.app.modules.notifications.service import NotificationService
 
-❌ DON'T: Forget soft delete filtering
+# Right - use event bus
+await event_bus.publish("event_name", data)
+```
 
 ## Pre-PR Checks
 
-### Module Testing
 ```bash
 # Test specific module
-uv run pytest tests/test_users.py -v
+uv run pytest tests/modules/test_users.py -v
 
 # Type check module
 uv run mypy src/app/modules/users/
 
 # Lint module
 uv run ruff check src/app/modules/users/
-```
 
-### Database Migration
-```bash
-# Generate migration for new models
-uv run alembic revision --autogenerate -m "Add {module_name} module"
-
-# Apply migration
-uv run alembic upgrade head
+# Generate migration if model changed
+uv run alembic revision --autogenerate -m "Update users module"
 ```

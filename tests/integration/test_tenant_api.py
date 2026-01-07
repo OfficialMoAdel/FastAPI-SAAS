@@ -11,7 +11,6 @@ Tests all 6 tenant endpoints from the API contract:
 NOTE: Tests that require database access are skipped when PostgreSQL is unavailable.
 """
 
-import os
 
 import pytest
 import pytest_asyncio
@@ -37,7 +36,7 @@ async def db_session():
     """
     if _use_sqlite:
         pytest.skip("This fixture requires PostgreSQL")
-    
+
     engine = create_async_engine(
         f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}"
         f"@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}",

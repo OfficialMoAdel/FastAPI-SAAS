@@ -27,8 +27,8 @@ Install these tools on your system:
 1. **Get the template**:
 
    ```bash
-   git clone https://github.com/benavlabs/fastapi-boilerplate
-   cd fastapi-boilerplate
+   git clone <your-repo-url>
+   cd fastapi-saas
    ```
 
 1. **Quick setup** (recommended):
@@ -133,8 +133,8 @@ For more control or development purposes, you can install everything manually.
 1. **Clone the repository**:
 
    ```bash
-   git clone https://github.com/benavlabs/fastapi-boilerplate
-   cd fastapi-boilerplate
+   git clone <your-repo-url>
+   cd fastapi-saas
    ```
 
 1. **Install Python dependencies**:
@@ -200,7 +200,7 @@ For contributors and advanced users who want to modify the boilerplate.
 
    ```bash
    # Fork the repository on GitHub first
-   git clone https://github.com/yourusername/fastapi-boilerplate
+   git clone https://github.com/OfficialMoAdel/FastAPI_SAAS.git
    cd fastapi-boilerplate
    ```
 
@@ -411,6 +411,6 @@ After successful installation:
 
 If you encounter issues:
 
-- Check the [GitHub Issues](https://github.com/benavlabs/fastapi-boilerplate/issues) for common problems
-- Search [existing issues](https://github.com/benavlabs/fastapi-boilerplate/issues)
-- Create a [new issue](https://github.com/benavlabs/fastapi-boilerplate/issues/new) with details
+- Check the [GitHub Issues](<your-repo-url>/issues) for common problems
+- Search [existing issues](<your-repo-url>/issues)
+- Create a [new issue](<your-repo-url>/issues/new) with details

@@ -30,20 +30,17 @@ T = TypeVar("T")
 
 
 class BaseService(Generic[T]):
-    """Base service with common CRUD operations.
+    """
+    Standardized business logic layer for all modules.
 
-    All feature services should inherit from this class to ensure
-    consistent service structure and CRUD operations.
+    The BaseService provides a unified interface for CRUD operations,
+    integrating logging, exception handling, and standard lifecycle patterns.
+    It acts as the orchestrator between routers and the data access layer (FastCRUD).
 
     Attributes:
         model: The SQLAlchemy model class.
         db: The async database session.
-        crud: FastCRUD instance for database operations.
-
-    Example:
-        class UserService(BaseService[User]):
-            def __init__(self, db: AsyncSession):
-                super().__init__(User, db)
+        crud: An instance of FastCRUD configured for the model.
     """
 
     def __init__(self, model: type[T], db: AsyncSession):

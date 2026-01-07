@@ -9,7 +9,6 @@ Tests permission enforcement on file endpoints:
 
 import io
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

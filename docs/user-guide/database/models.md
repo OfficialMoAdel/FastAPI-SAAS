@@ -4,7 +4,7 @@ This section explains how SQLAlchemy models are implemented in the boilerplate, 
 
 ## Model Structure
 
-Models are defined in `src/app/models/` using SQLAlchemy 2.0's declarative syntax with `Mapped` type annotations.
+Models are defined within their respective module directories in `src/app/modules/` using SQLAlchemy 2.0's declarative syntax with `Mapped` type annotations.
 
 ### Base Model
 
@@ -17,22 +17,24 @@ class Base(DeclarativeBase):
     pass
 ```
 
-**SQLAlchemy 2.0 Change**: Uses `DeclarativeBase` instead of the older `declarative_base()` function. This provides better type checking and IDE support.
+### Modular Model Structure
 
-### Model File Structure
-
-Each model is in its own file:
+Each module manages its own models:
 
 ```text
-src/app/models/
-├── __init__.py          # Imports all models for Alembic discovery
-├── user.py             # User authentication model
-├── post.py             # Example content model with relationships
-├── tier.py             # User subscription tiers
-└── rate_limit.py       # API rate limiting configuration
+src/app/modules/
+├── users/
+│   ├── models.py      # User authentication model
+├── posts/
+│   ├── models.py      # Content model
+├── tiers/
+│   ├── models.py      # Subscription tiers
+└── rate_limits/
+    ├── models.py      # API rate limiting configuration
 ```
 
-**Import Requirement**: Models must be imported in `__init__.py` for Alembic to detect them during migration generation.
+**Import Requirement**: Models must be imported in `src/app/core/db/models.py` (or similar registration point) for Alembic to detect them during migration generation.
+
 
 ## Design Decision: No SQLAlchemy Relationships
 
@@ -163,43 +165,17 @@ But consider the trade-offs and whether explicit queries might be better for you
 
 ## User Model Implementation
 
-The User model (`src/app/models/user.py`) demonstrates authentication patterns:
+The User model (`src/app/modules/users/models.py`) demonstrates authentication patterns:
 
 ```python
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from sqlalchemy import DateTime, ForeignKey, String
 from sqlalchemy.orm import Mapped, mapped_column
-from ..core.db.database import Base
+from src.app.core.db.database import Base
 
 class User(Base):
-    __tablename__ = "user"
-
-    id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
-    
-    # User data
-    name: Mapped[str] = mapped_column(String(30))
-    username: Mapped[str] = mapped_column(String(20), unique=True, index=True)
-    email: Mapped[str] = mapped_column(String(50), unique=True, index=True)
-    hashed_password: Mapped[str] = mapped_column(String)
-    
-    # Profile
-    profile_image_url: Mapped[str] = mapped_column(String, default="https://profileimageurl.com")
-    
-    # UUID for external references
-    uuid: Mapped[uuid_pkg.UUID] = mapped_column(default_factory=uuid_pkg.uuid4, primary_key=True, unique=True)
-    
-    # Timestamps
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
-    
-    # Status flags
-    is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
-    is_superuser: Mapped[bool] = mapped_column(default=False)
-    
-    # Foreign key to tier system (no relationship defined)
-    tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
+...
 ```
 
 ### Key Implementation Details
@@ -297,11 +273,11 @@ class RateLimit(Base):
 
 ### Step-by-Step Process
 
-1. **Create model file** in `src/app/models/your_model.py`
+1. **Create model file** in `src/app/modules/your_module/models.py`
 2. **Define model class** inheriting from `Base`
-3. **Add to imports** in `src/app/models/__init__.py`
-4. **Generate migration** with `alembic revision --autogenerate`
-5. **Apply migration** with `alembic upgrade head`
+3. **Register model** in `src/app/core/db/models.py`
+4. **Generate migration** with `uv run alembic revision --autogenerate`
+5. **Apply migration** with `uv run alembic upgrade head`
 
 ### Example: Creating a Category Model
 
@@ -333,15 +309,14 @@ class Post(Base):
     category_id: Mapped[int] = mapped_column(ForeignKey("category.id"), index=True)
 ```
 
-### Import in __init__.py
+### Import for Migration Discovery
 
 ```python
-# src/app/models/__init__.py
-from .user import User
-from .post import Post
-from .tier import Tier
-from .rate_limit import RateLimit
-from .category import Category  # Add new model
+# src/app/core/db/models.py
+from src.app.modules.users.models import User
+from src.app.modules.posts.models import Post
+from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import RateLimit
 ```
 
 **Critical**: Without this import, Alembic won't detect the model for migrations.

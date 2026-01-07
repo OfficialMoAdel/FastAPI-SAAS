@@ -1,53 +1,22 @@
 # User Management
 
-User management forms the core of any authentication system, handling everything from user registration and login to profile updates and account deletion. This section covers the complete user lifecycle with secure authentication flows and administrative operations.
-
-## Understanding User Lifecycle
-
-The user lifecycle in the boilerplate follows a secure, well-defined process that protects user data while providing a smooth experience. Understanding this flow helps you customize the system for your specific needs.
-
-**Registration → Authentication → Profile Management → Administrative Operations**
-
-Each stage has specific security considerations and business logic that ensure data integrity and user safety.
+User management forms the core of any SaaS platform, handling everything from user registration and login to profile updates and account deletion.
 
 ## User Registration
 
-User registration is the entry point to your application. The process must be secure, user-friendly, and prevent common issues like duplicate accounts or weak passwords.
-
-### Registration Process
-
-The registration endpoint performs several validation steps before creating a user account. This multi-step validation prevents common registration issues and ensures data quality.
+The registration endpoint performs several validation steps before creating a user account.
 
 ```python
-# User registration endpoint
+# src/app/modules/users/router.py
 @router.post("/user", response_model=UserRead, status_code=201)
 async def write_user(
     user: UserCreate, 
-    db: AsyncSession
+    db: AsyncSession = Depends(async_get_db)
 ) -> UserRead:
-    # 1. Check if email exists
-    email_row = await crud_users.exists(db=db, email=user.email)
-    if email_row:
-        raise DuplicateValueException("Email is already registered")
-    
-    # 2. Check if username exists
-    username_row = await crud_users.exists(db=db, username=user.username)
-    if username_row:
-        raise DuplicateValueException("Username not available")
-    
-    # 3. Hash password
-    user_internal_dict = user.model_dump()
-    user_internal_dict["hashed_password"] = get_password_hash(
-        password=user_internal_dict["password"]
-    )
-    del user_internal_dict["password"]
-    
-    # 4. Create user
-    user_internal = UserCreateInternal(**user_internal_dict)
-    created_user = await crud_users.create(db=db, object=user_internal)
-    
-    return created_user
+    user_service = UserService(db)
+    return await user_service.create_user(user)
 ```
+
 
 **Security Steps Explained:**
 

@@ -18,7 +18,6 @@ import pytest
 from fastapi import status
 
 
-
 class TestGoogleSSOE2EFlow:
     """End-to-end integration tests for Google SSO authentication flow."""
 
@@ -56,7 +55,7 @@ class TestGoogleSSOE2EFlow:
         # Patch get_sso_state_manager to mock state validation
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(return_value={
-            "tenant_id": 1, 
+            "tenant_id": 1,
             "redirect_uri": "https://example.com",
             "provider": "google"
         })
@@ -86,8 +85,8 @@ class TestGoogleSSOE2EFlow:
 
     def test_existing_user_google_oauth_flow(self, client, mock_user, db, auth_headers):
         """Test OAuth flow for existing user with linked Google account."""
-        from src.app.modules.users.models import User
         from src.app.modules.sso.models import UserSSOConnection
+        from src.app.modules.users.models import User
 
         existing_user = db.query(User).filter(User.email == "user@example.com").first()
         if existing_user:
@@ -106,7 +105,7 @@ class TestGoogleSSOE2EFlow:
 
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(return_value={
-            "tenant_id": 1, 
+            "tenant_id": 1,
             "redirect_uri": "https://example.com",
             "provider": "google"
         })
@@ -135,7 +134,7 @@ class TestGoogleSSOE2EFlow:
     def test_google_oauth_invalid_code(self, client, mock_user, auth_headers):
         """Test that invalid authorization codes are rejected."""
         from src.app.core.exceptions.http_exceptions import BadRequestException
-        
+
         # We need to patch the sso_service found in the router module
         # but configured to raise BadRequestException when called
         with patch(
@@ -173,7 +172,7 @@ class TestGoogleSSOE2EFlow:
         # or by the router before calling service, OR by service?
         # Router signature: code: Annotated[str, Query]
         # So FastAPI validation should catch it before service is called.
-        # But we patch things anyway to be safe? 
+        # But we patch things anyway to be safe?
         # Actually, if code is missing in Query, FastAPI returns 422.
         # Wait, the test expects 400.
         # If code param is required, FastAPI returns 422.
@@ -186,7 +185,7 @@ class TestGoogleSSOE2EFlow:
         # Let's assume standard FastAPI behavior.
         # The test originally expected 400.
         # Let's see if we can just patch state manager to be correct just in case.
-        
+
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
                 "/api/v1/auth/sso/google/callback?state=test_state",
@@ -199,14 +198,14 @@ class TestGoogleSSOE2EFlow:
         """Test that unknown provider returns 400."""
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(return_value={
-            "tenant_id": 1, 
+            "tenant_id": 1,
             "redirect_uri": "https://example.com",
             # We return "unknown_provider" in state to pass mismatch check?
             # Router checks: if state_data["provider"] != provider: raise BadRequest
             # provider param is "unknown_provider".
             "provider": "unknown_provider"
         })
-        
+
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
                 "/api/v1/auth/sso/unknown_provider/callback?code=test_code&state=test_state",
@@ -244,7 +243,7 @@ class TestGoogleSSOE2EFlow:
 
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(return_value={
-            "tenant_id": 1, 
+            "tenant_id": 1,
             "redirect_uri": "https://example.com",
             "provider": "google"
         })

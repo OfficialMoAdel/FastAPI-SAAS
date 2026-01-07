@@ -144,8 +144,7 @@ class TestPasskeyServiceChallengeGeneration:
 
         # Simulate existing credential (object as expected by webauthn exclusions)
         existing_cred_obj = PublicKeyCredentialDescriptor(
-            type=PublicKeyCredentialType.PUBLIC_KEY,
-            id=b"existing-cred-id"
+            type=PublicKeyCredentialType.PUBLIC_KEY, id=b"existing-cred-id"
         )
 
         with patch.object(service, "_get_existing_credentials", new_callable=AsyncMock) as mock_creds:
@@ -294,9 +293,9 @@ class TestPasskeyServiceVerification:
                                 "rawId": "mock-raw-id",
                                 "response": {
                                     "clientDataJSON": "mock-client-data",
-                                    "attestationObject": "mock-attestation"
+                                    "attestationObject": "mock-attestation",
                                 },
-                                "type": "public-key"
+                                "type": "public-key",
                             },
                             redis=AsyncMock(),
                         )
@@ -340,9 +339,9 @@ class TestPasskeyServiceVerification:
                                 "rawId": "mock-raw-id",
                                 "response": {
                                     "clientDataJSON": "mock-client-data",
-                                    "attestationObject": "mock-attestation"
+                                    "attestationObject": "mock-attestation",
                                 },
-                                "type": "public-key"
+                                "type": "public-key",
                             },
                             redis=AsyncMock(),
                         )
@@ -447,3 +446,142 @@ class TestPasskeyServiceCredentialDeletion:
                 )
 
                 mock_delete.assert_called_once()
+
+
+class TestPasskeyServiceAuthentication:
+    """Tests for authentication challenge and verification."""
+
+    @pytest.mark.asyncio
+    async def test_generate_auth_challenge_success(self):
+        """Verify generation of authentication challenge."""
+        from src.app.modules.passkey.service import PasskeyService
+
+        service = PasskeyService()
+        mock_db = AsyncMock()
+        mock_redis = AsyncMock()
+
+        with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
+            result = await service.generate_authentication_challenge(db=mock_db, redis=mock_redis)
+
+            assert "challenge" in result
+            mock_store.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_generate_auth_challenge_with_email(self):
+        """Verify generation with email hint."""
+        from src.app.modules.passkey.service import PasskeyService
+        from webauthn.helpers.structs import PublicKeyCredentialDescriptor, PublicKeyCredentialType
+
+        service = PasskeyService()
+        mock_db = AsyncMock()
+
+        # Mock finding credentials for email
+        mock_cred_desc = PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=b"test-id")
+
+        with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
+            mock_get_creds.return_value = [mock_cred_desc]
+
+            result = await service.generate_authentication_challenge(db=mock_db, email="test@example.com")
+
+            # Should have generated options with allowCredentials
+            assert result is not None
+            mock_get_creds.assert_called_once_with(mock_db, "test@example.com")
+
+    @pytest.mark.asyncio
+    async def test_verify_authentication_success(self):
+        """Verify successful authentication."""
+        from src.app.modules.passkey.service import PasskeyService
+
+        service = PasskeyService()
+        mock_db = AsyncMock()
+        mock_redis = AsyncMock()
+
+        # Mock data
+        mock_cred_payload = {"id": "mock-id", "rawId": "mock-raw-id", "type": "public-key", "response": {}}
+
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+            mock_get_challenge.return_value = b"challenge"
+
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find_cred:
+                mock_db_cred = MagicMock(id=1, counter=10, user_id=1, public_key=b"enc_key")
+                mock_find_cred.return_value = mock_db_cred
+
+                with patch.object(service, "_verify_authentication_response", new_callable=MagicMock) as mock_verify:
+                    mock_verify.return_value = MagicMock(new_sign_count=11)
+
+                    with patch.object(service, "_update_credential_counter", new_callable=AsyncMock) as mock_update:
+                        with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
+                            mock_get_user.return_value = MagicMock(id=1)
+
+                            with patch.object(service, "_generate_auth_tokens", new_callable=MagicMock) as mock_tokens:
+                                mock_tokens.return_value = {"access_token": "token"}
+
+                                with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
+                                    result = await service.verify_authentication(
+                                        db=mock_db, redis=mock_redis, credential=mock_cred_payload
+                                    )
+
+                                    assert result["access_token"] == "token"
+                                    mock_update.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_verify_authentication_replay_attack(self):
+        """Verify replay attack detection (counter check)."""
+        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules.passkey.service import PasskeyService
+
+        service = PasskeyService()
+        mock_db = AsyncMock()
+        mock_redis = AsyncMock()
+
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+            mock_get_challenge.return_value = b"challenge"
+
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find_cred:
+                # Stored counter is 10
+                mock_db_cred = MagicMock(id=1, counter=10, user_id=1)
+                mock_find_cred.return_value = mock_db_cred
+
+                with patch.object(service, "_verify_authentication_response", new_callable=MagicMock) as mock_verify:
+                    # New counter is 10 (or lower) -> Replay
+                    mock_verify.return_value = MagicMock(new_sign_count=10)
+
+                    with pytest.raises(BadRequestException) as exc:
+                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"})
+
+                    assert "replay" in str(exc.value.detail).lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_authentication_invalid_challenge(self):
+        """Verify fails when challenge is invalid or expired."""
+        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules.passkey.service import PasskeyService
+
+        service = PasskeyService()
+
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+            mock_get_challenge.return_value = None
+
+            with pytest.raises(BadRequestException) as exc:
+                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"})
+
+            assert "challenge" in str(exc.value.detail).lower()
+
+    @pytest.mark.asyncio
+    async def test_verify_authentication_credential_not_found(self):
+        """Verify fails when credential not found in DB."""
+        from src.app.core.exceptions.http_exceptions import BadRequestException
+        from src.app.modules.passkey.service import PasskeyService
+
+        service = PasskeyService()
+
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+            mock_get_challenge.return_value = b"challenge"
+
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
+                mock_find.return_value = None
+
+                with pytest.raises(BadRequestException) as exc:
+                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"})
+
+                assert "credential not found" in str(exc.value.detail).lower()

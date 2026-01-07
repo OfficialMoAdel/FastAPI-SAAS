@@ -33,7 +33,7 @@ class BaseCreate(BaseModel):
     Provides consistent configuration for all create operations.
     """
 
-    model_config = {"from_attributes": True}
+    model_config = {"from_attributes": True, "extra": "forbid"}
 
 
 class BaseRead(BaseModel):
@@ -71,7 +71,7 @@ class BaseUpdate(BaseModel):
     All fields are optional to support partial updates.
     """
 
-    model_config = {"from_attributes": True, "populate_by_name": True}
+    model_config = {"from_attributes": True, "populate_by_name": True, "extra": "forbid"}
 
 
 class BaseList(BaseModel, Generic[T]):

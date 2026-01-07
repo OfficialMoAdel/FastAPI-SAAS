@@ -8,7 +8,6 @@ Tests file management operations:
 - Tenant isolation verification
 """
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context

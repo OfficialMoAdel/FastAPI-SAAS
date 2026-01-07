@@ -14,7 +14,6 @@ from __future__ import annotations
 
 import logging
 import os
-from base64 import urlsafe_b64decode, urlsafe_b64encode
 
 from cryptography.fernet import Fernet, InvalidToken
 

@@ -6,7 +6,6 @@ Tests signed URL generation for file access:
 - Public vs private file access
 """
 
-import pytest
 from fastapi import status
 
 # Headers for tenant context
