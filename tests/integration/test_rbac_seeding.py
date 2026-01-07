@@ -25,6 +25,20 @@ class TestSystemRoleSeeding:
             "roles:assign",
             "feature_flags:manage",
             "notifications:manage",
+            # Phase 6: New Permissions
+            "users:self",
+            "users:delete",
+            "users:role_assign",
+            "billing:manage",
+            "products:manage",
+            # Phase 4: Storage
+            "storage_settings:manage",
+            "files:read",
+            "files:write",
+            "files:delete",
+            # Phase 7: Audit Logs
+            "audit_logs:read",
+            "audit_logs:export",
         }
 
         actual_permissions = {p.value for p in Permission}
@@ -37,12 +51,31 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
-        assert len(Permission) == 7, f"Expected 7 permissions, got {len(Permission)}"
+        assert len(Permission) == 18, f"Expected 18 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
-        valid_resources = {"users", "roles", "feature_flags", "notifications"}
-        valid_actions = {"read", "manage", "assign"}
+        valid_resources = {
+            "users",
+            "roles",
+            "feature_flags",
+            "notifications",
+            "billing",
+            "products",
+            "storage_settings",
+            "files",
+            "audit_logs",
+        }
+        valid_actions = {
+            "read",
+            "manage",
+            "assign",
+            "self",
+            "delete",
+            "role_assign",
+            "write",
+            "export",
+        }
 
         for perm in Permission:
             assert ":" in perm.value, f"Permission {perm.name} missing colon separator"
@@ -60,7 +93,7 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 7
+        assert len(admin_permissions) == 18
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """
@@ -70,9 +103,20 @@ class TestSystemRoleSeeding:
         happens in the migration. This documents the expected behavior.
         """
         # Member gets only :read permissions per migration logic (line 129-131)
-        member_permissions = {p for p in Permission if "read" in p.value}
-        expected_member = {Permission.USERS_READ, Permission.ROLES_READ}
-        assert member_permissions == expected_member
+        member_permissions = {p for p in Permission if "read" in p.value or "view" in p.name.lower()}
+        # Note: FILES_READ ("files:read") and AUDIT_LOGS_VIEW_ONLY ("audit_logs:read") are new read perms
+        expected_member = {
+            Permission.USERS_READ,
+            Permission.ROLES_READ,
+            Permission.FILES_READ,
+            Permission.AUDIT_LOGS_VIEW_ONLY,
+        }
+        # Filter strictly for permissions that contain "read" in the value
+        # This matches the migration logic: if "read" in perm.value
+        actual_read_perms = {p for p in Permission if "read" in p.value}
+
+        # Verify that our expected set matches what the logic would select
+        assert actual_read_perms == expected_member
 
     def test_system_roles_are_immutable_by_design(self) -> None:
         """

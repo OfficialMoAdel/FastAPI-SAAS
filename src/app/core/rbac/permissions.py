@@ -18,3 +18,27 @@ class Permission(str, Enum):
 
     # Notification Management
     NOTIFICATIONS_MANAGE = "notifications:manage"
+
+    # === Phase 6: New Permissions ===
+
+    # User Self-Access (Phase 6)
+    USER_SELF_READ_AND_WRITE_ONLY = "users:self"
+    USER_DELETE_ONLY = "users:delete"
+    USER_ROLE_ASSIGN_OR_REMOVE_ONLY = "users:role_assign"
+
+    # Billing & Products (Phase 6)
+    MANAGE_BILLING = "billing:manage"
+    MANAGE_PRODUCTS = "products:manage"
+
+    # Storage Settings (Phase 4)
+    MANAGE_STORAGE_SETTINGS = "storage_settings:manage"
+
+    # File Operations (Phase 4)
+    FILES_READ = "files:read"
+    FILES_WRITE = "files:write"
+    FILES_DELETE = "files:delete"
+
+    # Audit Logs (Phase 7)
+    AUDIT_LOGS_VIEW_ONLY = "audit_logs:read"
+    AUDIT_LOGS_DOWNLOAD = "audit_logs:export"
+

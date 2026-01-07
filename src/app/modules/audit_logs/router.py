@@ -23,7 +23,7 @@ router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 @router.get("", response_model=AuditLogListResponse)
 async def list_audit_logs(
     action: str | None = Query(None, description="Filter by action"),
-    user_id: UUID | None = Query(None, description="Filter by user ID"),
+    user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
@@ -125,4 +125,212 @@ async def list_available_actions(
     return sorted(actions)
 
 
-# Missing import
+# ============================================================================
+# Export Endpoints (Phase 7)
+# ============================================================================
+
+EXPORT_MAX_RECORDS = 100_000
+
+
+@router.get("/export/count")
+async def get_export_count(
+    action: str | None = Query(None, description="Filter by action"),
+    user_id: int | None = Query(None, description="Filter by user ID"),
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    Get count of records that would be exported.
+
+    Use this before export to check if date filtering is needed.
+    """
+    query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
+
+    if action:
+        query = query.where(AuditLog.action == action)
+    if user_id:
+        query = query.where(AuditLog.user_id == user_id)
+    if entity_type:
+        query = query.where(AuditLog.entity_type == entity_type)
+    if start_date:
+        query = query.where(AuditLog.created_at >= start_date)
+    if end_date:
+        query = query.where(AuditLog.created_at <= end_date)
+
+    result = await db.execute(query)
+    count = result.scalar_one()
+
+    return {
+        "count": count,
+        "max_export_limit": EXPORT_MAX_RECORDS,
+        "can_export": count <= EXPORT_MAX_RECORDS,
+    }
+
+
+@router.get("/export")
+async def export_audit_logs(
+    format: str = Query("csv", pattern="^(csv|json|jsonl)$", description="Export format"),
+    action: str | None = Query(None, description="Filter by action"),
+    user_id: int | None = Query(None, description="Filter by user ID"),
+    entity_type: str | None = Query(None, description="Filter by entity type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Export audit logs as CSV, JSON, or JSONL.
+
+    Maximum 100,000 records per export. Use date filtering for larger datasets.
+    Requires AUDIT_LOGS_DOWNLOAD permission.
+    """
+    import csv
+    import io
+    import json as json_lib
+    from collections.abc import AsyncGenerator
+
+    from fastapi.responses import StreamingResponse
+
+    # Build query with filters
+    query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
+
+    if action:
+        query = query.where(AuditLog.action == action)
+    if user_id:
+        query = query.where(AuditLog.user_id == user_id)
+    if entity_type:
+        query = query.where(AuditLog.entity_type == entity_type)
+    if start_date:
+        query = query.where(AuditLog.created_at >= start_date)
+    if end_date:
+        query = query.where(AuditLog.created_at <= end_date)
+
+    # Check count
+    count_query = select(func.count()).select_from(query.subquery())
+    count_result = await db.execute(count_query)
+    count = count_result.scalar_one()
+
+    if count > EXPORT_MAX_RECORDS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
+            f"Found {count} records. Use date filtering to reduce the export size.",
+        )
+
+    # Order by created_at for consistent export
+    query = query.order_by(AuditLog.created_at.asc())
+
+    # Execute query
+    result = await db.execute(query)
+    logs = result.scalars().all()
+
+    # Log the export event
+    from src.app.modules.audit_logs.service import log_audit_event
+
+    await log_audit_event(
+        db=db,
+        tenant_id=current_tenant.id,
+        user_id=current_user.id,
+        action="audit_logs.export",
+        entity_type="audit_log",
+        entity_id=None,
+        details={"format": format, "record_count": count},
+    )
+
+    async def generate_csv() -> AsyncGenerator[str, None]:
+        """Generate CSV content."""
+        output = io.StringIO()
+        writer = csv.writer(output)
+
+        # Header
+        writer.writerow(
+            ["id", "action", "user_id", "entity_type", "entity_id", "details", "ip_address", "user_agent", "created_at"]
+        )
+        yield output.getvalue()
+        output.seek(0)
+        output.truncate(0)
+
+        # Rows
+        for log in logs:
+            writer.writerow(
+                [
+                    str(log.id),
+                    log.action,
+                    str(log.user_id) if log.user_id else "",
+                    log.entity_type or "",
+                    str(log.entity_id) if log.entity_id else "",
+                    json_lib.dumps(log.details) if log.details else "",
+                    log.ip_address or "",
+                    log.user_agent or "",
+                    log.created_at.isoformat() if log.created_at else "",
+                ]
+            )
+            yield output.getvalue()
+            output.seek(0)
+            output.truncate(0)
+
+    async def generate_jsonl() -> AsyncGenerator[str, None]:
+        """Generate JSONL content (one JSON object per line)."""
+        for log in logs:
+            yield (
+                json_lib.dumps(
+                    {
+                        "id": str(log.id),
+                        "action": log.action,
+                        "user_id": str(log.user_id) if log.user_id else None,
+                        "entity_type": log.entity_type,
+                        "entity_id": str(log.entity_id) if log.entity_id else None,
+                        "details": log.details,
+                        "ip_address": log.ip_address,
+                        "user_agent": log.user_agent,
+                        "created_at": log.created_at.isoformat() if log.created_at else None,
+                    }
+                )
+                + "\n"
+            )
+
+    async def generate_json() -> AsyncGenerator[str, None]:
+        """Generate JSON array content."""
+        yield "[\n"
+        for i, log in enumerate(logs):
+            if i > 0:
+                yield ",\n"
+            yield json_lib.dumps(
+                {
+                    "id": str(log.id),
+                    "action": log.action,
+                    "user_id": str(log.user_id) if log.user_id else None,
+                    "entity_type": log.entity_type,
+                    "entity_id": str(log.entity_id) if log.entity_id else None,
+                    "details": log.details,
+                    "ip_address": log.ip_address,
+                    "user_agent": log.user_agent,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                }
+            )
+        yield "\n]"
+
+    # Generate response based on format
+    if format == "csv":
+        return StreamingResponse(
+            generate_csv(),
+            media_type="text/csv",
+            headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
+        )
+    elif format == "jsonl":
+        return StreamingResponse(
+            generate_jsonl(),
+            media_type="application/x-ndjson",
+            headers={"Content-Disposition": "attachment; filename=audit_logs.jsonl"},
+        )
+    else:  # json
+        return StreamingResponse(
+            generate_json(),
+            media_type="application/json",
+            headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
+        )

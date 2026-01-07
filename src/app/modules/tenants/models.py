@@ -10,7 +10,9 @@ from ...core.db.database import Base
 if TYPE_CHECKING:
     from src.app.modules.audit_logs.models import AuditLog
     from src.app.modules.feature_flags.models import FeatureFlagOverride
+    from src.app.modules.files.models import File
     from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+    from src.app.modules.storage_settings.models import StorageSettings
     from src.app.modules.users.models import User
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
 
@@ -42,3 +44,7 @@ class Tenant(Base):
     webhook_deliveries: Mapped[list["WebhookDelivery"]] = relationship(back_populates="tenant", init=False)
     feature_flag_overrides: Mapped[list["FeatureFlagOverride"]] = relationship(back_populates="tenant", init=False)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False)
+    storage_settings: Mapped["StorageSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, init=False
+    )
+    files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False)
