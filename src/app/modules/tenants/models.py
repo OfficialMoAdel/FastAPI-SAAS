@@ -8,7 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ...core.db.database import Base
 
 if TYPE_CHECKING:
+    from src.app.modules.ai.models import AIChatSession
     from src.app.modules.audit_logs.models import AuditLog
+    from src.app.modules.billing.models import Product, StripeSettings, SubscriptionPlan
     from src.app.modules.feature_flags.models import FeatureFlagOverride
     from src.app.modules.files.models import File
     from src.app.modules.notifications.models import EmailTemplateOverride, Notification
@@ -48,3 +50,14 @@ class Tenant(Base):
         back_populates="tenant", uselist=False, init=False
     )
     files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False)
+    # Billing & AI relationships (Phase 3/5)
+    stripe_settings: Mapped["StripeSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, init=False
+    )
+    subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(
+        back_populates="tenant", init=False
+    )
+    products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False)
+    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(
+        back_populates="tenant", init=False
+    )

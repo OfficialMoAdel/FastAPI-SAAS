@@ -113,15 +113,58 @@ src/app/modules/{module_name}/
 - [ ] Exceptions use `ModelNotFoundError`, `DuplicateError` from `_base`
 - [ ] Router registered in `api/v1/__init__.py`
 
-## When NOT to Use BaseService
+## Service Pattern Decision Guide
 
-Some modules should not inherit `BaseService`:
+The codebase uses two service patterns by design. Choose based on your service's characteristics.
 
-| Module Type | Reason |
-|-------------|--------|
-| Auth modules | Specialized authentication flows |
-| Queue-based | No database (e.g., `tasks` with ARQ) |
-| Append-only | No update/delete (e.g., `audit_logs`) |
-| Complex orchestration | Multi-service logic (e.g., `sso`) |
+### Pattern 1: BaseService (for standard entity CRUD)
 
-For these, still use `_base` exceptions for consistency.
+Use `BaseService[Model]` when:
+- Your service primarily manages a single entity type
+- Standard CRUD operations (get/list/create/update/delete) apply
+- Pagination is needed for listing
+- You want inherited FastCRUD integration
+
+**Current services using BaseService:**
+| Service | Model | Notes |
+|---------|-------|-------|
+| `APIKeyService` | APIKey | Standard key management |
+| `TenantService` | Tenant | Tenant CRUD with customization |
+| `PostService` | Post | Content management |
+| `TierService` | Tier | Subscription tier management |
+| `RateLimitService` | RateLimit | Rate limit configuration |
+
+### Pattern 2: Standalone Service (for specialized operations)
+
+Use standalone class when:
+- Operations don't fit standard CRUD patterns
+- Multiple external services are orchestrated
+- Complex business logic dominates
+- Authentication/security flows are primary concern
+- Write-only or append-only operations
+
+**Current standalone services:**
+| Service | Reason |
+|---------|--------|
+| `AuthService` | Token generation, password verification flows |
+| `SSOService` | External OAuth provider orchestration |
+| `PasskeyService` | WebAuthn registration/authentication flows |
+| `MagicLinkService` | Token-based passwordless auth |
+| `FileService` | External storage provider operations |
+| `StorageSettingsService` | Encrypted config with validation |
+| `SSOSettingsService` | Encrypted provider credentials |
+| `WebhookService` | Event delivery with retry logic |
+| `NotificationService` | Email sending, no DB entity |
+| `AuditLogService` | Append-only event logging |
+| `TaskService` | Background job management |
+| `UserService` | Complex user operations (roles, SSO links) |
+| `RoleService` | RBAC with permission queries |
+| `PreferencesService` | JSON preference operations |
+| `FeatureFlagsService` | Simple flag lookups |
+
+### Guidelines
+
+1. **Don't force BaseService** - If your service has mostly custom methods, standalone is cleaner
+2. **Consistency within pattern** - Follow the pattern conventions (DI factories, exception handling)
+3. **Use `_base` exceptions** - Both patterns should use `ModelNotFoundError`, `DuplicateError`, etc.
+4. **Document choice** - Add a docstring explaining why the pattern was chosen

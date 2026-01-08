@@ -1,0 +1,404 @@
+"""Billing & Payments router - HTTP handlers for billing operations."""
+
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
+from sqlalchemy.ext.asyncio import AsyncSession
+from redis.asyncio import Redis
+
+from src.app.core.config import settings
+from src.app.core.utils.cache import async_get_redis
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+from src.app.core.db.database import async_get_db
+from .webhook import verify_webhook_signature, handle_webhook_event
+import logging
+
+from src.app.api.dependencies import get_current_user
+
+from .schemas import (
+    BillingRecordPage,
+    BillingRecordRead,
+    CheckoutCreate,
+    CheckoutSession,
+    ProductCreate,
+    ProductPage,
+    ProductRead,
+    ProductUpdate,
+    StripeSettingsRead,
+    StripeSettingsReadFull,
+    StripeSettingsUpdate,
+    SubscriptionPlanCreate,
+    SubscriptionPlanPage,
+    SubscriptionPlanRead,
+    SubscriptionPlanUpdate,
+    UserSubscriptionRead,
+    UserSubscriptionReadWithPlan,
+)
+from .service import (
+    get_billing_record_service,
+    get_checkout_service,
+    get_product_service,
+    get_stripe_settings_service,
+    get_subscription_plan_service,
+    get_user_subscription_service,
+)
+
+router = APIRouter(prefix="/billing", tags=["billing"])
+logger = logging.getLogger(__name__)
+
+
+# =============================================================================
+# WEBHOOK ENDPOINT
+# =============================================================================
+
+
+@router.post("/webhook", status_code=status.HTTP_200_OK)
+async def stripe_webhook(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    redis: Annotated[Redis, Depends(async_get_redis)],
+):
+    """
+    Handle Stripe webhooks.
+
+    Verifies signature and dispatches event handling.
+    This endpoint is global for the platform.
+    """
+    payload = await request.body()
+    sig_header = request.headers.get("Stripe-Signature")
+    webhook_secret = settings.STRIPE_WEBHOOK_SECRET
+
+    if not webhook_secret:
+        logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook secret not configured")
+
+    if not sig_header:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Stripe-Signature header")
+
+    # Verify signature
+    event = verify_webhook_signature(payload, sig_header, webhook_secret)
+
+    # Idempotency check (T050)
+    event_id = event["id"]
+    key = f"stripe_webhook:{event_id}"
+    if await redis.exists(key):
+        logger.info(f"Duplicate webhook event ignored: {event_id}")
+        return {"status": "success", "message": "Already processed"}
+
+    # Set key with expiry (24h) - at-most-once semantics for now
+    await redis.setex(key, 86400, "1")
+
+    # Handle event in background task (T051)
+    background_tasks.add_task(handle_webhook_event, event)
+
+    return {"status": "success"}
+
+
+# =============================================================================
+# STRIPE SETTINGS ENDPOINTS (Admin only)
+# =============================================================================
+
+
+@router.get(
+    "/settings",
+    response_model=StripeSettingsReadFull,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_BILLING))],
+)
+async def get_stripe_settings(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Get Stripe settings for the current tenant (admin only)."""
+    service = get_stripe_settings_service(db)
+    settings = await service.get_settings()
+    if settings is None:
+        return {
+            "id": 0,
+            "tenant_id": 0,
+            "stripe_customer_id": None,
+            "stripe_account_id": None,
+            "is_active": False,
+            "has_secret_key": False,
+            "has_webhook_secret": False,
+            "created_at": None,
+            "updated_at": None,
+        }
+    return {
+        **settings,
+        "has_secret_key": bool(settings.get("encrypted_secret_key")),
+        "has_webhook_secret": bool(settings.get("webhook_secret")),
+    }
+
+
+@router.patch(
+    "/settings",
+    response_model=StripeSettingsRead,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_BILLING))],
+)
+async def update_stripe_settings(
+    data: StripeSettingsUpdate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Update Stripe settings for the current tenant (admin only)."""
+    service = get_stripe_settings_service(db)
+    return await service.update_settings(data)
+
+
+# =============================================================================
+# SUBSCRIPTION PLAN ENDPOINTS
+# =============================================================================
+
+
+@router.post(
+    "/plans",
+    response_model=SubscriptionPlanRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def create_subscription_plan(
+    data: SubscriptionPlanCreate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Create a new subscription plan (admin only)."""
+    service = get_subscription_plan_service(db)
+    return await service.create_plan(data)
+
+
+@router.get("/plans", response_model=SubscriptionPlanPage)
+async def list_subscription_plans(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    page: int = 1,
+    limit: int = 20,
+    is_active: bool | None = None,
+) -> dict:
+    """List subscription plans (public for pricing page)."""
+    service = get_subscription_plan_service(db)
+    result = await service.get_plans(page=page, limit=limit, is_active=is_active)
+    data = result.get("data", [])
+    total = result.get("total_count", len(data))
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
+
+
+@router.get("/plans/{plan_id}", response_model=SubscriptionPlanRead)
+async def get_subscription_plan(
+    plan_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Get a subscription plan by ID."""
+    service = get_subscription_plan_service(db)
+    return await service.get_plan(plan_id)
+
+
+@router.patch(
+    "/plans/{plan_id}",
+    response_model=SubscriptionPlanRead,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def update_subscription_plan(
+    plan_id: int,
+    data: SubscriptionPlanUpdate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Update a subscription plan (admin only)."""
+    service = get_subscription_plan_service(db)
+    return await service.update_plan(plan_id, data)
+
+
+@router.delete(
+    "/plans/{plan_id}",
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def delete_subscription_plan(
+    plan_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Deactivate a subscription plan (admin only)."""
+    service = get_subscription_plan_service(db)
+    return await service.delete_plan(plan_id)
+
+
+# =============================================================================
+# PRODUCT ENDPOINTS
+# =============================================================================
+
+
+@router.post(
+    "/products",
+    response_model=ProductRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def create_product(
+    data: ProductCreate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Create a new product (admin only)."""
+    service = get_product_service(db)
+    return await service.create_product(data)
+
+
+@router.get("/products", response_model=ProductPage)
+async def list_products(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    page: int = 1,
+    limit: int = 20,
+    is_active: bool | None = None,
+) -> dict:
+    """List products."""
+    service = get_product_service(db)
+    result = await service.get_products(page=page, limit=limit, is_active=is_active)
+    data = result.get("data", [])
+    total = result.get("total_count", len(data))
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
+
+
+@router.get("/products/{product_id}", response_model=ProductRead)
+async def get_product(
+    product_id: int,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Get a product by ID."""
+    service = get_product_service(db)
+    return await service.get_product(product_id)
+
+
+@router.patch(
+    "/products/{product_id}",
+    response_model=ProductRead,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def update_product(
+    product_id: int,
+    data: ProductUpdate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Update a product (admin only)."""
+    service = get_product_service(db)
+    return await service.update_product(product_id, data)
+
+
+# =============================================================================
+# USER SUBSCRIPTION ENDPOINTS
+# =============================================================================
+
+
+@router.get("/subscriptions/me", response_model=list[UserSubscriptionRead])
+async def get_my_subscriptions(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> list:
+    """Get current user's subscriptions."""
+    service = get_user_subscription_service(db)
+    result = await service.get_user_subscriptions(current_user["id"])
+    return result.get("data", [])
+
+
+@router.post("/subscriptions/{subscription_id}/cancel", response_model=UserSubscriptionRead)
+async def cancel_subscription(
+    subscription_id: int,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Cancel a subscription at period end."""
+    service = get_user_subscription_service(db)
+    subscription = await service.get_subscription(subscription_id)
+
+    # Verify ownership
+    if subscription["user_id"] != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to cancel this subscription",
+        )
+
+    return await service.cancel_subscription(subscription_id)
+
+
+# =============================================================================
+# CHECKOUT & BILLING RECORD ENDPOINTS
+# =============================================================================
+
+
+@router.post("/checkout", response_model=CheckoutSession)
+async def create_checkout_session(
+    data: CheckoutCreate,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Create a Stripe checkout session."""
+    service = get_checkout_service(db)
+    return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
+
+
+@router.post("/portal")
+async def create_portal_session(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """Create a Stripe Customer Portal session."""
+    # return_url expected in body or query? Usually body.
+    # Simple JSON body: {"return_url": "..."}
+    body = await request.json()
+    return_url = body.get("return_url")
+    if not return_url:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="return_url is required")
+
+    service = get_checkout_service(db)
+    url = await service.create_portal_session(return_url=return_url)
+    return {"url": url}
+
+
+@router.get("/records", response_model=BillingRecordPage)
+async def list_billing_records(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    page: int = 1,
+    limit: int = 20,
+) -> dict:
+    """List billing records for the current user."""
+    service = get_billing_record_service(db)
+    result = await service.get_user_records(current_user["id"], page=page, limit=limit)
+    data = result.get("data", [])
+    total = result.get("total_count", len(data))
+    pages = (total + limit - 1) // limit if limit > 0 else 1
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "limit": limit,
+        "pages": pages,
+    }
+
+
+@router.get("/records/{record_id}", response_model=BillingRecordRead)
+async def get_billing_record(
+    record_id: int,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Get a billing record by ID."""
+    service = get_billing_record_service(db)
+    record = await service.get_record(record_id)
+
+    # Verify ownership
+    if record["user_id"] != current_user["id"]:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Not authorized to view this record",
+        )
+
+    return record

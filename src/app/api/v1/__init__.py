@@ -1,8 +1,10 @@
 from fastapi import APIRouter
 
+from ...modules.ai.router import router as ai_router
 from ...modules.api_keys.router import router as api_keys_router
 from ...modules.audit_logs.router import router as audit_logs_router
 from ...modules.auth.router import router as auth_router
+from ...modules.billing.router import router as billing_router
 from ...modules.feature_flags.router import router as feature_flags_router
 from ...modules.files.router import router as files_router
 from ...modules.health.router import router as health_router
@@ -46,3 +48,6 @@ router.include_router(sso_settings_router)
 # Storage & Files (Phase 4)
 router.include_router(storage_settings_router)
 router.include_router(files_router)
+# Billing & AI (Phase 3/5)
+router.include_router(billing_router)
+router.include_router(ai_router)

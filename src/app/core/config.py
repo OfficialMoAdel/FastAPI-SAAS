@@ -110,6 +110,7 @@ class FirstUserSettings(BaseSettings):
 
 class AuthSettings(BaseSettings):
     """Authentication security settings."""
+
     # Account lockout configuration
     AUTH_MAX_LOGIN_ATTEMPTS: int = 5
     AUTH_LOCKOUT_DURATION_SECONDS: int = 900  # 15 minutes
@@ -221,7 +222,6 @@ class StorageSettings(BaseSettings):
     AWS_ENDPOINT_URL: str | None = None  # For localstack or MinIO
 
 
-
 class CORSSettings(BaseSettings):
     CORS_ORIGINS: list[str] = ["http://localhost:3000"]  # SECURITY: Restrict to specific origins
     CORS_METHODS: list[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
@@ -259,6 +259,22 @@ class CORSSettings(BaseSettings):
         return self
 
 
+class BillingSettings(BaseSettings):
+    """Stripe and Billing settings."""
+
+    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_PUBLISHABLE_KEY: str | None = None
+    STRIPE_WEBHOOK_SECRET: str | None = None
+
+
+class AISettings(BaseSettings):
+    """Settings for AI/LLM integration (Ollama)."""
+
+    OLLAMA_BASE_URL: str = "http://localhost:11434"
+    OLLAMA_TIMEOUT: float = 120.0
+    OLLAMA_DEFAULT_MODEL: str = "gemma3"
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -277,6 +293,8 @@ class Settings(
     WebhookSettings,
     EnvironmentSettings,
     StorageSettings,
+    BillingSettings,
+    AISettings,
     CORSSettings,
 ):
     model_config = SettingsConfigDict(

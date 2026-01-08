@@ -1,4 +1,4 @@
-# 🧠 Project Memory & Task Tracking (Beads)
+﻿# 🧠 Project Memory & Task Tracking (Beads)
 
 This project uses **Beads (`bd`)** for persistent task tracking. Do NOT use temporary markdown lists or plans in your context window.
 

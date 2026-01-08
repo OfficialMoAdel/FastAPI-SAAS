@@ -9,7 +9,8 @@ from faker import Faker
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy import Engine, String, create_engine, event
+from sqlalchemy import Engine, String, create_engine, event, text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, INET, JSONB, UUID
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.sql.expression import TextClause
@@ -61,14 +62,14 @@ def do_connect(dbapi_connection, connection_record):
     try:
         # Enable Write-Ahead Logging (WAL) for better concurrency
         cursor = dbapi_connection.cursor()
-        cursor.execute("PRAGMA journal_mode=WAL")
-        cursor.execute("PRAGMA synchronous=NORMAL")
+        # cursor.execute("PRAGMA journal_mode=WAL")
+        # cursor.execute("PRAGMA synchronous=NORMAL")
         cursor.close()
     except Exception:
         pass
 
 
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 
@@ -85,11 +86,35 @@ from src.app.main import app
 # DATABASE_URI = settings.POSTGRES_URI
 # DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
 # Use test.db specifically for tests to avoid conflicts with sql_app.db
-DATABASE_URI = "./test.db"
-DATABASE_PREFIX = settings.SQLITE_SYNC_PREFIX
+import os
 
-sync_engine = create_engine(DATABASE_PREFIX + DATABASE_URI, connect_args={"check_same_thread": False})
+# Use absolute path for test.db to avoid CWD ambiguity
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+DATABASE_URI = os.path.join(_base_dir, "test.db")
+# Ensure URI format for SQLite
+if os.name == "nt":
+    # On Windows, we need 3 slashes for absolute path: sqlite:///D:/path/to/db
+    DATABASE_URI_STR = f"/{DATABASE_URI.replace(os.sep, '/')}"
+else:
+    DATABASE_URI_STR = f"/{DATABASE_URI}"
+
+DATABASE_PREFIX = "sqlite://"  # settings.SQLITE_SYNC_PREFIX might be different
+# Result: sqlite:///D:/project/.../test.db
+
+print(f"DEBUG: conftest loaded. DB URI: {DATABASE_PREFIX}{DATABASE_URI_STR}")
+
+sync_engine = create_engine(
+    f"{DATABASE_PREFIX}{DATABASE_URI_STR}", connect_args={"check_same_thread": False}, poolclass=NullPool
+)
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+# Async Engine for tests
+test_async_engine = create_async_engine(
+    f"sqlite+aiosqlite://{DATABASE_URI_STR}",
+    poolclass=NullPool,
+)
+TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_async_engine, class_=AsyncSession)
+
 
 from src.app.core.db.database import Base
 from src.app.modules.tenants.models import Tenant
@@ -103,6 +128,15 @@ from src.app.modules.rbac.models import Role, Permission, UserRole, RolePermissi
 from src.app.modules.storage_settings.models import StorageSettings
 from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
 from src.app.modules.feature_flags.models import FeatureFlag
+from src.app.modules.billing.models import (
+    StripeSettings,
+    SubscriptionPlan,
+    Product,
+    Pricing,
+    UserSubscription,
+    BillingRecord,
+)
+from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings
 # Import all other models here to ensure they are registered in Base.metadata
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
@@ -114,142 +148,35 @@ fake = Faker()
 def setup_db():
     """Ensure fresh database schema for tests."""
     import os
-    import sys
 
     # Remove existing test database file if it exists
-    if os.path.exists("./test.db"):
-        try:
-            os.remove("./test.db")
-        except Exception as e:
-            sys.stdout.write(f"Warning: Could not remove test.db: {e}\n")
+    for ext in ["", "-wal", "-shm"]:
+        path = f"{DATABASE_URI}{ext}"
+        if os.path.exists(path):
+            try:
+                os.remove(path)
+            except Exception:
+                pass
 
     try:
         Base.metadata.drop_all(bind=sync_engine)
-    except Exception as e:
-        sys.stdout.write(f"Warning: drop_all failed: {e}\n")
-
-    # Debug: Print registered tables
-    tables = list(Base.metadata.tables.keys())
-    sys.stdout.write(f"\nDEBUG: Creating tables: {tables}\n")
+    except Exception:
+        pass
 
     Base.metadata.create_all(bind=sync_engine)
+
     yield
 
-    try:
-        Base.metadata.drop_all(bind=sync_engine)
-    except Exception as e:
-        sys.stdout.write(f"Warning: drop_all failed at teardown: {e}\n")
-
-    # Cleanup file after tests
-    if os.path.exists("./test.db"):
-        try:
-            os.remove("./test.db")
-        except Exception as e:
-            sys.stdout.write(f"Warning: Could not remove test.db at teardown: {e}\n")
-
-
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-from sqlalchemy.pool import NullPool
-
-# Setup async engine for tests (same DB as sync engine)
-# test_async_engine = create_async_engine(
-#     settings.POSTGRES_ASYNC_PREFIX + settings.POSTGRES_URI, echo=False, pool_size=5, max_overflow=5, pool_pre_ping=True
-# )
-test_async_engine = create_async_engine(
-    settings.SQLITE_ASYNC_PREFIX + "./test.db",
-    echo=False,
-    poolclass=NullPool,
-    # pool_pre_ping=True, # Not needed with NullPool usually, but harmless
-)
-TestingSessionLocal = async_sessionmaker(bind=test_async_engine, class_=AsyncSession, expire_on_commit=False)
-
-
-async def override_get_db() -> Generator[AsyncSession, None, None]:
-    """Override for async_get_db dependency using test async engine."""
-    async with TestingSessionLocal() as session:
-        yield session
+    # Cleanup file after tests (optional, kept for now to inspect if needed)
+    # if os.path.exists(DATABASE_URI):
+    #     try:
+    #         os.remove(DATABASE_URI)
+    #     except Exception:
+    #         pass
 
 
 @pytest.fixture
-def full_mock_context() -> Generator[None, None, None]:
-    """Setup mock context including overrides and patches."""
-    # Create valid fake data
-    fake_tenant = Mock()
-    fake_tenant.id = 1
-    fake_tenant.slug = "test-tenant-integration"
-    fake_tenant.is_active = True
-
-    fake_user = Mock()
-    fake_user.id = 1
-    fake_user.username = "testuser"
-    fake_user.email = "test@example.com"
-    fake_user.is_superuser = False
-    fake_user.tier_id = "test-tier-id"
-    fake_user.name = "Test User"
-    fake_user.__getitem__ = lambda self, key: getattr(self, key)
-    fake_user.get = lambda key, default=None: getattr(fake_user, key, default)
-
-    from src.app.api.dependencies import get_current_tenant, get_current_user, get_optional_user
-    from src.app.core.db.database import async_get_db
-
-    # Apply Overrides
-    app.dependency_overrides[get_current_user] = lambda: fake_user
-    app.dependency_overrides[get_current_tenant] = lambda: fake_tenant
-    app.dependency_overrides[get_optional_user] = lambda: fake_user
-    app.dependency_overrides[async_get_db] = override_get_db
-
-    # Create fake notification
-    from datetime import UTC, datetime
-    from uuid import uuid4
-
-    fake_notification = Mock()
-    fake_notification.id = uuid4()
-    fake_notification.tenant_id = uuid4()
-    fake_notification.user_id = uuid4()
-    fake_notification.template_name = "welcome"
-    fake_notification.to_email = "test@example.com"
-    fake_notification.subject = "Welcome"
-    fake_notification.status = "sent"
-    fake_notification.sent_at = datetime.now(UTC)
-    fake_notification.error_message = None
-    fake_notification.created_at = datetime.now(UTC)
-
-    # Apply Patches
-    with (
-        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
-        patch(
-            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
-            new_callable=AsyncMock,
-            return_value=(False, 0),
-        ),
-        patch(
-            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
-            new_callable=AsyncMock,
-            return_value=fake_tenant,
-        ),
-        patch(
-            "src.app.modules.notifications.service.NotificationService.send_email",
-            new_callable=AsyncMock,
-            return_value=fake_notification,
-        ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
-    ):
-        yield
-
-    # Cleanup overrides
-    app.dependency_overrides = {}
-
-
-@pytest.fixture
-def client(full_mock_context) -> Generator[TestClient, Any, None]:
-    """Sync TestClient reusing full_mock_context."""
-    with TestClient(app) as _client:
-        yield _client
-
-
-@pytest.fixture
-def db() -> Generator[Session, Any, None]:
+def db(setup_db) -> Generator[Session, Any, None]:
     session = local_session()
     yield session
     session.close()

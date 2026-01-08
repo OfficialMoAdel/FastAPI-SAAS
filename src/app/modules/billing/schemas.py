@@ -1,0 +1,387 @@
+"""Billing & Payments Pydantic schemas.
+
+Request/response models for Stripe settings, subscription plans,
+products, pricing, user subscriptions, and billing records.
+"""
+
+from datetime import datetime
+from typing import Annotated, Literal
+
+from pydantic import Field
+
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
+
+
+# =============================================================================
+# STRIPE SETTINGS SCHEMAS
+# =============================================================================
+
+
+class StripeSettingsCreate(BaseCreate):
+    """Schema for creating Stripe settings (internal use)."""
+
+    stripe_customer_id: str | None = None
+    stripe_account_id: str | None = None
+    webhook_secret: str | None = None
+    is_active: bool = False
+
+
+class StripeSettingsCreateInternal(StripeSettingsCreate):
+    """Internal schema for creating Stripe settings with tenant_id."""
+
+    tenant_id: int
+
+
+class StripeSettingsUpdate(BaseUpdate):
+    """Schema for updating Stripe settings."""
+
+    stripe_secret_key: Annotated[str | None, Field(min_length=1, max_length=255)] = None
+    webhook_secret: Annotated[str | None, Field(min_length=1, max_length=255)] = None
+    is_active: bool | None = None
+
+
+class StripeSettingsRead(BaseRead):
+    """Schema for reading Stripe settings (excludes secrets)."""
+
+    stripe_customer_id: str | None
+    stripe_account_id: str | None
+    is_active: bool
+    # Note: encrypted_secret_key and webhook_secret are NOT exposed
+
+
+class StripeSettingsReadFull(StripeSettingsRead):
+    """Schema for reading Stripe settings with masked secret presence."""
+
+    has_secret_key: bool = False
+    has_webhook_secret: bool = False
+
+
+# =============================================================================
+# SUBSCRIPTION PLAN SCHEMAS
+# =============================================================================
+
+
+class SubscriptionPlanCreate(BaseCreate):
+    """Schema for creating a subscription plan."""
+
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    description: str | None = None
+    stripe_price_id_monthly: Annotated[str | None, Field(max_length=255)] = None
+    stripe_price_id_yearly: Annotated[str | None, Field(max_length=255)] = None
+    price_monthly_cents: Annotated[int, Field(gt=0)]
+    price_yearly_cents: Annotated[int, Field(gt=0)]
+    currency: Annotated[str, Field(min_length=3, max_length=3)] = "usd"
+    features: list[str] = []
+    sort_order: int = 0
+    is_popular: bool = False
+    is_active: bool = True
+
+
+class SubscriptionPlanCreateInternal(SubscriptionPlanCreate):
+    """Internal schema for creating a subscription plan with tenant_id."""
+
+    tenant_id: int
+
+
+class SubscriptionPlanUpdate(BaseUpdate):
+    """Schema for updating a subscription plan."""
+
+    name: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    description: str | None = None
+    stripe_price_id_monthly: str | None = None
+    stripe_price_id_yearly: str | None = None
+    price_monthly_cents: Annotated[int | None, Field(gt=0)] = None
+    price_yearly_cents: Annotated[int | None, Field(gt=0)] = None
+    currency: Annotated[str | None, Field(min_length=3, max_length=3)] = None
+    features: list[str] | None = None
+    sort_order: int | None = None
+    is_popular: bool | None = None
+    is_active: bool | None = None
+
+
+class SubscriptionPlanRead(BaseRead):
+    """Schema for reading a subscription plan."""
+
+    tenant_id: int
+    name: str
+    description: str | None
+    stripe_price_id_monthly: str | None
+    stripe_price_id_yearly: str | None
+    price_monthly_cents: int
+    price_yearly_cents: int
+    currency: str
+    features: list[str]
+    sort_order: int
+    is_popular: bool
+    is_active: bool
+
+
+# =============================================================================
+# PRODUCT SCHEMAS
+# =============================================================================
+
+
+class ProductCreate(BaseCreate):
+    """Schema for creating a product."""
+
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    description: str | None = None
+    stripe_product_id: Annotated[str | None, Field(max_length=255)] = None
+    is_active: bool = True
+
+
+class ProductCreateInternal(ProductCreate):
+    """Internal schema for creating a product with tenant_id."""
+
+    tenant_id: int
+
+
+class ProductUpdate(BaseUpdate):
+    """Schema for updating a product."""
+
+    name: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    description: str | None = None
+    stripe_product_id: str | None = None
+    is_active: bool | None = None
+
+
+class ProductRead(BaseRead):
+    """Schema for reading a product."""
+
+    tenant_id: int
+    name: str
+    description: str | None
+    stripe_product_id: str | None
+    is_active: bool
+
+
+class ProductReadWithPricing(ProductRead):
+    """Schema for reading a product with its pricing tiers."""
+
+    pricing_tiers: list["PricingRead"] = []
+
+
+# =============================================================================
+# PRICING SCHEMAS
+# =============================================================================
+
+
+PricingInterval = Literal["monthly", "yearly", "one_time"]
+
+
+class PricingCreate(BaseCreate):
+    """Schema for creating a pricing tier."""
+
+    name: Annotated[str, Field(min_length=1, max_length=100)]
+    stripe_price_id: Annotated[str | None, Field(max_length=255)] = None
+    amount_cents: Annotated[int, Field(ge=0)]
+    currency: Annotated[str, Field(min_length=3, max_length=3)] = "usd"
+    interval: PricingInterval
+    features: list[str] = []
+    is_active: bool = True
+
+
+class PricingCreateInternal(PricingCreate):
+    """Internal schema for creating a pricing tier with product_id."""
+
+    product_id: int
+
+
+class PricingUpdate(BaseUpdate):
+    """Schema for updating a pricing tier."""
+
+    name: Annotated[str | None, Field(min_length=1, max_length=100)] = None
+    stripe_price_id: str | None = None
+    amount_cents: Annotated[int | None, Field(ge=0)] = None
+    currency: Annotated[str | None, Field(min_length=3, max_length=3)] = None
+    interval: PricingInterval | None = None
+    features: list[str] | None = None
+    is_active: bool | None = None
+
+
+class PricingRead(BaseRead):
+    """Schema for reading a pricing tier."""
+
+    product_id: int
+    name: str
+    stripe_price_id: str | None
+    amount_cents: int
+    currency: str
+    interval: str
+    features: list[str]
+    is_active: bool
+
+
+# =============================================================================
+# USER SUBSCRIPTION SCHEMAS
+# =============================================================================
+
+
+SubscriptionStatus = Literal["active", "canceled", "past_due", "expired", "trialing"]
+BillingInterval = Literal["monthly", "yearly"]
+
+
+class UserSubscriptionCreate(BaseCreate):
+    """Schema for creating a user subscription (internal use)."""
+
+    user_id: int
+    subscription_plan_id: int
+    stripe_subscription_id: str | None = None
+    status: SubscriptionStatus = "active"
+    billing_interval: BillingInterval
+    current_period_start: datetime
+    current_period_end: datetime
+    cancel_at_period_end: bool = False
+
+
+class UserSubscriptionCreateInternal(UserSubscriptionCreate):
+    """Internal schema for creating a user subscription with tenant_id."""
+
+    tenant_id: int
+
+
+class UserSubscriptionUpdate(BaseUpdate):
+    """Schema for updating a user subscription."""
+
+    stripe_subscription_id: str | None = None
+    status: SubscriptionStatus | None = None
+    current_period_start: datetime | None = None
+    current_period_end: datetime | None = None
+    cancel_at_period_end: bool | None = None
+    canceled_at: datetime | None = None
+
+
+class UserSubscriptionRead(BaseRead):
+    """Schema for reading a user subscription."""
+
+    tenant_id: int
+    user_id: int
+    subscription_plan_id: int
+    stripe_subscription_id: str | None
+    status: str
+    billing_interval: str
+    current_period_start: datetime
+    current_period_end: datetime
+    cancel_at_period_end: bool
+    canceled_at: datetime | None
+
+
+class UserSubscriptionReadWithPlan(UserSubscriptionRead):
+    """Schema for reading a user subscription with plan details."""
+
+    subscription_plan: SubscriptionPlanRead
+
+
+# =============================================================================
+# BILLING RECORD SCHEMAS
+# =============================================================================
+
+
+BillingRecordStatus = Literal["succeeded", "failed", "pending", "refunded"]
+
+
+class BillingRecordCreate(BaseCreate):
+    """Schema for creating a billing record (internal use)."""
+
+    user_id: int
+    user_subscription_id: int | None = None
+    stripe_payment_intent_id: str | None = None
+    stripe_invoice_id: str | None = None
+    amount_cents: int
+    currency: str = "usd"
+    status: BillingRecordStatus
+    description: str | None = None
+
+
+class BillingRecordCreateInternal(BillingRecordCreate):
+    """Internal schema for creating a billing record with tenant_id."""
+
+    tenant_id: int
+
+
+class BillingRecordRead(BaseRead):
+    """Schema for reading a billing record."""
+
+    tenant_id: int
+    user_id: int
+    user_subscription_id: int | None
+    stripe_payment_intent_id: str | None
+    stripe_invoice_id: str | None
+    amount_cents: int
+    currency: str
+    status: str
+    description: str | None
+
+
+# =============================================================================
+# CHECKOUT SCHEMAS
+# =============================================================================
+
+
+class CheckoutCreate(BaseCreate):
+    """Schema for initiating a checkout session."""
+
+    plan_id: int
+    billing_interval: BillingInterval
+    success_url: Annotated[str, Field(max_length=2000)]
+    cancel_url: Annotated[str, Field(max_length=2000)]
+
+
+class CheckoutSession(BaseCreate):
+    """Schema for checkout session response."""
+
+    checkout_url: str
+    session_id: str
+    expires_at: datetime
+
+
+# =============================================================================
+# PAGINATION SCHEMAS
+# =============================================================================
+
+
+class SubscriptionPlanPage(BaseCreate):
+    """Paginated list of subscription plans."""
+
+    items: list[SubscriptionPlanRead]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+class ProductPage(BaseCreate):
+    """Paginated list of products."""
+
+    items: list[ProductRead]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+class BillingRecordPage(BaseCreate):
+    """Paginated list of billing records."""
+
+    items: list[BillingRecordRead]
+    total: int
+    page: int
+    limit: int
+    pages: int
+
+
+# =============================================================================
+# ERROR SCHEMAS
+# =============================================================================
+
+
+class PaymentError(BaseCreate):
+    """Schema for payment error response."""
+
+    detail: str
+    error_code: str
+    decline_code: str | None = None
+
+
+# Resolve forward references
+ProductReadWithPricing.model_rebuild()

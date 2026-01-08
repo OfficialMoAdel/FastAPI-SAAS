@@ -164,8 +164,15 @@ Specify.txt
 Specify.md
 .agent
 .claude
-specs
-.specify
+#specs
+specs/001*
+specs/002*
+specs/003*
+specs/004*
+specs/005*
+specs/006*
+specs/007*
+#.specify
 .archived
 claudedocs
 geminidocs
@@ -173,8 +180,8 @@ env.txt
 Constitution.txt
 .serena
 1claudedocs
-IMPLEMENTATION_WORKFLOW.md
-MIGRATION_PLAN.md
+#IMPLEMENTATION_WORKFLOW.md
+#MIGRATION_PLAN.md
 IMPLEMENTATION_TASKS
 routes.txt
 Constitution.txt
@@ -182,3 +189,6 @@ coverage_report*
 #IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
 IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
 sql_app.db*
+
+# Auto Claude data directory
+.auto-claude/
