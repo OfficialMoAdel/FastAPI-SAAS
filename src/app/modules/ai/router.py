@@ -3,14 +3,16 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Response, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 
+from .middleware import RateLimitedUser
 from .schemas import (
+    AIModelsListResponse,
     AIServiceError,
     AISettingsRead,
     AISettingsUpdate,
@@ -23,7 +25,9 @@ from .schemas import (
     ChatSessionRead,
     ChatSessionReadWithMessages,
     ChatSessionUpdate,
+    RateLimitError as RateLimitErrorSchema,
 )
+from .ollama_client import get_ollama_client
 from .service import (
     ChatCompletionError,
     get_ai_settings_service,
@@ -171,6 +175,23 @@ async def update_ai_settings(
     return await service.update_settings(current_user["id"], data)
 
 
+@router.get("/models", response_model=AIModelsListResponse)
+async def list_available_models(
+    current_user: Annotated[dict, Depends(get_current_user)],
+) -> dict:
+    """List available AI models from Ollama.
+
+    Returns a list of model names that are currently available in the
+    configured Ollama instance, plus the default model.
+    """
+    client = get_ollama_client()
+    models = await client.list_models()
+    return {
+        "models": models,
+        "default_model": "gemma3",
+    }
+
+
 # =============================================================================
 # CHAT COMPLETION ENDPOINTS
 # =============================================================================
@@ -180,19 +201,22 @@ async def update_ai_settings(
     "/sessions/{session_id}/chat",
     response_model=ChatCompletionResponse,
     responses={
+        429: {"model": RateLimitErrorSchema, "description": "Rate limit exceeded"},
         503: {"model": AIServiceError, "description": "AI service unavailable"},
     },
 )
 async def chat_completion(
     session_id: int,
     request: ChatCompletionRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: RateLimitedUser,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
     """Send a message and get an AI response.
 
     This endpoint sends the user's message to the AI model and returns
     the complete response. For real-time streaming, use the /chat/stream endpoint.
+
+    Rate limited to 60 requests per user per minute.
     """
     service = get_chat_completion_service(db)
     try:
@@ -208,17 +232,24 @@ async def chat_completion(
         ) from e
 
 
-@router.post("/sessions/{session_id}/chat/stream")
+@router.post(
+    "/sessions/{session_id}/chat/stream",
+    responses={
+        429: {"model": RateLimitErrorSchema, "description": "Rate limit exceeded"},
+    },
+)
 async def chat_completion_stream(
     session_id: int,
     request: ChatCompletionRequest,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: RateLimitedUser,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> StreamingResponse:
     """Send a message and stream the AI response.
 
     Returns a Server-Sent Events (SSE) stream of response chunks.
     Each chunk is a JSON object with 'content', 'done', and optionally 'token_count'.
+
+    Rate limited to 60 requests per user per minute.
     """
     service = get_chat_completion_service(db)
 

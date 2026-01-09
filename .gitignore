@@ -164,7 +164,7 @@ Specify.txt
 Specify.md
 .agent
 .claude
-#specs
+specs
 specs/001*
 specs/002*
 specs/003*
@@ -172,7 +172,8 @@ specs/004*
 specs/005*
 specs/006*
 specs/007*
-#.specify
+specs/008*
+.specify
 .archived
 claudedocs
 geminidocs

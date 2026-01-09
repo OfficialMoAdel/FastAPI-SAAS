@@ -21,6 +21,8 @@ from .schemas import (
     BillingRecordRead,
     CheckoutCreate,
     CheckoutSession,
+    PricingCreate,
+    PricingRead,
     ProductCreate,
     ProductPage,
     ProductRead,
@@ -291,6 +293,22 @@ async def update_product(
     return await service.update_product(product_id, data)
 
 
+@router.post(
+    "/products/{product_id}/pricing",
+    response_model=PricingRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
+)
+async def add_product_pricing(
+    product_id: int,
+    data: PricingCreate,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict:
+    """Add a pricing tier to a product (admin only)."""
+    service = get_product_service(db)
+    return await service.add_pricing(product_id, data)
+
+
 # =============================================================================
 # USER SUBSCRIPTION ENDPOINTS
 # =============================================================================
@@ -368,10 +386,17 @@ async def list_billing_records(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
     limit: int = 20,
+    status: str | None = None,
 ) -> dict:
-    """List billing records for the current user."""
+    """List billing records for the current user.
+
+    Args:
+        page: Page number (1-indexed)
+        limit: Number of records per page
+        status: Optional filter by status (succeeded, failed, pending, refunded)
+    """
     service = get_billing_record_service(db)
-    result = await service.get_user_records(current_user["id"], page=page, limit=limit)
+    result = await service.get_user_records(current_user["id"], page=page, limit=limit, status=status)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
     pages = (total + limit - 1) // limit if limit > 0 else 1

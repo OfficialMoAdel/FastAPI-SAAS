@@ -100,6 +100,20 @@ class AISettingsRead(BaseRead):
     system_prompt: str | None
 
 
+class AIModelInfo(BaseCreate):
+    """Schema for model information."""
+
+    name: str
+    available: bool = True
+
+
+class AIModelsListResponse(BaseCreate):
+    """Schema for available models list response."""
+
+    models: list[str]
+    default_model: str = "gemma3"
+
+
 # =============================================================================
 # CHAT COMPLETION SCHEMAS
 # =============================================================================

@@ -182,6 +182,12 @@ def db(setup_db) -> Generator[Session, Any, None]:
     session.close()
 
 
+async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
+    """Override database dependency to use test async session."""
+    async with TestingSessionLocal() as session:
+        yield session
+
+
 @pytest.fixture
 def client_auth() -> Generator[TestClient, Any, None]:
     """Client fixture for authentication tests - patches tenant and uses SQLite DB."""

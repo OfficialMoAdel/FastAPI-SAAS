@@ -26,6 +26,8 @@ from ..modules._base.exceptions import (
 from ..modules._base.exceptions import (
     ValidationError as BaseValidationError,
 )
+from ..modules.ai.exceptions import SessionLimitExceededError
+from ..modules.billing.exceptions import PaymentRequiredError
 
 logger = get_logger(__name__)
 
@@ -52,6 +54,10 @@ class ErrorCode:
     # Rate limiting
     RATE_LIMITED = "RATE_LIMITED"
 
+    # Payment errors
+    PAYMENT_REQUIRED = "PAYMENT_REQUIRED"
+    PAYMENT_FAILED = "PAYMENT_FAILED"
+
     # Server errors
     INTERNAL_ERROR = "INTERNAL_ERROR"
     SERVICE_UNAVAILABLE = "SERVICE_UNAVAILABLE"
@@ -59,6 +65,9 @@ class ErrorCode:
     # Tenant errors
     TENANT_NOT_FOUND = "TENANT_NOT_FOUND"
     TENANT_SUSPENDED = "TENANT_SUSPENDED"
+
+    # Resource limit errors
+    SESSION_LIMIT_EXCEEDED = "SESSION_LIMIT_EXCEEDED"
 
 
 def create_error_response(
@@ -195,6 +204,34 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
+    @app.exception_handler(PaymentRequiredError)
+    async def payment_required_handler(request: Request, exc: PaymentRequiredError) -> JSONResponse:
+        """Handle PaymentRequiredError for billing/payment failures.
+
+        Returns HTTP 402 Payment Required with payment error details.
+        """
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Payment required",
+            error_code=exc.error_code,
+            decline_code=exc.decline_code,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        details: dict[str, Any] = {"error_code": exc.error_code}
+        if exc.decline_code:
+            details["decline_code"] = exc.decline_code
+
+        return create_error_response(
+            code=ErrorCode.PAYMENT_REQUIRED,
+            message=str(exc),
+            status_code=402,
+            details=details,
+            request_id=request_id,
+        )
+
     @app.exception_handler(ValidationError)
     async def validation_exception_handler(request: Request, exc: ValidationError) -> JSONResponse:
         """Handle Pydantic validation errors."""
@@ -222,6 +259,38 @@ def setup_exception_handlers(app: FastAPI) -> None:
             code=ErrorCode.VALIDATION_ERROR,
             message="Request validation failed",
             status_code=422,
+            details=details,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(SessionLimitExceededError)
+    async def session_limit_exceeded_handler(request: Request, exc: SessionLimitExceededError) -> JSONResponse:
+        """Handle SessionLimitExceededError for AI session limits.
+
+        Returns HTTP 429 Too Many Requests when session limit is exceeded.
+        """
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Session limit exceeded",
+            tenant_id=exc.tenant_id,
+            limit=exc.limit,
+            current_count=exc.current_count,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        details: dict[str, Any] = {
+            "tenant_id": exc.tenant_id,
+            "limit": exc.limit,
+        }
+        if exc.current_count is not None:
+            details["current_count"] = exc.current_count
+
+        return create_error_response(
+            code=ErrorCode.SESSION_LIMIT_EXCEEDED,
+            message=str(exc),
+            status_code=429,
             details=details,
             request_id=request_id,
         )
@@ -254,6 +323,7 @@ def _status_to_error_code(status_code: int) -> str:
     mapping = {
         400: ErrorCode.INVALID_INPUT,
         401: ErrorCode.UNAUTHORIZED,
+        402: ErrorCode.PAYMENT_REQUIRED,
         403: ErrorCode.FORBIDDEN,
         404: ErrorCode.NOT_FOUND,
         409: ErrorCode.CONFLICT,

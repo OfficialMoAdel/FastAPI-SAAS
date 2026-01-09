@@ -4,6 +4,7 @@ Business logic for Stripe integration, subscription management,
 products, pricing, and billing records.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,6 +16,8 @@ from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
+
+logger = logging.getLogger(__name__)
 
 from .crud import (
     crud_billing_records,
@@ -202,6 +205,43 @@ class ProductService(BaseService[Product]):
         await crud_products.update(db=self.db, object=update_data, id=product_id)
         return await crud_products.get(db=self.db, id=product_id)
 
+    async def deactivate_product(self, product_id: int) -> dict[str, Any]:
+        """Deactivate a product."""
+        product = await crud_products.get(db=self.db, id=product_id)
+        if product is None:
+            raise ModelNotFoundError("Product", product_id)
+
+        update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
+        await crud_products.update(db=self.db, object=update_data, id=product_id)
+        return await crud_products.get(db=self.db, id=product_id)
+
+    async def get_product_with_pricing(self, product_id: int) -> dict[str, Any]:
+        """Get a product by ID with its pricing tiers."""
+        product = await crud_products.get(db=self.db, id=product_id)
+        if product is None:
+            raise ModelNotFoundError("Product", product_id)
+
+        pricing_tiers = await crud_pricing.get_multi(db=self.db, product_id=product_id)
+        result = dict(product) if hasattr(product, "__iter__") else product
+        if isinstance(result, dict):
+            result["pricing_tiers"] = pricing_tiers
+        return result
+
+    async def add_pricing(
+        self,
+        product_id: int,
+        data: PricingCreate,
+    ) -> dict[str, Any]:
+        """Add a pricing tier to a product."""
+        product = await crud_products.get(db=self.db, id=product_id)
+        if product is None:
+            raise ModelNotFoundError("Product", product_id)
+
+        pricing_data = data.model_dump()
+        pricing_data["product_id"] = product_id
+        create_obj = PricingCreateInternal(**pricing_data)
+        return await crud_pricing.create(db=self.db, object=create_obj)
+
 
 class PricingService(BaseService[Pricing]):
     """Service for managing pricing tiers."""
@@ -255,11 +295,14 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
+        logger.info(f"Creating subscription for user {user_id} in tenant {tenant.id}")
         sub_data = data.model_dump()
         sub_data["tenant_id"] = tenant.id
         sub_data["user_id"] = user_id
         create_obj = UserSubscriptionCreateInternal(**sub_data)
-        return await crud_user_subscriptions.create(db=self.db, object=create_obj)
+        result = await crud_user_subscriptions.create(db=self.db, object=create_obj)
+        logger.info(f"Subscription created: {result.get('id')}")
+        return result
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Get a subscription by ID."""
@@ -284,10 +327,46 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         return await crud_user_subscriptions.get(db=self.db, id=subscription_id)
 
     async def cancel_subscription(self, subscription_id: int) -> dict[str, Any]:
-        """Cancel a subscription at period end."""
+        """Cancel a subscription at period end.
+
+        This method:
+        1. Validates subscription exists
+        2. Calls Stripe API to cancel at period end (if stripe_subscription_id exists)
+        3. Updates local database record
+
+        Args:
+            subscription_id: The subscription ID to cancel
+
+        Returns:
+            Updated subscription record
+
+        Raises:
+            ModelNotFoundError: If subscription not found
+            HTTPException: If Stripe API call fails
+        """
+        logger.info(f"Cancelling subscription {subscription_id}")
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        # T109: Call Stripe API to cancel subscription at period end
+        stripe_subscription_id = subscription.get("stripe_subscription_id")
+        if stripe_subscription_id:
+            api_key = settings.STRIPE_SECRET_KEY
+            if api_key:
+                try:
+                    stripe.Subscription.modify(
+                        stripe_subscription_id,
+                        api_key=api_key,
+                        cancel_at_period_end=True,
+                    )
+                    logger.info(f"Stripe subscription {stripe_subscription_id} marked for cancellation")
+                except stripe.error.StripeError as e:
+                    logger.error(f"Failed to cancel Stripe subscription: {e}")
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Failed to cancel subscription in Stripe: {str(e)}",
+                    )
 
         await crud_user_subscriptions.update(
             db=self.db,
@@ -325,10 +404,30 @@ class BillingRecordService(BaseService[BillingRecord]):
             raise ModelNotFoundError("BillingRecord", record_id)
         return record
 
-    async def get_user_records(self, user_id: int, page: int = 1, limit: int = 20) -> dict[str, Any]:
-        """Get paginated billing records for a user."""
+    async def get_user_records(
+        self, user_id: int, page: int = 1, limit: int = 20, status: str | None = None
+    ) -> dict[str, Any]:
+        """Get paginated billing records for a user.
+
+        Args:
+            user_id: The user ID to filter records for
+            page: Page number (1-indexed)
+            limit: Number of records per page
+            status: Optional status filter (succeeded, failed, pending, refunded)
+
+        Returns:
+            Dict with 'data' list and 'total_count'
+        """
         offset = (page - 1) * limit
-        return await crud_billing_records.get_multi(db=self.db, user_id=user_id, offset=offset, limit=limit)
+        filters: dict[str, Any] = {"user_id": user_id}
+
+        # T105: Add billing record status filtering
+        if status is not None:
+            filters["status"] = status
+
+        return await crud_billing_records.get_multi(
+            db=self.db, offset=offset, limit=limit, sort_columns=["created_at"], sort_orders=["desc"], **filters
+        )
 
 
 # Dependency injection factories

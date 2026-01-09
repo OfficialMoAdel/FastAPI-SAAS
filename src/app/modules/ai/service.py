@@ -3,6 +3,7 @@
 Business logic for AI chat sessions, messages, and user settings.
 """
 
+import logging
 from datetime import UTC, datetime
 from typing import Any, AsyncGenerator
 
@@ -12,7 +13,10 @@ from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 
+logger = logging.getLogger(__name__)
+
 from .crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
+from .exceptions import SessionLimitExceededError
 from .models import AIChatMessage, AIChatSession, AISettings
 from .ollama_client import OllamaClient, OllamaError, get_ollama_client
 from .schemas import (
@@ -24,6 +28,102 @@ from .schemas import (
 )
 
 
+# T096: Token estimation (4 chars per token)
+DEFAULT_CONTEXT_WINDOW = 8192  # Default context window size in tokens
+
+# T134: Maximum concurrent sessions per tenant
+MAX_SESSIONS_PER_TENANT = 100
+
+
+def estimate_tokens(text: str) -> int:
+    """Estimate token count using 4 chars per token approximation.
+
+    T096: Implement token estimation (4 chars per token).
+
+    Args:
+        text: The text to estimate tokens for
+
+    Returns:
+        Estimated token count
+    """
+    return len(text) // 4 if text else 0
+
+
+def estimate_messages_tokens(messages: list[dict[str, str]]) -> int:
+    """Estimate total tokens for a list of messages.
+
+    Args:
+        messages: List of message dicts with 'role' and 'content'
+
+    Returns:
+        Estimated total token count
+    """
+    total = 0
+    for msg in messages:
+        # Count role and content
+        total += estimate_tokens(msg.get("role", ""))
+        total += estimate_tokens(msg.get("content", ""))
+        # Add overhead for message structure (approx 4 tokens per message)
+        total += 4
+    return total
+
+
+# T097: Context window truncation (FIFO, preserve system prompt)
+def truncate_context(
+    messages: list[dict[str, str]],
+    max_tokens: int = DEFAULT_CONTEXT_WINDOW,
+    system_prompt: str | None = None,
+    reserve_for_response: int = 1024,
+) -> list[dict[str, str]]:
+    """Truncate message history to fit within context window.
+
+    T097: Implement context window truncation (FIFO, preserve system prompt).
+
+    Uses FIFO strategy: removes oldest messages first while preserving
+    the system prompt and most recent messages.
+
+    Args:
+        messages: List of message dicts with 'role' and 'content'
+        max_tokens: Maximum context window size in tokens
+        system_prompt: Optional system prompt to preserve (not counted in messages)
+        reserve_for_response: Tokens to reserve for model response
+
+    Returns:
+        Truncated list of messages that fits within token limit
+    """
+    if not messages:
+        return []
+
+    # Calculate available tokens (subtract system prompt and response reserve)
+    available_tokens = max_tokens - reserve_for_response
+    if system_prompt:
+        available_tokens -= estimate_tokens(system_prompt)
+        available_tokens -= 4  # Overhead for system message structure
+
+    if available_tokens <= 0:
+        # Not enough room, return only the last message
+        return messages[-1:] if messages else []
+
+    # Start from the most recent messages (FIFO removes oldest first)
+    truncated = []
+    current_tokens = 0
+
+    # Iterate from newest to oldest
+    for msg in reversed(messages):
+        msg_tokens = estimate_tokens(msg.get("content", ""))
+        msg_tokens += estimate_tokens(msg.get("role", ""))
+        msg_tokens += 4  # Message structure overhead
+
+        if current_tokens + msg_tokens <= available_tokens:
+            truncated.insert(0, msg)  # Insert at beginning to maintain order
+            current_tokens += msg_tokens
+        else:
+            # No more room, stop adding older messages
+            break
+
+    return truncated
+
+
 class ChatSessionService(BaseService[AIChatSession]):
     """Service for managing AI chat sessions."""
 
@@ -33,10 +133,22 @@ class ChatSessionService(BaseService[AIChatSession]):
     async def create_session(
         self, user_id: int, data: ChatSessionCreate
     ) -> dict[str, Any]:
-        """Create a new chat session."""
+        """Create a new chat session.
+
+        T134: Enforces maximum 100 concurrent sessions per tenant.
+        """
         tenant = get_tenant_context()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
+
+        # T134: Check session limit before creating
+        current_count = await crud_chat_sessions.count(db=self.db, tenant_id=tenant.id)
+        if current_count >= MAX_SESSIONS_PER_TENANT:
+            raise SessionLimitExceededError(
+                tenant_id=tenant.id,
+                limit=MAX_SESSIONS_PER_TENANT,
+                current_count=current_count,
+            )
 
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
@@ -199,6 +311,7 @@ class ChatCompletionService:
         Returns:
             Dict with assistant response, model, token_count
         """
+        logger.info(f"Chat completion request for session {session_id} by user {user_id}")
         # Verify session ownership
         session = await self._session_service.get_session(session_id, user_id)
 
@@ -223,6 +336,14 @@ class ChatCompletionService:
         # Add the new user message
         history.append({"role": "user", "content": request.message})
 
+        # T097: Truncate context to fit within context window
+        history = truncate_context(
+            messages=history,
+            max_tokens=DEFAULT_CONTEXT_WINDOW,
+            system_prompt=system_prompt,
+            reserve_for_response=max_tokens,
+        )
+
         # Save user message to database
         await self._message_service.add_message(
             session_id=session_id,
@@ -231,6 +352,7 @@ class ChatCompletionService:
 
         # Call Ollama
         try:
+            logger.debug(f"Calling Ollama with model={model}, temperature={temperature}")
             result = await self.ollama.chat(
                 model=model,
                 messages=history,
@@ -238,6 +360,7 @@ class ChatCompletionService:
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
             )
+            logger.info(f"Chat completion successful, tokens={result.get('token_count')}")
 
             # Save assistant response to database
             await self._message_service.add_message(
@@ -262,6 +385,7 @@ class ChatCompletionService:
             }
 
         except OllamaError as e:
+            logger.error(f"Chat completion failed: {e.message} ({e.error_code})")
             raise ChatCompletionError(e.message, e.error_code, model) from e
 
     async def complete_stream(
@@ -297,6 +421,14 @@ class ChatCompletionService:
 
         # Add the new user message
         history.append({"role": "user", "content": request.message})
+
+        # T097: Truncate context to fit within context window
+        history = truncate_context(
+            messages=history,
+            max_tokens=DEFAULT_CONTEXT_WINDOW,
+            system_prompt=system_prompt,
+            reserve_for_response=max_tokens,
+        )
 
         # Save user message to database
         await self._message_service.add_message(
