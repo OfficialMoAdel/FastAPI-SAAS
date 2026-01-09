@@ -3,6 +3,7 @@
 import enum
 import uuid as uuid_pkg
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import (
     Boolean,
@@ -22,6 +23,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
 from ...core.db.models import UUIDMixin
+
+if TYPE_CHECKING:
+    from ...modules.tenants.models import Tenant
 
 
 class WebhookDeliveryStatus(str, enum.Enum):

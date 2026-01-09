@@ -14,6 +14,8 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .._base import BaseCreate, BaseRead, BaseUpdate
+
 # ============================================================================
 # Enums
 # ============================================================================
@@ -32,7 +34,7 @@ class ThemeOption(str, Enum):
 # ============================================================================
 
 
-class UserPreferencesUpdate(BaseModel):
+class UserPreferencesUpdate(BaseUpdate):
     """Schema for updating user preferences (partial update).
 
     All fields are optional - only include fields to update.
@@ -115,7 +117,7 @@ class UserPreferencesResponse(BaseModel):
 # ============================================================================
 
 
-class UserPreferencesCreate(BaseModel):
+class UserPreferencesCreate(BaseCreate):
     """Schema for creating user preferences record."""
 
     user_id: int = Field(..., description="User ID")
@@ -125,13 +127,11 @@ class UserPreferencesCreate(BaseModel):
     )
 
 
-class UserPreferencesRead(BaseModel):
-    """Schema for reading user preferences from database."""
+class UserPreferencesRead(BaseRead):
+    """Schema for reading user preferences from database.
 
-    model_config = ConfigDict(from_attributes=True)
+    Inherits from BaseRead: id, created_at, updated_at
+    """
 
-    id: int
     user_id: int
     preferences: dict[str, Any]
-    created_at: datetime
-    updated_at: datetime

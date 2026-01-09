@@ -1,36 +1,84 @@
+"""User schemas for API request/response validation."""
+
 from datetime import datetime
 from typing import Annotated
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
+from .._base import BaseCreate, BaseRead, BaseUpdate
+
+# =============================================================================
+# Base Schema (shared fields)
+# =============================================================================
 
 
 class UserBase(BaseModel):
+    """Base schema with common user fields."""
+
     name: Annotated[str, Field(min_length=2, max_length=30, examples=["User Userson"])]
     username: Annotated[str, Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userson"])]
     email: Annotated[EmailStr, Field(examples=["user.userson@example.com"])]
 
 
+# =============================================================================
+# Internal Schemas (for ORM/service layer)
+# =============================================================================
+
+
 class User(TimestampSchema, UserBase, UUIDSchema, PersistentDeletion):
+    """Internal user schema with all fields including sensitive data."""
+
     profile_image_url: Annotated[str, Field(default="https://www.profileimageurl.com")]
     hashed_password: str
     is_superuser: bool = False
     tier_id: int | None = None
 
 
-class UserRead(BaseModel):
-    id: int
+class UserCreateInternal(UserBase):
+    """Internal schema for creating users with hashed password."""
 
-    name: Annotated[str, Field(min_length=2, max_length=30, examples=["User Userson"])]
-    username: Annotated[str, Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userson"])]
-    email: Annotated[EmailStr, Field(examples=["user.userson@example.com"])]
+    hashed_password: str
+    tenant_id: int | None = None
+
+
+class UserUpdateInternal(BaseUpdate):
+    """Internal schema for updating users with timestamp."""
+
+    name: Annotated[str | None, Field(min_length=2, max_length=30, examples=["User Userberg"], default=None)]
+    username: Annotated[
+        str | None,
+        Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userberg"], default=None),
+    ]
+    email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
+    profile_image_url: Annotated[
+        str | None,
+        Field(
+            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
+            examples=["https://www.profileimageurl.com"],
+            default=None,
+        ),
+    ]
+    updated_at: datetime | None = None
+
+
+# =============================================================================
+# API Schemas (for external API)
+# =============================================================================
+
+
+class UserRead(BaseRead):
+    """API response schema for user data."""
+
+    name: str
+    username: str
+    email: EmailStr
     profile_image_url: str
     tier_id: int | None
 
 
-class UserCreate(UserBase):
-    model_config = ConfigDict(extra="forbid")
+class UserCreate(UserBase, BaseCreate):
+    """API request schema for creating a user."""
 
     password: Annotated[
         str,
@@ -59,41 +107,39 @@ class UserCreate(UserBase):
         return v
 
 
-class UserCreateInternal(UserBase):
-    hashed_password: str
-    tenant_id: int | None = None
-
-
-class UserUpdate(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class UserUpdate(BaseUpdate):
+    """API request schema for updating a user."""
 
     name: Annotated[str | None, Field(min_length=2, max_length=30, examples=["User Userberg"], default=None)]
     username: Annotated[
-        str | None, Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userberg"], default=None)
+        str | None,
+        Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userberg"], default=None),
     ]
     email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
     profile_image_url: Annotated[
         str | None,
         Field(
-            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$", examples=["https://www.profileimageurl.com"], default=None
+            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
+            examples=["https://www.profileimageurl.com"],
+            default=None,
         ),
     ]
 
 
-class UserUpdateInternal(UserUpdate):
-    updated_at: datetime
-
-
 class UserTierUpdate(BaseModel):
+    """Schema for updating user tier."""
+
     tier_id: int
 
 
-class UserDelete(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class UserDelete(BaseUpdate):
+    """Schema for soft-deleting a user."""
 
     is_deleted: bool
     deleted_at: datetime
 
 
 class UserRestoreDeleted(BaseModel):
+    """Schema for restoring a soft-deleted user."""
+
     is_deleted: bool

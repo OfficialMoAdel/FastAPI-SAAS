@@ -13,6 +13,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from .._base import BaseRead, BaseUpdate
+
 
 class StorageProviderType(str, Enum):
     """Supported storage provider types."""
@@ -97,7 +99,7 @@ class StorageSettingsCreate(StorageSettingsBase):
     )
 
 
-class StorageSettingsUpdate(BaseModel):
+class StorageSettingsUpdate(BaseUpdate):
     """Schema for updating storage settings.
 
     All fields are optional - only provided fields are updated.
@@ -107,9 +109,7 @@ class StorageSettingsUpdate(BaseModel):
     max_file_size_mb: Annotated[int, Field(ge=1, le=5000)] | None = None
     allowed_file_types: list[str] | None = None
     max_file_count: Annotated[int, Field(ge=1, le=1_000_000)] | None = None
-    storage_quota_bytes: Annotated[int, Field(ge=1024, le=10_000_000_000_000)] | None = (
-        None
-    )
+    storage_quota_bytes: Annotated[int, Field(ge=1024, le=10_000_000_000_000)] | None = None
 
     # Provider-specific credentials (optional for update)
     s3_credentials: S3Credentials | None = None
@@ -126,42 +126,20 @@ class StorageSettingsUpdate(BaseModel):
     )
 
 
-class StorageSettingsRead(StorageSettingsBase):
+class StorageSettingsRead(BaseRead, StorageSettingsBase):
     """Schema for reading storage settings.
 
+    Inherits from BaseRead: id, created_at, updated_at
     Credentials are masked for security.
     """
 
-    id: int
     tenant_id: UUID
     bucket_name: str | None = None
     region: str | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
 
     # Masked credential indicators (never expose actual values)
     has_credentials: bool = False
     credentials_last_updated: datetime | None = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "id": 1,
-                "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
-                "provider": "s3",
-                "bucket_name": "my-app-files",
-                "region": "us-east-1",
-                "max_file_size_mb": 100,
-                "allowed_file_types": ["image/jpeg", "image/png", "application/pdf"],
-                "max_file_count": 10000,
-                "storage_quota_bytes": 10737418240,
-                "has_credentials": True,
-                "created_at": "2026-01-07T12:00:00Z",
-                "updated_at": None,
-            }
-        }
-    )
 
 
 __all__ = [

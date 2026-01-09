@@ -11,6 +11,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .._base import BaseRead, BaseUpdate
+
 
 class FileUploadResponse(BaseModel):
     """Response after successful file upload."""
@@ -35,14 +37,16 @@ class FileUploadResponse(BaseModel):
                 "is_public": False,
                 "created_at": "2026-01-07T12:00:00Z",
             }
-        }
+        },
     )
 
 
-class FileRead(BaseModel):
-    """File metadata read schema."""
+class FileRead(BaseRead):
+    """File metadata read schema.
 
-    id: int
+    Inherits from BaseRead: id, created_at, updated_at
+    """
+
     tenant_id: UUID
     user_id: UUID | None = None
     original_name: str
@@ -51,45 +55,14 @@ class FileRead(BaseModel):
     size_bytes: int
     is_public: bool
     description: str | None = None
-    created_at: datetime
-    updated_at: datetime | None = None
-
-    model_config = ConfigDict(
-        from_attributes=True,
-        json_schema_extra={
-            "example": {
-                "id": 1,
-                "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
-                "user_id": "660e8400-e29b-41d4-a716-446655440001",
-                "original_name": "document.pdf",
-                "storage_path": "tenants/abc123/files/uuid-doc.pdf",
-                "mime_type": "application/pdf",
-                "size_bytes": 1048576,
-                "is_public": False,
-                "description": "Quarterly report",
-                "created_at": "2026-01-07T12:00:00Z",
-                "updated_at": None,
-            }
-        }
-    )
 
 
-class FileUpdate(BaseModel):
+class FileUpdate(BaseUpdate):
     """Schema for updating file metadata."""
 
     original_name: Annotated[str, Field(min_length=1, max_length=255)] | None = None
     is_public: bool | None = None
     description: Annotated[str, Field(max_length=1000)] | None = None
-
-    model_config = ConfigDict(
-        json_schema_extra={
-            "example": {
-                "original_name": "renamed-document.pdf",
-                "is_public": True,
-                "description": "Updated quarterly report",
-            }
-        }
-    )
 
 
 class FileListResponse(BaseModel):

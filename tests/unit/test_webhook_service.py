@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules._base import ModelNotFoundError
 from src.app.modules.webhooks.service import WEBHOOK_RETRY_DELAYS, WebhookService
 
 
@@ -170,20 +171,20 @@ class TestWebhookServiceDelivery:
         """Test error when delivery record not found."""
         mock_db.get.return_value = None
 
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ModelNotFoundError) as exc:
             await webhook_service.deliver_webhook(uuid4())
 
-        assert "Delivery" in str(exc.value) and "not found" in str(exc.value)
+        assert "WebhookDelivery" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_endpoint_not_found(self, webhook_service, mock_db, mock_webhook_delivery):
         """Test error when endpoint not found."""
         mock_db.get.side_effect = [mock_webhook_delivery, None]
 
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ModelNotFoundError) as exc:
             await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
-        assert "Endpoint" in str(exc.value) and "not found" in str(exc.value)
+        assert "WebhookEndpoint" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_circuit_open(
@@ -337,10 +338,10 @@ class TestWebhookServiceDelivery:
         """Test error when retrying non-existent delivery."""
         mock_db.get.return_value = None
 
-        with pytest.raises(ValueError) as exc:
+        with pytest.raises(ModelNotFoundError) as exc:
             await webhook_service.retry_delivery(uuid4())
 
-        assert "Delivery" in str(exc.value) and "not found" in str(exc.value)
+        assert "WebhookDelivery" in str(exc.value)
 
     @pytest.mark.asyncio
     async def test_retry_delivery(self, webhook_service, mock_db, mock_webhook_delivery):

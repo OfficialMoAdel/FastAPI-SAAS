@@ -1,7 +1,9 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
+
+from .._base import BaseCreate, BaseRead, BaseUpdate
 
 
 class SSOProvider(str, Enum):
@@ -18,28 +20,40 @@ class UserSSOConnectionBase(BaseModel):
     token_expires_at: datetime | None = None
 
 
-class UserSSOConnectionCreate(UserSSOConnectionBase):
+class UserSSOConnectionCreate(BaseCreate):
+    """Schema for creating SSO connection."""
+
+    provider: SSOProvider
+    provider_user_id: str
+    provider_email: str | None = None
+    token_expires_at: datetime | None = None
     user_id: int
     tenant_id: int
     access_token: bytes | None = None
     refresh_token: bytes | None = None
 
 
-class UserSSOConnectionUpdate(BaseModel):
+class UserSSOConnectionUpdate(BaseUpdate):
+    """Schema for updating SSO connection."""
+
     provider_email: str | None = None
     access_token: bytes | None = None
     refresh_token: bytes | None = None
     token_expires_at: datetime | None = None
 
 
-class UserSSOConnectionRead(UserSSOConnectionBase):
-    id: int
+class UserSSOConnectionRead(BaseRead):
+    """Schema for reading SSO connection.
+
+    Inherits from BaseRead: id, created_at, updated_at
+    """
+
+    provider: SSOProvider
+    provider_user_id: str
+    provider_email: str | None = None
+    token_expires_at: datetime | None = None
     user_id: int
     tenant_id: int
-    created_at: datetime
-    updated_at: datetime
-
-    model_config = ConfigDict(from_attributes=True)
 
 
 class SSOProviderRead(BaseModel):

@@ -1,6 +1,7 @@
 """Audit log model for tracking system actions and changes."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 from uuid import UUID
 
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, Text, text
@@ -10,6 +11,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from ...core.db.database import Base
+
+if TYPE_CHECKING:
+    from ...modules.tenants.models import Tenant
 
 
 class AuditLog(Base):

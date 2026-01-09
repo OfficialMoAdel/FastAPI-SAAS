@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, Field, field_validator
+
+from .._base import BaseCreate, BaseList, BaseReadUUID
+
+# =============================================================================
+# Audit Log Schemas
+# =============================================================================
 
 
 class AuditLogBase(BaseModel):
@@ -16,7 +22,7 @@ class AuditLogBase(BaseModel):
     details: dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
 
-class AuditLogCreate(AuditLogBase):
+class AuditLogCreate(AuditLogBase, BaseCreate):
     """Schema for creating audit log."""
 
     tenant_id: int
@@ -25,27 +31,36 @@ class AuditLogCreate(AuditLogBase):
     user_agent: str | None = None
 
 
-class AuditLogResponse(AuditLogBase):
+class AuditLogRead(BaseReadUUID):
     """Schema for audit log response."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
     tenant_id: int
     user_id: int | None
+    action: str
+    entity_type: str | None
+    entity_id: UUID | None
+    details: dict[str, Any]
     ip_address: str | None
     user_agent: str | None
-    created_at: datetime
 
 
-class AuditLogListResponse(BaseModel):
+# Backward compatibility alias
+AuditLogResponse = AuditLogRead
+
+
+class AuditLogList(BaseList[AuditLogRead]):
     """Schema for paginated audit log list."""
 
-    items: list[AuditLogResponse]
-    total: int
-    page: int
-    page_size: int
-    has_more: bool
+    pass
+
+
+# Backward compatibility alias
+AuditLogListResponse = AuditLogList
+
+
+# =============================================================================
+# Filter & Query Schemas
+# =============================================================================
 
 
 class AuditLogFilter(BaseModel):
@@ -58,7 +73,12 @@ class AuditLogFilter(BaseModel):
     start_date: datetime | None = None
     end_date: datetime | None = None
     page: int = Field(1, ge=1)
-    page_size: int = Field(50, ge=1, le=100)
+    per_page: int = Field(50, ge=1, le=100)  # Renamed from page_size
+
+
+# =============================================================================
+# Event Bus Schemas
+# =============================================================================
 
 
 class AuditLogEventData(BaseModel):

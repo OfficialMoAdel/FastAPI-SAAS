@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
+
+from .._base import BaseCreate, BaseList, BaseReadUUID, BaseUpdate
+
+# =============================================================================
+# Webhook Endpoint Schemas
+# =============================================================================
 
 
 class WebhookEndpointBase(BaseModel):
@@ -23,7 +29,7 @@ class WebhookEndpointBase(BaseModel):
         return v
 
 
-class WebhookEndpointCreate(WebhookEndpointBase):
+class WebhookEndpointCreate(WebhookEndpointBase, BaseCreate):
     """Schema for creating webhook endpoint."""
 
     tenant_id: UUID
@@ -32,7 +38,7 @@ class WebhookEndpointCreate(WebhookEndpointBase):
     )
 
 
-class WebhookEndpointUpdate(BaseModel):
+class WebhookEndpointUpdate(BaseUpdate):
     """Schema for updating webhook endpoint."""
 
     url: HttpUrl | None = None
@@ -41,36 +47,38 @@ class WebhookEndpointUpdate(BaseModel):
     secret: str | None = Field(None, description="New secret (regenerates signature)")
 
 
-class WebhookEndpointResponse(BaseModel):
+class WebhookEndpointRead(BaseReadUUID):
     """Schema for webhook endpoint response."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
     tenant_id: UUID
     url: str
     event_type: str
     is_active: bool
-    created_at: datetime
     # Note: secret is NOT included for security
 
 
-class WebhookEndpointListResponse(BaseModel):
+# Backward compatibility alias
+WebhookEndpointResponse = WebhookEndpointRead
+
+
+class WebhookEndpointList(BaseList[WebhookEndpointRead]):
     """Schema for paginated webhook endpoint list."""
 
-    items: list[WebhookEndpointResponse]
-    total: int
-    page: int
-    page_size: int
-    has_more: bool
+    pass
 
 
-class WebhookDeliveryResponse(BaseModel):
+# Backward compatibility alias
+WebhookEndpointListResponse = WebhookEndpointList
+
+
+# =============================================================================
+# Webhook Delivery Schemas
+# =============================================================================
+
+
+class WebhookDeliveryRead(BaseReadUUID):
     """Schema for webhook delivery response."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
     webhook_endpoint_id: UUID
     event_type: str
     payload: dict[str, Any]
@@ -79,17 +87,25 @@ class WebhookDeliveryResponse(BaseModel):
     response_status: int | None
     response_body: str | None
     next_retry_at: datetime | None
-    created_at: datetime
 
 
-class WebhookDeliveryListResponse(BaseModel):
+# Backward compatibility alias
+WebhookDeliveryResponse = WebhookDeliveryRead
+
+
+class WebhookDeliveryList(BaseList[WebhookDeliveryRead]):
     """Schema for paginated webhook delivery list."""
 
-    items: list[WebhookDeliveryResponse]
-    total: int
-    page: int
-    page_size: int
-    has_more: bool
+    pass
+
+
+# Backward compatibility alias
+WebhookDeliveryListResponse = WebhookDeliveryList
+
+
+# =============================================================================
+# Request Schemas
+# =============================================================================
 
 
 class WebhookDeliveryFilter(BaseModel):

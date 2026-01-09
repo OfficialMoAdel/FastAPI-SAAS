@@ -103,8 +103,7 @@ async def list_notifications(
         items=[NotificationResponse.model_validate(n) for n in notifications],
         total=total,
         page=(offset // limit) + 1,
-        page_size=limit,
-        has_more=(offset + len(notifications)) < total,
+        per_page=limit,
     )
 
 

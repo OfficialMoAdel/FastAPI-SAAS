@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.logger import get_logger
 from ...core.security.encryption import decrypt_data, encrypt_data
 from ...core.security.url_validator import SSRFProtectionError, validate_webhook_url
+from .._base import ModelNotFoundError
 from .models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
@@ -180,12 +181,12 @@ class WebhookService:
         # Get delivery record
         delivery = await self.db.get(WebhookDelivery, delivery_id)
         if not delivery:
-            raise ValueError(f"Delivery {delivery_id} not found")
+            raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
         # Get endpoint
         endpoint = await self.db.get(WebhookEndpoint, delivery.webhook_endpoint_id)
         if not endpoint:
-            raise ValueError(f"Endpoint {delivery.webhook_endpoint_id} not found")
+            raise ModelNotFoundError("WebhookEndpoint", delivery.webhook_endpoint_id)
 
         # Check circuit breaker before attempting delivery
         if not webhook_circuit.is_closed:
@@ -295,7 +296,7 @@ class WebhookService:
         """Retry a failed delivery."""
         delivery = await self.db.get(WebhookDelivery, delivery_id)
         if not delivery:
-            raise ValueError(f"Delivery {delivery_id} not found")
+            raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
         delivery.status = WebhookDeliveryStatus.PENDING
         delivery.attempt_count = 0

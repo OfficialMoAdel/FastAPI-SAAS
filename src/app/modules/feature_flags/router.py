@@ -1,34 +1,34 @@
 """Feature Flags API Router."""
 
-from fastapi import APIRouter, Depends
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
+from typing import Any
+
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from ...api.dependencies import get_current_tenant, get_current_user
-from ...core.db.database import async_get_db
 from ...core.rbac.dependencies import requires_permission
 from ...core.rbac.permissions import Permission
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
-from .._base.exceptions import ModelNotFoundError
+from .._base import ModelNotFoundError
 from .schemas import (
     FeatureFlagBulkUpdateRequest,
     FeatureFlagCheckResponse,
     FeatureFlagsResponse,
     FeatureFlagUpdateRequest,
 )
-from .utils import (
-    bulk_update_feature_flags,
-    get_feature_flags,
-    is_feature_enabled,
-)
+from .service import FeatureFlagService, get_feature_flag_service
 
 router = APIRouter(prefix="/feature-flags", tags=["Feature Flags"])
 
 
+def _get_tenant_id(current_tenant: Tenant | int) -> Any:
+    """Extract tenant ID from tenant object or int."""
+    return current_tenant.id if hasattr(current_tenant, "id") else current_tenant
+
+
 @router.get("", response_model=FeatureFlagsResponse)
 async def list_feature_flags(
-    db: AsyncSession = Depends(async_get_db),
+    service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> FeatureFlagsResponse:
@@ -37,16 +37,16 @@ async def list_feature_flags(
 
     Returns the complete feature_flags JSONB object from tenant record.
     """
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    flags = await get_feature_flags(db, tenant_id)
+    tenant_id = _get_tenant_id(current_tenant)
+    flags = await service.get_tenant_flags(tenant_id)
 
-    return FeatureFlagsResponse(flags=flags)
+    return FeatureFlagsResponse(feature_flags=flags)
 
 
 @router.get("/{flag_name}", response_model=FeatureFlagCheckResponse)
 async def check_feature_flag(
     flag_name: str,
-    db: AsyncSession = Depends(async_get_db),
+    service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> FeatureFlagCheckResponse:
@@ -56,8 +56,8 @@ async def check_feature_flag(
     Returns the value of the flag (can be boolean, string, number, etc.).
     Returns null if flag doesn't exist.
     """
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    enabled = await is_feature_enabled(db, tenant_id, flag_name)
+    tenant_id = _get_tenant_id(current_tenant)
+    enabled = await service.is_enabled(tenant_id, flag_name)
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
@@ -73,7 +73,7 @@ async def check_feature_flag(
 async def update_feature_flag(
     flag_name: str,
     request: FeatureFlagUpdateRequest,
-    db: AsyncSession = Depends(async_get_db),
+    service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> FeatureFlagCheckResponse:
@@ -84,27 +84,20 @@ async def update_feature_flag(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-    # Get current tenant
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    query = select(Tenant).where(Tenant.id == tenant_id)
-    result = await db.execute(query)
-    tenant = result.scalar_one()
+    tenant_id = _get_tenant_id(current_tenant)
 
-    # Update feature flags JSONB
-    if tenant.feature_flags is None:
-        tenant.feature_flags = {}
+    # Determine value to set
+    value = request.value if request.value is not None else request.enabled
 
-    # Create a copy to trigger SQLAlchemy change detection
-    flags = dict(tenant.feature_flags)
-    flags[flag_name] = request.value
-    tenant.feature_flags = flags
-
-    await db.commit()
-    await db.refresh(tenant)
+    try:
+        await service.update_tenant_flag(tenant_id, flag_name, value)
+    except ModelNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
-        enabled=request.value,
+        enabled=value if isinstance(value, bool) else True,
+        value=value,
     )
 
 
@@ -115,7 +108,7 @@ async def update_feature_flag(
 )
 async def delete_feature_flag(
     flag_name: str,
-    db: AsyncSession = Depends(async_get_db),
+    service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> None:
@@ -124,21 +117,12 @@ async def delete_feature_flag(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-    # Get current tenant
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    query = select(Tenant).where(Tenant.id == tenant_id)
-    result = await db.execute(query)
-    tenant = result.scalar_one()
+    tenant_id = _get_tenant_id(current_tenant)
 
-    if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
-        raise ModelNotFoundError("FeatureFlag", flag_name)
-
-    # Remove flag
-    flags = dict(tenant.feature_flags)
-    del flags[flag_name]
-    tenant.feature_flags = flags
-
-    await db.commit()
+    try:
+        await service.delete_tenant_flag(tenant_id, flag_name)
+    except ModelNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
 
 @router.put(
@@ -148,7 +132,7 @@ async def delete_feature_flag(
 )
 async def bulk_update_flags(
     request: FeatureFlagBulkUpdateRequest,
-    db: AsyncSession = Depends(async_get_db),
+    service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
 ) -> FeatureFlagsResponse:
@@ -157,9 +141,13 @@ async def bulk_update_flags(
 
     Requires FEATURE_FLAGS_MANAGE permission.
     """
-    tenant_id = current_tenant.id if hasattr(current_tenant, "id") else current_tenant
-    await bulk_update_feature_flags(db, tenant_id, request.feature_flags)
+    tenant_id = _get_tenant_id(current_tenant)
+
+    try:
+        await service.bulk_update_tenant_flags(tenant_id, request.feature_flags)
+    except ModelNotFoundError as e:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
 
     # Return updated flags
-    flags = await get_feature_flags(db, tenant_id)
-    return FeatureFlagsResponse(flags=flags)
+    flags = await service.get_tenant_flags(tenant_id)
+    return FeatureFlagsResponse(feature_flags=flags)

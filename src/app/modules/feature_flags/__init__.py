@@ -1,5 +1,39 @@
-"""Feature flags module."""
+"""Feature Flags module."""
 
-from .utils import get_feature_flags, is_feature_enabled, update_feature_flag
+from .models import FeatureFlag, FeatureFlagOverride
+from .schemas import (
+    FeatureFlagCheckResponse,
+    FeatureFlagCreate,
+    FeatureFlagList,
+    FeatureFlagOverrideCreate,
+    FeatureFlagOverrideRead,
+    FeatureFlagOverrideUpdate,
+    FeatureFlagRead,
+    FeatureFlagsResponse,
+    FeatureFlagUpdate,
+)
+from .service import (
+    FeatureFlagService,
+    feature_flags_service,  # Legacy compatibility
+    get_feature_flag_service,
+)
 
-__all__ = ["get_feature_flags", "is_feature_enabled", "update_feature_flag"]
+__all__ = [
+    # Models
+    "FeatureFlag",
+    "FeatureFlagOverride",
+    # Schemas
+    "FeatureFlagCreate",
+    "FeatureFlagRead",
+    "FeatureFlagUpdate",
+    "FeatureFlagList",
+    "FeatureFlagsResponse",
+    "FeatureFlagCheckResponse",
+    "FeatureFlagOverrideCreate",
+    "FeatureFlagOverrideRead",
+    "FeatureFlagOverrideUpdate",
+    # Service
+    "FeatureFlagService",
+    "get_feature_flag_service",
+    "feature_flags_service",  # Legacy
+]

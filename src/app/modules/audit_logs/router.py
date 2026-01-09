@@ -77,8 +77,8 @@ async def list_audit_logs(
     return AuditLogListResponse(
         items=[AuditLogResponse.model_validate(log) for log in logs],
         total=total,
-        limit=limit,
-        offset=offset,
+        page=(offset // limit) + 1,
+        per_page=limit,
     )
 
 

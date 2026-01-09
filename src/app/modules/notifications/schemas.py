@@ -4,7 +4,13 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field
+
+from .._base import BaseCreate, BaseList, BaseReadUUID, BaseUpdate
+
+# =============================================================================
+# Notification Schemas
+# =============================================================================
 
 
 class NotificationBase(BaseModel):
@@ -16,19 +22,16 @@ class NotificationBase(BaseModel):
     context: dict[str, Any] = Field(default_factory=dict, description="Template context variables")
 
 
-class NotificationCreate(NotificationBase):
+class NotificationCreate(NotificationBase, BaseCreate):
     """Schema for creating notification."""
 
     tenant_id: UUID
     user_id: UUID | None = None
 
 
-class NotificationResponse(BaseModel):
+class NotificationRead(BaseReadUUID):
     """Schema for notification response."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
     tenant_id: UUID
     user_id: UUID | None
     template_name: str
@@ -37,7 +40,20 @@ class NotificationResponse(BaseModel):
     status: str
     sent_at: datetime | None
     error_message: str | None
-    created_at: datetime
+
+
+# Backward compatibility alias
+NotificationResponse = NotificationRead
+
+
+class NotificationList(BaseList[NotificationRead]):
+    """Schema for paginated notification list."""
+
+    pass
+
+
+# Backward compatibility alias
+NotificationListResponse = NotificationList
 
 
 class NotificationSendRequest(BaseModel):
@@ -49,47 +65,41 @@ class NotificationSendRequest(BaseModel):
     subject_override: str | None = Field(None, description="Override default subject")
 
 
-class NotificationListResponse(BaseModel):
-    """Schema for paginated notification list."""
-
-    items: list[NotificationResponse]
-    total: int
-    page: int
-    page_size: int
-    has_more: bool
+# =============================================================================
+# Email Template Override Schemas
+# =============================================================================
 
 
 class EmailTemplateOverrideBase(BaseModel):
     """Base schema for email template override."""
 
-    template_name: str
-    subject_override: str | None = None
+    template_name: str = Field(..., description="Template name to override")
+    subject_override: str | None = Field(None, description="Custom subject line")
     # Limit content to 50KB to prevent DoS
     content: str = Field(..., max_length=51200, description="HTML template content (max 50KB)")
 
 
-class EmailTemplateOverrideCreate(EmailTemplateOverrideBase):
+class EmailTemplateOverrideCreate(EmailTemplateOverrideBase, BaseCreate):
     """Schema for creating email template override."""
 
     tenant_id: UUID
 
 
-class EmailTemplateOverrideUpdate(BaseModel):
+class EmailTemplateOverrideUpdate(BaseUpdate):
     """Schema for updating email template override."""
 
     subject_override: str | None = None
-    content: str | None = None
+    content: str | None = Field(None, max_length=51200)
 
 
-class EmailTemplateOverrideResponse(BaseModel):
+class EmailTemplateOverrideRead(BaseReadUUID):
     """Schema for email template override response."""
 
-    model_config = ConfigDict(from_attributes=True)
-
-    id: UUID
     tenant_id: UUID
     template_name: str
     subject_override: str | None
     content: str
-    created_at: datetime
-    updated_at: datetime
+
+
+# Backward compatibility alias
+EmailTemplateOverrideResponse = EmailTemplateOverrideRead

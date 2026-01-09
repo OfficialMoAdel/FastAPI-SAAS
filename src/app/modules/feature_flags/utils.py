@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.logger import get_logger
 from ...core.utils.cache import client as redis_client
 from ...modules.tenants.models import Tenant
+from .._base import ModelNotFoundError
 
 logger = get_logger(__name__)
 
@@ -112,10 +113,17 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
     Returns
     -------
         Tenant: Updated tenant object
+
+
+    DEPRECATED: Use FeatureFlagService.update_tenant_flag() instead.
+
+    Raises
+    ------
+        ModelNotFoundError: If tenant doesn't exist
     """
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise ValueError(f"Tenant {tenant_id} not found")
+        raise ModelNotFoundError("Tenant", tenant_id)
 
     # Initialize feature_flags if None
     if tenant.feature_flags is None:
@@ -149,6 +157,8 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     """
     Update multiple feature flags at once.
 
+    DEPRECATED: Use FeatureFlagService.bulk_update_tenant_flags() instead.
+
     Args:
         db: Database session
         tenant_id: Tenant UUID
@@ -157,10 +167,14 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     Returns
     -------
         Tenant: Updated tenant object
+
+    Raises
+    ------
+        ModelNotFoundError: If tenant doesn't exist
     """
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
-        raise ValueError(f"Tenant {tenant_id} not found")
+        raise ModelNotFoundError("Tenant", tenant_id)
 
     # Initialize feature_flags if None
     if tenant.feature_flags is None:

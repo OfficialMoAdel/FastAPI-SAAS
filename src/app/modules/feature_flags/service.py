@@ -1,77 +1,388 @@
+"""Feature flags service with BaseService pattern."""
+
+from typing import Any
+from uuid import UUID
+
+from fastapi import Depends
 from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import flag_modified
 
-from ...core.db.models import FeatureFlag, FeatureFlagOverride
+from ...core.db.database import async_get_db
+from ...core.logger import get_logger
+from ...core.utils.cache import client as redis_client
+from ...modules.tenants.models import Tenant
+from .._base import BaseService, ModelNotFoundError
+from .models import FeatureFlag, FeatureFlagOverride
 from .schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
+    FeatureFlagOverrideUpdate,
     FeatureFlagUpdate,
 )
 
+logger = get_logger(__name__)
 
-class FeatureFlagsService:
-    def __init__(self):
-        self.crud = FastCRUD(FeatureFlag)
+CACHE_TTL = 300  # 5 minutes
+
+
+class FeatureFlagService(BaseService[FeatureFlag]):
+    """Service for managing feature flags using BaseService pattern."""
+
+    def __init__(self, db: AsyncSession):
+        super().__init__(model=FeatureFlag, db=db)
         self.override_crud = FastCRUD(FeatureFlagOverride)
 
+    # =========================================================================
+    # Core Flag Operations
+    # =========================================================================
+
+    async def get_flag_by_key(self, key: str) -> FeatureFlag:
+        """
+        Get a feature flag by its unique key.
+
+        Args:
+            key: Unique feature flag key
+
+        Returns:
+            FeatureFlag entity
+
+        Raises:
+            ModelNotFoundError: If flag doesn't exist
+        """
+        flag = await self.crud.get(db=self.db, key=key)
+        if not flag:
+            raise ModelNotFoundError("FeatureFlag", key)
+        return flag
+
+    async def get_flag_by_key_or_none(self, key: str) -> FeatureFlag | None:
+        """Get a feature flag by key, returns None if not found."""
+        return await self.crud.get(db=self.db, key=key)
+
+    async def create_flag(self, data: FeatureFlagCreate) -> FeatureFlag:
+        """
+        Create a new feature flag.
+
+        Args:
+            data: Feature flag creation data
+
+        Returns:
+            Created FeatureFlag entity
+        """
+        return await self.create(**data.model_dump())
+
+    async def update_flag(self, flag_id: int, data: FeatureFlagUpdate) -> FeatureFlag:
+        """
+        Update an existing feature flag.
+
+        Args:
+            flag_id: ID of the flag to update
+            data: Update data
+
+        Returns:
+            Updated FeatureFlag entity
+
+        Raises:
+            ModelNotFoundError: If flag doesn't exist
+        """
+        flag = await self.update(flag_id, **data.model_dump(exclude_unset=True))
+        if not flag:
+            raise ModelNotFoundError("FeatureFlag", flag_id)
+        return flag
+
+    async def delete_flag(self, flag_id: int) -> dict[str, Any]:
+        """
+        Delete a feature flag.
+
+        Args:
+            flag_id: ID of the flag to delete
+
+        Returns:
+            Deletion result
+        """
+        return await self.delete(flag_id)
+
+    # =========================================================================
+    # Override Operations
+    # =========================================================================
+
+    async def get_override(self, feature_flag_id: int, tenant_id: UUID) -> FeatureFlagOverride | None:
+        """Get a feature flag override for a tenant."""
+        return await self.override_crud.get(db=self.db, feature_flag_id=feature_flag_id, tenant_id=tenant_id)
+
+    async def create_override(self, data: FeatureFlagOverrideCreate) -> FeatureFlagOverride:
+        """Create a feature flag override."""
+        return await self.override_crud.create(db=self.db, object=data.model_dump())
+
+    async def update_override(self, override_id: int, data: FeatureFlagOverrideUpdate) -> FeatureFlagOverride | None:
+        """Update a feature flag override."""
+        return await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
+
+    async def delete_override(self, override_id: int) -> dict[str, Any]:
+        """Delete a feature flag override."""
+        return await self.override_crud.delete(db=self.db, id=override_id)
+
+    # =========================================================================
+    # Tenant Feature Flags (JSONB-based)
+    # =========================================================================
+
+    async def get_tenant_flags(self, tenant_id: UUID) -> dict[str, Any]:
+        """
+        Get all feature flags for a tenant from JSONB.
+
+        Args:
+            tenant_id: Tenant UUID
+
+        Returns:
+            Dictionary of feature flags
+        """
+        cache_key = f"tenant:{tenant_id}:features"
+
+        # Try cache first
+        if redis_client:
+            try:
+                import json
+
+                cached_value = await redis_client.get(cache_key)
+                if cached_value:
+                    return json.loads(cached_value)
+            except Exception as e:
+                logger.debug(f"Cache get failed: {e}")
+
+        # Fallback to DB
+        tenant = await self.db.get(Tenant, tenant_id)
+        flags: dict[str, Any] = {}
+
+        if tenant and tenant.feature_flags:
+            flags = tenant.feature_flags
+
+        # Update cache
+        if redis_client:
+            try:
+                import json
+
+                await redis_client.setex(cache_key, CACHE_TTL, json.dumps(flags))
+            except Exception as e:
+                logger.debug(f"Cache operation failed: {e}")
+
+        return flags
+
+    async def is_enabled(self, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
+        """
+        Check if a feature is enabled for a tenant.
+
+        Args:
+            tenant_id: Tenant UUID
+            feature_name: Name of the feature flag
+            default: Default value if flag is not set
+
+        Returns:
+            True if feature is enabled, False otherwise
+        """
+        cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
+
+        # Try cache first
+        if redis_client:
+            try:
+                cached_value = await redis_client.get(cache_key)
+                if cached_value is not None:
+                    val_str = cached_value.decode().lower()
+                    return val_str == "true"
+            except Exception as e:
+                logger.debug(f"Cache get failed: {e}")
+
+        # Fallback to DB
+        tenant = await self.db.get(Tenant, tenant_id)
+        enabled = default
+
+        if tenant and tenant.feature_flags:
+            enabled = tenant.feature_flags.get(feature_name, default)
+
+        # Update cache
+        if redis_client:
+            try:
+                await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
+            except Exception as e:
+                logger.debug(f"Cache operation failed: {e}")
+
+        return enabled
+
+    async def update_tenant_flag(self, tenant_id: UUID, feature_name: str, value: Any) -> Tenant:
+        """
+        Update a single feature flag for a tenant.
+
+        Args:
+            tenant_id: Tenant UUID
+            feature_name: Name of the feature flag
+            value: Value to set
+
+        Returns:
+            Updated Tenant entity
+
+        Raises:
+            ModelNotFoundError: If tenant doesn't exist
+        """
+        tenant = await self.db.get(Tenant, tenant_id)
+        if not tenant:
+            raise ModelNotFoundError("Tenant", tenant_id)
+
+        # Initialize feature_flags if None
+        if tenant.feature_flags is None:
+            tenant.feature_flags = {}
+
+        # Update the feature flag
+        tenant.feature_flags[feature_name] = value
+
+        # Mark as modified for SQLAlchemy to detect change
+        flag_modified(tenant, "feature_flags")
+
+        await self.db.commit()
+        await self.db.refresh(tenant)
+
+        # Invalidate cache
+        await self._invalidate_cache(tenant_id, feature_name)
+
+        return tenant
+
+    async def delete_tenant_flag(self, tenant_id: UUID, flag_name: str) -> Tenant:
+        """
+        Remove a feature flag from tenant configuration.
+
+        Args:
+            tenant_id: Tenant UUID
+            flag_name: Name of the flag to remove
+
+        Returns:
+            Updated Tenant entity
+
+        Raises:
+            ModelNotFoundError: If tenant or flag doesn't exist
+        """
+        tenant = await self.db.get(Tenant, tenant_id)
+        if not tenant:
+            raise ModelNotFoundError("Tenant", tenant_id)
+
+        if tenant.feature_flags is None or flag_name not in tenant.feature_flags:
+            raise ModelNotFoundError("FeatureFlag", flag_name)
+
+        # Remove flag
+        del tenant.feature_flags[flag_name]
+        flag_modified(tenant, "feature_flags")
+
+        await self.db.commit()
+        await self.db.refresh(tenant)
+
+        # Invalidate cache
+        await self._invalidate_cache(tenant_id, flag_name)
+
+        return tenant
+
+    async def bulk_update_tenant_flags(self, tenant_id: UUID, flags: dict[str, Any]) -> Tenant:
+        """
+        Update multiple feature flags at once.
+
+        Args:
+            tenant_id: Tenant UUID
+            flags: Dictionary of feature flags to update
+
+        Returns:
+            Updated Tenant entity
+
+        Raises:
+            ModelNotFoundError: If tenant doesn't exist
+        """
+        tenant = await self.db.get(Tenant, tenant_id)
+        if not tenant:
+            raise ModelNotFoundError("Tenant", tenant_id)
+
+        # Initialize feature_flags if None
+        if tenant.feature_flags is None:
+            tenant.feature_flags = {}
+
+        # Update all flags
+        tenant.feature_flags.update(flags)
+        flag_modified(tenant, "feature_flags")
+
+        await self.db.commit()
+        await self.db.refresh(tenant)
+
+        # Invalidate cache for all updated flags
+        if redis_client:
+            try:
+                await redis_client.delete(f"tenant:{tenant_id}:features")
+                keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags]
+                if keys_to_delete:
+                    await redis_client.delete(*keys_to_delete)
+            except Exception as e:
+                logger.debug(f"Cache invalidation failed: {e}")
+
+        return tenant
+
+    # =========================================================================
+    # Private Helpers
+    # =========================================================================
+
+    async def _invalidate_cache(self, tenant_id: UUID, feature_name: str | None = None) -> None:
+        """Invalidate cache for tenant feature flags."""
+        if not redis_client:
+            return
+
+        try:
+            await redis_client.delete(f"tenant:{tenant_id}:features")
+            if feature_name:
+                await redis_client.delete(f"tenant:{tenant_id}:feature:{feature_name}")
+        except Exception as e:
+            logger.debug(f"Cache invalidation failed: {e}")
+
+
+# =============================================================================
+# Dependency Injection Factory
+# =============================================================================
+
+
+def get_feature_flag_service(
+    db: AsyncSession = Depends(async_get_db),
+) -> FeatureFlagService:
+    """
+    Dependency injection factory for FeatureFlagService.
+
+    Usage:
+        @router.get("/flags")
+        async def list_flags(
+            service: FeatureFlagService = Depends(get_feature_flag_service)
+        ):
+            ...
+    """
+    return FeatureFlagService(db=db)
+
+
+# =============================================================================
+# Legacy Compatibility (Backward Compatible)
+# =============================================================================
+
+
+class _LegacyFeatureFlagsService:
+    """
+    Legacy wrapper for backward compatibility.
+
+    DEPRECATED: Use get_feature_flag_service() dependency injection instead.
+    """
+
+    def __init__(self) -> None:
+        self._service: FeatureFlagService | None = None
+
+    async def _get_service(self, db: AsyncSession) -> FeatureFlagService:
+        """Get or create service instance with db session."""
+        return FeatureFlagService(db=db)
+
     async def get_flag(self, db: AsyncSession, name: str, tenant_id: int) -> FeatureFlag | None:
-        return await self.crud.get(db, name=name, tenant_id=tenant_id)
-
-    async def create_flag(self, db: AsyncSession, flag: FeatureFlagCreate, tenant_id: int) -> FeatureFlag:
-        flag_data = flag.model_dump()
-        flag_data["tenant_id"] = tenant_id
-        return await self.crud.create(db, flag_data)
-
-    async def update_flag(
-        self,
-        db: AsyncSession,
-        name: str,
-        flag: FeatureFlagUpdate,
-        tenant_id: int,
-    ) -> FeatureFlag | None:
-        return await self.crud.update(
-            db,
-            name=name,
-            tenant_id=tenant_id,
-            object=flag.model_dump(exclude_unset=True),
-        )
-
-    async def delete_flag(self, db: AsyncSession, name: str, tenant_id: int) -> bool:
-        return await self.crud.delete(db, name=name, tenant_id=tenant_id)
-
-    async def list_flags(self, db: AsyncSession, tenant_id: int, skip: int = 0, limit: int = 100):
-        return await self.crud.get_multi(db, tenant_id=tenant_id, skip=skip, limit=limit)
-
-    async def get_override(
-        self, db: AsyncSession, flag_name: str, user_id: int, tenant_id: int
-    ) -> FeatureFlagOverride | None:
-        return await self.override_crud.get(db, flag_name=flag_name, user_id=user_id, tenant_id=tenant_id)
-
-    async def create_override(
-        self,
-        db: AsyncSession,
-        override: FeatureFlagOverrideCreate,
-        tenant_id: int,
-    ) -> FeatureFlagOverride:
-        override_data = override.model_dump()
-        override_data["tenant_id"] = tenant_id
-        return await self.override_crud.create(db, override_data)
-
-    async def delete_override(self, db: AsyncSession, flag_name: str, user_id: int, tenant_id: int) -> bool:
-        return await self.override_crud.delete(db, flag_name=flag_name, user_id=user_id, tenant_id=tenant_id)
+        service = await self._get_service(db)
+        return await service.get_flag_by_key_or_none(name)
 
     async def is_feature_enabled(self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: int) -> bool:
-        flag = await self.get_flag(db, flag_name, tenant_id)
-        if not flag:
-            return False
-        if not flag.is_enabled:
-            return False
-        if not user_id:
-            return True
-        user_override = await self.get_override(db, flag_name, user_id, tenant_id)
-        if user_override:
-            return user_override.is_enabled
-        return True
+        service = await self._get_service(db)
+        return await service.is_enabled(UUID(str(tenant_id)), flag_name, default=False)
 
 
-feature_flags_service = FeatureFlagsService()
+# Legacy singleton for backward compatibility
+feature_flags_service = _LegacyFeatureFlagsService()

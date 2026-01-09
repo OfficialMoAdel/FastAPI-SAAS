@@ -2,7 +2,7 @@
 
 import enum
 from datetime import UTC, datetime
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 from sqlalchemy import (
     DateTime,
@@ -18,6 +18,10 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
 from ...core.db.models import UUIDMixin
+
+if TYPE_CHECKING:
+    from ...modules.tenants.models import Tenant
+    from ...modules.users.models import User
 
 
 class NotificationStatus(str, enum.Enum):

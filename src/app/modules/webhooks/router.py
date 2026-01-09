@@ -60,8 +60,8 @@ async def list_webhook_endpoints(
     return WebhookEndpointListResponse(
         items=[WebhookEndpointResponse.model_validate(e) for e in endpoints],
         total=total,
-        limit=limit,
-        offset=offset,
+        page=(offset // limit) + 1,
+        per_page=limit,
     )
 
 
@@ -211,8 +211,8 @@ async def list_webhook_deliveries(
     return WebhookDeliveryListResponse(
         items=[WebhookDeliveryResponse.model_validate(d) for d in deliveries],
         total=total,
-        limit=limit,
-        offset=offset,
+        page=(offset // limit) + 1,
+        per_page=limit,
     )
 
 

@@ -1,56 +1,58 @@
-"""Magic Link authentication Pydantic schemas.
+"""Pydantic schemas for magic link authentication."""
 
-Request and response schemas for magic link passwordless authentication.
-Follows the API contract defined in auth-api.yaml.
-"""
+from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
+from .._base import BaseCreate, BaseRead
+
+# =============================================================================
+# Auth Flow Schemas (API Request/Response)
+# =============================================================================
+
 
 class MagicLinkSendRequest(BaseModel):
-    """Request schema for sending a magic link.
+    """Request schema for sending a magic link."""
 
-    POST /api/v1/auth/magic-link/send
-    """
-
-    email: EmailStr = Field(
-        ...,
-        description="Email address to send the magic link to",
-        examples=["user@example.com"],
-    )
+    email: EmailStr = Field(..., description="Email address to send magic link to")
 
 
 class MagicLinkSendResponse(BaseModel):
-    """Response schema after sending a magic link.
+    """Response schema after sending magic link."""
 
-    Note: Always returns success message to prevent email enumeration,
-    even if the user doesn't exist.
-    """
-
-    message: str = Field(
-        default="If an account exists, a magic link has been sent",
-        description="Status message",
-    )
-    may_be_delayed: bool = Field(
-        default=False,
-        description="Whether email delivery may be delayed due to queuing",
-    )
+    message: str = Field(..., description="Success message")
+    may_be_delayed: bool = Field(False, description="Whether email delivery may be delayed")
 
 
 class MagicLinkVerifyRequest(BaseModel):
-    """Request schema for verifying a magic link token.
+    """Request schema for verifying a magic link token."""
 
-    POST /api/v1/auth/magic-link/verify
-    """
-
-    token: str = Field(
-        ...,
-        description="Magic link token from the email link",
-        min_length=32,
-        max_length=64,
-        examples=["abc123..."],
-    )
+    token: str = Field(..., min_length=32, max_length=64, description="Magic link token")
 
 
-# Note: MagicLinkVerifyResponse uses AuthTokenResponse from auth.schemas
-# which includes: access_token, refresh_token, token_type, expires_in
+# =============================================================================
+# CRUD Schemas (for MagicLink entity)
+# =============================================================================
+
+
+class MagicLinkCreate(BaseCreate):
+    """Schema for creating a magic link record."""
+
+    user_id: int = Field(..., description="User ID")
+    token: str = Field(..., max_length=64, description="URL-safe token")
+    action: str = Field(..., max_length=50, description="Token purpose (login, verify_email, password_reset)")
+    expires_at: datetime = Field(..., description="Token expiration timestamp")
+    ip_address: str | None = Field(None, description="Request IP address")
+    user_agent: str | None = Field(None, description="Request user agent")
+
+
+class MagicLinkRead(BaseRead):
+    """Schema for reading a magic link record."""
+
+    user_id: int
+    token: str
+    action: str
+    expires_at: datetime
+    used_at: datetime | None
+    ip_address: str | None
+    user_agent: str | None

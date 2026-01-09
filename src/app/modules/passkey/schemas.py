@@ -14,6 +14,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from .._base import BaseCreate, BaseRead, BaseUpdate
+
 # ============================================================================
 # Request Schemas
 # ============================================================================
@@ -61,12 +63,8 @@ class PasskeyCredentialResponse(BaseModel):
     id: int = Field(..., description="Credential database ID")
     device_type: str = Field(..., description="Human-readable device name")
     created_at: datetime = Field(..., description="Credential creation timestamp")
-    last_used_at: datetime | None = Field(
-        None, description="Last successful authentication timestamp"
-    )
-    transports: list[str] | None = Field(
-        None, description="Supported transports (usb, nfc, ble, internal, hybrid)"
-    )
+    last_used_at: datetime | None = Field(None, description="Last successful authentication timestamp")
+    transports: list[str] | None = Field(None, description="Supported transports (usb, nfc, ble, internal, hybrid)")
 
 
 class PasskeyCredentialListResponse(BaseModel):
@@ -130,7 +128,7 @@ class AuthTokenResponse(BaseModel):
 # ============================================================================
 
 
-class PasskeyCredentialCreate(BaseModel):
+class PasskeyCredentialCreate(BaseCreate):
     """Schema for creating a new passkey credential."""
 
     user_id: int = Field(..., description="User ID")
@@ -142,19 +140,19 @@ class PasskeyCredentialCreate(BaseModel):
     transports: list[str] | None = Field(None, description="Supported transports")
 
 
-class PasskeyCredentialUpdate(BaseModel):
+class PasskeyCredentialUpdate(BaseUpdate):
     """Schema for updating a passkey credential."""
 
     counter: int | None = Field(None, description="Updated signature counter")
     last_used_at: datetime | None = Field(None, description="Last authentication time")
 
 
-class PasskeyCredentialRead(BaseModel):
-    """Schema for reading a passkey credential from database."""
+class PasskeyCredentialRead(BaseRead):
+    """Schema for reading a passkey credential from database.
 
-    model_config = ConfigDict(from_attributes=True)
+    Inherits from BaseRead: id, created_at, updated_at
+    """
 
-    id: int
     user_id: int
     credential_id: bytes
     public_key: bytes
@@ -162,5 +160,4 @@ class PasskeyCredentialRead(BaseModel):
     device_type: str
     aaguid: str | None = None
     transports: list[str] | None = None
-    created_at: datetime
     last_used_at: datetime | None = None
