@@ -121,9 +121,9 @@ from src.app.core.config import settings
 - App Init: `src/app/__init__.py` - Application package initialization
 
 ### Database Management
-- Migrations: `migrations/` - Alembic migration files and configuration
-- Migration Env: `migrations/env.py` - Migration environment setup
-- Migration Script: `migrations/script.py.mako` - Migration file template
+- Migrations: `src/migrations/` - Alembic migration files and configuration
+- Migration Env: `src/migrations/env.py` - Migration environment setup
+- Migration Script: `src/migrations/script.py.mako` - Migration file template
 
 ### Setup Scripts
 - Superuser: `src/scripts/create_first_superuser.py` - Create initial admin user
@@ -152,7 +152,7 @@ ls src/ src/app/ src/app/modules/ src/app/core/
 find src/scripts/ -name "*.py" -type f
 
 # Find migration files
-find migrations/ -name "*.py" -type f
+find src/migrations/ -name "*.py" -type f
 ```
 
 ### Import Pattern Searches
@@ -170,7 +170,7 @@ rg -n "local_session\|async_engine" src/
 ### Migration Searches
 ```bash
 # Find migration commands
-rg -n "alembic.*upgrade|alembic.*downgrade" migrations/
+rg -n "alembic.*upgrade|alembic.*downgrade" src/migrations/
 
 # Find database operations in scripts
 rg -n "select\|insert\|update\|delete" src/scripts/

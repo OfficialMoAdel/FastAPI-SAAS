@@ -181,8 +181,6 @@ env.txt
 Constitution.txt
 .serena
 1claudedocs
-#IMPLEMENTATION_WORKFLOW.md
-#MIGRATION_PLAN.md
 IMPLEMENTATION_TASKS
 routes.txt
 Constitution.txt
@@ -190,4 +188,6 @@ coverage_report*
 sql_app.db*
 # Auto Claude data directory
 .auto-claude/
+#Advanced Code Optimization Workflow.md
 Advanced Code Optimization Workflow.md
+PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1*

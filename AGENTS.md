@@ -83,7 +83,7 @@ uv run alembic upgrade head
 - API layer: `src/app/api/` → [see src/app/api/AGENTS.md](src/app/api/AGENTS.md)
 - Middleware: `src/app/middleware/` → [see src/app/middleware/AGENTS.md](src/app/middleware/AGENTS.md)
 - Test suite: `tests/` → [see tests/AGENTS.md](tests/AGENTS.md)
-- Database migrations: `migrations/` → [see migrations/AGENTS.md](migrations/AGENTS.md)
+- Database migrations: `src/migrations/` → [see src/migrations/AGENTS.md](src/migrations/AGENTS.md)
 
 ### Module Documentation
 

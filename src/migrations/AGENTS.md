@@ -141,12 +141,12 @@ def upgrade() -> None:
 
 ### Migration Configuration
 - Alembic Config: `alembic.ini` - Alembic configuration file
-- Environment: `migrations/env.py` - Migration environment setup
-- Script Template: `migrations/script.py.mako` - Migration file template
+- Environment: `src/migrations/env.py` - Migration environment setup
+- Script Template: `src/migrations/script.py.mako` - Migration file template
 
 ### Migration Files
-- Versions: `migrations/versions/` - Individual migration files
-- README: `migrations/versions/README.MD` - Migration documentation
+- Versions: `src/migrations/versions/` - Individual migration files
+- README: `src/migrations/versions/README.MD` - Migration documentation
 
 ### Database Models
 - Base Models: `src/app/core/db/models.py` - Base SQLAlchemy models
