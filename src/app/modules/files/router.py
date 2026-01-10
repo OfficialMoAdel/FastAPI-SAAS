@@ -18,7 +18,7 @@ from src.app.modules.files.schemas import (
     SignedUrlResponse,
 )
 from src.app.modules.files.service import (
-    FileNotFoundError as FileServiceNotFoundError,
+    FileEntityNotFoundError as FileServiceNotFoundError,
 )
 from src.app.modules.files.service import (
     FileService,

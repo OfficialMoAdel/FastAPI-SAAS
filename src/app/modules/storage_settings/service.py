@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 from typing import TYPE_CHECKING
-from uuid import UUID
 
 import structlog
 from fastapi import Depends
@@ -145,7 +144,7 @@ class StorageSettingsService:
 
     async def update_settings(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         data: StorageSettingsUpdate,
     ) -> StorageSettings:
         """Update storage settings for a tenant.
@@ -154,7 +153,7 @@ class StorageSettingsService:
         Supports key rotation (per clarification Q5).
 
         Args:
-            tenant_id: The tenant UUID.
+            tenant_id: The tenant ID.
             data: Fields to update.
 
         Returns:
@@ -205,11 +204,11 @@ class StorageSettingsService:
         )
         return settings
 
-    async def get_provider(self, tenant_id: UUID) -> StorageProvider:
+    async def get_provider(self, tenant_id: int) -> StorageProvider:
         """Get a configured storage provider for a tenant.
 
         Args:
-            tenant_id: The tenant UUID.
+            tenant_id: The tenant ID.
 
         Returns:
             Configured StorageProvider instance.

@@ -14,11 +14,10 @@ Handles:
 import logging
 from typing import Any
 
-from fastapi import Depends, UploadFile
+from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.db.database import async_get_db
 from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.storage import get_storage
 from src.app.modules.user_preferences.crud import crud_user_preferences
@@ -258,13 +257,12 @@ class PreferencesService:
         return None
 
 
-def get_preferences_service(db: AsyncSession = Depends(async_get_db)) -> PreferencesService:
+def get_preferences_service() -> PreferencesService:
     """Dependency injection factory for PreferencesService.
 
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
+    Note: This service uses a stateless pattern where db is passed
+    to each method rather than the constructor. This allows the same
+    service instance to be reused across different database sessions.
 
     Returns
     -------

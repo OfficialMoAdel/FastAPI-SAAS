@@ -60,9 +60,6 @@ async def get_password_hash(password: str) -> str:
     return hashed_password.decode()
 
 
-
-
-
 async def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     if expires_delta:
@@ -142,7 +139,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
             if exp_timestamp is not None:
-                expires_at = datetime.fromtimestamp(exp_timestamp)
+                expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
@@ -154,7 +151,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         if exp_timestamp is not None:
-            expires_at = datetime.fromtimestamp(exp_timestamp)
+            expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)

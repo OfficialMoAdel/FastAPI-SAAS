@@ -36,8 +36,8 @@ class QuotaExceededError(Exception):
     pass
 
 
-class FileNotFoundError(Exception):
-    """Raised when file is not found."""
+class FileEntityNotFoundError(Exception):
+    """Raised when file entity is not found in database."""
 
     pass
 
@@ -211,11 +211,11 @@ class FileService:
             File.
 
         Raises:
-            FileNotFoundError: If file not found.
+            FileEntityNotFoundError: If file not found.
         """
         file = await self.get_file(tenant_id, file_id)
         if not file:
-            raise FileNotFoundError(f"File {file_id} not found")
+            raise FileEntityNotFoundError(f"File {file_id} not found")
         return file
 
     async def list_files(
@@ -271,7 +271,7 @@ class FileService:
             File content chunks.
 
         Raises:
-            FileNotFoundError: If file not found.
+            FileEntityNotFoundError: If file not found.
         """
         file = await self.get_file_or_raise(tenant_id, file_id)
         provider = await self._storage_service.get_provider(tenant_id)
@@ -312,7 +312,7 @@ class FileService:
             Updated File.
 
         Raises:
-            FileNotFoundError: If file not found.
+            FileEntityNotFoundError: If file not found.
         """
         file = await self.get_file_or_raise(tenant_id, file_id)
 
@@ -336,7 +336,7 @@ class FileService:
             file_id: The file ID.
 
         Raises:
-            FileNotFoundError: If file not found.
+            FileEntityNotFoundError: If file not found.
         """
         file = await self.get_file_or_raise(tenant_id, file_id)
         provider = await self._storage_service.get_provider(tenant_id)
@@ -383,7 +383,7 @@ class FileService:
             Signed URL.
 
         Raises:
-            FileNotFoundError: If file not found.
+            FileEntityNotFoundError: If file not found.
         """
         file = await self.get_file_or_raise(tenant_id, file_id)
         provider = await self._storage_service.get_provider(tenant_id)
@@ -456,6 +456,6 @@ def get_file_service(db: AsyncSession = Depends(async_get_db)) -> FileService:
 __all__ = [
     "FileService",
     "QuotaExceededError",
-    "FileNotFoundError",
+    "FileEntityNotFoundError",
     "get_file_service",
 ]
