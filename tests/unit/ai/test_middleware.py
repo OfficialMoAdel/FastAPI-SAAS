@@ -4,9 +4,9 @@ Tests T099: Rate limiting middleware (60 req/user/min)
 Tests T100: HTTP 429 RateLimitError response
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
 from fastapi import HTTPException
 
 

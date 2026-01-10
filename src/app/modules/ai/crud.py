@@ -16,7 +16,6 @@ from .schemas import (
     ChatSessionUpdate,
 )
 
-
 # Chat Session CRUD (tenant-aware)
 CRUDChatSession = TenantAwareCRUD[
     AIChatSession,

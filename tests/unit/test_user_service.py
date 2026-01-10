@@ -429,7 +429,6 @@ class TestUserServiceTierAndRateLimits:
     @pytest.mark.asyncio
     async def test_update_tier(self, user_service, mock_existing_user):
         """Test updating user tier."""
-        from src.app.modules.users.schemas import UserTierUpdate
 
         tier_update = UserTierUpdate(tier_id=2)
 

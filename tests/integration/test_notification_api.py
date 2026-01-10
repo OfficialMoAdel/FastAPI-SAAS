@@ -25,7 +25,7 @@ def mock_current_user(tenant):
         username="testuser",
         hashed_password="mock_password_hash",
         is_superuser=False,
-        tenant_id=tenant.id
+        tenant_id=tenant.id,
     )
     mock_user.id = 1
     mock_user.tenant_id = tenant.id
@@ -157,17 +157,20 @@ class TestEmailTemplateAPI:
 class TestNotificationTenantIsolation:
     """Tests for notification tenant isolation."""
 
-    def test_notifications_isolated_between_tenants(self, client) -> None:
+    def test_notifications_isolated_between_tenants(self, client, auth_headers) -> None:
         """Notifications from one tenant should not be visible to another."""
         tenant_a = str(uuid4())
         tenant_b = str(uuid4())
 
-        headers_a = {"X-Tenant-ID": tenant_a}
-        headers_b = {"X-Tenant-ID": tenant_b}
+        # Reuse auth headers to ensure valid authorization
+        headers_a = {**auth_headers, "X-Tenant-ID": tenant_a}
+        headers_b = {**auth_headers, "X-Tenant-ID": tenant_b}
 
         # NOTE: This might fail 403/404 if tenants don't exist in DB
         # But we verify status code consistency
         response_a = client.get("/api/v1/notifications/", headers=headers_a)
+        if response_a.status_code == 422:
+            print(f"DEBUG 422 Response: {response_a.json()}")
         response_b = client.get("/api/v1/notifications/", headers=headers_b)
 
         assert response_a.status_code in [200, 401, 403, 404]

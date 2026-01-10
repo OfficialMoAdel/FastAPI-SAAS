@@ -4,8 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.rbac.service import RoleService
@@ -161,10 +160,10 @@ class TestRoleServiceUpdate:
 
         role_in = RoleUpdate(name="Hacked Admin")
 
-        with pytest.raises(DuplicateError) as exc:
+        with pytest.raises(ForbiddenError) as exc:
             await role_service.update_role(2, role_in)
 
-        assert exc.value.field == "is_system"
+        assert exc.value.message == "System roles cannot be modified"
 
     @pytest.mark.asyncio
     async def test_update_role_duplicate_name(self, role_service, mock_db, mock_role):
@@ -199,7 +198,7 @@ class TestRoleServiceDelete:
         """Test deleting system role raises error."""
         role_service.get_role = AsyncMock(return_value=mock_system_role)
 
-        with pytest.raises(DuplicateError):
+        with pytest.raises(ForbiddenError):
             await role_service.delete_role(2)
 
 
@@ -266,10 +265,10 @@ class TestRoleServicePermissions:
         """Test adding permission to system role fails."""
         role_service.get_role = AsyncMock(return_value=mock_system_role)
 
-        with pytest.raises(DuplicateError) as exc:
+        with pytest.raises(ForbiddenError) as exc:
             await role_service.add_permission_to_role(2, "users:read")
 
-        assert exc.value.field == "is_system"
+        assert exc.value.message == "System role permissions cannot be modified"
 
     @pytest.mark.asyncio
     async def test_add_permission_not_found(self, role_service, mock_db, mock_role):
@@ -306,7 +305,7 @@ class TestRoleServicePermissions:
         """Test removing permission from system role fails."""
         role_service.get_role = AsyncMock(return_value=mock_system_role)
 
-        with pytest.raises(DuplicateError):
+        with pytest.raises(ForbiddenError):
             await role_service.remove_permission_from_role(2, "users:read")
 
     @pytest.mark.asyncio

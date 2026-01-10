@@ -3,9 +3,10 @@
 Tests T065: Unit test for BillingRecordCRUD in tests/unit/billing/test_billing_record_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.billing.crud import crud_billing_records
 from src.app.modules.billing.models import BillingRecord
@@ -57,7 +58,7 @@ class TestBillingRecordCRUD:
         mock_record.description = billing_record_data["description"]
         mock_record.stripe_payment_intent_id = billing_record_data["stripe_payment_intent_id"]
         mock_record.stripe_invoice_id = billing_record_data["stripe_invoice_id"]
-        mock_record.created_at = datetime.now(timezone.utc)
+        mock_record.created_at = datetime.now(UTC)
 
         with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record

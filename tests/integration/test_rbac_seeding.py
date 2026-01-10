@@ -103,7 +103,7 @@ class TestSystemRoleSeeding:
         happens in the migration. This documents the expected behavior.
         """
         # Member gets only :read permissions per migration logic (line 129-131)
-        member_permissions = {p for p in Permission if "read" in p.value or "view" in p.name.lower()}
+        # member_permissions = {p for p in Permission if "read" in p.value or "view" in p.name.lower()}
         # Note: FILES_READ ("files:read") and AUDIT_LOGS_VIEW_ONLY ("audit_logs:read") are new read perms
         expected_member = {
             Permission.USERS_READ,

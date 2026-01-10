@@ -4,7 +4,9 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 # Skip all tests in this module due to persistent DB isolation issues
-pytestmark = pytest.mark.skip("Database isolation issues with async_get_db/full_mock_context preventing proper user lookup in dependencies.")
+pytestmark = pytest.mark.skip(
+    "Database isolation issues with async_get_db/full_mock_context preventing proper user lookup in dependencies."
+)
 
 
 from src.app.main import app
@@ -12,10 +14,11 @@ from src.app.modules.users.models import User
 
 # --- Fixtures ---
 
+
 @pytest.fixture(autouse=True)
 async def fix_db_isolation(db_session, full_mock_context):
     """Patch async_get_db to share the test session context.
-    
+
     This ensures that any dependency trying to get a DB session receives
     the same session as the test, preserving the transaction.
     """
@@ -26,7 +29,7 @@ async def fix_db_isolation(db_session, full_mock_context):
     original_close = db_session.close
 
     db_session.commit = db_session.flush
-    db_session.close = AsyncMock() # No-op for close
+    db_session.close = AsyncMock()  # No-op for close
 
     async def _get_db_override():
         yield db_session
@@ -35,6 +38,7 @@ async def fix_db_isolation(db_session, full_mock_context):
 
     # Remove auth overrides from full_mock_context to use real auth logic
     from src.app.api.dependencies import get_current_tenant, get_current_user, get_optional_user
+
     app.dependency_overrides.pop(get_current_user, None)
     app.dependency_overrides.pop(get_current_tenant, None)
     app.dependency_overrides.pop(get_optional_user, None)
@@ -49,10 +53,12 @@ async def fix_db_isolation(db_session, full_mock_context):
     from src.app.modules.tenants.models import Tenant
 
     async def _real_get_tenant_by_slug(slug: str):
-         result = await db_session.execute(select(Tenant).where(Tenant.slug == slug))
-         return result.scalar_one_or_none()
+        result = await db_session.execute(select(Tenant).where(Tenant.slug == slug))
+        return result.scalar_one_or_none()
 
-    patcher_tenant = patch("src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", side_effect=_real_get_tenant_by_slug)
+    patcher_tenant = patch(
+        "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug", side_effect=_real_get_tenant_by_slug
+    )
     patcher_tenant.start()
 
     yield
@@ -67,18 +73,18 @@ async def fix_db_isolation(db_session, full_mock_context):
     db_session.commit = original_commit
     db_session.close = original_close
 
+
 @pytest.fixture
 async def async_tenant(db_session: AsyncSession):
     """Create a test tenant."""
     from src.app.modules.tenants.models import Tenant
-    tenant = Tenant(
-        name="Test Tenant Integration",
-        slug="test-tenant-integration"
-    )
+
+    tenant = Tenant(name="Test Tenant Integration", slug="test-tenant-integration")
     db_session.add(tenant)
     await db_session.flush()
     await db_session.refresh(tenant)
     return tenant
+
 
 @pytest.fixture
 async def mock_event_bus():
@@ -88,15 +94,12 @@ async def mock_event_bus():
     with patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock:
         yield mock
 
+
 # --- Tests ---
 
+
 @pytest.mark.asyncio
-async def test_auth_login_creates_audit_log(
-    async_client,
-    db_session: AsyncSession,
-    async_tenant,
-    mock_event_bus
-):
+async def test_auth_login_creates_audit_log(async_client, db_session: AsyncSession, async_tenant, mock_event_bus):
     # 1. Create user
     user = User(
         email="audittest_login@example.com",
@@ -131,7 +134,7 @@ async def test_auth_login_creates_audit_log(
     assert audit_call is not None, "audit.log event was not published"
 
     # Verify payload
-    event_data = audit_call[0][1] # Second arg is data
+    event_data = audit_call[0][1]  # Second arg is data
     assert event_data["action"] == "auth.login"
     assert event_data["entity_type"] == "user"
     assert str(event_data["user_id"]) == str(user.id)
@@ -139,11 +142,7 @@ async def test_auth_login_creates_audit_log(
 
 
 @pytest.mark.asyncio
-async def test_auth_login_failure_creates_audit_log(
-    async_client,
-    async_tenant,
-    mock_event_bus
-):
+async def test_auth_login_failure_creates_audit_log(async_client, async_tenant, mock_event_bus):
     # Login with non-existent user
     login_data = {"username": "nonexistent_audit", "password": "password", "scope": ""}
 
@@ -169,12 +168,7 @@ async def test_auth_login_failure_creates_audit_log(
 
 
 @pytest.mark.asyncio
-async def test_auth_logout_creates_audit_log(
-    async_client,
-    db_session: AsyncSession,
-    async_tenant,
-    mock_event_bus
-):
+async def test_auth_logout_creates_audit_log(async_client, db_session: AsyncSession, async_tenant, mock_event_bus):
     # 1. Create user
     user = User(
         email="audittest_logout@example.com",
@@ -200,9 +194,7 @@ async def test_auth_logout_creates_audit_log(
     mock_event_bus.reset_mock()
 
     response = await async_client.post(
-        "/api/v1/auth/logout",
-        headers={"Authorization": f"Bearer {token}"},
-        cookies={"refresh_token": refresh_token}
+        "/api/v1/auth/logout", headers={"Authorization": f"Bearer {token}"}, cookies={"refresh_token": refresh_token}
     )
     assert response.status_code == 200
 
@@ -226,14 +218,12 @@ async def test_auth_logout_creates_audit_log(
 
 
 @pytest.mark.integration
-@pytest.mark.skip(reason="Database isolation issues with async_get_db/full_mock_context preventing proper user lookup in dependencies.")
+@pytest.mark.skip(
+    reason="Database isolation issues with async_get_db/full_mock_context "
+    "preventing proper user lookup in dependencies."
+)
 @pytest.mark.asyncio
-async def test_sso_settings_audit_logs(
-    async_client,
-    db_session: AsyncSession,
-    async_tenant,
-    mock_event_bus
-):
+async def test_sso_settings_audit_logs(async_client, db_session: AsyncSession, async_tenant, mock_event_bus):
     # Fake superuser
     user = User(
         email="admin_audit@example.com",
@@ -249,6 +239,7 @@ async def test_sso_settings_audit_logs(
 
     # Login
     from src.app.core.security import create_access_token
+
     token = await create_access_token({"sub": user.username})
 
     # Create SSO Settings
@@ -257,16 +248,14 @@ async def test_sso_settings_audit_logs(
         "client_id": "test_client",
         "client_secret": "test_secret",
         "tenant_id": async_tenant.id,
-        "is_active": True
+        "is_active": True,
     }
 
     # Mock encrypt if needed, or rely on real logic
     mock_event_bus.reset_mock()
 
     response = await async_client.post(
-        "/api/v1/admin/sso-settings/",
-        json=payload,
-        headers={"Authorization": f"Bearer {token}"}
+        "/api/v1/admin/sso-settings/", json=payload, headers={"Authorization": f"Bearer {token}"}
     )
 
     assert response.status_code == 201

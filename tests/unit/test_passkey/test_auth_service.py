@@ -36,17 +36,14 @@ class TestPasskeyAuthenticationChallengeGeneration:
         mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
-        with patch(
-            "src.app.modules.passkey.service.generate_authentication_options"
-        ) as mock_generate, patch(
-            "src.app.modules.passkey.service.options_to_json"
-        ) as mock_to_json:
+        with (
+            patch("src.app.modules.passkey.service.generate_authentication_options") as mock_generate,
+            patch("src.app.modules.passkey.service.options_to_json") as mock_to_json,
+        ):
             mock_generate.return_value = MagicMock(challenge=b"test-challenge")
             mock_to_json.return_value = '{"challenge": "test-challenge", "publicKey": {"challenge": "test"}}'
 
-            with patch.object(
-                service, "_store_auth_challenge", new_callable=AsyncMock
-            ) as mock_store:
+            with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
                 result = await service.generate_authentication_challenge(
                     db=mock_db,
                     redis=mock_redis,
@@ -54,6 +51,7 @@ class TestPasskeyAuthenticationChallengeGeneration:
 
                 # Should return dict with WebAuthn authentication options
                 assert result is not None
+                mock_store.assert_called()
 
     @pytest.mark.asyncio
     async def test_generate_authentication_challenge_with_email_hint(self):
@@ -64,22 +62,17 @@ class TestPasskeyAuthenticationChallengeGeneration:
         mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
-        with patch.object(
-            service, "_get_credentials_for_email", new_callable=AsyncMock
-        ) as mock_get_creds:
+        with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
             mock_get_creds.return_value = []
 
-            with patch(
-                "src.app.modules.passkey.service.generate_authentication_options"
-            ) as mock_generate, patch(
-                "src.app.modules.passkey.service.options_to_json"
-            ) as mock_to_json:
+            with (
+                patch("src.app.modules.passkey.service.generate_authentication_options") as mock_generate,
+                patch("src.app.modules.passkey.service.options_to_json") as mock_to_json,
+            ):
                 mock_generate.return_value = MagicMock(challenge=b"test-challenge")
                 mock_to_json.return_value = '{"challenge": "test"}'
 
-                with patch.object(
-                    service, "_store_auth_challenge", new_callable=AsyncMock
-                ):
+                with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock):
                     result = await service.generate_authentication_challenge(
                         db=mock_db,
                         redis=mock_redis,
@@ -99,18 +92,15 @@ class TestPasskeyAuthenticationChallengeGeneration:
         mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
-        with patch(
-            "src.app.modules.passkey.service.generate_authentication_options"
-        ) as mock_generate, patch(
-            "src.app.modules.passkey.service.options_to_json"
-        ) as mock_to_json:
+        with (
+            patch("src.app.modules.passkey.service.generate_authentication_options") as mock_generate,
+            patch("src.app.modules.passkey.service.options_to_json") as mock_to_json,
+        ):
             # Mock return value with a bytes challenge
             mock_generate.return_value = MagicMock(challenge=b"test-challenge")
             mock_to_json.return_value = '{"challenge": "test"}'
 
-            with patch.object(
-                service, "_store_auth_challenge", new_callable=AsyncMock
-            ) as mock_store:
+            with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
                 await service.generate_authentication_challenge(
                     db=mock_db,
                     redis=mock_redis,
@@ -136,22 +126,17 @@ class TestPasskeyAuthenticationChallengeGeneration:
             transports=["internal"],
         )
 
-        with patch.object(
-            service, "_get_credentials_for_email", new_callable=AsyncMock
-        ) as mock_get_creds:
+        with patch.object(service, "_get_credentials_for_email", new_callable=AsyncMock) as mock_get_creds:
             mock_get_creds.return_value = [mock_cred]
 
-            with patch(
-                "src.app.modules.passkey.service.generate_authentication_options"
-            ) as mock_generate, patch(
-                "src.app.modules.passkey.service.options_to_json"
-            ) as mock_to_json:
+            with (
+                patch("src.app.modules.passkey.service.generate_authentication_options") as mock_generate,
+                patch("src.app.modules.passkey.service.options_to_json") as mock_to_json,
+            ):
                 mock_generate.return_value = MagicMock(challenge=b"test-challenge")
                 mock_to_json.return_value = '{"challenge": "test"}'
 
-                with patch.object(
-                    service, "_store_auth_challenge", new_callable=AsyncMock
-                ):
+                with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock):
                     result = await service.generate_authentication_challenge(
                         db=mock_db,
                         redis=mock_redis,
@@ -183,9 +168,7 @@ class TestPasskeyAuthenticationVerification:
         mock_db = AsyncMock()
         mock_redis = AsyncMock()
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = None  # No stored challenge
 
             with pytest.raises(BadRequestException) as exc_info:
@@ -195,10 +178,7 @@ class TestPasskeyAuthenticationVerification:
                     credential={"response": {}},
                 )
 
-            assert (
-                "challenge" in str(exc_info.value.detail).lower()
-                or "expired" in str(exc_info.value.detail).lower()
-            )
+            assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(exc_info.value.detail).lower()
 
     @pytest.mark.asyncio
     async def test_verify_authentication_finds_credential(self):
@@ -214,14 +194,10 @@ class TestPasskeyAuthenticationVerification:
             "challenge": b"test-challenge",
         }
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = mock_challenge_data
 
-            with patch.object(
-                service, "_find_credential_by_id", new_callable=AsyncMock
-            ) as mock_find:
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = None  # Credential not found
 
                 with pytest.raises(BadRequestException) as exc_info:
@@ -264,19 +240,13 @@ class TestPasskeyAuthenticationVerification:
             counter=10,
         )
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = mock_challenge_data
 
-            with patch.object(
-                service, "_find_credential_by_id", new_callable=AsyncMock
-            ) as mock_find:
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = mock_cred
 
-                with patch.object(
-                    service, "_verify_authentication_response"
-                ) as mock_verify:
+                with patch.object(service, "_verify_authentication_response") as mock_verify:
                     # Return verification with lower/equal counter (replay attempt)
                     mock_verify.return_value = MagicMock(
                         new_sign_count=5,  # Lower than stored counter (10)
@@ -329,43 +299,29 @@ class TestPasskeyAuthenticationVerification:
         # Mock user for token generation
         mock_user = MagicMock(id=1, email="test@example.com")
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = mock_challenge_data
 
-            with patch.object(
-                service, "_find_credential_by_id", new_callable=AsyncMock
-            ) as mock_find:
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = mock_cred
 
-                with patch.object(
-                    service, "_verify_authentication_response"
-                ) as mock_verify:
+                with patch.object(service, "_verify_authentication_response") as mock_verify:
                     # Return verification with higher counter
                     mock_verify.return_value = MagicMock(
                         new_sign_count=11,  # Higher than stored counter (10)
                     )
 
-                    with patch.object(
-                        service, "_update_credential_counter", new_callable=AsyncMock
-                    ) as mock_update:
-                        with patch.object(
-                            service, "_get_user_for_credential", new_callable=AsyncMock
-                        ) as mock_get_user:
+                    with patch.object(service, "_update_credential_counter", new_callable=AsyncMock) as mock_update:
+                        with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
                             mock_get_user.return_value = mock_user
 
-                            with patch.object(
-                                service, "_generate_auth_tokens"
-                            ) as mock_tokens:
+                            with patch.object(service, "_generate_auth_tokens") as mock_tokens:
                                 mock_tokens.return_value = {
                                     "access_token": "test",
                                     "refresh_token": "test",
                                 }
 
-                                with patch.object(
-                                    service, "_delete_auth_challenge", new_callable=AsyncMock
-                                ):
+                                with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,
@@ -407,32 +363,20 @@ class TestPasskeyAuthenticationVerification:
 
         mock_user = MagicMock(id=1, email="test@example.com")
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = mock_challenge_data
 
-            with patch.object(
-                service, "_find_credential_by_id", new_callable=AsyncMock
-            ) as mock_find:
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = mock_cred
 
-                with patch.object(
-                    service, "_verify_authentication_response"
-                ) as mock_verify:
+                with patch.object(service, "_verify_authentication_response") as mock_verify:
                     mock_verify.return_value = MagicMock(new_sign_count=11)
 
-                    with patch.object(
-                        service, "_update_credential_counter", new_callable=AsyncMock
-                    ):
-                        with patch.object(
-                            service, "_get_user_for_credential", new_callable=AsyncMock
-                        ) as mock_get_user:
+                    with patch.object(service, "_update_credential_counter", new_callable=AsyncMock):
+                        with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
                             mock_get_user.return_value = mock_user
 
-                            with patch.object(
-                                service, "_generate_auth_tokens"
-                            ) as mock_tokens:
+                            with patch.object(service, "_generate_auth_tokens") as mock_tokens:
                                 mock_tokens.return_value = {
                                     "access_token": "access-123",
                                     "refresh_token": "refresh-456",
@@ -440,9 +384,7 @@ class TestPasskeyAuthenticationVerification:
                                     "expires_in": 3600,
                                 }
 
-                                with patch.object(
-                                    service, "_delete_auth_challenge", new_callable=AsyncMock
-                                ):
+                                with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     result = await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,
@@ -486,40 +428,26 @@ class TestPasskeyAuthenticationVerification:
 
         mock_user = MagicMock(id=1, email="test@example.com")
 
-        with patch.object(
-            service, "_get_stored_auth_challenge", new_callable=AsyncMock
-        ) as mock_get_challenge:
+        with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
             mock_get_challenge.return_value = mock_challenge_data
 
-            with patch.object(
-                service, "_find_credential_by_id", new_callable=AsyncMock
-            ) as mock_find:
+            with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
                 mock_find.return_value = mock_cred
 
-                with patch.object(
-                    service, "_verify_authentication_response"
-                ) as mock_verify:
+                with patch.object(service, "_verify_authentication_response") as mock_verify:
                     mock_verify.return_value = MagicMock(new_sign_count=11)
 
-                    with patch.object(
-                        service, "_update_credential_counter", new_callable=AsyncMock
-                    ) as mock_update:
-                        with patch.object(
-                            service, "_get_user_for_credential", new_callable=AsyncMock
-                        ) as mock_get_user:
+                    with patch.object(service, "_update_credential_counter", new_callable=AsyncMock) as mock_update:
+                        with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
                             mock_get_user.return_value = mock_user
 
-                            with patch.object(
-                                service, "_generate_auth_tokens"
-                            ) as mock_tokens:
+                            with patch.object(service, "_generate_auth_tokens") as mock_tokens:
                                 mock_tokens.return_value = {
                                     "access_token": "test",
                                     "refresh_token": "test",
                                 }
 
-                                with patch.object(
-                                    service, "_delete_auth_challenge", new_callable=AsyncMock
-                                ):
+                                with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,

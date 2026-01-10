@@ -55,6 +55,7 @@ def mock_post():
         "title": "Test Post",
         "text": "This is a test post content.",
         "media_url": None,
+        "created_by_user_id": 1,
         "user_id": 1,
         "tenant_id": 1,
         "created_at": datetime.now(UTC),
@@ -87,18 +88,15 @@ class TestPostServiceCreate:
         service = PostService(mock_db)
 
         with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
             patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
             patch("src.app.modules.posts.service.get_tenant_context") as mock_context,
         ):
-            mock_get_user.return_value = mock_user
             mock_crud.create.return_value = mock_post
             mock_tenant = AsyncMock()
             mock_tenant.id = 1
             mock_context.return_value = mock_tenant
 
-            result = await service.create_post(
-                username="testuser",
+            result = await service.create(
                 post=post_create,
                 current_user=mock_user,
             )
@@ -106,25 +104,6 @@ class TestPostServiceCreate:
             assert result["id"] == 1
             assert result["title"] == "Test Post"
             mock_crud.create.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_create_post_forbidden_for_other_user(self, mock_db, mock_user, post_create):
-        """Test that creating post for another user raises ForbiddenException."""
-        from src.app.core.exceptions.http_exceptions import ForbiddenException
-        from src.app.modules.posts.service import PostService
-
-        service = PostService(mock_db)
-        other_user = {**mock_user, "id": 999, "username": "otheruser"}
-
-        with patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user:
-            mock_get_user.return_value = other_user
-
-            with pytest.raises(ForbiddenException):
-                await service.create_post(
-                    username="otheruser",
-                    post=post_create,
-                    current_user=mock_user,
-                )
 
 
 class TestPostServiceGet:
@@ -137,16 +116,12 @@ class TestPostServiceGet:
 
         service = PostService(mock_db)
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
-            result = await service.get_post(
-                username="testuser",
+            result = await service.get(
                 post_id=1,
+                user_id=mock_user["id"],
             )
 
             assert result["id"] == 1
@@ -160,15 +135,11 @@ class TestPostServiceGet:
 
         service = PostService(mock_db)
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
-                await service.get_post(username="testuser", post_id=999)
+                await service.get(post_id=999, user_id=mock_user["id"])
 
     @pytest.mark.asyncio
     async def test_get_posts_paginated(self, mock_db, mock_user, mock_post):
@@ -178,15 +149,11 @@ class TestPostServiceGet:
         service = PostService(mock_db)
         mock_response = {"data": [mock_post], "total_count": 1}
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get_multi.return_value = mock_response
 
-            result = await service.get_posts(
-                username="testuser",
+            result = await service.get_multi(
+                user_id=mock_user["id"],
                 page=1,
                 items_per_page=10,
             )
@@ -206,16 +173,11 @@ class TestPostServiceUpdate:
         service = PostService(mock_db)
         updated_post = {**mock_post, "title": "Updated Title", "text": "Updated content."}
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.update.return_value = updated_post
 
-            result = await service.update_post(
-                username="testuser",
+            result = await service.update(
                 post_id=1,
                 values=post_update,
                 current_user=mock_user,
@@ -233,19 +195,14 @@ class TestPostServiceUpdate:
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = other_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):
-                await service.update_post(
-                    username="otheruser",
+                await service.update(
                     post_id=1,
                     values=post_update,
-                    current_user=mock_user,
+                    current_user=other_user,
                 )
 
 
@@ -259,16 +216,11 @@ class TestPostServiceDelete:
 
         service = PostService(mock_db)
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.update.return_value = None
 
-            result = await service.delete_post(
-                username="testuser",
+            result = await service.delete(
                 post_id=1,
                 current_user=mock_user,
             )
@@ -283,16 +235,11 @@ class TestPostServiceDelete:
 
         service = PostService(mock_db)
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = mock_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.delete.return_value = None
 
-            result = await service.hard_delete_post(
-                username="testuser",
+            result = await service.hard_delete(
                 post_id=1,
             )
 
@@ -308,16 +255,11 @@ class TestPostServiceDelete:
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
 
-        with (
-            patch.object(service, "_get_user_or_404", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-        ):
-            mock_get_user.return_value = other_user
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):
-                await service.delete_post(
-                    username="otheruser",
+                await service.delete(
                     post_id=1,
-                    current_user=mock_user,
+                    current_user=other_user,
                 )

@@ -53,7 +53,7 @@ class TestMagicLinkE2EFlow:
             patch(
                 "src.app.modules.magic_link.service.MagicLinkService._queue_magic_link_email",
                 new_callable=AsyncMock,
-            ) as mock_queue_email,
+            ),
             patch(
                 "src.app.modules.magic_link.service.MagicLinkService._get_magic_link_manager",
             ) as mock_manager,

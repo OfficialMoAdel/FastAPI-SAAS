@@ -2,8 +2,12 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.billing.crud import crud_stripe_settings
-from src.app.modules.billing.schemas import StripeSettingsCreate, StripeSettingsUpdate, StripeSettingsCreateInternal, StripeSettingsRead
-from src.app.modules.billing.models import StripeSettings
+from src.app.modules.billing.schemas import (
+    StripeSettingsCreate,
+    StripeSettingsCreateInternal,
+    StripeSettingsRead,
+    StripeSettingsUpdate,
+)
 
 
 @pytest.mark.asyncio
@@ -96,10 +100,10 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     s1_id = s1["id"]  # Capture ID before other operations expire the object
 
     # We need a second tenant.
-    from src.app.modules.tenants.models import Tenant
-
     # Check if tenant 2 exists
     from sqlalchemy import select
+
+    from src.app.modules.tenants.models import Tenant
 
     res = await db_session.execute(select(Tenant).where(Tenant.slug == "tenant-2"))
     tenant2 = res.scalar_one_or_none()

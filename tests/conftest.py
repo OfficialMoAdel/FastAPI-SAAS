@@ -105,11 +105,27 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 
 from src.app.core.db.database import Base
 
-# Import all other models here to ensure they are registered in Base.metadata
+# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
-
-# Import all models to ensure Base.metadata is fully populated for drop_all/create_all
+from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.billing.models import SubscriptionPlan, UserSubscription, Product, Pricing, StripeSettings
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.files.models import File
+from src.app.modules.magic_link.models import MagicLink
+from src.app.modules.notifications.models import Notification
+from src.app.modules.passkey.models import PasskeyCredential
+from src.app.modules.posts.models import Post
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.sso.models import UserSSOConnection
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.storage_settings.models import StorageSettings
+from src.app.modules.tiers.models import Tier
+from src.app.modules.user_preferences.models import UserPreferences
+from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
 
 fake = Faker()
 
@@ -166,8 +182,8 @@ def client() -> Generator[TestClient, Any, None]:
     fake_tenant.slug = "test-tenant"
     fake_tenant.is_active = True
 
-    from src.app.core.db.database import async_get_db
     from src.app.api.dependencies import get_current_user
+    from src.app.core.db.database import async_get_db
 
     # Mock superuser for auth
     fake_superuser = MockUser(
@@ -314,8 +330,8 @@ async def full_mock_context():
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
-    from src.app.core.db.database import async_get_db
     from src.app.api.dependencies import get_current_user
+    from src.app.core.db.database import async_get_db
 
     # Mock superuser with dict-like access for routes using current_user["id"]
     fake_superuser = MockUser(
@@ -333,6 +349,20 @@ async def full_mock_context():
     app.dependency_overrides[async_get_db] = override_get_db
     app.dependency_overrides[get_current_user] = mock_get_current_user
 
+    # PATCH RBAC dependency to respect the get_current_user override
+    # This is needed because RBAC dependencies call _get_current_user_from_token directly
+    # instead of using the get_current_user dependency
+    import inspect
+
+    async def mock_get_current_user_from_token(token: str, db: Any) -> dict:
+        # Check if get_current_user is overridden
+        override = app.dependency_overrides.get(get_current_user)
+        if override:
+            if inspect.iscoroutinefunction(override):
+                return await override()
+            return override()
+        return fake_superuser
+
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
@@ -347,6 +377,9 @@ async def full_mock_context():
             return_value=fake_tenant,
         ),
         patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+        patch(
+            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
+        ),
     ):
         yield
 
@@ -401,7 +434,6 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def async_client(full_mock_context) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture."""
     # Note: ASGITransport(app=app) handles lifespan automatically.
-    # We rely on full_mock_context for dependencies/patches, but avoid Nested TestClient usage.
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -425,7 +457,7 @@ async def unauthenticated_async_client(unauthenticated_mock_context) -> AsyncGen
 
 
 @pytest.fixture
-def superuser_token_headers(full_mock_context):
+async def superuser_token_headers(full_mock_context):
     """Headers for superuser requests (overrides get_current_user)."""
     from src.app.api.dependencies import get_current_user
 
@@ -448,7 +480,7 @@ def superuser_token_headers(full_mock_context):
 
 
 @pytest.fixture
-def regular_user_token_headers(full_mock_context):
+async def regular_user_token_headers(full_mock_context):
     """Headers for regular user requests (non-superuser)."""
     from src.app.api.dependencies import get_current_user
 
@@ -654,6 +686,80 @@ def current_user_dict():
         "name": fake.name(),
         "is_superuser": False,
     }
+
+
+@pytest.fixture
+def mock_sso_settings():
+    """Fixture to mock SSO settings for Apple provider."""
+
+    patches = []
+
+    def _mock_sso_settings(provider: str, enabled: bool = True):
+        patcher = patch(
+            "src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings",
+            new_callable=AsyncMock,
+        )
+        mock = patcher.start()
+        patches.append(patcher)
+
+        mock.return_value = {
+            "client_id": "com.example.app",
+            "client_secret": "test-secret",
+            "team_id": "TEAMID1234",
+            "key_id": "KEYID12345",
+            "private_key": "-----BEGIN PRIVATE KEY-----\ntest\n-----END PRIVATE KEY-----",
+            "is_enabled": enabled,
+        }
+        return mock
+
+    yield _mock_sso_settings
+
+    for patcher in patches:
+        patcher.stop()
+
+
+@pytest.fixture
+def mock_apple_oauth():
+    """Fixture to mock Apple OAuth responses."""
+
+    patches = []
+
+    def _mock_apple_oauth(token_response: dict = None):
+        # We mock the provider instance returned by _get_provider_instance
+        # This is safer than patching methods on the class
+
+        mock_provider = AsyncMock()
+        mock_provider.exchange_code_for_token.return_value = token_response or {
+            "access_token": "mock-access-token",
+            "id_token": "mock-id-token",
+            "refresh_token": "mock-refresh-token",
+            "expires_in": 3600,
+            "token_type": "bearer",
+        }
+
+        # Default user info setup
+        # We can't import AppleUserInfo here easily if it depends on other things,
+        # so we mock the return value object
+        mock_user_info = Mock()
+        mock_user_info.provider_user_id = "test.apple.id"
+        mock_user_info.email = "test@example.com"
+        mock_user_info.email_verified = True
+        mock_user_info.name = "Test User"
+        mock_user_info.is_private_email = False
+
+        mock_provider.get_user_info.return_value = mock_user_info
+
+        # Patch the factory method in service
+        patcher = patch("src.app.modules.sso.service.SSOService._get_provider_instance", return_value=mock_provider)
+        patcher.start()
+        patches.append(patcher)
+
+        return mock_provider
+
+    yield _mock_apple_oauth
+
+    for patcher in patches:
+        patcher.stop()
 
 
 @pytest.fixture

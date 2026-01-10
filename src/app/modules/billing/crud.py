@@ -33,7 +33,6 @@ from .schemas import (
     UserSubscriptionUpdate,
 )
 
-
 # Stripe Settings CRUD (1:1 per tenant)
 CRUDStripeSettings = TenantAwareCRUD[
     StripeSettings,

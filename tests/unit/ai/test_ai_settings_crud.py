@@ -3,9 +3,10 @@
 Tests T135: Unit test for AISettingsCRUD in tests/unit/ai/test_ai_settings_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.ai.crud import crud_ai_settings
 from src.app.modules.ai.models import AISettings
@@ -50,7 +51,7 @@ class TestAISettingsCRUD:
         mock_settings.temperature = ai_settings_data["temperature"]
         mock_settings.max_tokens = ai_settings_data["max_tokens"]
         mock_settings.system_prompt = ai_settings_data["system_prompt"]
-        mock_settings.created_at = datetime.now(timezone.utc)
+        mock_settings.created_at = datetime.now(UTC)
         mock_settings.updated_at = None
 
         with patch.object(crud_ai_settings, 'create', new_callable=AsyncMock) as mock_create:
@@ -118,7 +119,7 @@ class TestAISettingsCRUD:
         mock_settings = MagicMock(spec=AISettings)
         mock_settings.id = settings_id
         mock_settings.model = "llama3"
-        mock_settings.updated_at = datetime.now(timezone.utc)
+        mock_settings.updated_at = datetime.now(UTC)
 
         update_data = AISettingsUpdate(model="llama3")
 
@@ -142,7 +143,7 @@ class TestAISettingsCRUD:
         mock_settings = MagicMock(spec=AISettings)
         mock_settings.id = settings_id
         mock_settings.temperature = 0.9
-        mock_settings.updated_at = datetime.now(timezone.utc)
+        mock_settings.updated_at = datetime.now(UTC)
 
         update_data = AISettingsUpdate(temperature=0.9)
 
@@ -166,7 +167,7 @@ class TestAISettingsCRUD:
         mock_settings = MagicMock(spec=AISettings)
         mock_settings.id = settings_id
         mock_settings.max_tokens = 4096
-        mock_settings.updated_at = datetime.now(timezone.utc)
+        mock_settings.updated_at = datetime.now(UTC)
 
         update_data = AISettingsUpdate(max_tokens=4096)
 
@@ -191,7 +192,7 @@ class TestAISettingsCRUD:
         mock_settings = MagicMock(spec=AISettings)
         mock_settings.id = settings_id
         mock_settings.system_prompt = new_prompt
-        mock_settings.updated_at = datetime.now(timezone.utc)
+        mock_settings.updated_at = datetime.now(UTC)
 
         update_data = AISettingsUpdate(system_prompt=new_prompt)
 

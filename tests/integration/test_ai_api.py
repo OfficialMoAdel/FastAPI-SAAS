@@ -10,8 +10,6 @@ Tests cover:
 
 from unittest.mock import AsyncMock, patch
 
-import pytest
-
 
 class TestChatSessionAPI:
     """Integration tests for chat session endpoints."""

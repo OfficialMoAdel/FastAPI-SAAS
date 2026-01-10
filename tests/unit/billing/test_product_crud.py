@@ -3,9 +3,10 @@
 Tests T114: Unit test for ProductCRUD in tests/unit/billing/test_product_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.billing.crud import crud_products
 from src.app.modules.billing.models import Product
@@ -51,7 +52,7 @@ class TestProductCRUD:
         mock_product.description = product_data["description"]
         mock_product.stripe_product_id = product_data["stripe_product_id"]
         mock_product.is_active = product_data["is_active"]
-        mock_product.created_at = datetime.now(timezone.utc)
+        mock_product.created_at = datetime.now(UTC)
         mock_product.updated_at = None
 
         with patch.object(crud_products, 'create', new_callable=AsyncMock) as mock_create:
@@ -130,7 +131,7 @@ class TestProductCRUD:
         mock_product.name = new_name
         mock_product.description = "Updated description"
         mock_product.is_active = True
-        mock_product.updated_at = datetime.now(timezone.utc)
+        mock_product.updated_at = datetime.now(UTC)
 
         update_data = ProductUpdate(name=new_name, description="Updated description")
 
@@ -158,7 +159,7 @@ class TestProductCRUD:
         mock_product.id = product_id
         mock_product.tenant_id = tenant_id
         mock_product.is_active = False
-        mock_product.updated_at = datetime.now(timezone.utc)
+        mock_product.updated_at = datetime.now(UTC)
 
         update_data = ProductUpdate(is_active=False)
 

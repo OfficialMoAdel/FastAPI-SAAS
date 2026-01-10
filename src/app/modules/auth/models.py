@@ -2,15 +2,24 @@
 
 import secrets
 from datetime import UTC, datetime, timedelta
+from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
 
+if TYPE_CHECKING:
+    from ..users.models import User
+
 
 def generate_reset_token() -> str:
     """Generate cryptographically secure reset token."""
+    return secrets.token_urlsafe(32)
+
+
+def generate_verification_token() -> str:
+    """Generate cryptographically secure verification token."""
     return secrets.token_urlsafe(32)
 
 
@@ -78,27 +87,28 @@ class PasswordResetToken(Base):
     )
 
     # Relationship
-    user: Mapped["User"] = relationship(  # type: ignore[name-defined]
+    user: Mapped["User"] = relationship(
         "User",
         init=False,
     )
 
     def __repr__(self) -> str:
-        return f"<PasswordResetToken(id={self.id}, user_id={self.user_id}, used={self.used})>"
+        return f"<EmailVerificationToken(id={self.id}, user_id={self.user_id})>"
 
     @property
     def is_expired(self) -> bool:
         """Check if token has expired."""
         return datetime.now(UTC) > self.expires_at
 
-    @property
-    def is_valid(self) -> bool:
-        """Check if token is valid (not used and not expired)."""
-        return not self.used and not self.is_expired
-
 
 class EmailVerificationToken(Base):
-    """Token for email verification.
+    """Token for email verification requests.
+
+    Tokens are:
+    - Single-use (deleted after use)
+    - Time-limited (expires_at)
+    - User-specific (user_id FK)
+    - Securely generated (43 chars URL-safe)
 
     Attributes
     ----------
@@ -130,7 +140,7 @@ class EmailVerificationToken(Base):
         nullable=False,
         unique=True,
         index=True,
-        default_factory=generate_reset_token,
+        default_factory=generate_verification_token,
     )
 
     expires_at: Mapped[datetime] = mapped_column(
@@ -147,7 +157,7 @@ class EmailVerificationToken(Base):
     )
 
     # Relationship
-    user: Mapped["User"] = relationship(  # type: ignore[name-defined]
+    user: Mapped["User"] = relationship(
         "User",
         init=False,
     )

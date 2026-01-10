@@ -1,8 +1,10 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import MagicMock, patch
-from fastapi import HTTPException
-from src.app.modules.billing.webhook import verify_webhook_signature, handle_webhook_event
 import stripe
+from fastapi import HTTPException
+
+from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature
 
 
 def test_verify_webhook_signature_success():

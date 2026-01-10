@@ -26,7 +26,7 @@ class TestFileListOperations:
         if response.status_code == status.HTTP_200_OK:
             data = response.json()
             # Should have pagination structure
-            assert isinstance(data, (list, dict))
+            assert isinstance(data, list | dict)
 
     def test_list_files_with_mime_type_filter(self, client):
         """GET /files?mime_type=image/jpeg filters by mime type."""

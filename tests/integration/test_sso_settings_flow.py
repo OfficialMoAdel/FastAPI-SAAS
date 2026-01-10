@@ -61,9 +61,7 @@ class TestSSOSettingsAdminWorkflow:
             },
         )
 
-        assert create_response.status_code == status.HTTP_201_CREATED, (
-            f"Create failed: {create_response.text}"
-        )
+        assert create_response.status_code == status.HTTP_201_CREATED, f"Create failed: {create_response.text}"
 
         create_data = create_response.json()
         assert create_data["provider"] == provider
@@ -156,7 +154,9 @@ class TestSSOSettingsEncryptionIntegration:
             # Raw bytes should NOT contain plaintext
             # Handle both ORM object and dictionary (FastCRUD might return dict)
             client_id_bytes = db_settings.client_id if hasattr(db_settings, "client_id") else db_settings["client_id"]
-            client_secret_bytes = db_settings.client_secret if hasattr(db_settings, "client_secret") else db_settings["client_secret"]
+            client_secret_bytes = (
+                db_settings.client_secret if hasattr(db_settings, "client_secret") else db_settings["client_secret"]
+            )
 
             # Encrypted data should not be readable as plaintext
             try:
@@ -359,7 +359,7 @@ class TestSSOSettingsListFunctionality:
 
         data = response.json()
         # Should be a paginated response or list
-        assert isinstance(data, (dict, list))
+        assert isinstance(data, dict | list)
 
     async def test_list_supports_pagination(
         self,

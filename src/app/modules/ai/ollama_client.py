@@ -4,7 +4,8 @@ Provides async interface to Ollama API for chat completions with streaming suppo
 """
 
 import logging
-from typing import Any, AsyncGenerator
+from collections.abc import AsyncGenerator
+from typing import Any
 
 import httpx
 from pydantic import BaseModel

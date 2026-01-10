@@ -213,16 +213,20 @@ class SSOService:
 
             if user_by_email:
                 found_user_data = user_by_email
-                await self._link_account(db, found_user_data["id"], provider, user_info)
+                user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                await self._link_account(db, user_id, provider, user_info)
             else:
                 current_tenant = get_tenant_context()
                 if not current_tenant:
                     raise BadRequestException("Cannot register new user without tenant context")
 
                 found_user_data = await self._create_sso_user(db, user_info)
-                await self._link_account(db, found_user_data["id"], provider, user_info)
+                user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                await self._link_account(db, user_id, provider, user_info)
 
         if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
+            raise UnauthorizedException("Account is disabled")
+        elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
             raise UnauthorizedException("Account is disabled")
 
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -258,13 +262,21 @@ class SSOService:
                 {
                     "action": "auth.sso_login",
                     "entity_type": "user",
-                    "entity_id": str(found_user_data["id"]),
-                    "tenant_id": str(found_user_data["tenant_id"]),
-                    "user_id": str(found_user_data["id"]),
+                    "entity_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
+                    "tenant_id": str(
+                        found_user_data.tenant_id
+                        if hasattr(found_user_data, "tenant_id")
+                        else found_user_data["tenant_id"]
+                    ),
+                    "user_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
                     "details": {
                         "provider": provider,
-                        "email": found_user_data["email"],
-                        "username": found_user_data["username"],
+                        "email": found_user_data.email
+                        if hasattr(found_user_data, "email")
+                        else found_user_data["email"],
+                        "username": found_user_data.username
+                        if hasattr(found_user_data, "username")
+                        else found_user_data["username"],
                         "success": True,
                     },
                     "ip_address": request.client.host if request.client else None,

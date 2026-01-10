@@ -222,7 +222,7 @@ class MagicLinkService:
             token: Magic link token.
             user_id: User ID for logging.
         """
-        from src.app.core.utils.queue import queue
+        from src.app.core.utils import queue
 
         # Build magic link URL
         magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={token}"

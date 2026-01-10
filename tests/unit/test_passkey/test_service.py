@@ -156,7 +156,7 @@ class TestPasskeyServiceChallengeGeneration:
                 mock_can_create.return_value = True
 
                 with patch.object(service, "_store_challenge", new_callable=AsyncMock):
-                    result = await service.generate_registration_challenge(
+                    await service.generate_registration_challenge(
                         db=mock_db,
                         user=mock_user,
                         device_type="Test Device",
@@ -469,8 +469,9 @@ class TestPasskeyServiceAuthentication:
     @pytest.mark.asyncio
     async def test_generate_auth_challenge_with_email(self):
         """Verify generation with email hint."""
-        from src.app.modules.passkey.service import PasskeyService
         from webauthn.helpers.structs import PublicKeyCredentialDescriptor, PublicKeyCredentialType
+
+        from src.app.modules.passkey.service import PasskeyService
 
         service = PasskeyService()
         mock_db = AsyncMock()
@@ -513,7 +514,7 @@ class TestPasskeyServiceAuthentication:
                         with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
                             mock_get_user.return_value = MagicMock(id=1)
 
-                            with patch.object(service, "_generate_auth_tokens", new_callable=MagicMock) as mock_tokens:
+                            with patch.object(service, "_generate_auth_tokens", new_callable=AsyncMock) as mock_tokens:
                                 mock_tokens.return_value = {"access_token": "token"}
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):

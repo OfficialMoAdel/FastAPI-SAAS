@@ -4,10 +4,8 @@ Tests T096: Token estimation (4 chars per token)
 Tests T097: Context window truncation (FIFO, preserve system prompt)
 """
 
-import pytest
 
 from src.app.modules.ai.service import (
-    DEFAULT_CONTEXT_WINDOW,
     estimate_messages_tokens,
     estimate_tokens,
     truncate_context,

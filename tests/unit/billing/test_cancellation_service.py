@@ -3,12 +3,13 @@
 Tests T106: Unit test for CancellationService in tests/unit/billing/test_cancellation_service.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.app.modules.billing.service import UserSubscriptionService
+import pytest
+
 from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.modules.billing.service import UserSubscriptionService
 
 
 @pytest.fixture
@@ -38,8 +39,8 @@ class TestCancellationService:
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
             "billing_interval": "monthly",
-            "current_period_start": datetime.now(timezone.utc) - timedelta(days=15),
-            "current_period_end": datetime.now(timezone.utc) + timedelta(days=15),
+            "current_period_start": datetime.now(UTC) - timedelta(days=15),
+            "current_period_end": datetime.now(UTC) + timedelta(days=15),
             "cancel_at_period_end": False,
             "canceled_at": None,
         }
@@ -47,7 +48,7 @@ class TestCancellationService:
         mock_updated_subscription = {
             **mock_subscription,
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc),
+            "canceled_at": datetime.now(UTC),
         }
 
         with patch(
@@ -92,7 +93,7 @@ class TestCancellationService:
             "status": "canceled",
             "billing_interval": "monthly",
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc) - timedelta(days=5),
+            "canceled_at": datetime.now(UTC) - timedelta(days=5),
         }
 
         with patch(
@@ -216,7 +217,7 @@ class TestSubscriptionStatusAfterCancellation:
         """Test that subscription stays active until period end after cancellation."""
         service = UserSubscriptionService(mock_db_session)
 
-        period_end = datetime.now(timezone.utc) + timedelta(days=15)
+        period_end = datetime.now(UTC) + timedelta(days=15)
         mock_subscription = {
             "id": 1,
             "user_id": 1,
@@ -229,7 +230,7 @@ class TestSubscriptionStatusAfterCancellation:
         mock_updated = {
             **mock_subscription,
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc),
+            "canceled_at": datetime.now(UTC),
             # Status remains "active" - not "canceled" yet
             "status": "active",
         }
@@ -255,13 +256,13 @@ class TestSubscriptionStatusAfterCancellation:
         """Test that user retains access until current_period_end."""
         service = UserSubscriptionService(mock_db_session)
 
-        period_end = datetime.now(timezone.utc) + timedelta(days=20)
+        period_end = datetime.now(UTC) + timedelta(days=20)
         mock_subscription = {
             "id": 1,
             "user_id": 1,
             "tenant_id": 1,
             "status": "active",
-            "current_period_start": datetime.now(timezone.utc) - timedelta(days=10),
+            "current_period_start": datetime.now(UTC) - timedelta(days=10),
             "current_period_end": period_end,
             "cancel_at_period_end": False,
         }

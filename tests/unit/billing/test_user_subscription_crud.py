@@ -3,9 +3,10 @@
 Tests T064: Unit test for UserSubscriptionCRUD in tests/unit/billing/test_user_subscription_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.billing.crud import crud_user_subscriptions
 from src.app.modules.billing.models import UserSubscription
@@ -15,7 +16,7 @@ from src.app.modules.billing.schemas import UserSubscriptionCreate, UserSubscrip
 @pytest.fixture
 def user_subscription_data():
     """Sample user subscription data for testing."""
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {
         "user_id": 1,
         "subscription_plan_id": 1,
@@ -152,7 +153,7 @@ class TestUserSubscriptionCRUD:
     async def test_update_cancel_at_period_end(self, mock_db_session):
         """Test setting cancel_at_period_end flag."""
         tenant_id = 1
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         mock_subscription = MagicMock(spec=UserSubscription)
         mock_subscription.id = 1

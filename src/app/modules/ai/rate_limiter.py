@@ -6,7 +6,6 @@ Provides Redis-based rate limiting for AI endpoints with configurable limits.
 Default: 60 requests per user per minute.
 """
 
-from typing import Tuple
 from redis.asyncio import Redis
 
 
@@ -48,7 +47,7 @@ class AIRateLimiter:
         """Generate Redis key for user's rate limit bucket."""
         return f"{self.key_prefix}:{user_id}"
 
-    async def check_rate_limit(self, user_id: int) -> Tuple[bool, int, int]:
+    async def check_rate_limit(self, user_id: int) -> tuple[bool, int, int]:
         """Check if request is within rate limit.
 
         Args:
@@ -88,7 +87,7 @@ class AIRateLimiter:
 
         return is_allowed, remaining, retry_after
 
-    async def get_current_usage(self, user_id: int) -> Tuple[int, int]:
+    async def get_current_usage(self, user_id: int) -> tuple[int, int]:
         """Get current usage without incrementing counter.
 
         Args:
@@ -136,6 +135,7 @@ def get_ai_rate_limiter(redis_client: Redis | None = None) -> AIRateLimiter:
         if redis_client is None:
             # Import here to avoid circular imports
             from src.app.core.utils.cache import client as cache_client
+
             redis_client = cache_client
 
         _rate_limiter = AIRateLimiter(redis_client=redis_client)
@@ -143,7 +143,7 @@ def get_ai_rate_limiter(redis_client: Redis | None = None) -> AIRateLimiter:
     return _rate_limiter
 
 
-async def check_ai_rate_limit(user_id: int) -> Tuple[bool, int, int]:
+async def check_ai_rate_limit(user_id: int) -> tuple[bool, int, int]:
     """Convenience function to check rate limit.
 
     Args:

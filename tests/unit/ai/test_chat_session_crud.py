@@ -3,9 +3,10 @@
 Tests T081: Unit test for AIChatSessionCRUD in tests/unit/ai/test_chat_session_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.ai.crud import crud_chat_sessions
 from src.app.modules.ai.models import AIChatSession
@@ -42,7 +43,7 @@ class TestAIChatSessionCRUD:
         user_id = 1
 
         # Create session data with required fields
-        session_data = {**chat_session_data, "user_id": user_id}
+        # session_data = {**chat_session_data, "user_id": user_id}
         create_schema = ChatSessionCreate(**chat_session_data)
 
         mock_session = MagicMock(spec=AIChatSession)
@@ -51,15 +52,14 @@ class TestAIChatSessionCRUD:
         mock_session.user_id = user_id
         mock_session.title = chat_session_data["title"]
         mock_session.model = chat_session_data["model"]
-        mock_session.created_at = datetime.now(timezone.utc)
-        mock_session.updated_at = datetime.now(timezone.utc)
+        mock_session.created_at = datetime.now(UTC)
+        mock_session.updated_at = datetime.now(UTC)
 
-        with patch.object(crud_chat_sessions, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_chat_sessions, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_session
 
             result = await crud_chat_sessions.create(
-                db=mock_db_session,
-                object={**create_schema.model_dump(), "tenant_id": tenant_id, "user_id": user_id}
+                db=mock_db_session, object={**create_schema.model_dump(), "tenant_id": tenant_id, "user_id": user_id}
             )
 
             assert result.id == 1
@@ -78,33 +78,24 @@ class TestAIChatSessionCRUD:
         mock_session.user_id = user_id
         mock_session.title = "Test Session"
 
-        with patch.object(crud_chat_sessions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_chat_sessions, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_session
 
-            result = await crud_chat_sessions.get(
-                db=mock_db_session,
-                id=session_id
-            )
+            result = await crud_chat_sessions.get(db=mock_db_session, id=session_id)
 
             assert result is not None
             assert result.id == session_id
-            mock_get.assert_called_once_with(
-                db=mock_db_session,
-                id=session_id
-            )
+            mock_get.assert_called_once_with(db=mock_db_session, id=session_id)
 
     @pytest.mark.asyncio
     async def test_get_chat_session_not_found(self, mock_db_session):
         """Test retrieving a non-existent session returns None."""
         session_id = 999
 
-        with patch.object(crud_chat_sessions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_chat_sessions, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_chat_sessions.get(
-                db=mock_db_session,
-                id=session_id
-            )
+            result = await crud_chat_sessions.get(db=mock_db_session, id=session_id)
 
             assert result is None
 
@@ -119,13 +110,11 @@ class TestAIChatSessionCRUD:
 
         update_data = ChatSessionUpdate(title="Updated Title")
 
-        with patch.object(crud_chat_sessions, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_chat_sessions, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_session
 
             result = await crud_chat_sessions.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=session_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=session_id
             )
 
             assert result.title == "Updated Title"
@@ -136,18 +125,12 @@ class TestAIChatSessionCRUD:
         """Test deleting a chat session."""
         session_id = 1
 
-        with patch.object(crud_chat_sessions, 'db_delete', new_callable=AsyncMock) as mock_delete:
+        with patch.object(crud_chat_sessions, "db_delete", new_callable=AsyncMock) as mock_delete:
             mock_delete.return_value = None
 
-            await crud_chat_sessions.db_delete(
-                db=mock_db_session,
-                id=session_id
-            )
+            await crud_chat_sessions.db_delete(db=mock_db_session, id=session_id)
 
-            mock_delete.assert_called_once_with(
-                db=mock_db_session,
-                id=session_id
-            )
+            mock_delete.assert_called_once_with(db=mock_db_session, id=session_id)
 
     @pytest.mark.asyncio
     async def test_get_multi_by_user(self, mock_db_session):
@@ -159,13 +142,10 @@ class TestAIChatSessionCRUD:
             MagicMock(spec=AIChatSession, id=2, user_id=user_id, title="Session 2"),
         ]
 
-        with patch.object(crud_chat_sessions, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = {"data": mock_sessions, "total_count": 2}
 
-            result = await crud_chat_sessions.get_multi(
-                db=mock_db_session,
-                user_id=user_id
-            )
+            result = await crud_chat_sessions.get_multi(db=mock_db_session, user_id=user_id)
 
             assert result["total_count"] == 2
             assert len(result["data"]) == 2
@@ -198,13 +178,11 @@ class TestAIChatSessionCRUD:
 
         update_data = ChatSessionUpdate(title="New Title")  # Only title
 
-        with patch.object(crud_chat_sessions, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_chat_sessions, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_session
 
             result = await crud_chat_sessions.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=session_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=session_id
             )
 
             assert result.title == "New Title"
@@ -224,21 +202,14 @@ class TestAIChatSessionCRUD:
         mock_session.id = session_id
         mock_session.tenant_id = tenant_id_1
 
-        with patch.object(crud_chat_sessions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_chat_sessions, "get", new_callable=AsyncMock) as mock_get:
             # When session exists for tenant 1
             mock_get.return_value = mock_session
-            result = await crud_chat_sessions.get(
-                db=mock_db_session,
-                id=session_id
-            )
+            result = await crud_chat_sessions.get(db=mock_db_session, id=session_id)
             assert result is not None
             assert result.tenant_id == tenant_id_1
 
             # Different tenant should not see this session
             mock_get.return_value = None
-            result = await crud_chat_sessions.get(
-                db=mock_db_session,
-                id=session_id,
-                tenant_id=tenant_id_2
-            )
+            result = await crud_chat_sessions.get(db=mock_db_session, id=session_id, tenant_id=tenant_id_2)
             assert result is None

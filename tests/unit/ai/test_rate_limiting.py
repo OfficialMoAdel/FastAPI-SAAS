@@ -3,10 +3,9 @@
 Tests T086: Unit test for rate limiting middleware in tests/unit/ai/test_rate_limiting.py
 """
 
+from unittest.mock import AsyncMock, MagicMock
+
 import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
-import time
 
 
 class TestAIRateLimiter:

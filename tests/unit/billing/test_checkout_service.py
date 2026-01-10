@@ -1,8 +1,9 @@
-import pytest
 from unittest.mock import MagicMock, patch
+
+import pytest
 from fastapi import HTTPException
-from src.app.modules.billing.service import CheckoutService, CheckoutCreate
-from src.app.core.config import settings
+
+from src.app.modules.billing.service import CheckoutCreate, CheckoutService
 
 
 @pytest.mark.asyncio

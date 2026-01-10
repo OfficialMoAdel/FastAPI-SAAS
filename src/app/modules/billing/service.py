@@ -19,6 +19,8 @@ from src.app.modules._base.service import BaseService
 
 logger = logging.getLogger(__name__)
 
+from src.app.core.config import settings
+
 from .crud import (
     crud_billing_records,
     crud_pricing,
@@ -35,7 +37,6 @@ from .models import (
     SubscriptionPlan,
     UserSubscription,
 )
-from src.app.core.config import settings
 from .schemas import (
     BillingRecordCreate,
     BillingRecordCreateInternal,
@@ -122,7 +123,9 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
         create_obj = SubscriptionPlanCreateInternal(**plan_data)
-        return await crud_subscription_plans.create(db=self.db, object=create_obj, schema_to_select=SubscriptionPlanRead)
+        return await crud_subscription_plans.create(
+            db=self.db, object=create_obj, schema_to_select=SubscriptionPlanRead
+        )
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
@@ -306,7 +309,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         sub_data["tenant_id"] = tenant.id
         sub_data["user_id"] = user_id
         create_obj = UserSubscriptionCreateInternal(**sub_data)
-        result = await crud_user_subscriptions.create(db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead)
+        result = await crud_user_subscriptions.create(
+            db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead
+        )
         logger.info(f"Subscription created: {result.get('id') if result else None}")
         return result
 

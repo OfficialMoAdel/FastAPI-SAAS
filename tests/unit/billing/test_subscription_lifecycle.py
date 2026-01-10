@@ -3,9 +3,10 @@
 Tests T107: Unit test for subscription lifecycle in tests/unit/billing/test_subscription_lifecycle.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.billing.service import UserSubscriptionService
 
@@ -36,8 +37,8 @@ class TestSubscriptionLifecycleStates:
             "subscription_plan_id": 1,
             "status": "active",
             "billing_interval": "monthly",
-            "current_period_start": datetime.now(timezone.utc),
-            "current_period_end": datetime.now(timezone.utc) + timedelta(days=30),
+            "current_period_start": datetime.now(UTC),
+            "current_period_end": datetime.now(UTC) + timedelta(days=30),
             "cancel_at_period_end": False,
             "canceled_at": None,
         }
@@ -56,7 +57,7 @@ class TestSubscriptionLifecycleStates:
         """Test subscription in trial period."""
         service = UserSubscriptionService(mock_db_session)
 
-        trial_end = datetime.now(timezone.utc) + timedelta(days=14)
+        trial_end = datetime.now(UTC) + timedelta(days=14)
         mock_subscription = {
             "id": 1,
             "user_id": 1,
@@ -92,7 +93,7 @@ class TestSubscriptionStateTransitions:
         mock_updated = {
             **mock_subscription,
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc),
+            "canceled_at": datetime.now(UTC),
         }
 
         with patch(
@@ -156,7 +157,7 @@ class TestSubscriptionStateTransitions:
         mock_updated = {
             **mock_subscription,
             "status": "canceled",
-            "canceled_at": datetime.now(timezone.utc),
+            "canceled_at": datetime.now(UTC),
         }
 
         # Verify the state transition is valid
@@ -200,10 +201,10 @@ class TestSubscriptionPeriodManagement:
     @pytest.mark.asyncio
     async def test_current_period_dates_updated_on_renewal(self, mock_db_session):
         """Test that period dates are updated when subscription renews."""
-        old_start = datetime.now(timezone.utc) - timedelta(days=30)
-        old_end = datetime.now(timezone.utc)
-        new_start = datetime.now(timezone.utc)
-        new_end = datetime.now(timezone.utc) + timedelta(days=30)
+        old_start = datetime.now(UTC) - timedelta(days=30)
+        old_end = datetime.now(UTC)
+        new_start = datetime.now(UTC)
+        new_end = datetime.now(UTC) + timedelta(days=30)
 
         mock_subscription = {
             "id": 1,
@@ -219,14 +220,14 @@ class TestSubscriptionPeriodManagement:
         }
 
         # Verify period dates are updated
-        assert mock_subscription["current_period_end"] <= datetime.now(timezone.utc)
-        assert mock_renewed["current_period_end"] > datetime.now(timezone.utc)
+        assert mock_subscription["current_period_end"] <= datetime.now(UTC)
+        assert mock_renewed["current_period_end"] > datetime.now(UTC)
 
     @pytest.mark.asyncio
     async def test_subscription_access_during_period(self, mock_db_session):
         """Test that subscription provides access during current period."""
-        period_start = datetime.now(timezone.utc) - timedelta(days=15)
-        period_end = datetime.now(timezone.utc) + timedelta(days=15)
+        period_start = datetime.now(UTC) - timedelta(days=15)
+        period_end = datetime.now(UTC) + timedelta(days=15)
 
         subscription = {
             "id": 1,
@@ -236,7 +237,7 @@ class TestSubscriptionPeriodManagement:
         }
 
         # User should have access when current time is within period
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         has_access = (
             subscription["status"] == "active"
             and subscription["current_period_start"] <= now <= subscription["current_period_end"]
@@ -246,18 +247,18 @@ class TestSubscriptionPeriodManagement:
     @pytest.mark.asyncio
     async def test_canceled_subscription_access_until_period_end(self, mock_db_session):
         """Test that canceled subscription still provides access until period end."""
-        period_end = datetime.now(timezone.utc) + timedelta(days=10)
+        period_end = datetime.now(UTC) + timedelta(days=10)
 
         subscription = {
             "id": 1,
             "status": "active",  # Still active
             "cancel_at_period_end": True,  # But will cancel
-            "canceled_at": datetime.now(timezone.utc) - timedelta(days=5),
+            "canceled_at": datetime.now(UTC) - timedelta(days=5),
             "current_period_end": period_end,
         }
 
         # User should still have access
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         has_access = subscription["status"] == "active" and now < subscription["current_period_end"]
         assert has_access is True
 
@@ -268,7 +269,7 @@ class TestBillingIntervalTransitions:
     @pytest.mark.asyncio
     async def test_monthly_subscription_period(self, mock_db_session):
         """Test monthly subscription period calculation."""
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         end = start + timedelta(days=30)
 
         subscription = {
@@ -284,7 +285,7 @@ class TestBillingIntervalTransitions:
     @pytest.mark.asyncio
     async def test_yearly_subscription_period(self, mock_db_session):
         """Test yearly subscription period calculation."""
-        start = datetime.now(timezone.utc)
+        start = datetime.now(UTC)
         end = start + timedelta(days=365)
 
         subscription = {
@@ -304,7 +305,7 @@ class TestCancellationFlow:
     @pytest.mark.asyncio
     async def test_full_cancellation_flow(self, mock_db_session):
         """Test complete cancellation lifecycle."""
-        service = UserSubscriptionService(mock_db_session)
+        # service = UserSubscriptionService(mock_db_session)
 
         # Step 1: Active subscription
         active_subscription = {
@@ -312,14 +313,14 @@ class TestCancellationFlow:
             "status": "active",
             "cancel_at_period_end": False,
             "canceled_at": None,
-            "current_period_end": datetime.now(timezone.utc) + timedelta(days=20),
+            "current_period_end": datetime.now(UTC) + timedelta(days=20),
         }
 
         # Step 2: User requests cancellation
         canceling_subscription = {
             **active_subscription,
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc),
+            "canceled_at": datetime.now(UTC),
             "status": "active",  # Still active
         }
 
@@ -343,7 +344,7 @@ class TestCancellationFlow:
         canceled_subscription = {
             "id": 1,
             "status": "canceled",
-            "canceled_at": datetime.now(timezone.utc) - timedelta(days=1),
+            "canceled_at": datetime.now(UTC) - timedelta(days=1),
         }
 
         # Reactivation should require new checkout, not update

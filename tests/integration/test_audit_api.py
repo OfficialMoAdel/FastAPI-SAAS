@@ -17,7 +17,7 @@ from src.app.modules.audit_logs.schemas import AuditLogResponse
 
 class TestAuditLogAPIEndpoints:
     """Integration tests for audit log API endpoints.
-    
+
     Note: Uses the client fixture from conftest.py which provides proper
     database override (SQLite) and tenant middleware mocking.
     """
@@ -42,7 +42,6 @@ class TestAuditLogAPIEndpoints:
     def auth_headers(self):
         """Authentication headers for tenant context (simplified - no DB dependency)."""
         return {"X-Tenant-ID": str(uuid4())}
-
 
     @pytest.fixture
     def sample_user_id(self, db, tenant):

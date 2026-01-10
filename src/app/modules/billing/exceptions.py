@@ -7,8 +7,6 @@ T079: HTTP 402 PaymentError response handling
 
 from __future__ import annotations
 
-from typing import Any
-
 
 class PaymentRequiredError(Exception):
     """Raised when payment is required or payment has failed.

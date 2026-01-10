@@ -148,7 +148,7 @@ class TestPreferencesService:
     @pytest.mark.asyncio
     async def test_update_preferences_empty_update_returns_current(self, service, mock_db, mock_prefs_record):
         """Test empty update returns current preferences without DB update."""
-        updates = UserPreferencesUpdate()  # No fields set
+        # updates = UserPreferencesUpdate()  # No fields set
 
         with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             mock_crud.get_or_create = AsyncMock(return_value=mock_prefs_record)
@@ -157,6 +157,10 @@ class TestPreferencesService:
 
             # Should not call update_preferences since no updates
             mock_crud.update_preferences.assert_not_called()
+
+            assert result is not None
+
+            assert result is not None
 
     @pytest.mark.asyncio
     async def test_update_preferences_handles_enum_conversion(self, service, mock_db):

@@ -1,7 +1,6 @@
-import pytest
 from uuid import uuid4
-from datetime import datetime, UTC
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery, WebhookDeliveryStatus
+
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 
 
 def test_webhook_delivery_status_enum():

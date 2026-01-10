@@ -3,8 +3,7 @@
 Tests T067: Integration test for checkout endpoints in tests/integration/billing/test_checkout_api.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -31,10 +30,12 @@ class TestCheckoutAPI:
         mock_session = MagicMock()
         mock_session.checkout_url = "https://checkout.stripe.com/pay/cs_test_123"
         mock_session.session_id = "cs_test_123"
-        mock_session.expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_session.expires_at = datetime.now(UTC) + timedelta(hours=24)
 
         with (
-            patch("src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock) as mock_create,
+            patch(
+                "src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock
+            ) as mock_create,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
             mock_tenant.return_value = MagicMock(id=1)
@@ -55,7 +56,10 @@ class TestCheckoutAPI:
     def test_create_checkout_session_invalid_plan(self, client_auth) -> None:
         """POST /billing/checkout should return 404 for non-existent plan."""
         with (
-            patch("src.app.modules.billing.service.SubscriptionPlanService.get_plan", new_callable=AsyncMock) as mock_get_plan,
+            patch(
+                "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
+                new_callable=AsyncMock,
+            ) as mock_get_plan,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
             mock_tenant.return_value = MagicMock(id=1)
@@ -118,10 +122,12 @@ class TestCheckoutAPI:
         mock_session = MagicMock()
         mock_session.checkout_url = "https://checkout.stripe.com/pay/cs_test_123"
         mock_session.session_id = "cs_test_123"
-        mock_session.expires_at = datetime.now(timezone.utc) + timedelta(hours=24)
+        mock_session.expires_at = datetime.now(UTC) + timedelta(hours=24)
 
         with (
-            patch("src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock) as mock_create,
+            patch(
+                "src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock
+            ) as mock_create,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
             mock_tenant.return_value = MagicMock(id=1)
@@ -159,8 +165,8 @@ class TestMySubscriptionAPI:
             },
             "status": "active",
             "billing_interval": "monthly",
-            "current_period_start": datetime.now(timezone.utc).isoformat(),
-            "current_period_end": (datetime.now(timezone.utc) + timedelta(days=30)).isoformat(),
+            "current_period_start": datetime.now(UTC).isoformat(),
+            "current_period_end": (datetime.now(UTC) + timedelta(days=30)).isoformat(),
             "cancel_at_period_end": False,
         }
 
@@ -199,7 +205,7 @@ class TestCancelSubscriptionAPI:
             "id": 1,
             "status": "active",
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -240,7 +246,7 @@ class TestBillingHistoryAPI:
                 "currency": "usd",
                 "status": "succeeded",
                 "description": "Monthly subscription",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
         ]
 

@@ -3,11 +3,12 @@
 Tests T127: Unit test for session deletion with cascade in tests/unit/ai/test_session_delete.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.app.modules.ai.crud import crud_chat_messages, crud_chat_sessions
+import pytest
+
+from src.app.modules.ai.crud import crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession
 
 
@@ -46,7 +47,7 @@ def mock_session_with_messages(mock_user, mock_tenant):
     session.tenant_id = mock_tenant.id
     session.title = "Test Session"
     session.model = "gemma3"
-    session.created_at = datetime.now(timezone.utc)
+    session.created_at = datetime.now(UTC)
 
     messages = [
         MagicMock(
@@ -55,7 +56,7 @@ def mock_session_with_messages(mock_user, mock_tenant):
             session_id=session.id,
             role="user",
             content="Hello",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
         MagicMock(
             spec=AIChatMessage,
@@ -63,7 +64,7 @@ def mock_session_with_messages(mock_user, mock_tenant):
             session_id=session.id,
             role="assistant",
             content="Hi there!",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
         MagicMock(
             spec=AIChatMessage,
@@ -71,7 +72,7 @@ def mock_session_with_messages(mock_user, mock_tenant):
             session_id=session.id,
             role="user",
             content="How are you?",
-            created_at=datetime.now(timezone.utc),
+            created_at=datetime.now(UTC),
         ),
     ]
     session.messages = messages
@@ -86,9 +87,7 @@ class TestSessionDeletion:
         """Test basic session deletion."""
         session_id = 1
 
-        with patch.object(
-            crud_chat_sessions, "db_delete", new_callable=AsyncMock
-        ) as mock_delete:
+        with patch.object(crud_chat_sessions, "db_delete", new_callable=AsyncMock) as mock_delete:
             mock_delete.return_value = None
 
             await crud_chat_sessions.db_delete(db=mock_db_session, id=session_id)
@@ -159,12 +158,12 @@ class TestSessionDeletion:
         session_id = 1
         other_user_id = 999
 
-        mock_session = {
-            "id": session_id,
-            "user_id": mock_user["id"],  # Owned by user 1
-            "tenant_id": mock_tenant.id,
-            "title": "Test Session",
-        }
+        # mock_session = {
+        #     "id": session_id,
+        #     "user_id": mock_user["id"],  # Owned by user 1
+        #     "tenant_id": mock_tenant.id,
+        #     "title": "Test Session",
+        # }
 
         with patch(
             "src.app.modules.ai.service.get_tenant_context",
@@ -187,9 +186,7 @@ class TestCascadeDelete:
     """Test suite for cascade deletion of session messages."""
 
     @pytest.mark.asyncio
-    async def test_cascade_deletes_messages(
-        self, mock_db_session, mock_session_with_messages
-    ):
+    async def test_cascade_deletes_messages(self, mock_db_session, mock_session_with_messages):
         """Test that deleting a session cascades to its messages.
 
         Note: This tests the SQLAlchemy cascade behavior via the model definition.
@@ -199,9 +196,7 @@ class TestCascadeDelete:
         assert len(session.messages) == 3
 
         # When the session is deleted via SQLAlchemy, messages are cascaded
-        with patch.object(
-            crud_chat_sessions, "db_delete", new_callable=AsyncMock
-        ) as mock_delete:
+        with patch.object(crud_chat_sessions, "db_delete", new_callable=AsyncMock) as mock_delete:
             mock_delete.return_value = None
 
             await crud_chat_sessions.db_delete(db=mock_db_session, id=session.id)
@@ -223,9 +218,7 @@ class TestCascadeDelete:
         assert "delete-orphan" in messages_rel.cascade
 
     @pytest.mark.asyncio
-    async def test_delete_session_cleans_up_messages(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_delete_session_cleans_up_messages(self, mock_db_session, mock_user, mock_tenant):
         """Test session deletion properly cleans up associated messages."""
         session_id = 1
         mock_session = {
@@ -261,9 +254,7 @@ class TestSessionDeletionEdgeCases:
     """Test edge cases for session deletion."""
 
     @pytest.mark.asyncio
-    async def test_delete_session_with_no_messages(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_delete_session_with_no_messages(self, mock_db_session, mock_user, mock_tenant):
         """Test deleting a session that has no messages."""
         session_id = 1
         mock_session = {
@@ -295,9 +286,7 @@ class TestSessionDeletionEdgeCases:
                     assert "deleted" in result["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_delete_multiple_sessions(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_delete_multiple_sessions(self, mock_db_session, mock_user, mock_tenant):
         """Test deleting multiple sessions in sequence."""
         session_ids = [1, 2, 3]
 
@@ -329,9 +318,7 @@ class TestSessionDeletionEdgeCases:
                     assert mock_delete.call_count == 3
 
     @pytest.mark.asyncio
-    async def test_delete_returns_confirmation_message(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_delete_returns_confirmation_message(self, mock_db_session, mock_user, mock_tenant):
         """Test that deletion returns a proper confirmation message."""
         session_id = 1
         mock_session = {

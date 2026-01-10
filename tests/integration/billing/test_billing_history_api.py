@@ -3,9 +3,8 @@
 Tests T102: Integration test for billing history endpoint in tests/integration/billing/test_billing_history_api.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 
 class TestBillingHistoryEndpoint:
@@ -31,8 +30,8 @@ class TestBillingHistoryEndpoint:
                     "stripe_payment_intent_id": "pi_test_123",
                     "stripe_invoice_id": "in_test_123",
                     "user_subscription_id": 1,
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 },
             ],
             "total_count": 1,
@@ -114,8 +113,8 @@ class TestBillingHistoryEndpoint:
                     "currency": "usd",
                     "status": "succeeded",
                     "description": "Monthly subscription payment",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
-                    "updated_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
+                    "updated_at": datetime.now(UTC).isoformat(),
                 }
             ],
             "total_count": 1,
@@ -159,8 +158,8 @@ class TestBillingRecordDetailEndpoint:
             "stripe_payment_intent_id": "pi_test_123",
             "stripe_invoice_id": "in_test_123",
             "user_subscription_id": 1,
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(

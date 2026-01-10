@@ -4,8 +4,9 @@ Business logic for AI chat sessions, messages, and user settings.
 """
 
 import logging
+from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any, AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -26,7 +27,6 @@ from .schemas import (
     ChatSessionCreate,
     ChatSessionUpdate,
 )
-
 
 # T096: Token estimation (4 chars per token)
 DEFAULT_CONTEXT_WINDOW = 8192  # Default context window size in tokens
@@ -130,9 +130,7 @@ class ChatSessionService(BaseService[AIChatSession]):
     def __init__(self, db: AsyncSession):
         super().__init__(AIChatSession, db)
 
-    async def create_session(
-        self, user_id: int, data: ChatSessionCreate
-    ) -> dict[str, Any]:
+    async def create_session(self, user_id: int, data: ChatSessionCreate) -> dict[str, Any]:
         """Create a new chat session.
 
         T134: Enforces maximum 100 concurrent sessions per tenant.
@@ -164,20 +162,14 @@ class ChatSessionService(BaseService[AIChatSession]):
             raise ModelNotFoundError("ChatSession", session_id)
         return session
 
-    async def get_user_sessions(
-        self, user_id: int, page: int = 1, limit: int = 20
-    ) -> dict[str, Any]:
+    async def get_user_sessions(self, user_id: int, page: int = 1, limit: int = 20) -> dict[str, Any]:
         """Get paginated chat sessions for a user."""
         offset = (page - 1) * limit
-        return await crud_chat_sessions.get_multi(
-            db=self.db, user_id=user_id, offset=offset, limit=limit
-        )
+        return await crud_chat_sessions.get_multi(db=self.db, user_id=user_id, offset=offset, limit=limit)
 
-    async def update_session(
-        self, session_id: int, user_id: int, data: ChatSessionUpdate
-    ) -> dict[str, Any]:
+    async def update_session(self, session_id: int, user_id: int, data: ChatSessionUpdate) -> dict[str, Any]:
         """Update a chat session."""
-        session = await self.get_session(session_id, user_id)
+        await self.get_session(session_id, user_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
@@ -207,14 +199,10 @@ class ChatMessageService(BaseService[AIChatMessage]):
             message_data["token_count"] = token_count
         return await crud_chat_messages.create(db=self.db, object=message_data)
 
-    async def get_session_messages(
-        self, session_id: int, page: int = 1, limit: int = 50
-    ) -> dict[str, Any]:
+    async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
         """Get paginated messages for a session."""
         offset = (page - 1) * limit
-        return await crud_chat_messages.get_multi(
-            db=self.db, session_id=session_id, offset=offset, limit=limit
-        )
+        return await crud_chat_messages.get_multi(db=self.db, session_id=session_id, offset=offset, limit=limit)
 
 
 class AISettingsService(BaseService[AISettings]):
@@ -244,9 +232,7 @@ class AISettingsService(BaseService[AISettings]):
             )
         return settings
 
-    async def update_settings(
-        self, user_id: int, data: AISettingsUpdate
-    ) -> dict[str, Any]:
+    async def update_settings(self, user_id: int, data: AISettingsUpdate) -> dict[str, Any]:
         """Update AI settings for a user."""
         settings = await crud_ai_settings.get(db=self.db, user_id=user_id)
 
@@ -325,13 +311,8 @@ class ChatCompletionService:
         system_prompt = user_settings.get("system_prompt")
 
         # Get existing messages for context
-        messages_result = await self._message_service.get_session_messages(
-            session_id, limit=50
-        )
-        history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages_result.get("data", [])
-        ]
+        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
+        history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
 
         # Add the new user message
         history.append({"role": "user", "content": request.message})
@@ -411,13 +392,8 @@ class ChatCompletionService:
         system_prompt = user_settings.get("system_prompt")
 
         # Get existing messages for context
-        messages_result = await self._message_service.get_session_messages(
-            session_id, limit=50
-        )
-        history = [
-            {"role": m["role"], "content": m["content"]}
-            for m in messages_result.get("data", [])
-        ]
+        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
+        history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
 
         # Add the new user message
         history.append({"role": "user", "content": request.message})

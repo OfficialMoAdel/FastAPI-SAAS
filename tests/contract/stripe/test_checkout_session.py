@@ -6,14 +6,15 @@ These tests verify the contract between our application and the Stripe API
 for checkout session creation and management.
 """
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from datetime import datetime, timezone, timedelta
-from unittest.mock import MagicMock, patch, AsyncMock
 import stripe
 
-from src.app.modules.billing.service import CheckoutService
-from src.app.modules.billing.schemas import CheckoutCreate, CheckoutSession
 from src.app.core.config import settings
+from src.app.modules.billing.schemas import CheckoutCreate, CheckoutSession
+from src.app.modules.billing.service import CheckoutService
 
 
 class TestCheckoutSessionContract:
@@ -35,7 +36,7 @@ class TestCheckoutSessionContract:
         mock_session = MagicMock()
         mock_session.id = "cs_test_a1b2c3d4e5f6g7h8i9j0"
         mock_session.url = "https://checkout.stripe.com/pay/cs_test_a1b2c3d4e5f6g7h8i9j0"
-        mock_session.expires_at = int((datetime.now(timezone.utc) + timedelta(hours=24)).timestamp())
+        mock_session.expires_at = int((datetime.now(UTC) + timedelta(hours=24)).timestamp())
         mock_session.status = "open"
         mock_session.mode = "subscription"
         mock_session.customer = None
@@ -52,13 +53,13 @@ class TestCheckoutSessionContract:
         checkout_session = CheckoutSession(
             checkout_url=mock_stripe_session.url,
             session_id=mock_stripe_session.id,
-            expires_at=datetime.fromtimestamp(mock_stripe_session.expires_at, timezone.utc),
+            expires_at=datetime.fromtimestamp(mock_stripe_session.expires_at, UTC),
         )
 
         # Verify format matches contract
         assert checkout_session.session_id.startswith("cs_")
         assert checkout_session.checkout_url.startswith("https://checkout.stripe.com/")
-        assert checkout_session.expires_at > datetime.now(timezone.utc)
+        assert checkout_session.expires_at > datetime.now(UTC)
 
     @pytest.mark.asyncio
     async def test_checkout_session_id_format(self, mock_stripe_session):
@@ -73,8 +74,8 @@ class TestCheckoutSessionContract:
     @pytest.mark.asyncio
     async def test_checkout_session_expiry_contract(self, mock_stripe_session):
         """Verify checkout session expires in 24 hours."""
-        expires_at = datetime.fromtimestamp(mock_stripe_session.expires_at, timezone.utc)
-        now = datetime.now(timezone.utc)
+        expires_at = datetime.fromtimestamp(mock_stripe_session.expires_at, UTC)
+        now = datetime.now(UTC)
 
         # Session should expire approximately 24 hours from now
         time_until_expiry = expires_at - now
@@ -155,10 +156,25 @@ class TestCheckoutSessionContract:
         payment_method_types = ["card"]
 
         valid_types = [
-            "card", "acss_debit", "alipay", "au_becs_debit", "bacs_debit",
-            "bancontact", "boleto", "eps", "fpx", "giropay", "grabpay",
-            "ideal", "klarna", "oxxo", "p24", "sepa_debit", "sofort",
-            "afterpay_clearpay", "wechat_pay"
+            "card",
+            "acss_debit",
+            "alipay",
+            "au_becs_debit",
+            "bacs_debit",
+            "bancontact",
+            "boleto",
+            "eps",
+            "fpx",
+            "giropay",
+            "grabpay",
+            "ideal",
+            "klarna",
+            "oxxo",
+            "p24",
+            "sepa_debit",
+            "sofort",
+            "afterpay_clearpay",
+            "wechat_pay",
         ]
 
         for method in payment_method_types:
@@ -207,9 +223,13 @@ class TestCheckoutSessionContract:
         # Our service should catch and transform these
         for error_type in error_types:
             assert error_type in [
-                "card_error", "invalid_request_error", "api_error",
-                "authentication_error", "rate_limit_error", "idempotency_error",
-                "invalid_grant"
+                "card_error",
+                "invalid_request_error",
+                "api_error",
+                "authentication_error",
+                "rate_limit_error",
+                "idempotency_error",
+                "invalid_grant",
             ]
 
     @pytest.mark.asyncio
@@ -262,7 +282,7 @@ class TestCheckoutSessionLive:
         # and a valid price_id from the Stripe test account
 
         # Skip if no test price available
-        test_price_id = getattr(settings, 'STRIPE_TEST_PRICE_ID', None)
+        test_price_id = getattr(settings, "STRIPE_TEST_PRICE_ID", None)
         if not test_price_id:
             pytest.skip("STRIPE_TEST_PRICE_ID not configured")
 
@@ -270,8 +290,14 @@ class TestCheckoutSessionLive:
 
         with (
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
-            patch("src.app.modules.billing.service.StripeSettingsService.get_settings", new_callable=AsyncMock) as mock_settings,
-            patch("src.app.modules.billing.service.SubscriptionPlanService.get_plan", new_callable=AsyncMock) as mock_plan,
+            patch(
+                "src.app.modules.billing.service.StripeSettingsService.get_settings",
+                new_callable=AsyncMock,
+            ) as mock_settings,
+            patch(
+                "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
+                new_callable=AsyncMock,
+            ) as mock_plan,
         ):
             mock_tenant.return_value = MagicMock(id=1)
             mock_settings.return_value = {"stripe_customer_id": None}
@@ -297,7 +323,7 @@ class TestCheckoutSessionLive:
                 # Verify response format
                 assert result.session_id.startswith("cs_")
                 assert result.checkout_url.startswith("https://checkout.stripe.com/")
-                assert result.expires_at > datetime.now(timezone.utc)
+                assert result.expires_at > datetime.now(UTC)
 
             except stripe.error.StripeError as e:
                 # Expected if price_id is invalid

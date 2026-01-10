@@ -1,11 +1,12 @@
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.app.modules.billing.crud import crud_subscription_plans
 from src.app.modules.billing.schemas import (
     SubscriptionPlanCreate,
-    SubscriptionPlanUpdate,
     SubscriptionPlanCreateInternal,
     SubscriptionPlanRead,
+    SubscriptionPlanUpdate,
 )
 
 

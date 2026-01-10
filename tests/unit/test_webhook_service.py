@@ -6,7 +6,7 @@ Tests cover:
 - Service initialization
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 from uuid import uuid4
 
 import pytest
@@ -36,8 +36,9 @@ def webhook_service(mock_db):
 @pytest.fixture
 def mock_webhook_endpoint():
     """Mock WebhookEndpoint object."""
-    from src.app.modules.webhooks.models import WebhookEndpoint
     from uuid import uuid4
+
+    from src.app.modules.webhooks.models import WebhookEndpoint
 
     endpoint = WebhookEndpoint(
         tenant_id=uuid4(),
@@ -53,9 +54,10 @@ def mock_webhook_endpoint():
 @pytest.fixture
 def mock_webhook_delivery():
     """Mock WebhookDelivery object."""
-    from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+    from datetime import UTC, datetime
     from uuid import uuid4
-    from datetime import datetime, UTC
+
+    from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
 
     delivery = WebhookDelivery(
         webhook_endpoint_id=uuid4(),

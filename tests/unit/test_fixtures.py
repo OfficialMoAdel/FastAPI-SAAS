@@ -18,6 +18,7 @@ class TestFakeRedisFixture:
     def fake_redis(self):
         """Get a fresh FakeRedis instance."""
         from tests.conftest import FakeRedis
+
         return FakeRedis()
 
     @pytest.mark.asyncio
@@ -111,9 +112,9 @@ class TestMockDBFixture:
         from sqlalchemy.ext.asyncio import AsyncSession
 
         mock_session = Mock(spec=AsyncSession)
-        assert hasattr(mock_session, 'execute')
-        assert hasattr(mock_session, 'commit')
-        assert hasattr(mock_session, 'rollback')
+        assert hasattr(mock_session, "execute")
+        assert hasattr(mock_session, "commit")
+        assert hasattr(mock_session, "rollback")
 
     def test_mock_session_can_be_configured(self):
         """Test that mock session can be configured with return values."""
@@ -129,24 +130,26 @@ class TestClientFixtures:
     def test_client_fixture_exists(self, client):
         """Test that client fixture is available."""
         assert client is not None
-        assert hasattr(client, 'get')
-        assert hasattr(client, 'post')
-        assert hasattr(client, 'put')
-        assert hasattr(client, 'delete')
+        assert hasattr(client, "get")
+        assert hasattr(client, "post")
+        assert hasattr(client, "put")
+        assert hasattr(client, "delete")
 
     def test_client_auth_fixture_exists(self, client_auth):
         """Test that client_auth fixture is available."""
         assert client_auth is not None
-        assert hasattr(client_auth, 'get')
-        assert hasattr(client_auth, 'post')
+        assert hasattr(client_auth, "get")
+        assert hasattr(client_auth, "post")
 
     def test_client_auth_does_not_mock_db(self, client_auth):
         """Test that client_auth doesn't have dependency overrides set."""
         from src.app.main import app
+
         # client_auth should not have the same overrides as client
         # It intentionally doesn't mock DB dependencies
-        assert len(app.dependency_overrides) == 0 or \
-               "src.app.api.dependencies.get_current_user" not in str(app.dependency_overrides)
+        assert len(app.dependency_overrides) == 0 or "src.app.api.dependencies.get_current_user" not in str(
+            app.dependency_overrides
+        )
 
 
 class TestSampleDataFixtures:
@@ -162,6 +165,7 @@ class TestSampleDataFixtures:
     def test_sample_user_read(self, sample_user_read):
         """Test sample_user_read fixture returns valid UserRead."""
         from src.app.schemas.user import UserRead
+
         user = sample_user_read
         assert isinstance(user, UserRead)
         assert user.id is not None
@@ -215,6 +219,7 @@ class TestAsyncSessionBehavior:
     async def test_async_session_exists(self):
         """Test that TestingSessionLocal can be instantiated."""
         from tests.conftest import TestingSessionLocal
+
         # Just verify the class can be accessed
         assert TestingSessionLocal is not None
 
@@ -236,6 +241,7 @@ class TestMockRedisAutouse:
     async def test_mock_redis_available(self):
         """Test that mock_redis is available in tests."""
         from src.app.core.utils.cache import client
+
         # The mock should be in place
         ping_result = await client.ping()
         assert ping_result is True
@@ -284,11 +290,13 @@ class TestConftestImports:
         """Test that conftest can be imported from tests package."""
         # Import from the tests package, not top-level
         from tests import conftest
+
         assert conftest is not None
 
     def test_fake_redis_import(self):
         """Test that FakeRedis can be imported."""
         from tests.conftest import FakeRedis
+
         redis = FakeRedis()
         assert redis.store == {}
 
@@ -298,7 +306,9 @@ class TestConftestImports:
         from tests.conftest import override_dependency
 
         mock_response = Mock()
-        test_dependency = lambda: mock_response
+
+        def test_dependency():
+            return mock_response
 
         # Import a real dependency to override
         from src.app.api.dependencies import get_optional_user
@@ -354,8 +364,9 @@ class TestFakerInstanceProperties:
     def test_faker_has_locale(self):
         """Test that Faker has a locale set."""
         from tests.conftest import fake
+
         # Faker should have locale attribute
-        assert hasattr(fake, 'locale')
+        assert hasattr(fake, "locale")
 
     def test_faker_can_generate_multiple_types(self):
         """Test that Faker can generate various data types."""
@@ -379,16 +390,19 @@ class TestDatabaseEngines:
     def test_sync_engine_exists(self):
         """Test that sync engine is created."""
         from tests.conftest import sync_engine
+
         assert sync_engine is not None
 
     def test_test_async_engine_exists(self):
         """Test that async test engine is created."""
         from tests.conftest import test_async_engine
+
         assert test_async_engine is not None
 
     def test_testing_session_local_exists(self):
         """Test that TestingSessionLocal is created."""
         from tests.conftest import TestingSessionLocal
+
         assert TestingSessionLocal is not None
 
 
@@ -398,11 +412,13 @@ class TestSettingsConfiguration:
     def test_encryption_key_is_set(self):
         """Test that ENCRYPTION_KEY is set."""
         from src.app.core.config import settings
+
         assert settings.ENCRYPTION_KEY is not None
 
     def test_database_uri_is_set(self):
         """Test that database URI is configured."""
         from src.app.core.config import settings
+
         assert settings.POSTGRES_URI is not None
 
 
@@ -413,14 +429,16 @@ class TestRedisPoolMocks:
     async def test_cache_client_mocked(self):
         """Test that cache client is mocked."""
         from src.app.core.utils.cache import client
-        assert hasattr(client, 'get')
-        assert hasattr(client, 'set')
+
+        assert hasattr(client, "get")
+        assert hasattr(client, "set")
 
     @pytest.mark.asyncio
     async def test_rate_limiter_client_mocked(self):
         """Test that rate limiter client is mocked."""
         # Import from the correct path
         from src.app.core.utils.rate_limit import RateLimiter
+
         limiter = RateLimiter()
         # The get_client method should return the mocked client
         client = limiter.get_client()
@@ -433,6 +451,7 @@ class TestMiddlewareMocks:
     def test_rate_limiter_check_mocked(self):
         """Test that rate_limiter.check_rate_limit is mocked in tests."""
         from src.app.core.utils.rate_limit import rate_limiter
+
         # The mock should be in place via autouse fixture
         # We just verify the module loads correctly
         assert rate_limiter is not None

@@ -3,9 +3,8 @@
 Tests T117: Integration test for product endpoints in tests/integration/billing/test_products_api.py
 """
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 
 class TestProductListEndpoint:
@@ -27,7 +26,7 @@ class TestProductListEndpoint:
                 "description": "Description 1",
                 "stripe_product_id": "prod_123",
                 "is_active": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "updated_at": None,
             },
             {
@@ -37,7 +36,7 @@ class TestProductListEndpoint:
                 "description": "Description 2",
                 "stripe_product_id": None,
                 "is_active": True,
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
                 "updated_at": None,
             },
         ]
@@ -93,7 +92,7 @@ class TestProductCreateEndpoint:
             "description": product_data["description"],
             "stripe_product_id": None,
             "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
         }
 
@@ -141,7 +140,7 @@ class TestProductDetailEndpoint:
             "description": "Test description",
             "stripe_product_id": "prod_123",
             "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
             "pricing_tiers": [],
         }
@@ -190,7 +189,7 @@ class TestProductUpdateEndpoint:
             "name": update_data["name"],
             "description": "Original description",
             "is_active": True,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -249,7 +248,7 @@ class TestProductPricingEndpoint:
             "interval": pricing_data["interval"],
             "features": pricing_data["features"],
             "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
         }
 
@@ -314,7 +313,7 @@ class TestProductWithPricingResponse:
             "description": "Test description",
             "stripe_product_id": "prod_123",
             "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
             "pricing_tiers": [
                 {

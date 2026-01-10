@@ -3,12 +3,12 @@
 Tests T101: Unit test for BillingHistoryService in tests/unit/billing/test_billing_history_service.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import pytest
+
 from src.app.modules.billing.service import BillingRecordService
-from src.app.modules.billing.models import BillingRecord
 
 
 @pytest.fixture
@@ -39,7 +39,7 @@ class TestBillingHistoryService:
                     "currency": "usd",
                     "status": "succeeded",
                     "description": "Monthly subscription",
-                    "created_at": datetime.now(timezone.utc),
+                    "created_at": datetime.now(UTC),
                 },
                 {
                     "id": 2,
@@ -48,7 +48,7 @@ class TestBillingHistoryService:
                     "currency": "usd",
                     "status": "succeeded",
                     "description": "Add-on purchase",
-                    "created_at": datetime.now(timezone.utc) - timedelta(days=7),
+                    "created_at": datetime.now(UTC) - timedelta(days=7),
                 },
             ],
             "total_count": 2,
@@ -148,7 +148,7 @@ class TestBillingHistoryService:
             "description": "Monthly subscription",
             "stripe_payment_intent_id": "pi_test_123",
             "stripe_invoice_id": "in_test_123",
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
         }
 
         with patch(
@@ -180,7 +180,7 @@ class TestBillingHistoryService:
         """Test that billing records are returned sorted by date (newest first)."""
         service = BillingRecordService(mock_db_session)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_records = {
             "data": [
                 {"id": 3, "created_at": now, "status": "succeeded"},

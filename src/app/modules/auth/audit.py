@@ -32,7 +32,7 @@ logger = get_logger(__name__)
 
 class AuthAuditLogger:
     """Centralized authentication audit logger.
-    
+
     Provides structured logging for all authentication events.
     Logs are persisted via the event bus and audit log service.
     """
@@ -47,7 +47,7 @@ class AuthAuditLogger:
         user_agent: str | None = None,
     ) -> None:
         """Log an authentication event.
-        
+
         Args:
             action: Event action (e.g., "auth.magic_link.sent")
             tenant_id: Tenant ID (required for multi-tenancy)

@@ -7,7 +7,6 @@ consistent state management across the application.
 """
 
 from enum import Enum
-from typing import Set
 
 
 class SubscriptionStatus(str, Enum):
@@ -15,6 +14,7 @@ class SubscriptionStatus(str, Enum):
 
     Maps to UserSubscription.status field values.
     """
+
     ACTIVE = "active"
     TRIALING = "trialing"
     PAST_DUE = "past_due"
@@ -25,26 +25,26 @@ class SubscriptionStatus(str, Enum):
 # Valid state transitions mapping
 # Key: current state
 # Value: set of valid next states
-VALID_TRANSITIONS: dict[SubscriptionStatus, Set[SubscriptionStatus]] = {
+VALID_TRANSITIONS: dict[SubscriptionStatus, set[SubscriptionStatus]] = {
     SubscriptionStatus.TRIALING: {
-        SubscriptionStatus.ACTIVE,      # Trial converted to paid
-        SubscriptionStatus.CANCELED,    # Trial canceled
-        SubscriptionStatus.EXPIRED,     # Trial expired without conversion
+        SubscriptionStatus.ACTIVE,  # Trial converted to paid
+        SubscriptionStatus.CANCELED,  # Trial canceled
+        SubscriptionStatus.EXPIRED,  # Trial expired without conversion
     },
     SubscriptionStatus.ACTIVE: {
-        SubscriptionStatus.PAST_DUE,    # Payment failed
-        SubscriptionStatus.CANCELED,    # User/system canceled
-        SubscriptionStatus.EXPIRED,     # Subscription period ended
+        SubscriptionStatus.PAST_DUE,  # Payment failed
+        SubscriptionStatus.CANCELED,  # User/system canceled
+        SubscriptionStatus.EXPIRED,  # Subscription period ended
     },
     SubscriptionStatus.PAST_DUE: {
-        SubscriptionStatus.ACTIVE,      # Payment recovered
-        SubscriptionStatus.CANCELED,    # Max retries exceeded or user canceled
-        SubscriptionStatus.EXPIRED,     # Grace period ended
+        SubscriptionStatus.ACTIVE,  # Payment recovered
+        SubscriptionStatus.CANCELED,  # Max retries exceeded or user canceled
+        SubscriptionStatus.EXPIRED,  # Grace period ended
     },
     SubscriptionStatus.CANCELED: {
         # Canceled is typically a terminal state
         # Reactivation requires new subscription
-        SubscriptionStatus.EXPIRED,     # Final cleanup
+        SubscriptionStatus.EXPIRED,  # Final cleanup
     },
     SubscriptionStatus.EXPIRED: {
         # Expired is terminal - no valid transitions
@@ -72,9 +72,7 @@ class SubscriptionLifecycleError(Exception):
     def __init__(self, current_status: str, target_status: str):
         self.current_status = current_status
         self.target_status = target_status
-        super().__init__(
-            f"Invalid subscription state transition: {current_status} -> {target_status}"
-        )
+        super().__init__(f"Invalid subscription state transition: {current_status} -> {target_status}")
 
 
 def is_valid_transition(current_status: str, target_status: str) -> bool:

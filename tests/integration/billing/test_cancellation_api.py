@@ -3,8 +3,7 @@
 Tests T108: Integration test for cancellation endpoint in tests/integration/billing/test_cancellation_api.py
 """
 
-import pytest
-from datetime import datetime, timezone, timedelta
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 
@@ -26,10 +25,10 @@ class TestCancellationEndpoint:
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
             "billing_interval": "monthly",
-            "current_period_start": datetime.now(timezone.utc).isoformat(),
-            "current_period_end": (datetime.now(timezone.utc) + timedelta(days=20)).isoformat(),
+            "current_period_start": datetime.now(UTC).isoformat(),
+            "current_period_end": (datetime.now(UTC) + timedelta(days=20)).isoformat(),
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -80,7 +79,7 @@ class TestCancellationEndpoint:
             "tenant_id": 1,
             "status": "canceled",
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -105,7 +104,7 @@ class TestCancellationWithStripeIntegration:
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -136,12 +135,12 @@ class TestCancellationResponse:
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
             "billing_interval": "monthly",
-            "current_period_start": datetime.now(timezone.utc).isoformat(),
-            "current_period_end": (datetime.now(timezone.utc) + timedelta(days=20)).isoformat(),
+            "current_period_start": datetime.now(UTC).isoformat(),
+            "current_period_end": (datetime.now(UTC) + timedelta(days=20)).isoformat(),
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -159,14 +158,14 @@ class TestCancellationResponse:
 
     def test_cancel_response_shows_access_until_date(self, client_auth) -> None:
         """Cancellation response should indicate when access ends."""
-        period_end = datetime.now(timezone.utc) + timedelta(days=15)
+        period_end = datetime.now(UTC) + timedelta(days=15)
         mock_result = {
             "id": 1,
             "user_id": 1,
             "status": "active",
             "current_period_end": period_end.isoformat(),
             "cancel_at_period_end": True,
-            "canceled_at": datetime.now(timezone.utc).isoformat(),
+            "canceled_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(

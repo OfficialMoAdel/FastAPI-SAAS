@@ -3,9 +3,9 @@
 Tests T134: Unit test for concurrent session limit (100 per tenant)
 """
 
-import pytest
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture

@@ -3,13 +3,13 @@
 Tests T126: Unit test for session list/pagination in tests/unit/ai/test_session_management.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.ai.crud import crud_chat_sessions
 from src.app.modules.ai.models import AIChatSession
-from src.app.modules.ai.schemas import ChatSessionCreate
 
 
 @pytest.fixture
@@ -75,7 +75,7 @@ class TestSessionListPagination:
                 user_id=mock_user["id"],
                 title="Session 1",
                 model="gemma3",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
             MagicMock(
                 spec=AIChatSession,
@@ -83,7 +83,7 @@ class TestSessionListPagination:
                 user_id=mock_user["id"],
                 title="Session 2",
                 model="llama2",
-                created_at=datetime.now(timezone.utc),
+                created_at=datetime.now(UTC),
             ),
         ]
 
@@ -177,7 +177,7 @@ class TestSessionListPagination:
         self, mock_db_session, mock_user
     ):
         """Test sessions are returned ordered by created_at descending."""
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         mock_sessions = [
             MagicMock(
                 spec=AIChatSession,
@@ -189,7 +189,7 @@ class TestSessionListPagination:
                 spec=AIChatSession,
                 id=2,
                 title="Oldest",
-                created_at=datetime(2024, 1, 1, tzinfo=timezone.utc),
+                created_at=datetime(2024, 1, 1, tzinfo=UTC),
             ),
         ]
 

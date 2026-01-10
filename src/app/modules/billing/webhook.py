@@ -1,19 +1,19 @@
 import logging
+from datetime import UTC, datetime
+from typing import Any
+
 import stripe
-from typing import Any, Dict
-from datetime import datetime, timezone
-from fastapi import Request, HTTPException, status
+from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import settings
 from src.app.core.db.database import local_session
-from src.app.modules.users.models import User
-from .crud import crud_user_subscriptions, crud_billing_records, crud_subscription_plans
+
+from .crud import crud_billing_records, crud_user_subscriptions
 from .schemas import (
+    BillingRecordCreate,
     UserSubscriptionCreate,
     UserSubscriptionUpdate,
-    BillingRecordCreate,
 )
 
 logger = logging.getLogger(__name__)
@@ -47,7 +47,7 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
 
-async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None) -> Dict[str, str]:
+async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None) -> dict[str, str]:
     """
     Route and handle specific Stripe webhook events.
 
@@ -104,18 +104,23 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
     plan_id = int(metadata.get("plan_id", 0))
 
     if not all([tenant_id, user_id, plan_id]):
-        logger.error(f"Missing metadata in checkout session: tenant_id={tenant_id}, user_id={user_id}, plan_id={plan_id}")
+        logger.error(
+            "Missing metadata in checkout session: tenant_id=%s, user_id=%s, plan_id=%s",
+            tenant_id,
+            user_id,
+            plan_id,
+        )
         return
 
     stripe_subscription_id = session.get("subscription")
-    stripe_customer_id = session.get("customer")
+    # stripe_customer_id = session.get("customer")  # Unused
 
     # Retrieve subscription details from Stripe
     if stripe_subscription_id:
         try:
             stripe_sub = stripe.Subscription.retrieve(stripe_subscription_id)
-            current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, timezone.utc)
-            current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, timezone.utc)
+            current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, UTC)
+            current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, UTC)
 
             # Determine billing interval from Stripe subscription
             interval = stripe_sub.items.data[0].price.recurring.interval if stripe_sub.items.data else "month"
@@ -187,13 +192,13 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
     # Update subscription
     update_data = UserSubscriptionUpdate(
         status=new_status,
-        current_period_start=datetime.fromtimestamp(subscription["current_period_start"], timezone.utc),
-        current_period_end=datetime.fromtimestamp(subscription["current_period_end"], timezone.utc),
+        current_period_start=datetime.fromtimestamp(subscription["current_period_start"], UTC),
+        current_period_end=datetime.fromtimestamp(subscription["current_period_end"], UTC),
         cancel_at_period_end=subscription.get("cancel_at_period_end", False),
     )
 
     if subscription.get("canceled_at"):
-        update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], timezone.utc)
+        update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
 
     await crud_user_subscriptions.update(
         db=db,
@@ -230,7 +235,7 @@ async def handle_subscription_deleted(db: AsyncSession, event: stripe.Event) -> 
     # Update subscription to canceled/expired
     update_data = UserSubscriptionUpdate(
         status="canceled",
-        canceled_at=datetime.now(timezone.utc),
+        canceled_at=datetime.now(UTC),
     )
 
     await crud_user_subscriptions.update(
@@ -280,7 +285,7 @@ async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event
         amount_cents=invoice["amount_paid"],
         currency=invoice["currency"],
         status="succeeded",
-        description=f"Invoice payment for subscription",
+        description="Invoice payment for subscription",
     )
 
     await crud_billing_records.create(

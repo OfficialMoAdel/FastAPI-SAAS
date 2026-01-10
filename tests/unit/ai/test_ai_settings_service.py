@@ -3,12 +3,13 @@
 Tests T136: Unit test for AISettingsService in tests/unit/ai/test_ai_settings_service.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.app.modules.ai.service import AISettingsService, get_ai_settings_service
+import pytest
+
 from src.app.modules.ai.schemas import AISettingsUpdate
+from src.app.modules.ai.service import AISettingsService, get_ai_settings_service
 
 
 @pytest.fixture
@@ -38,7 +39,7 @@ def sample_settings():
         "temperature": 0.7,
         "max_tokens": 2048,
         "system_prompt": None,
-        "created_at": datetime.now(timezone.utc),
+        "created_at": datetime.now(UTC),
         "updated_at": None,
     }
 

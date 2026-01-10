@@ -3,9 +3,10 @@
 Tests T115: Unit test for PricingCRUD in tests/unit/billing/test_pricing_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.billing.crud import crud_pricing
 from src.app.modules.billing.models import Pricing
@@ -57,7 +58,7 @@ class TestPricingCRUD:
         mock_pricing.interval = pricing_data["interval"]
         mock_pricing.features = pricing_data["features"]
         mock_pricing.is_active = pricing_data["is_active"]
-        mock_pricing.created_at = datetime.now(timezone.utc)
+        mock_pricing.created_at = datetime.now(UTC)
         mock_pricing.updated_at = None
 
         with patch.object(crud_pricing, 'create', new_callable=AsyncMock) as mock_create:
@@ -129,7 +130,7 @@ class TestPricingCRUD:
         mock_pricing.name = pricing_data["name"]
         mock_pricing.amount_cents = new_amount
         mock_pricing.is_active = True
-        mock_pricing.updated_at = datetime.now(timezone.utc)
+        mock_pricing.updated_at = datetime.now(UTC)
 
         update_data = PricingUpdate(amount_cents=new_amount)
 
@@ -153,7 +154,7 @@ class TestPricingCRUD:
         mock_pricing = MagicMock(spec=Pricing)
         mock_pricing.id = pricing_id
         mock_pricing.is_active = False
-        mock_pricing.updated_at = datetime.now(timezone.utc)
+        mock_pricing.updated_at = datetime.now(UTC)
 
         update_data = PricingUpdate(is_active=False)
 
@@ -199,7 +200,7 @@ class TestPricingCRUD:
         mock_pricing = MagicMock(spec=Pricing)
         mock_pricing.id = pricing_id
         mock_pricing.features = new_features
-        mock_pricing.updated_at = datetime.now(timezone.utc)
+        mock_pricing.updated_at = datetime.now(UTC)
 
         update_data = PricingUpdate(features=new_features)
 

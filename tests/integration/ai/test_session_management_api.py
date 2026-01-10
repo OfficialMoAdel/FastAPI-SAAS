@@ -3,9 +3,8 @@
 Tests T128: Integration test for session management endpoints in tests/integration/ai/test_session_management_api.py
 """
 
-import pytest
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, MagicMock, patch
+from datetime import UTC, datetime
+from unittest.mock import AsyncMock, patch
 
 
 class TestSessionListEndpoint:
@@ -27,7 +26,7 @@ class TestSessionListEndpoint:
                     "tenant_id": 1,
                     "title": "Test Session 1",
                     "model": "gemma3",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "updated_at": None,
                 },
                 {
@@ -36,7 +35,7 @@ class TestSessionListEndpoint:
                     "tenant_id": 1,
                     "title": "Test Session 2",
                     "model": "llama2",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                     "updated_at": None,
                 },
             ],
@@ -105,7 +104,7 @@ class TestSessionDetailEndpoint:
             "tenant_id": 1,
             "title": "Test Session",
             "model": "gemma3",
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
         }
 
@@ -152,8 +151,8 @@ class TestSessionUpdateEndpoint:
             "tenant_id": 1,
             "title": update_data["title"],
             "model": "gemma3",
-            "created_at": datetime.now(timezone.utc).isoformat(),
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -244,14 +243,14 @@ class TestSessionMessagesEndpoint:
                     "session_id": 1,
                     "role": "user",
                     "content": "Hello",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
                 {
                     "id": 2,
                     "session_id": 1,
                     "role": "assistant",
                     "content": "Hi there!",
-                    "created_at": datetime.now(timezone.utc).isoformat(),
+                    "created_at": datetime.now(UTC).isoformat(),
                 },
             ],
             "total": 2,

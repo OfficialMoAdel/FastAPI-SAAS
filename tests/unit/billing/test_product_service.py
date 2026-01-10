@@ -3,9 +3,10 @@
 Tests T116: Unit test for ProductService in tests/unit/billing/test_product_service.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 
 @pytest.fixture
@@ -67,7 +68,7 @@ class TestProductService:
             "description": product_data["description"],
             "stripe_product_id": product_data["stripe_product_id"],
             "is_active": True,
-            "created_at": datetime.now(timezone.utc).isoformat(),
+            "created_at": datetime.now(UTC).isoformat(),
             "updated_at": None,
         }
 
@@ -178,7 +179,7 @@ class TestProductService:
             "tenant_id": 1,
             "name": new_name,
             "is_active": True,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(
@@ -215,7 +216,7 @@ class TestProductService:
             "tenant_id": 1,
             "name": product_data["name"],
             "is_active": False,
-            "updated_at": datetime.now(timezone.utc).isoformat(),
+            "updated_at": datetime.now(UTC).isoformat(),
         }
 
         with patch(

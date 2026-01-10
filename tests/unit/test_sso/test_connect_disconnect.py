@@ -72,7 +72,7 @@ class TestConnectProviderService:
     @pytest.mark.asyncio
     async def test_callback_in_connect_mode_links_to_specified_user(self):
         """Verify callback in connect mode links provider to the user from state."""
-        service = SSOService()
+        # service = SSOService()
 
         # This test verifies that when connect_mode is True in state,
         # the callback links the provider to the user_id from state

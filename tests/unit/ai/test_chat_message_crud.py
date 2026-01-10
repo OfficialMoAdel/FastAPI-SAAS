@@ -3,9 +3,10 @@
 Tests T082: Unit test for AIChatMessageCRUD in tests/unit/ai/test_chat_message_crud.py
 """
 
-import pytest
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.ai.crud import crud_chat_messages
 from src.app.modules.ai.models import AIChatMessage
@@ -46,7 +47,7 @@ class TestAIChatMessageCRUD:
         mock_message.role = chat_message_data["role"]
         mock_message.content = chat_message_data["content"]
         mock_message.token_count = None
-        mock_message.created_at = datetime.now(timezone.utc)
+        mock_message.created_at = datetime.now(UTC)
 
         create_schema = ChatMessageCreate(**chat_message_data)
 
@@ -78,7 +79,7 @@ class TestAIChatMessageCRUD:
         mock_message.role = message_data["role"]
         mock_message.content = message_data["content"]
         mock_message.token_count = 25
-        mock_message.created_at = datetime.now(timezone.utc)
+        mock_message.created_at = datetime.now(UTC)
 
         create_schema = ChatMessageCreate(**message_data)
 
@@ -263,7 +264,7 @@ class TestAIChatMessageCRUD:
     async def test_message_ordering(self, mock_db_session):
         """Test that messages are ordered by creation time."""
         session_id = 1
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
 
         mock_messages = [
             MagicMock(spec=AIChatMessage, id=1, created_at=now),

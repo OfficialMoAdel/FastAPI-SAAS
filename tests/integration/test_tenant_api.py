@@ -11,7 +11,6 @@ Tests all 6 tenant endpoints from the API contract:
 NOTE: Tests that require database access are skipped when PostgreSQL is unavailable.
 """
 
-
 import pytest
 import pytest_asyncio
 from fastapi import status
@@ -30,7 +29,7 @@ _use_sqlite = settings.SQLITE_ASYNC_PREFIX is not None and "sqlite" in str(setti
 @pytest_asyncio.fixture
 async def db_session():
     """Get database session for tests.
-    
+
     NOTE: This fixture requires PostgreSQL and will fail with SQLite.
     Tests using this fixture should be marked or skipped appropriately.
     """
@@ -73,9 +72,7 @@ async def cleanup_test_tenants(db_session: AsyncSession):
     """Cleanup test tenants after tests."""
     yield
     # Cleanup any test tenants created during tests
-    await db_session.execute(
-        text("DELETE FROM tenants WHERE slug LIKE 'test-%'")
-    )
+    await db_session.execute(text("DELETE FROM tenants WHERE slug LIKE 'test-%'"))
     await db_session.commit()
 
 

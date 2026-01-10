@@ -12,6 +12,7 @@ class AppSettings(BaseSettings):
     LICENSE_NAME: str | None = None
     CONTACT_NAME: str | None = None
     CONTACT_EMAIL: str | None = None
+    FRONTEND_URL: str = "http://localhost:3000"  # Frontend URL for magic links, etc.
     # DATABASE: Control table creation (set to False in production)
     CREATE_TABLES_ON_STARTUP: bool = True
 
@@ -41,7 +42,8 @@ class CryptSettings(BaseSettings):
             if not self.JWT_PRIVATE_KEY or not self.JWT_PUBLIC_KEY:
                 raise ValueError(
                     "RS256 algorithm requires JWT_PRIVATE_KEY and JWT_PUBLIC_KEY. "
-                    "Generate with: openssl genrsa -out private.pem 2048 && openssl rsa -in private.pem -pubout -out public.pem"
+                    "Generate with: openssl genrsa -out private.pem 2048 && "
+                    "openssl rsa -in private.pem -pubout -out public.pem"
                 )
         else:
             # For HS256, validate SECRET_KEY length
