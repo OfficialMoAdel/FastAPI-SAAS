@@ -1,4 +1,4 @@
-﻿# 🧠 Project Memory & Task Tracking (Beads)
+# 🧠 Project Memory & Task Tracking (Beads)
 
 This project uses **Beads (`bd`)** for persistent task tracking. Do NOT use temporary markdown lists or plans in your context window.
 
@@ -87,14 +87,34 @@ uv run alembic upgrade head
 
 ### Module Documentation
 
-Core modules have dedicated AGENTS.md files:
+All 21 modules have dedicated AGENTS.md files:
 
 | Module | Location | Purpose |
 |--------|----------|---------|
-| Feature Flags | `src/app/modules/feature_flags/AGENTS.md` | Toggle management |
-| Webhooks | `src/app/modules/webhooks/AGENTS.md` | Event delivery |
+| API Keys | `src/app/modules/api_keys/AGENTS.md` | Programmatic access |
+| AI | `src/app/modules/ai/AGENTS.md` | AI integration |
 | Audit Logs | `src/app/modules/audit_logs/AGENTS.md` | Immutable logging |
+| Auth | `src/app/modules/auth/AGENTS.md` | Authentication |
+| Billing | `src/app/modules/billing/AGENTS.md` | Stripe billing |
+| Feature Flags | `src/app/modules/feature_flags/AGENTS.md` | Toggle management |
+| Files | `src/app/modules/files/AGENTS.md` | File storage |
+| Health | `src/app/modules/health/AGENTS.md` | Health checks |
+| Magic Link | `src/app/modules/magic_link/AGENTS.md` | Passwordless auth |
 | Notifications | `src/app/modules/notifications/AGENTS.md` | Email delivery |
+| Passkey | `src/app/modules/passkey/AGENTS.md` | WebAuthn auth |
+| Posts | `src/app/modules/posts/AGENTS.md` | Blog posts |
+| Rate Limits | `src/app/modules/rate_limits/AGENTS.md` | Rate limiting |
+| RBAC | `src/app/modules/rbac/AGENTS.md` | Permissions |
+| SSO | `src/app/modules/sso/AGENTS.md` | OAuth providers |
+| SSO Settings | `src/app/modules/sso_settings/AGENTS.md` | SSO config |
+| Storage | `src/app/modules/storage/AGENTS.md` | Cloud storage |
+| Storage Settings | `src/app/modules/storage_settings/AGENTS.md` | Storage config |
+| Tasks | `src/app/modules/tasks/AGENTS.md` | Background jobs |
+| Tenants | `src/app/modules/tenants/AGENTS.md` | Multi-tenancy |
+| Tiers | `src/app/modules/tiers/AGENTS.md` | Billing tiers |
+| User Preferences | `src/app/modules/user_preferences/AGENTS.md` | User settings |
+| Users | `src/app/modules/users/AGENTS.md` | User management |
+| Webhooks | `src/app/modules/webhooks/AGENTS.md` | Event delivery |
 
 ### Quick Find Commands
 

@@ -190,5 +190,4 @@ coverage_report*
 sql_app.db*
 # Auto Claude data directory
 .auto-claude/
-analysis_report.md
-analysis_report_v2.md
+Advanced Code Optimization Workflow.md
