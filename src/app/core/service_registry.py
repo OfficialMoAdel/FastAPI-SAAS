@@ -17,7 +17,7 @@ Usage:
     tier = await tier_svc.get_by_id(tier_id)
 """
 
-from typing import TYPE_CHECKING, Any, Protocol, TypeVar
+from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +44,9 @@ class RateLimitServiceProtocol(Protocol):
 class UserServiceProtocol(Protocol):
     """Protocol for UserService - defines expected interface."""
 
+    async def get(self, user_id: Any) -> Any: ...
     async def get_by_username(self, username: str) -> Any: ...
+    async def get_by_email(self, email: str) -> Any: ...
     async def create(self, user: Any) -> Any: ...
 
 
@@ -109,14 +111,14 @@ T = TypeVar("T")
 
 def get_tier_service(db: AsyncSession) -> "TierService":
     """Get TierService instance (typed helper)."""
-    return get_service("tier", db)
+    return cast("TierService", get_service("tier", db))
 
 
 def get_rate_limit_service(db: AsyncSession) -> "RateLimitService":
     """Get RateLimitService instance (typed helper)."""
-    return get_service("rate_limit", db)
+    return cast("RateLimitService", get_service("rate_limit", db))
 
 
 def get_user_service(db: AsyncSession) -> "UserService":
     """Get UserService instance (typed helper)."""
-    return get_service("user", db)
+    return cast("UserService", get_service("user", db))

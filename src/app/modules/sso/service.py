@@ -13,9 +13,9 @@ from src.app.core.exceptions.http_exceptions import (
 )
 from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
+from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users import crud_users
 from src.app.modules.users.schemas import UserCreate
 
 from .crud import crud_user_sso_connections
@@ -202,14 +202,14 @@ class SSOService:
                 ),
                 id=connection.id,
             )
-            found_user_data = await crud_users.get(db=db, id=connection.user_id)
+            found_user_data = await get_service("user", db).get(connection.user_id)
             if not found_user_data:
                 raise NotFoundException("Associated user not found")
         else:
             if not user_info.email:
                 raise BadRequestException("Email required from provider")
 
-            user_by_email = await crud_users.get(db=db, email=user_info.email)
+            user_by_email = await get_service("user", db).get_by_email(user_info.email)
 
             if user_by_email:
                 found_user_data = user_by_email
@@ -425,7 +425,7 @@ class SSOService:
             True if user can safely disconnect a provider
         """
         # Check if user has a password
-        user = await crud_users.get(db=db, id=user_id)
+        user = await get_service("user", db).get(user_id)
         if user and user.get("hashed_password"):
             return True
 

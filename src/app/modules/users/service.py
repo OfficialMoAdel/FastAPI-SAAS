@@ -87,6 +87,36 @@ class UserService(BaseService[User]):
             raise ModelNotFoundError("User", username)
         return db_user
 
+    async def get(self, user_id: Any) -> User | None:
+        """Get a user by ID.
+
+        Parameters
+        ----------
+        user_id : Any
+            User ID (UUID)
+
+        Returns
+        -------
+        User | None
+            User instance or None if not found
+        """
+        return await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+
+    async def get_by_email(self, email: str) -> User | None:
+        """Get a user by email address.
+
+        Parameters
+        ----------
+        email : str
+            Email address to look up
+
+        Returns
+        -------
+        User | None
+            User instance or None if not found
+        """
+        return await self.crud.get(db=self.db, email=email, is_deleted=False)
+
     async def update(
         self,
         username: str,

@@ -335,9 +335,57 @@ async def send_email_task(
 async def handle_notification_send_event(data: dict[str, Any]) -> None:
     """Handle notification send events by queuing email delivery.
 
+    This handler receives events published by send_email() and other services,
+    then enqueues the actual email delivery via ARQ background worker.
+
     Args:
-        data: Event payload with notification details
+        data: Event payload with notification details:
+            - notification_id: ID of the notification record
+            - to_email: Recipient email address
+            - subject: Email subject line
+            - html_content: Rendered HTML body
     """
-    # This will be handled by ARQ queue via event bus
-    # The actual work is done by send_email_task
-    pass
+    from ...core.utils.queue import queue
+
+    notification_id = data.get("notification_id")
+    to_email = data.get("to_email")
+    subject = data.get("subject")
+    html_content = data.get("html_content")
+
+    if not all([notification_id, to_email, subject, html_content]):
+        logger.warning(
+            "notification_send_event_missing_data",
+            notification_id=notification_id,
+            has_to_email=bool(to_email),
+            has_subject=bool(subject),
+            has_html_content=bool(html_content),
+        )
+        return
+
+    # Enqueue the email delivery task via ARQ
+    if queue.pool:
+        try:
+            await queue.pool.enqueue_job(
+                "send_email_task",
+                notification_id,
+                to_email,
+                subject,
+                html_content,
+            )
+            logger.debug(
+                "email_task_enqueued",
+                notification_id=notification_id,
+                to_email=to_email,
+            )
+        except Exception as e:
+            logger.error(
+                "failed_to_enqueue_email_task",
+                notification_id=notification_id,
+                error=str(e),
+            )
+    else:
+        logger.warning(
+            "arq_queue_not_available",
+            notification_id=notification_id,
+            to_email=to_email,
+        )

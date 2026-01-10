@@ -12,6 +12,7 @@ from typing import TYPE_CHECKING, Any
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.config import settings
 from src.app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
@@ -221,16 +222,46 @@ class MagicLinkService:
             token: Magic link token.
             user_id: User ID for logging.
         """
-        # TODO: Integrate with ARQ email task queue
-        # For now, we just log that the email would be sent
-        logger.info(
-            "Magic link email queued",
-            extra={
-                "operation": "queue_magic_link_email",
-                "user_id": user_id,
-                "email": email,
-            },
-        )
+        from src.app.core.utils.queue import queue
+
+        # Build magic link URL
+        magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={token}"
+
+        # Enqueue via ARQ if available
+        if queue.pool:
+            try:
+                await queue.pool.enqueue_job(
+                    "send_magic_link_email_task",
+                    email,
+                    magic_link_url,
+                    user_id,
+                )
+                logger.info(
+                    "magic_link_email_enqueued",
+                    user_id=user_id,
+                    email=email,
+                )
+            except Exception as e:
+                logger.error(
+                    "failed_to_enqueue_magic_link_email",
+                    user_id=user_id,
+                    email=email,
+                    error=str(e),
+                )
+                # Fallback: log the link for development/debugging
+                logger.warning(
+                    "magic_link_fallback",
+                    user_id=user_id,
+                    magic_link_url=magic_link_url,
+                )
+        else:
+            # ARQ not available - log for development
+            logger.warning(
+                "arq_queue_not_available_magic_link",
+                user_id=user_id,
+                email=email,
+                magic_link_url=magic_link_url,
+            )
 
     async def _create_auth_tokens(self, user: User) -> dict[str, Any]:
         """Create access and refresh tokens for user.
