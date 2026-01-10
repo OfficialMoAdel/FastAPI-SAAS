@@ -10,17 +10,22 @@ from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
 from .crud import crud_users
 from .schemas import UserCreate, UserList, UserRead, UserTierUpdate, UserUpdate
-from .service import user_service
+from .service import UserService, get_user_service
 
 router = APIRouter(tags=["users"])
 
 
+async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
+    """Dependency for UserService injection."""
+    return get_user_service(db)
+
+
 @router.post("/user", response_model=UserRead, status_code=201)
 async def write_user(
-    request: Request, user: UserCreate, db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
     """Create a new user."""
-    return await user_service.create_user(user, db)
+    return await service.create(user)
 
 
 @router.get("/users", response_model=UserList, dependencies=[Depends(get_current_superuser)])
@@ -56,10 +61,10 @@ async def read_users_me(request: Request, current_user: Annotated[dict, Depends(
 
 @router.get("/user/{username}", response_model=UserRead, dependencies=[Depends(get_current_user)])
 async def read_user(
-    request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request, username: str, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
     """Get user by username (authenticated users only)."""
-    return await user_service.get_user(username, db)
+    return await service.get_by_username(username)
 
 
 @router.patch("/user/{username}")
@@ -68,10 +73,10 @@ async def patch_user(
     values: UserUpdate,
     username: str,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    service: UserService = Depends(_get_user_service),
 ) -> dict[str, str]:
     """Update a user."""
-    return await user_service.update_user(username, values, current_user, db)
+    return await service.update(username, values, current_user)
 
 
 @router.delete("/user/{username}")
@@ -79,43 +84,43 @@ async def erase_user(
     request: Request,
     username: str,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> dict[str, str]:
     """Soft delete a user."""
-    return await user_service.delete_user(username, current_user, token, db)
+    return await service.delete(username, current_user, token)
 
 
 @router.delete("/db_user/{username}", dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
     request: Request,
     username: str,
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> dict[str, str]:
     """Permanently delete a user from database (superuser only)."""
-    return await user_service.hard_delete_user(username, token, db)
+    return await service.hard_delete(username, token)
 
 
 @router.get("/user/{username}/rate_limits", dependencies=[Depends(get_current_superuser)])
 async def read_user_rate_limits(
-    request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request, username: str, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
     """Get user's rate limits based on their tier."""
-    return await user_service.get_user_with_rate_limits(username, db)
+    return await service.get_with_rate_limits(username)
 
 
 @router.get("/user/{username}/tier", dependencies=[Depends(get_current_user)])
 async def read_user_tier(
-    request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request, username: str, service: UserService = Depends(_get_user_service)
 ) -> dict | None:
     """Get user's tier information (authenticated users only)."""
-    return await user_service.get_user_with_tier(username, db)
+    return await service.get_with_tier(username)
 
 
 @router.patch("/user/{username}/tier", dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
-    request: Request, username: str, values: UserTierUpdate, db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request, username: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
 ) -> dict[str, str]:
     """Update user's tier (superuser only)."""
-    return await user_service.update_user_tier(username, values, db)
+    return await service.update_tier(username, values)

@@ -2,49 +2,53 @@
 
 from typing import Any
 
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.security import blacklist_token, get_password_hash
 from ...core.tenancy.context import get_tenant_context
 from .._base.exceptions import DuplicateError, ModelNotFoundError
+from .._base.service import BaseService
 from .crud import crud_users
-from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
+from .models import User
+from .schemas import UserCreate, UserCreateInternal, UserTierUpdate, UserUpdate
 
 
-class UserService:
+class UserService(BaseService[User]):
     """Service class for user-related business logic."""
 
-    async def create_user(self, user: UserCreate, db: AsyncSession) -> dict[str, Any]:
+    def __init__(self, db: AsyncSession):
+        super().__init__(User, db)
+        self.crud = crud_users
+
+    async def create(self, user: UserCreate) -> User:
         """Create a new user with validation and password hashing.
 
         Parameters
         ----------
         user : UserCreate
             User creation data
-        db : AsyncSession
-            Database session
 
         Returns
         -------
-        dict[str, Any]
-            Created user data
+        User
+            Created user instance
 
         Raises
         ------
         DuplicateError
             If email or username already exists
-        ModelNotFoundError
-            If user creation fails
         """
-        # Check for duplicate email or username in single query (N+1 optimization)
+        # Optimized: Check for duplicate email or username in single query
+        stmt = select(User).where(
+            or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
+        )
+        existing_user = await self.db.scalar(stmt)
 
-        email_exists = await crud_users.exists(db=db, email=user.email)
-        username_exists = await crud_users.exists(db=db, username=user.username)
-
-        if email_exists:
-            raise DuplicateError("email", user.email)
-        if username_exists:
+        if existing_user:
+            if existing_user.email == user.email:
+                raise DuplicateError("email", user.email)
             raise DuplicateError("username", user.username)
 
         # Hash password and create internal user object
@@ -58,44 +62,36 @@ class UserService:
             user_dict["tenant_id"] = tenant.id
 
         user_internal = UserCreateInternal(**user_dict)
-        created_user = await crud_users.create(db=db, object=user_internal, schema_to_select=UserRead)
+        return await self.crud.create(db=self.db, object=user_internal)
 
-        if created_user is None:
-            raise ModelNotFoundError("User", "creation failed")
-
-        return created_user
-
-    async def get_user(self, username: str, db: AsyncSession) -> dict[str, Any]:
+    async def get_by_username(self, username: str) -> User:
         """Get a user by username.
 
         Parameters
         ----------
         username : str
             Username to look up
-        db : AsyncSession
-            Database session
 
         Returns
         -------
-        dict[str, Any]
-            User data
+        User
+            User instance
 
         Raises
         ------
         ModelNotFoundError
             If user not found
         """
-        db_user = await crud_users.get(db=db, username=username, is_deleted=False, schema_to_select=UserRead)
+        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if db_user is None:
             raise ModelNotFoundError("User", username)
         return db_user
 
-    async def update_user(
+    async def update(
         self,
         username: str,
         values: UserUpdate,
         current_user: dict[str, Any],
-        db: AsyncSession,
     ) -> dict[str, str]:
         """Update a user with ownership validation.
 
@@ -107,8 +103,6 @@ class UserService:
             Update values
         current_user : dict[str, Any]
             Currently authenticated user
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -124,12 +118,12 @@ class UserService:
         DuplicateError
             If new email/username already taken
         """
-        db_user = await crud_users.get(db=db, username=username)
+        db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        db_username = db_user["username"]
-        db_email = db_user["email"]
+        db_username = db_user.username
+        db_email = db_user.email
 
         # Ownership check
         if db_username != current_user["username"]:
@@ -137,23 +131,22 @@ class UserService:
 
         # Check for duplicate email if changing
         if values.email is not None and values.email != db_email:
-            if await crud_users.exists(db=db, email=values.email):
+            if await self.crud.exists(db=self.db, email=values.email):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing
         if values.username is not None and values.username != db_username:
-            if await crud_users.exists(db=db, username=values.username):
+            if await self.crud.exists(db=self.db, username=values.username):
                 raise DuplicateError("username", values.username)
 
-        await crud_users.update(db=db, object=values, username=username)
+        await self.crud.update(db=self.db, object=values, username=username)
         return {"message": "User updated"}
 
-    async def delete_user(
+    async def delete(
         self,
         username: str,
         current_user: dict[str, Any],
         token: str,
-        db: AsyncSession,
     ) -> dict[str, str]:
         """Soft delete a user with ownership validation.
 
@@ -165,8 +158,6 @@ class UserService:
             Currently authenticated user
         token : str
             Access token to blacklist
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -180,18 +171,18 @@ class UserService:
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+        db_user = await self.crud.get(db=self.db, username=username)
         if not db_user:
             raise ModelNotFoundError("User", username)
 
         if username != current_user["username"]:
             raise ForbiddenException()
 
-        await crud_users.delete(db=db, username=username)
-        await blacklist_token(token=token, db=db)
+        await self.crud.delete(db=self.db, username=username)
+        await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted"}
 
-    async def hard_delete_user(self, username: str, token: str, db: AsyncSession) -> dict[str, str]:
+    async def hard_delete(self, username: str, token: str) -> dict[str, str]:
         """Permanently delete a user from database (superuser only).
 
         Parameters
@@ -200,8 +191,6 @@ class UserService:
             Username of user to delete
         token : str
             Access token to blacklist
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -213,15 +202,15 @@ class UserService:
         ModelNotFoundError
             If user not found
         """
-        db_user = await crud_users.exists(db=db, username=username)
+        db_user = await self.crud.exists(db=self.db, username=username)
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        await crud_users.db_delete(db=db, username=username)
-        await blacklist_token(token=token, db=db)
+        await self.crud.db_delete(db=self.db, username=username)
+        await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted from the database"}
 
-    async def update_user_tier(self, username: str, values: UserTierUpdate, db: AsyncSession) -> dict[str, str]:
+    async def update_tier(self, username: str, values: UserTierUpdate) -> dict[str, str]:
         """Update user's tier (superuser only).
 
         Parameters
@@ -230,8 +219,6 @@ class UserService:
             Username of user to update
         values : UserTierUpdate
             Tier update values
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -243,32 +230,30 @@ class UserService:
         ModelNotFoundError
             If user or tier not found
         """
-        # Use lazy import to avoid circular dependencies while maintaining module boundaries
+        # Use lazy import to avoid circular dependencies
         from ...modules.tiers.service import TierService
 
-        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+        db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        # Validate tier exists by using service layer with DI pattern
-        tier_svc = TierService(db)
+        # Validate tier exists
+        tier_svc = TierService(self.db)
         try:
             await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
-        await crud_users.update(db=db, object=values.model_dump(), username=username)
-        return {"message": f"User {db_user['name']} Tier updated"}
+        await self.crud.update(db=self.db, object=values.model_dump(), username=username)
+        return {"message": f"User {db_user.name} Tier updated"}
 
-    async def get_user_with_rate_limits(self, username: str, db: AsyncSession) -> dict[str, Any]:
+    async def get_with_rate_limits(self, username: str) -> dict[str, Any]:
         """Get user with their tier's rate limits.
 
         Parameters
         ----------
         username : str
             Username to look up
-        db : AsyncSession
-            Database session
 
         Returns
         -------
@@ -283,31 +268,30 @@ class UserService:
         from ...modules.rate_limits.service import RateLimitService
         from ...modules.tiers.service import TierService
 
-        db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
+        db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        user_dict = dict(db_user)
-        if db_user["tier_id"] is None:
+        user_dict = {c.name: getattr(db_user, c.name) for c in db_user.__table__.columns}
+        if db_user.tier_id is None:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        # Use service layer with DI pattern for cross-module access
-        tier_svc = TierService(db)
-        rate_limit_svc = RateLimitService(db)
+        tier_svc = TierService(self.db)
+        rate_limit_svc = RateLimitService(self.db)
 
-        db_tier = await tier_svc.get_tier_by_id(db_user["tier_id"])
+        db_tier = await tier_svc.get_tier_by_id(db_user.tier_id)
         rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_tier["id"])
 
         user_dict["tier_rate_limits"] = rate_limits_response["data"]
         return user_dict
 
-    async def get_user_with_tier(self, username: str, db: AsyncSession) -> dict[str, Any] | None:
+    async def get_with_tier(self, username: str) -> dict[str, Any] | None:
         """Get user with tier information merged.
 
         Optimized to use single query via get_user_with_tier_eager.
         """
-        user_with_tier = await crud_users.get_user_with_tier_eager(db=db, username=username)
+        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
 
         if not user_with_tier:
             raise ModelNotFoundError("User", username)
@@ -329,5 +313,6 @@ class UserService:
         return user_dict
 
 
-# Singleton instance for import convenience
-user_service = UserService()
+def get_user_service(db: AsyncSession) -> UserService:
+    """Dependency injection factory for UserService."""
+    return UserService(db)

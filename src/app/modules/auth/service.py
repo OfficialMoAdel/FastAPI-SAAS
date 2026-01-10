@@ -29,10 +29,7 @@ logger = get_logger(__name__)
 class AuthService:
     """Service class for authentication-related business logic."""
 
-
-    async def authenticate_user(
-        self, username_or_email: str, password: str, db: AsyncSession
-    ) -> dict | bool:
+    async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict | bool:
         """Authenticate user by checking database and password."""
         if "@" in username_or_email:
             db_user = await crud_users.get(db=db, email=username_or_email, is_deleted=False)
@@ -60,6 +57,7 @@ class AuthService:
         try:
             if not tenant_id:
                 from ...core.tenancy.context import get_tenant_context
+
                 tenant = get_tenant_context()
                 if tenant:
                     tenant_id = tenant.id
@@ -162,13 +160,7 @@ class AuthService:
         )
 
         # Audit log success
-        await self._publish_login_audit(
-            request,
-            username,
-            True,
-            tenant_id=user["tenant_id"],
-            user_id=user["id"]
-        )
+        await self._publish_login_audit(request, username, True, tenant_id=user["tenant_id"], user_id=user["id"])
 
         return {"access_token": access_token, "token_type": "bearer"}
 
@@ -249,7 +241,7 @@ class AuthService:
             try:
                 user_data = await verify_token(access_token, TokenType.ACCESS, db)
             except Exception:
-                pass # Token might be expired, proceed with logout anyway
+                pass  # Token might be expired, proceed with logout anyway
 
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
@@ -257,10 +249,6 @@ class AuthService:
             # Audit log logout
             try:
                 username = user_data.username_or_email if user_data else "unknown"
-                # We might not have tenant_id/user_id easily if we don't fetch the user,
-                # but verify_token returns TokenData.
-                # Ideally we would fetch the user to get ID and Tenant ID, but let's keep it lightweight.
-                # If we really need tenant/user ID we'd need to fetch user.
 
                 await event_bus.publish(
                     "audit.log",
@@ -268,7 +256,7 @@ class AuthService:
                         "action": "auth.logout",
                         "entity_type": "user",
                         "entity_id": None,
-                        "tenant_id": "0", # We might not know without DB lookup
+                        "tenant_id": "0",
                         "user_id": None,
                         "details": {
                             "username": username,
@@ -280,11 +268,12 @@ class AuthService:
                     priority=EventPriority.NORMAL,
                 )
             except Exception as e:
-                logger.error("failed_to_publish_audit_log", error=str(e))
+                logger.warning("failed_to_publish_logout_audit_log", error=str(e))
 
             return {"message": "Logged out successfully"}
 
-        except JWTError:
+        except JWTError as e:
+            logger.error("logout_jwt_error", error=str(e))
             raise UnauthorizedException("Invalid token.")
 
     async def change_password(

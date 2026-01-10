@@ -15,8 +15,9 @@ from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users import crud_users, user_service
+from src.app.modules.users import crud_users
 from src.app.modules.users.schemas import UserCreate
+from src.app.modules.users.service import UserService
 
 from .crud import crud_user_sso_connections
 from .providers.apple import AppleProvider
@@ -312,7 +313,8 @@ class SSOService:
             name=user_info.name or base_username,
         )
 
-        return await user_service.create_user(user=user_in, db=db)
+        user_svc = UserService(db)
+        return await user_svc.create(user=user_in)
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
         """List all available SSO providers with their status."""
