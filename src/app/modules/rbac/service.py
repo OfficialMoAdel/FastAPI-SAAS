@@ -11,7 +11,7 @@ from ...api.dependencies import get_current_tenant
 from ...core.db.database import async_get_db
 from ...core.rbac.dependencies import invalidate_user_permissions_cache
 from ...modules.tenants.models import Tenant
-from .._base.exceptions import DuplicateError, ModelNotFoundError
+from .._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from .models import Permission, Role, RolePermission, UserRole
 from .schemas import RoleCreate, RoleUpdate
 
@@ -67,7 +67,7 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateError("is_system", "System roles cannot be modified")
+            raise ForbiddenError("System roles cannot be modified", reason="system_role")
 
         # Check for duplicate name if name is being changed
         if role_in.name != role.name:
@@ -88,7 +88,7 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateError("is_system", "System roles cannot be deleted")
+            raise ForbiddenError("System roles cannot be deleted", reason="system_role")
 
         await self.db.delete(role)
         await self.db.commit()
@@ -110,7 +110,7 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateError("is_system", "System role permissions cannot be modified")
+            raise ForbiddenError("System role permissions cannot be modified", reason="system_role")
 
         # Get permission by slug
         stmt = select(Permission).where(Permission.slug == permission_slug)
@@ -142,7 +142,7 @@ class RoleService:
         role = await self.get_role(role_id)
 
         if role.is_system:
-            raise DuplicateError("is_system", "System role permissions cannot be modified")
+            raise ForbiddenError("System role permissions cannot be modified", reason="system_role")
 
         # Get permission by slug
         stmt = select(Permission).where(Permission.slug == permission_slug)

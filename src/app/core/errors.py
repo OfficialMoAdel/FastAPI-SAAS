@@ -21,6 +21,7 @@ from structlog import get_logger
 
 from ..modules._base.exceptions import (
     DuplicateError,
+    ForbiddenError,
     ModelNotFoundError,
 )
 from ..modules._base.exceptions import (
@@ -182,6 +183,27 @@ def setup_exception_handlers(app: FastAPI) -> None:
             message=str(exc),
             status_code=409,
             details={"field": exc.field, "value": str(exc.value)},
+            request_id=request_id,
+        )
+
+    @app.exception_handler(ForbiddenError)
+    async def forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
+        """Handle ForbiddenError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Forbidden action",
+            reason=exc.reason,
+            message=exc.message,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.FORBIDDEN,
+            message=exc.message,
+            status_code=403,
+            details={"reason": exc.reason},
             request_id=request_id,
         )
 

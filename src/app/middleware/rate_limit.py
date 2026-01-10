@@ -5,6 +5,7 @@ Provides different rate limits based on user's tier:
 - Authenticated: User-based with tier-specific limits
 """
 
+import ipaddress
 from collections.abc import Callable
 
 from fastapi import Request, Response
@@ -151,18 +152,33 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     # Trusted proxy IPs - configure based on your infrastructure
     # Cloud load balancers, Kubernetes ingress, etc.
-    TRUSTED_PROXIES = {"127.0.0.1", "::1", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"}
+    TRUSTED_PROXY_IPS: set[str] = {"127.0.0.1", "::1"}
+    TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+    )
+
+    def _is_trusted_proxy(self, ip_str: str) -> bool:
+        """Check if IP is a trusted proxy (exact match or within trusted network)."""
+        if ip_str in self.TRUSTED_PROXY_IPS:
+            return True
+        try:
+            ip = ipaddress.ip_address(ip_str)
+            return any(ip in network for network in self.TRUSTED_PROXY_NETWORKS)
+        except ValueError:
+            return False
 
     def _get_client_ip(self, request: Request) -> str:
         """Get client IP with trusted proxy validation.
-        
+
         Only trusts X-Forwarded-For header if request comes from a trusted proxy.
         This prevents attackers from spoofing their IP to bypass rate limits.
         """
         client_ip = request.client.host if request.client else "unknown"
 
         # Only trust X-Forwarded-For if request is from a trusted proxy
-        if client_ip in self.TRUSTED_PROXIES:
+        if self._is_trusted_proxy(client_ip):
             forwarded = request.headers.get("X-Forwarded-For")
             if forwarded:
                 # Return the first (original client) IP from the chain

@@ -546,63 +546,6 @@ class CheckoutService:
         except stripe.error.StripeError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
 
-        # Decrypt API key
-        encrypted_key = stripe_settings.get("encrypted_secret_key")
-        if not encrypted_key:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Stripe secret key not found")
-
-        api_key = self.encryption.decrypt(encrypted_key)
-
-        # Get Plan
-        plan_service = SubscriptionPlanService(self.db)
-        plan = await plan_service.get_plan(data.plan_id)
-
-        # Get Price ID based on interval
-        price_id = (
-            plan["stripe_price_id_monthly"] if data.billing_interval == "monthly" else plan["stripe_price_id_yearly"]
-        )
-
-        if not price_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Plan does not have a {data.billing_interval} price configured",
-            )
-
-        try:
-            # Create Stripe Session
-            session = stripe.checkout.Session.create(
-                api_key=api_key,
-                customer_email=user_email,  # Pre-fill email
-                # customer=... if we have stored customer_id for this user?
-                # We should check UserSubscription or User model for stripe_customer_id?
-                # For now, we rely on email or let Stripe create new customer.
-                # Ideally we store customer_id on User.
-                payment_method_types=["card"],
-                line_items=[
-                    {
-                        "price": price_id,
-                        "quantity": 1,
-                    }
-                ],
-                mode="subscription",
-                success_url=data.success_url,
-                cancel_url=data.cancel_url,
-                client_reference_id=str(user_id),  # To link back webhook
-                subscription_data={
-                    "metadata": {"tenant_id": str(tenant.id), "user_id": str(user_id), "plan_id": str(data.plan_id)}
-                },
-                metadata={"tenant_id": str(tenant.id), "user_id": str(user_id), "plan_id": str(data.plan_id)},
-            )
-
-            return CheckoutSession(
-                checkout_url=session.url,
-                session_id=session.id,
-                expires_at=datetime.fromtimestamp(session.expires_at, UTC),
-            )
-
-        except stripe.error.StripeError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
-
 
 def get_stripe_settings_service(db: AsyncSession) -> StripeSettingsService:
     """Get StripeSettingsService instance."""

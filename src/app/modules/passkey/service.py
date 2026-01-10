@@ -293,7 +293,7 @@ class PasskeyService:
         if not user:
             raise BadRequestException(detail="User not found for credential.")
 
-        tokens = self._generate_auth_tokens(user)
+        tokens = await self._generate_auth_tokens(user)
 
         # 7. Cleanup
         if redis:
@@ -499,12 +499,12 @@ class PasskeyService:
 
         return await crud_users.get(db=db, id=credential.user_id)
 
-    def _generate_auth_tokens(self, user: Any) -> dict[str, Any]:
+    async def _generate_auth_tokens(self, user: Any) -> dict[str, Any]:
         """Generate JWT authentication tokens for a user."""
         from src.app.core.security import create_access_token, create_refresh_token
 
-        access_token = create_access_token(data={"sub": str(user.id)})
-        refresh_token = create_refresh_token(data={"sub": str(user.id)})
+        access_token = await create_access_token(data={"sub": str(user.id)})
+        refresh_token = await create_refresh_token(data={"sub": str(user.id)})
 
         return {
             "access_token": access_token,

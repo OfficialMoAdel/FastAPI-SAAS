@@ -81,4 +81,27 @@ class DuplicateError(Exception):
         super().__init__(self.message)
 
 
-__all__ = ["ModelNotFoundError", "ValidationError", "DuplicateError"]
+class ForbiddenError(Exception):
+    """Raised when an action is forbidden.
+
+    Used when a valid request is rejected due to business rules,
+    not authentication/authorization.
+
+    Attributes:
+        message: Human-readable error message.
+        reason: Machine-readable reason code.
+    """
+
+    def __init__(self, message: str, reason: str = "forbidden"):
+        """Initialize ForbiddenError.
+
+        Args:
+            message: Description of why the action is forbidden.
+            reason: Machine-readable reason code for the error.
+        """
+        self.message = message
+        self.reason = reason
+        super().__init__(self.message)
+
+
+__all__ = ["ModelNotFoundError", "ValidationError", "DuplicateError", "ForbiddenError"]
