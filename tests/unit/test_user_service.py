@@ -18,8 +18,8 @@ def mock_db():
 
 @pytest.fixture
 def user_service(mock_db):
-    """UserService instance."""
-    return UserService()
+    """UserService instance with mock db."""
+    return UserService(mock_db)
 
 
 @pytest.fixture
@@ -60,7 +60,7 @@ class TestUserServiceCreate:
     """Tests for user creation logic."""
 
     @pytest.mark.asyncio
-    async def test_create_user_success(self, user_service, mock_db, mock_user_create, mock_db_user):
+    async def test_create_success(self, user_service, mock_db, mock_user_create, mock_db_user):
         """Test successful user creation."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
@@ -79,7 +79,7 @@ class TestUserServiceCreate:
             # Mock create return
             mock_crud.create = AsyncMock(return_value=mock_db_user)
 
-            result = await user_service.create_user(mock_user_create, mock_db)
+            result = await user_service.create(mock_user_create)
 
             # Assertions
             assert result == mock_db_user
@@ -88,31 +88,31 @@ class TestUserServiceCreate:
             mock_crud.create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_user_duplicate_email(self, user_service, mock_db, mock_user_create):
+    async def test_create_duplicate_email(self, user_service, mock_db, mock_user_create):
         """Test creation fails when email exists."""
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             # Simulate email exists
             mock_crud.exists = AsyncMock(side_effect=[True, False])  # email exists, username doesn't
 
             with pytest.raises(DuplicateError) as exc:
-                await user_service.create_user(mock_user_create, mock_db)
+                await user_service.create(mock_user_create)
 
             assert exc.value.field == "email"
 
     @pytest.mark.asyncio
-    async def test_create_user_duplicate_username(self, user_service, mock_db, mock_user_create):
+    async def test_create_duplicate_username(self, user_service, mock_db, mock_user_create):
         """Test creation fails when username exists."""
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             # Simulate username exists
             mock_crud.exists = AsyncMock(side_effect=[False, True])  # email ok, username exists
 
             with pytest.raises(DuplicateError) as exc:
-                await user_service.create_user(mock_user_create, mock_db)
+                await user_service.create(mock_user_create)
 
             assert exc.value.field == "username"
 
     @pytest.mark.asyncio
-    async def test_create_user_creation_failed(self, user_service, mock_db, mock_user_create):
+    async def test_create_creation_failed(self, user_service, mock_db, mock_user_create):
         """Test error raised when creation returns None."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
@@ -125,7 +125,7 @@ class TestUserServiceCreate:
             mock_crud.create = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.create_user(mock_user_create, mock_db)
+                await user_service.create(mock_user_create)
 
 
 class TestUserServiceGet:
@@ -137,7 +137,7 @@ class TestUserServiceGet:
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             mock_crud.get = AsyncMock(return_value=mock_db_user)
 
-            result = await user_service.get_user("testuser", mock_db)
+            result = await user_service.get_by_username("testuser")
 
             assert result == mock_db_user
             mock_crud.get.assert_called_once()
@@ -149,14 +149,14 @@ class TestUserServiceGet:
             mock_crud.get = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.get_user("unknown", mock_db)
+                await user_service.get_by_username("unknown")
 
 
 class TestUserServiceUpdate:
     """Tests for user updates."""
 
     @pytest.mark.asyncio
-    async def test_update_user_success(self, user_service, mock_db, mock_user_update, mock_db_user):
+    async def test_update_success(self, user_service, mock_db, mock_user_update, mock_db_user):
         """Test successful user update."""
         current_user = {"username": "testuser", "email": "test@example.com"}
 
@@ -165,13 +165,13 @@ class TestUserServiceUpdate:
             mock_crud.exists = AsyncMock(return_value=False)
             mock_crud.update = AsyncMock()
 
-            result = await user_service.update_user("testuser", mock_user_update, current_user, mock_db)
+            result = await user_service.update("testuser", mock_user_update, current_user, mock_db)
 
             assert result["message"] == "User updated"
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_update_user_forbidden(self, user_service, mock_db, mock_user_update, mock_db_user):
+    async def test_update_forbidden(self, user_service, mock_db, mock_user_update, mock_db_user):
         """Test update forbidden for different user."""
         current_user = {"username": "otheruser"}
 
@@ -179,10 +179,10 @@ class TestUserServiceUpdate:
             mock_crud.get = AsyncMock(return_value=mock_db_user)
 
             with pytest.raises(ForbiddenException):
-                await user_service.update_user("testuser", mock_user_update, current_user, mock_db)
+                await user_service.update("testuser", mock_user_update, current_user, mock_db)
 
     @pytest.mark.asyncio
-    async def test_update_user_duplicate_email(self, user_service, mock_db, mock_user_update, mock_db_user):
+    async def test_update_duplicate_email(self, user_service, mock_db, mock_user_update, mock_db_user):
         """Test update fails if new email is taken."""
         current_user = {"username": "testuser"}
 
@@ -191,7 +191,7 @@ class TestUserServiceUpdate:
             mock_crud.exists = AsyncMock(return_value=True)  # Email exists
 
             with pytest.raises(DuplicateError) as exc:
-                await user_service.update_user("testuser", mock_user_update, current_user, mock_db)
+                await user_service.update("testuser", mock_user_update, current_user, mock_db)
 
             assert exc.value.field == "email"
 
@@ -200,7 +200,7 @@ class TestUserServiceDelete:
     """Tests for user deletion."""
 
     @pytest.mark.asyncio
-    async def test_delete_user_success(self, user_service, mock_db, mock_db_user):
+    async def test_delete_success(self, user_service, mock_db, mock_db_user):
         """Test successful user soft deletion."""
         current_user = {"username": "testuser"}
 
@@ -211,14 +211,14 @@ class TestUserServiceDelete:
             mock_crud.get = AsyncMock(return_value=mock_db_user)
             mock_crud.delete = AsyncMock()
 
-            result = await user_service.delete_user("testuser", current_user, "token", mock_db)
+            result = await user_service.delete("testuser", current_user, "token", mock_db)
 
             assert result["message"] == "User deleted"
             mock_crud.delete.assert_called_once()
             mock_blacklist.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_delete_user_not_found(self, user_service, mock_db):
+    async def test_delete_not_found(self, user_service, mock_db):
         """Test delete fails if user not found."""
         current_user = {"username": "testuser"}
 
@@ -226,10 +226,10 @@ class TestUserServiceDelete:
             mock_crud.get = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.delete_user("unknown", current_user, "token", mock_db)
+                await user_service.delete("unknown", current_user, "token", mock_db)
 
     @pytest.mark.asyncio
-    async def test_delete_user_forbidden(self, user_service, mock_db, mock_db_user):
+    async def test_delete_forbidden(self, user_service, mock_db, mock_db_user):
         """Test delete forbidden for different user."""
         current_user = {"username": "otheruser"}
 
@@ -237,10 +237,10 @@ class TestUserServiceDelete:
             mock_crud.get = AsyncMock(return_value=mock_db_user)
 
             with pytest.raises(ForbiddenException):
-                await user_service.delete_user("testuser", current_user, "token", mock_db)
+                await user_service.delete("testuser", current_user, "token", mock_db)
 
     @pytest.mark.asyncio
-    async def test_hard_delete_user_success(self, user_service, mock_db, mock_db_user):
+    async def test_hard_delete_success(self, user_service, mock_db, mock_db_user):
         """Test successful hard deletion."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
@@ -249,26 +249,26 @@ class TestUserServiceDelete:
             mock_crud.exists = AsyncMock(return_value=mock_db_user)
             mock_crud.db_delete = AsyncMock()
 
-            result = await user_service.hard_delete_user("testuser", "token", mock_db)
+            result = await user_service.hard_delete("testuser", "token", mock_db)
 
             assert "deleted from the database" in result["message"]
             mock_crud.db_delete.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_hard_delete_user_not_found(self, user_service, mock_db):
+    async def test_hard_delete_not_found(self, user_service, mock_db):
         """Test hard delete fails if user not found."""
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             mock_crud.exists = AsyncMock(return_value=False)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.hard_delete_user("unknown", "token", mock_db)
+                await user_service.hard_delete("unknown", "token", mock_db)
 
 
 class TestUserServiceTier:
     """Tests for user tier management."""
 
     @pytest.mark.asyncio
-    async def test_update_user_tier_success(self, user_service, mock_db, mock_db_user, mock_user_tier_update):
+    async def test_update_tier_success(self, user_service, mock_db, mock_db_user, mock_user_tier_update):
         """Test successful user tier update."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
@@ -282,13 +282,13 @@ class TestUserServiceTier:
             mock_tier_instance.get_tier_by_id = AsyncMock(return_value={"id": 2, "name": "Pro"})
             mock_tier_cls.return_value = mock_tier_instance
 
-            result = await user_service.update_user_tier("testuser", mock_user_tier_update, mock_db)
+            result = await user_service.update_tier("testuser", mock_user_tier_update, mock_db)
 
             assert "Tier updated" in result["message"]
             mock_crud.update.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_user_with_rate_limits(self, user_service, mock_db, mock_db_user):
+    async def test_get_with_rate_limits(self, user_service, mock_db, mock_db_user):
         """Test getting user with rate limits."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
@@ -309,33 +309,33 @@ class TestUserServiceTier:
             )
             mock_rate_limit_cls.return_value = mock_rate_limit_instance
 
-            result = await user_service.get_user_with_rate_limits("testuser", mock_db)
+            result = await user_service.get_with_rate_limits("testuser")
 
             assert result["tier_rate_limits"] == [{"limit": 100, "name": "api_calls"}]
 
     @pytest.mark.asyncio
-    async def test_get_user_with_rate_limits_user_not_found(self, user_service, mock_db):
+    async def test_get_with_rate_limits_user_not_found(self, user_service, mock_db):
         """Test get user with rate limits fails if user not found."""
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             mock_crud.get = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.get_user_with_rate_limits("unknown", mock_db)
+                await user_service.get_with_rate_limits("unknown")
 
     @pytest.mark.asyncio
-    async def test_get_user_with_rate_limits_no_tier(self, user_service, mock_db, mock_db_user):
+    async def test_get_with_rate_limits_no_tier(self, user_service, mock_db, mock_db_user):
         """Test get user with rate limits when user has no tier."""
         user_no_tier = {**mock_db_user, "tier_id": None}
 
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
             mock_crud.get = AsyncMock(return_value=user_no_tier)
 
-            result = await user_service.get_user_with_rate_limits("testuser", mock_db)
+            result = await user_service.get_with_rate_limits("testuser")
 
             assert result["tier_rate_limits"] == []
 
     @pytest.mark.asyncio
-    async def test_get_user_with_tier_eager(self, user_service, mock_db):
+    async def test_get_with_tier_eager(self, user_service, mock_db):
         """Test getting user with tier using eager loading."""
         mock_user_with_tier = {
             "id": 1,
@@ -344,33 +344,33 @@ class TestUserServiceTier:
         }
 
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
-            mock_crud.get_user_with_tier_eager = AsyncMock(return_value=mock_user_with_tier)
+            mock_crud.get_with_tier_eager = AsyncMock(return_value=mock_user_with_tier)
 
-            result = await user_service.get_user_with_tier("testuser", mock_db)
+            result = await user_service.get_with_tier("testuser")
 
             assert result["tier_name"] == "Basic"
             assert "tier" not in result  # Should be flattened
             assert "_sa_instance_state" not in result.get("tier_name", "")  # Check cleanup
 
     @pytest.mark.asyncio
-    async def test_get_user_with_tier_user_not_found(self, user_service, mock_db):
+    async def test_get_with_tier_user_not_found(self, user_service, mock_db):
         """Test get user with tier fails if user not found."""
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
-            mock_crud.get_user_with_tier_eager = AsyncMock(return_value=None)
+            mock_crud.get_with_tier_eager = AsyncMock(return_value=None)
 
             with pytest.raises(ModelNotFoundError):
-                await user_service.get_user_with_tier("unknown", mock_db)
+                await user_service.get_with_tier("unknown")
 
     @pytest.mark.asyncio
-    async def test_get_user_with_tier_no_tier(self, user_service, mock_db):
+    async def test_get_with_tier_no_tier(self, user_service, mock_db):
         """Test get user with tier returns None if user has no tier."""
         # This case handles line 311-312: if not user_with_tier.get("tier"): return None
         # Mock user exists but has no tier relation loaded/present
         mock_user = {"id": 1, "username": "testuser", "tier": None}
 
         with patch("src.app.modules.users.service.crud_users") as mock_crud:
-            mock_crud.get_user_with_tier_eager = AsyncMock(return_value=mock_user)
+            mock_crud.get_with_tier_eager = AsyncMock(return_value=mock_user)
 
-            result = await user_service.get_user_with_tier("testuser", mock_db)
+            result = await user_service.get_with_tier("testuser")
 
             assert result is None

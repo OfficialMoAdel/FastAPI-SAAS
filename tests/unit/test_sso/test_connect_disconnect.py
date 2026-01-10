@@ -12,6 +12,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.modules.sso.service import SSOService
+
 
 class TestConnectProviderService:
     """Test connect_provider functionality in SSOService."""
@@ -19,17 +21,15 @@ class TestConnectProviderService:
     @pytest.mark.asyncio
     async def test_get_authorization_url_accepts_connect_mode(self):
         """Verify get_authorization_url accepts connect_mode parameter."""
-        from src.app.modules.sso.service import sso_service
+        service = SSOService()
 
         # Method signature should accept connect_mode and user_id
-        sig = sso_service.get_authorization_url.__code__.co_varnames
+        sig = service.get_authorization_url.__code__.co_varnames
         assert "connect_mode" in sig or True  # Will fail if not implemented
 
     @pytest.mark.asyncio
     async def test_connect_mode_stores_user_id_in_state(self):
         """Verify connect_mode stores user_id in state for callback."""
-        from src.app.modules.sso.service import SSOService
-
         service = SSOService()
 
         mock_db = AsyncMock()
@@ -47,16 +47,12 @@ class TestConnectProviderService:
                 "is_enabled": True,
             }
 
-            with patch(
-                "src.app.modules.sso.service.get_sso_state_manager"
-            ) as mock_state_mgr:
+            with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_state_mgr:
                 mock_manager = MagicMock()
                 mock_manager.create_state = AsyncMock(return_value="test-state")
                 mock_state_mgr.return_value = mock_manager
 
-                with patch(
-                    "src.app.modules.sso.service.get_tenant_context"
-                ) as mock_tenant:
+                with patch("src.app.modules.sso.service.get_tenant_context") as mock_tenant:
                     mock_tenant.return_value = MagicMock(id=1)
 
                     await service.get_authorization_url(
@@ -76,8 +72,6 @@ class TestConnectProviderService:
     @pytest.mark.asyncio
     async def test_callback_in_connect_mode_links_to_specified_user(self):
         """Verify callback in connect mode links provider to the user from state."""
-        from src.app.modules.sso.service import SSOService
-
         service = SSOService()
 
         # This test verifies that when connect_mode is True in state,
@@ -92,30 +86,23 @@ class TestDisconnectProviderService:
     @pytest.mark.asyncio
     async def test_disconnect_provider_method_exists(self):
         """Verify disconnect_provider method exists in SSOService."""
-        from src.app.modules.sso.service import sso_service
+        service = SSOService()
 
-        assert hasattr(sso_service, "disconnect_provider")
+        assert hasattr(service, "disconnect_provider")
 
     @pytest.mark.asyncio
     async def test_disconnect_removes_sso_connection(self):
         """Verify disconnect_provider removes the SSO connection."""
         from src.app.modules.sso.crud import crud_user_sso_connections
-        from src.app.modules.sso.service import SSOService
 
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch.object(
-            crud_user_sso_connections, "get", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_user_sso_connections, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = MagicMock(id=1, user_id=123, provider="google")
 
-            with patch.object(
-                crud_user_sso_connections, "delete", new_callable=AsyncMock
-            ) as mock_delete:
-                with patch.object(
-                    service, "_can_disconnect", new_callable=AsyncMock
-                ) as mock_can:
+            with patch.object(crud_user_sso_connections, "delete", new_callable=AsyncMock) as mock_delete:
+                with patch.object(service, "_can_disconnect", new_callable=AsyncMock) as mock_can:
                     mock_can.return_value = True
 
                     await service.disconnect_provider(
@@ -131,7 +118,6 @@ class TestDisconnectProviderService:
     async def test_disconnect_fails_if_last_auth_method(self):
         """Verify disconnect fails if provider is user's only authentication method."""
         from src.app.core.exceptions.http_exceptions import BadRequestException
-        from src.app.modules.sso.service import SSOService
 
         service = SSOService()
         mock_db = AsyncMock()
@@ -147,9 +133,7 @@ class TestDisconnectProviderService:
                     tenant_id=1,
                 )
 
-            assert "last" in str(exc_info.value.detail).lower() or "only" in str(
-                exc_info.value.detail
-            ).lower()
+            assert "last" in str(exc_info.value.detail).lower() or "only" in str(exc_info.value.detail).lower()
 
 
 class TestCanDisconnectLogic:
@@ -158,14 +142,10 @@ class TestCanDisconnectLogic:
     @pytest.mark.asyncio
     async def test_can_disconnect_with_password(self):
         """User with password set can disconnect any SSO provider."""
-        from src.app.modules.sso.service import SSOService
-
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch(
-            "src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock
-        ) as mock_user:
+        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
             # User has password (hashed_password is not None)
             mock_user.return_value = {"id": 123, "hashed_password": "hashed_pw_value"}
 
@@ -180,14 +160,10 @@ class TestCanDisconnectLogic:
     @pytest.mark.asyncio
     async def test_can_disconnect_with_multiple_sso(self):
         """User with multiple SSO providers can disconnect one."""
-        from src.app.modules.sso.service import SSOService
-
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch(
-            "src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock
-        ) as mock_user:
+        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
             # User has no password (SSO-only user)
             mock_user.return_value = {"id": 123, "hashed_password": None}
 
@@ -209,14 +185,10 @@ class TestCanDisconnectLogic:
     @pytest.mark.asyncio
     async def test_cannot_disconnect_last_sso_without_password(self):
         """User with only one SSO and no password cannot disconnect."""
-        from src.app.modules.sso.service import SSOService
-
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch(
-            "src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock
-        ) as mock_user:
+        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
             # User has no password (SSO-only user)
             mock_user.return_value = {"id": 123, "hashed_password": None}
 
@@ -241,6 +213,7 @@ class TestCanDisconnectLogic:
 
 
 # Fixtures for testing
+
 
 @pytest.fixture
 def mock_sso_connection():

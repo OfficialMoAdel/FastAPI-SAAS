@@ -7,9 +7,34 @@ Task: T034 [US2] Write contract tests for /auth/sso/* endpoints
 Tests verify the API contract per specs/004-auth-user-management/contracts/auth-api.yaml
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, Mock
 
 from fastapi import status
+
+from src.app.main import app
+from src.app.modules.sso.service import get_sso_service
+
+
+def _create_mock_sso_service(**method_returns):
+    """Helper to create a mock SSOService with specified method return values."""
+    mock_service = Mock()
+    for method_name, return_value in method_returns.items():
+        if isinstance(return_value, Exception):
+            setattr(mock_service, method_name, AsyncMock(side_effect=return_value))
+        else:
+            setattr(mock_service, method_name, AsyncMock(return_value=return_value))
+    return mock_service
+
+
+@contextmanager
+def override_sso_service(mock_service):
+    """Context manager to override get_sso_service dependency."""
+    app.dependency_overrides[get_sso_service] = lambda: mock_service
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_sso_service, None)
 
 
 class TestSSOProvidersEndpoint:
@@ -29,10 +54,8 @@ class TestSSOProvidersEndpoint:
             {"name": "google", "enabled": True, "display_name": "Google"},
             {"name": "github", "enabled": True, "display_name": "GitHub"},
         ]
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(get_enabled_providers=AsyncMock(return_value=mock_providers)),
-        ):
+        mock_service = _create_mock_sso_service(get_enabled_providers=mock_providers)
+        with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/auth/sso/providers",
                 headers=auth_headers,
@@ -48,10 +71,8 @@ class TestSSOAuthorizeEndpoint:
 
     def test_authorize_endpoint_exists(self, client, auth_headers):
         """Verify authorize endpoint exists."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(get_authorization_url=AsyncMock(return_value="https://google.com/auth")),
-        ):
+        mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
+        with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/auth/sso/google/authorize",
                 headers=auth_headers,
@@ -69,14 +90,10 @@ class TestSSOAuthorizeEndpoint:
 
     def test_authorize_redirect_includes_state(self, client, auth_headers):
         """Verify authorize returns redirect URL with state parameter."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(
-                get_authorization_url=AsyncMock(
-                    return_value="https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback"
-                )
-            ),
-        ):
+        mock_service = _create_mock_sso_service(
+            get_authorization_url="https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback"
+        )
+        with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/auth/sso/google/authorize",
                 headers=auth_headers,
@@ -118,14 +135,9 @@ class TestSSOCallbackEndpoint:
     def test_callback_invalid_state_returns_400(self, client, auth_headers):
         """Verify invalid state returns 400."""
         from fastapi import HTTPException
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(
-                process_callback=AsyncMock(
-                    side_effect=HTTPException(status_code=400, detail="Invalid state")
-                )
-            ),
-        ):
+
+        mock_service = _create_mock_sso_service(process_callback=HTTPException(status_code=400, detail="Invalid state"))
+        with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/auth/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
@@ -140,10 +152,8 @@ class TestSSOCallbackEndpoint:
             "token_type": "bearer",
             "expires_in": 1800,
         }
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(process_callback=AsyncMock(return_value=mock_tokens)),
-        ):
+        mock_service = _create_mock_sso_service(process_callback=mock_tokens)
+        with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/auth/sso/google/callback?code=test_code&state=test_state",
                 headers=auth_headers,
@@ -160,10 +170,8 @@ class TestSSOConnectEndpoint:
 
     def test_connect_endpoint_exists(self, client, auth_headers):
         """Verify connect endpoint exists."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(get_authorization_url=AsyncMock(return_value="https://google.com/auth")),
-        ):
+        mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
+        with override_sso_service(mock_service):
             response = client.post(
                 "/api/v1/auth/sso/google/connect",
                 headers=auth_headers,
@@ -181,14 +189,10 @@ class TestSSOConnectEndpoint:
 
     def test_connect_returns_authorization_url(self, client, auth_headers):
         """Verify connect returns authorization URL in Location header."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(
-                get_authorization_url=AsyncMock(
-                    return_value="https://accounts.google.com/o/oauth2/v2/auth?state=connect_state"
-                )
-            ),
-        ):
+        mock_service = _create_mock_sso_service(
+            get_authorization_url="https://accounts.google.com/o/oauth2/v2/auth?state=connect_state"
+        )
+        with override_sso_service(mock_service):
             response = client.post(
                 "/api/v1/auth/sso/google/connect",
                 headers=auth_headers,
@@ -203,10 +207,8 @@ class TestSSODisconnectEndpoint:
 
     def test_disconnect_endpoint_exists(self, client, auth_headers):
         """Verify disconnect endpoint exists."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(disconnect_provider=AsyncMock(return_value={"message": "ok"})),
-        ):
+        mock_service = _create_mock_sso_service(disconnect_provider={"message": "ok"})
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/google",
                 headers=auth_headers,
@@ -223,10 +225,8 @@ class TestSSODisconnectEndpoint:
 
     def test_disconnect_returns_success_message(self, client, auth_headers):
         """Verify disconnect returns success message."""
-        with patch(
-            "src.app.modules.sso.router.sso_service",
-            Mock(disconnect_provider=AsyncMock(return_value={"message": "Provider disconnected successfully"})),
-        ):
+        mock_service = _create_mock_sso_service(disconnect_provider={"message": "Provider disconnected successfully"})
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/google",
                 headers=auth_headers,

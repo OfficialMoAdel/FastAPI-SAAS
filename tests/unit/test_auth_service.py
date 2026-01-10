@@ -14,6 +14,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from jose import JWTError
 
+from src.app.modules.auth.service import AuthService
+
+
+@pytest.fixture
+def auth_service():
+    """Create an AuthService instance."""
+    return AuthService()
+
 
 @pytest.fixture
 def mock_db():
@@ -65,10 +73,11 @@ class TestAuthServiceLockout:
     """Tests for account lockout (brute force protection)."""
 
     @pytest.mark.asyncio
-    async def test_account_locked_after_5_failed_attempts(self, mock_db, mock_redis, mock_response, mock_request):
+    async def test_account_locked_after_5_failed_attempts(
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+    ):
         """Test that account is locked after 5 failed login attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         # Simulate 5 failed attempts already recorded
         mock_redis.get = AsyncMock(return_value=b"5")
@@ -80,18 +89,17 @@ class TestAuthServiceLockout:
         assert "15 minutes" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_failed_attempt_increments_counter(self, mock_db, mock_redis, mock_response, mock_request):
+    async def test_failed_attempt_increments_counter(
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+    ):
         """Test that failed login increments the attempt counter."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         mock_redis.get = AsyncMock(return_value=None)  # No previous attempts
         mock_redis.incr = AsyncMock(return_value=1)  # First attempt
 
         with (
-            patch(
-                "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
-            ) as mock_auth,
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
         ):
             mock_auth.return_value = None  # Authentication fails
 
@@ -103,17 +111,16 @@ class TestAuthServiceLockout:
             mock_redis.expire.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_lockout_counter_expires_after_15_minutes(self, mock_db, mock_redis, mock_response, mock_request):
+    async def test_lockout_counter_expires_after_15_minutes(
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+    ):
         """Test that lockout counter expiration is set to 15 minutes (900 seconds)."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         mock_redis.get = AsyncMock(return_value=None)
         mock_redis.incr = AsyncMock(return_value=1)
 
-        with patch(
-            "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
-        ) as mock_auth:
+        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
             mock_auth.return_value = None
 
             with pytest.raises(UnauthorizedException):
@@ -124,23 +131,15 @@ class TestAuthServiceLockout:
 
     @pytest.mark.asyncio
     async def test_successful_login_clears_lockout_counter(
-        self, mock_db, mock_redis, mock_response, mock_request, mock_user
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_user
     ):
         """Test that successful login clears the failed attempt counter."""
-        from src.app.modules.auth.service import auth_service
-
         mock_redis.get = AsyncMock(return_value=b"3")  # 3 previous failed attempts
 
         with (
-            patch(
-                "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
-            ) as mock_auth,
-            patch(
-                "src.app.modules.auth.service.create_access_token", new_callable=AsyncMock
-            ) as mock_access,
-            patch(
-                "src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock
-            ) as mock_refresh,
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_access,
+            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
         ):
             mock_auth.return_value = mock_user
             mock_access.return_value = "access_token"
@@ -152,17 +151,14 @@ class TestAuthServiceLockout:
             mock_redis.delete.assert_called_once_with("login_attempts:testuser")
 
     @pytest.mark.asyncio
-    async def test_lockout_at_exactly_5_attempts(self, mock_db, mock_redis, mock_response, mock_request):
+    async def test_lockout_at_exactly_5_attempts(self, auth_service, mock_db, mock_redis, mock_response, mock_request):
         """Test that lockout triggers at exactly 5 attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         # 4 previous attempts - should NOT be locked
         mock_redis.get = AsyncMock(return_value=b"4")
 
-        with patch(
-            "src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock
-        ) as mock_auth:
+        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
             mock_auth.return_value = None  # Auth fails
 
             # This is the 5th attempt - should fail but not be locked yet
@@ -177,10 +173,9 @@ class TestAuthServiceTokenRefresh:
     """Tests for token refresh edge cases."""
 
     @pytest.mark.asyncio
-    async def test_refresh_with_missing_token_raises_error(self, mock_db, mock_response):
+    async def test_refresh_with_missing_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with no token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
             await auth_service.refresh_access_token(None, mock_response, mock_db)
@@ -188,10 +183,9 @@ class TestAuthServiceTokenRefresh:
         assert "Refresh token missing" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_with_empty_string_token_raises_error(self, mock_db, mock_response):
+    async def test_refresh_with_empty_string_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with empty string token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
             await auth_service.refresh_access_token("", mock_response, mock_db)
@@ -199,14 +193,11 @@ class TestAuthServiceTokenRefresh:
         assert "Refresh token missing" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_with_invalid_token_raises_error(self, mock_db, mock_response):
+    async def test_refresh_with_invalid_token_raises_error(self, auth_service, mock_db, mock_response):
         """Test that refresh with invalid/expired token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
-        with patch(
-            "src.app.modules.auth.service.verify_token", new_callable=AsyncMock
-        ) as mock_verify:
+        with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = None  # Token invalid or expired
 
             with pytest.raises(UnauthorizedException) as exc_info:
@@ -215,30 +206,21 @@ class TestAuthServiceTokenRefresh:
             assert "Invalid refresh token" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_success_rotates_tokens(self, mock_db, mock_response):
+    async def test_refresh_success_rotates_tokens(self, auth_service, mock_db, mock_response):
         """Test successful token refresh rotates both tokens and sets cookie."""
-        from src.app.modules.auth.service import auth_service
-
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "testuser"
 
         # Mock settings to simulate production environment
         with (
             patch("src.app.modules.auth.service.settings") as mock_settings,
-            patch(
-                "src.app.modules.auth.service.verify_token", new_callable=AsyncMock
-            ) as mock_verify,
-            patch(
-                "src.app.modules.auth.service.create_access_token", new_callable=AsyncMock
-            ) as mock_create_access,
-            patch(
-                "src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock
-            ) as mock_create_refresh,
-            patch(
-                "src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock
-            ) as mock_blacklist,
+            patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
+            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
+            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
+            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
         ):
             from src.app.core.config import EnvironmentOption
+
             mock_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
 
@@ -273,10 +255,9 @@ class TestAuthServiceLogout:
     """Tests for logout edge cases."""
 
     @pytest.mark.asyncio
-    async def test_logout_without_refresh_token_raises_error(self, mock_db, mock_response, mock_request):
+    async def test_logout_without_refresh_token_raises_error(self, auth_service, mock_db, mock_response, mock_request):
         """Test that logout without refresh token raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         with pytest.raises(UnauthorizedException) as exc_info:
             await auth_service.logout("access_token", None, mock_response, mock_request, mock_db)
@@ -284,13 +265,9 @@ class TestAuthServiceLogout:
         assert "Refresh token not found" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_logout_success_blacklists_tokens(self, mock_db, mock_response, mock_request):
+    async def test_logout_success_blacklists_tokens(self, auth_service, mock_db, mock_response, mock_request):
         """Test successful logout blacklists both tokens and clears cookie."""
-        from src.app.modules.auth.service import auth_service
-
-        with patch(
-            "src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock
-        ) as mock_blacklist:
+        with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock) as mock_blacklist:
             result = await auth_service.logout("access_token", "refresh_token", mock_response, mock_request, mock_db)
 
             mock_blacklist.assert_called_once_with(
@@ -300,14 +277,11 @@ class TestAuthServiceLogout:
             assert result["message"] == "Logged out successfully"
 
     @pytest.mark.asyncio
-    async def test_logout_with_invalid_jwt_raises_error(self, mock_db, mock_response, mock_request):
+    async def test_logout_with_invalid_jwt_raises_error(self, auth_service, mock_db, mock_response, mock_request):
         """Test that logout with JWT decode error raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
-        with patch(
-            "src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock
-        ) as mock_blacklist:
+        with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock) as mock_blacklist:
             mock_blacklist.side_effect = JWTError("Invalid token")
 
             with pytest.raises(UnauthorizedException) as exc_info:
@@ -316,29 +290,19 @@ class TestAuthServiceLogout:
             assert "Invalid token" in str(exc_info.value.detail)
 
 
-
-
-
 class TestAuthServiceEmailFlows:
     """Tests for email-related flows (password reset, verification)."""
 
     @pytest.mark.asyncio
-    async def test_request_password_reset_sends_email(self, mock_db):
+    async def test_request_password_reset_sends_email(self, auth_service, mock_db):
         """Test that requesting password reset triggers email event."""
-        from src.app.modules.auth.service import auth_service
-
-        mock_user = {
-            "id": 1,
-            "email": "test@example.com",
-            "username": "testuser",
-            "tenant_id": 100
-        }
+        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": 100}
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
             patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.models.PasswordResetToken") as mock_token_model,
-            patch("src.app.modules.auth.service.settings") as mock_settings
+            patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
             mock_get_user.return_value = mock_user
             mock_settings.FRONTEND_URL = "http://test-frontend"
@@ -373,23 +337,21 @@ class TestAuthServiceEmailFlows:
             assert "http://test-frontend" in call_args[0][1]["context"]["reset_link"]
 
     @pytest.mark.asyncio
-    async def test_send_verification_email_creates_token_and_event(self, mock_db):
+    async def test_send_verification_email_creates_token_and_event(self, auth_service, mock_db):
         """Test sending verification email creates token and triggers event."""
-        from src.app.modules.auth.service import auth_service
-
         mock_user = {
             "id": 1,
             "email": "test@example.com",
             "username": "testuser",
             "is_email_verified": False,
-            "tenant_id": 100
+            "tenant_id": 100,
         }
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
             patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.models.EmailVerificationToken") as mock_token_cls,
-            patch("src.app.modules.auth.service.settings") as mock_settings
+            patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
             mock_get_user.return_value = mock_user
             mock_settings.FRONTEND_URL = "http://test-frontend"
@@ -417,15 +379,13 @@ class TestAuthServiceEmailFlows:
             assert "verification_link" in call_args[0][1]["context"]
 
     @pytest.mark.asyncio
-    async def test_verify_email_validates_and_updates_user(self, mock_db):
+    async def test_verify_email_validates_and_updates_user(self, auth_service, mock_db):
         """Test verification logic updates user and deletes token."""
-        from src.app.modules.auth.service import auth_service
-
         mock_user = {"id": 99, "is_email_verified": False}
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.users.crud.crud_users.update", new_callable=AsyncMock) as mock_update_user
+            patch("src.app.modules.users.crud.crud_users.update", new_callable=AsyncMock) as mock_update_user,
         ):
             mock_get_user.return_value = mock_user
 
@@ -452,10 +412,9 @@ class TestAuthServiceEmailFlows:
             assert result == {"message": "Email verified successfully."}
 
     @pytest.mark.asyncio
-    async def test_verify_email_invalid_token_raises_error(self, mock_db):
+    async def test_verify_email_invalid_token_raises_error(self, auth_service, mock_db):
         """Test verify_email raises error if token is invalid or missing."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.modules.auth.service import auth_service
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None

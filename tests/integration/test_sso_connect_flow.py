@@ -11,12 +11,37 @@ all necessary mocks for tenant, user, rate limiting, etc. We need to add X-Tenan
 header to requests since the middleware requires it.
 """
 
-from unittest.mock import AsyncMock, patch
+from contextlib import contextmanager
+from unittest.mock import AsyncMock, Mock, patch
 
 from starlette.testclient import TestClient
 
+from src.app.main import app
+from src.app.modules.sso.service import get_sso_service
+
 # Test tenant header for middleware
 TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}
+
+
+def _create_mock_sso_service(**method_returns):
+    """Helper to create a mock SSOService with specified method return values."""
+    mock_service = Mock()
+    for method_name, return_value in method_returns.items():
+        if isinstance(return_value, Exception):
+            setattr(mock_service, method_name, AsyncMock(side_effect=return_value))
+        else:
+            setattr(mock_service, method_name, AsyncMock(return_value=return_value))
+    return mock_service
+
+
+@contextmanager
+def override_sso_service(mock_service):
+    """Context manager to override get_sso_service dependency."""
+    app.dependency_overrides[get_sso_service] = lambda: mock_service
+    try:
+        yield
+    finally:
+        app.dependency_overrides.pop(get_sso_service, None)
 
 
 class TestSSOConnectFlowIntegration:
@@ -24,17 +49,15 @@ class TestSSOConnectFlowIntegration:
 
     def test_connect_redirects_to_provider(self, client: TestClient):
         """Verify connect initiates OAuth flow with provider."""
-        # Mock at router level - sso_service.get_authorization_url returns redirect URL
+        mock_service = _create_mock_sso_service(
+            get_authorization_url="https://accounts.google.com/o/oauth2/auth?state=test-state"
+        )
         with patch(
             "src.app.modules.sso.router.crud_user_sso_connections.exists",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            with patch(
-                "src.app.modules.sso.router.sso_service.get_authorization_url",
-                new_callable=AsyncMock,
-                return_value="https://accounts.google.com/o/oauth2/auth?state=test-state",
-            ):
+            with override_sso_service(mock_service):
                 response = client.post(
                     "/api/v1/auth/sso/google/connect",
                     headers=TEST_TENANT_HEADER,
@@ -48,17 +71,15 @@ class TestSSOConnectFlowIntegration:
 
     def test_connect_stores_user_id_in_state(self, client: TestClient):
         """Verify connect mode stores user_id in OAuth state."""
-        # Mock at router level and verify get_authorization_url is called with connect_mode
+        mock_service = _create_mock_sso_service(
+            get_authorization_url="https://accounts.google.com/o/oauth2/auth?state=test-state"
+        )
         with patch(
             "src.app.modules.sso.router.crud_user_sso_connections.exists",
             new_callable=AsyncMock,
             return_value=False,
         ):
-            with patch(
-                "src.app.modules.sso.router.sso_service.get_authorization_url",
-                new_callable=AsyncMock,
-                return_value="https://accounts.google.com/o/oauth2/auth?state=test-state",
-            ) as mock_auth_url:
+            with override_sso_service(mock_service):
                 response = client.post(
                     "/api/v1/auth/sso/google/connect",
                     headers=TEST_TENANT_HEADER,
@@ -66,8 +87,8 @@ class TestSSOConnectFlowIntegration:
                 )
 
                 # Verify get_authorization_url was called with connect_mode=True and user_id
-                assert mock_auth_url.called
-                call_kwargs = mock_auth_url.call_args.kwargs
+                assert mock_service.get_authorization_url.called
+                call_kwargs = mock_service.get_authorization_url.call_args.kwargs
                 assert call_kwargs.get("connect_mode") is True
                 assert "user_id" in call_kwargs
                 assert response.status_code in [307, 302]
@@ -119,11 +140,8 @@ class TestSSODisconnectFlowIntegration:
 
     def test_disconnect_removes_provider_connection(self, client: TestClient):
         """Verify disconnect removes SSO connection when user has password."""
-        # Mock the service to succeed
-        with patch(
-            "src.app.modules.sso.router.sso_service.disconnect_provider",
-            new_callable=AsyncMock,
-        ) as mock_disconnect:
+        mock_service = _create_mock_sso_service(disconnect_provider={"message": "google disconnected successfully"})
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/google",
                 headers=TEST_TENANT_HEADER,
@@ -131,20 +149,16 @@ class TestSSODisconnectFlowIntegration:
 
             assert response.status_code == 200
             assert "disconnected" in response.json().get("message", "").lower()
-            mock_disconnect.assert_called_once()
+            mock_service.disconnect_provider.assert_called_once()
 
     def test_disconnect_fails_for_last_auth_method(self, client: TestClient):
         """Verify disconnect fails when it's user's only auth method."""
         from src.app.core.exceptions.http_exceptions import BadRequestException
 
-        # Mock the service to raise BadRequestException
-        with patch(
-            "src.app.modules.sso.router.sso_service.disconnect_provider",
-            new_callable=AsyncMock,
-            side_effect=BadRequestException(
-                "Cannot disconnect: this is your only authentication method."
-            ),
-        ):
+        mock_service = _create_mock_sso_service(
+            disconnect_provider=BadRequestException("Cannot disconnect: this is your only authentication method.")
+        )
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/google",
                 headers=TEST_TENANT_HEADER,
@@ -156,11 +170,8 @@ class TestSSODisconnectFlowIntegration:
 
     def test_disconnect_succeeds_with_multiple_sso_providers(self, client: TestClient):
         """Verify SSO-only user can disconnect one provider if they have another."""
-        # Mock the service to succeed (user has multiple SSO)
-        with patch(
-            "src.app.modules.sso.router.sso_service.disconnect_provider",
-            new_callable=AsyncMock,
-        ):
+        mock_service = _create_mock_sso_service(disconnect_provider={"message": "google disconnected successfully"})
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/google",
                 headers=TEST_TENANT_HEADER,
@@ -173,12 +184,10 @@ class TestSSODisconnectFlowIntegration:
         """Verify disconnect returns 404 for non-connected provider."""
         from src.app.core.exceptions.http_exceptions import NotFoundException
 
-        # Mock the service to raise NotFoundException
-        with patch(
-            "src.app.modules.sso.router.sso_service.disconnect_provider",
-            new_callable=AsyncMock,
-            side_effect=NotFoundException("No github connection found for this account"),
-        ):
+        mock_service = _create_mock_sso_service(
+            disconnect_provider=NotFoundException("No github connection found for this account")
+        )
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/github",
                 headers=TEST_TENANT_HEADER,
@@ -188,10 +197,8 @@ class TestSSODisconnectFlowIntegration:
 
     def test_disconnect_response_format(self, client: TestClient):
         """Verify disconnect returns proper success message format."""
-        with patch(
-            "src.app.modules.sso.router.sso_service.disconnect_provider",
-            new_callable=AsyncMock,
-        ):
+        mock_service = _create_mock_sso_service(disconnect_provider={"message": "microsoft disconnected successfully"})
+        with override_sso_service(mock_service):
             response = client.delete(
                 "/api/v1/auth/sso/microsoft",
                 headers=TEST_TENANT_HEADER,
