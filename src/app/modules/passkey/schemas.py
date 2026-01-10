@@ -76,19 +76,6 @@ class PasskeyCredentialList(BaseList[PasskeyCredentialResponse]):
     pass
 
 
-class PasskeyCredentialListResponse(BaseModel):
-    """Response for listing user's passkey credentials.
-
-    Deprecated: Use PasskeyCredentialList for new endpoints.
-    This schema is kept for backward compatibility with existing API contracts.
-    """
-
-    credentials: list[PasskeyCredentialResponse] = Field(
-        default_factory=list,
-        description="List of user's passkey credentials",
-    )
-
-
 class PasskeyDeleteResponse(BaseModel):
     """Response for credential deletion."""
 
@@ -125,15 +112,6 @@ class PasskeyAuthenticationOptionsResponse(BaseModel):
         ...,
         description="WebAuthn PublicKeyCredentialRequestOptions",
     )
-
-
-class AuthTokenResponse(BaseModel):
-    """Response containing authentication tokens."""
-
-    access_token: str = Field(..., description="JWT access token")
-    refresh_token: str = Field(..., description="JWT refresh token")
-    token_type: str = Field(default="bearer", description="Token type (always 'bearer')")
-    expires_in: int = Field(..., description="Access token expiry in seconds")
 
 
 # ============================================================================

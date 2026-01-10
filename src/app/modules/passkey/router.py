@@ -9,8 +9,8 @@ from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.rate_limit import rate_limiter
+from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.passkey.schemas import (
-    AuthTokenResponse,
     PasskeyAuthenticationOptionsResponse,
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
@@ -107,9 +107,7 @@ async def delete_credential(
     db: AsyncSession = Depends(async_get_db),
 ):
     """Delete a passkey credential."""
-    await passkey_service.delete_credential(
-        db=db, user_id=current_user["id"], credential_id=credential_id
-    )
+    await passkey_service.delete_credential(db=db, user_id=current_user["id"], credential_id=credential_id)
     return PasskeyDeleteResponse(message="Credential deleted successfully")
 
 
@@ -163,4 +161,3 @@ async def login_complete(
         credential=request.credential,
     )
     return AuthTokenResponse(**result)
-
