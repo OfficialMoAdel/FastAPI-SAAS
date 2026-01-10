@@ -268,18 +268,18 @@ class _LegacyPostService:
     async def get_posts(
         self, username: str, db: AsyncSession, page: int = 1, items_per_page: int = 10
     ) -> dict[str, Any]:
-        # Need to lookup user_id from username for backward compat
-        from ...modules.users.service import UserService
+        # Use service registry for cross-module decoupling
+        from ...core.service_registry import get_service
 
-        user_svc = UserService(db)
+        user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)
         service = PostService(db)
         return await service.get_multi(user.id, page, items_per_page)
 
     async def get_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, Any]:
-        from ...modules.users.service import UserService
+        from ...core.service_registry import get_service
 
-        user_svc = UserService(db)
+        user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)
         service = PostService(db)
         return await service.get(post_id, user.id)

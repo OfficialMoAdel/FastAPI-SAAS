@@ -17,7 +17,6 @@ from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.users import crud_users
 from src.app.modules.users.schemas import UserCreate
-from src.app.modules.users.service import UserService
 
 from .crud import crud_user_sso_connections
 from .providers.apple import AppleProvider
@@ -313,7 +312,10 @@ class SSOService:
             name=user_info.name or base_username,
         )
 
-        user_svc = UserService(db)
+        # Use service registry for cross-module decoupling
+        from src.app.core.service_registry import get_service
+
+        user_svc = get_service("user", db)
         return await user_svc.create(user=user_in)
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:

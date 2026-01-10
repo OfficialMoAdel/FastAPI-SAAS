@@ -29,10 +29,10 @@ class RateLimitService(BaseService[RateLimit]):
 
     async def _get_tier_or_404(self, tier_name: str) -> dict[str, Any]:
         """Get tier by name or raise ModelNotFoundError."""
-        # Use TierService with same db session for cross-module access
-        from ...modules.tiers.service import TierService
+        # Use service registry for cross-module decoupling
+        from ...core.service_registry import get_service
 
-        tier_service = TierService(self.db)
+        tier_service = get_service("tier", self.db)
         return await tier_service.get_tier(tier_name)
 
     async def get_rate_limits_by_tier_id(self, tier_id: int) -> dict[str, Any]:

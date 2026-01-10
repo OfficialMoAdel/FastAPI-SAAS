@@ -230,15 +230,15 @@ class UserService(BaseService[User]):
         ModelNotFoundError
             If user or tier not found
         """
-        # Use lazy import to avoid circular dependencies
-        from ...modules.tiers.service import TierService
+        # Use service registry for cross-module decoupling
+        from ...core.service_registry import get_service
 
         db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        # Validate tier exists
-        tier_svc = TierService(self.db)
+        # Validate tier exists via registry
+        tier_svc = get_service("tier", self.db)
         try:
             await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
@@ -265,8 +265,8 @@ class UserService(BaseService[User]):
         ModelNotFoundError
             If user or tier not found
         """
-        from ...modules.rate_limits.service import RateLimitService
-        from ...modules.tiers.service import TierService
+        # Use service registry for cross-module decoupling
+        from ...core.service_registry import get_service
 
         db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
@@ -277,8 +277,8 @@ class UserService(BaseService[User]):
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        tier_svc = TierService(self.db)
-        rate_limit_svc = RateLimitService(self.db)
+        tier_svc = get_service("tier", self.db)
+        rate_limit_svc = get_service("rate_limit", self.db)
 
         db_tier = await tier_svc.get_tier_by_id(db_user.tier_id)
         rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_tier["id"])
