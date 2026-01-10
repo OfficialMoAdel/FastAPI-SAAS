@@ -13,26 +13,26 @@ from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
 from .models import AuditLog
 from .schemas import (
-    AuditLogListResponse,
+    AuditLogList,
     AuditLogResponse,
 )
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
 
-@router.get("", response_model=AuditLogListResponse)
+@router.get("", response_model=AuditLogList)
 async def list_audit_logs(
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> AuditLogListResponse:
+) -> dict:
     """
     List audit logs for the current tenant.
 
@@ -68,18 +68,21 @@ async def list_audit_logs(
     total = total_result.scalar_one()
 
     # Apply pagination
-    query = query.limit(limit).offset(offset)
+    offset = (page - 1) * per_page
+    query = query.limit(per_page).offset(offset)
 
     # Execute query
     result = await db.execute(query)
     logs = result.scalars().all()
 
-    return AuditLogListResponse(
-        items=[AuditLogResponse.model_validate(log) for log in logs],
-        total=total,
-        page=(offset // limit) + 1,
-        per_page=limit,
-    )
+    return {
+        "items": [AuditLogResponse.model_validate(log) for log in logs],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/{log_id}", response_model=AuditLogResponse)

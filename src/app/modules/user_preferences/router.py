@@ -16,7 +16,7 @@ from src.app.modules.user_preferences.schemas import (
     UserPreferencesResponse,
     UserPreferencesUpdate,
 )
-from src.app.modules.user_preferences.service import preferences_service
+from src.app.modules.user_preferences.service import PreferencesService, get_preferences_service
 
 router = APIRouter(prefix="/user/me", tags=["user"])
 
@@ -25,13 +25,14 @@ router = APIRouter(prefix="/user/me", tags=["user"])
 async def get_preferences(
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
+    service: PreferencesService = Depends(get_preferences_service),
 ):
     """Get current user's preferences.
 
     Returns user preferences with defaults for any unset values.
     Creates a preferences record if one doesn't exist.
     """
-    result = await preferences_service.get_preferences(
+    result = await service.get_preferences(
         db=db,
         user_id=current_user["id"],
     )
@@ -43,12 +44,13 @@ async def update_preferences(
     updates: UserPreferencesUpdate,
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
+    service: PreferencesService = Depends(get_preferences_service),
 ):
     """Update current user's preferences.
 
     Only provided fields are updated; others remain unchanged.
     """
-    result = await preferences_service.update_preferences(
+    result = await service.update_preferences(
         db=db,
         user_id=current_user["id"],
         updates=updates,
@@ -61,13 +63,14 @@ async def upload_profile_image(
     file: UploadFile = File(...),
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
+    service: PreferencesService = Depends(get_preferences_service),
 ):
     """Upload profile image.
 
     Uploads image to storage and updates user profile URL.
     Returns the new image URL.
     """
-    result = await preferences_service.upload_profile_image(
+    result = await service.upload_profile_image(
         db=db,
         user_id=current_user["id"],
         file=file,
@@ -79,12 +82,13 @@ async def upload_profile_image(
 async def delete_profile_image(
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
+    service: PreferencesService = Depends(get_preferences_service),
 ):
     """Delete profile image.
 
     Removes image from storage and clears user profile URL.
     """
-    await preferences_service.delete_profile_image(
+    await service.delete_profile_image(
         db=db,
         user_id=current_user["id"],
     )

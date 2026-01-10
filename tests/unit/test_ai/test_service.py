@@ -31,7 +31,8 @@ class TestChatSessionService:
 
         with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
-                mock_crud.create = AsyncMock(return_value={"id": 1, "tenant_id": 1, "user_id": 1})
+                mock_crud.create = AsyncMock(return_value=MagicMock(id=1, tenant_id=1, user_id=1))
+                mock_crud.count = AsyncMock(return_value=0)
 
                 service = ChatSessionService(mock_db)
                 data = ChatSessionCreate(title="Test Session")
@@ -265,10 +266,12 @@ class TestAISettingsService:
         from src.app.modules.ai.service import AISettingsService
 
         with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(side_effect=[
-                {"id": 1, "user_id": 1, "model": "gemma3"},  # First call
-                {"id": 1, "user_id": 1, "model": "llama3"},  # After update
-            ])
+            mock_crud.get = AsyncMock(
+                side_effect=[
+                    {"id": 1, "user_id": 1, "model": "gemma3"},  # First call
+                    {"id": 1, "user_id": 1, "model": "llama3"},  # After update
+                ]
+            )
             mock_crud.update = AsyncMock()
 
             service = AISettingsService(mock_db)
@@ -292,12 +295,14 @@ class TestChatCompletionService:
     def mock_ollama_client(self):
         """Create a mock Ollama client."""
         client = MagicMock()
-        client.chat = AsyncMock(return_value={
-            "message": "Hello! How can I help you?",
-            "model": "gemma3",
-            "token_count": 25,
-            "finish_reason": "stop",
-        })
+        client.chat = AsyncMock(
+            return_value={
+                "message": "Hello! How can I help you?",
+                "model": "gemma3",
+                "token_count": 25,
+                "finish_reason": "stop",
+            }
+        )
         return client
 
     @pytest.mark.asyncio
@@ -310,19 +315,25 @@ class TestChatCompletionService:
             with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                 with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
                     # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3"
-                    })
+                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
                     mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(return_value={
-                        "data": [{"role": "user", "content": "Hi"}],
-                        "total_count": 1,
-                    })
+                    mock_messages.get_multi = AsyncMock(
+                        return_value={
+                            "data": [{"role": "user", "content": "Hi"}],
+                            "total_count": 1,
+                        }
+                    )
                     mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3",
-                        "temperature": 0.7, "max_tokens": 2048, "system_prompt": None,
-                    })
+                    mock_settings.get = AsyncMock(
+                        return_value={
+                            "id": 1,
+                            "user_id": 1,
+                            "model": "gemma3",
+                            "temperature": 0.7,
+                            "max_tokens": 2048,
+                            "system_prompt": None,
+                        }
+                    )
 
                     service = ChatCompletionService(mock_db, mock_ollama_client)
                     request = ChatCompletionRequest(message="Hello")
@@ -351,18 +362,25 @@ class TestChatCompletionService:
             with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                 with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
                     # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3"
-                    })
+                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
                     mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(return_value={
-                        "data": [], "total_count": 0,
-                    })
+                    mock_messages.get_multi = AsyncMock(
+                        return_value={
+                            "data": [],
+                            "total_count": 0,
+                        }
+                    )
                     mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3",
-                        "temperature": 0.7, "max_tokens": 2048, "system_prompt": None,
-                    })
+                    mock_settings.get = AsyncMock(
+                        return_value={
+                            "id": 1,
+                            "user_id": 1,
+                            "model": "gemma3",
+                            "temperature": 0.7,
+                            "max_tokens": 2048,
+                            "system_prompt": None,
+                        }
+                    )
 
                     service = ChatCompletionService(mock_db, mock_ollama_client)
                     request = ChatCompletionRequest(message="Hello")
@@ -390,18 +408,25 @@ class TestChatCompletionService:
             with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                 with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
                     # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3"
-                    })
+                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
                     mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(return_value={
-                        "data": [], "total_count": 0,
-                    })
+                    mock_messages.get_multi = AsyncMock(
+                        return_value={
+                            "data": [],
+                            "total_count": 0,
+                        }
+                    )
                     mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3",
-                        "temperature": 0.7, "max_tokens": 2048, "system_prompt": None,
-                    })
+                    mock_settings.get = AsyncMock(
+                        return_value={
+                            "id": 1,
+                            "user_id": 1,
+                            "model": "gemma3",
+                            "temperature": 0.7,
+                            "max_tokens": 2048,
+                            "system_prompt": None,
+                        }
+                    )
 
                     service = ChatCompletionService(mock_db, mock_ollama_client)
                     request = ChatCompletionRequest(
@@ -431,17 +456,24 @@ class TestChatCompletionService:
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
             with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                 with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
-                    mock_sessions.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3"
-                    })
-                    mock_messages.get_multi = AsyncMock(return_value={
-                        "data": [], "total_count": 0,
-                    })
+                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+                    mock_messages.get_multi = AsyncMock(
+                        return_value={
+                            "data": [],
+                            "total_count": 0,
+                        }
+                    )
                     mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(return_value={
-                        "id": 1, "user_id": 1, "model": "gemma3",
-                        "temperature": 0.7, "max_tokens": 2048, "system_prompt": None,
-                    })
+                    mock_settings.get = AsyncMock(
+                        return_value={
+                            "id": 1,
+                            "user_id": 1,
+                            "model": "gemma3",
+                            "temperature": 0.7,
+                            "max_tokens": 2048,
+                            "system_prompt": None,
+                        }
+                    )
 
                     service = ChatCompletionService(mock_db, mock_ollama)
                     request = ChatCompletionRequest(message="Hello")

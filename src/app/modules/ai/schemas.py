@@ -4,13 +4,11 @@ Request/response models for AI chat sessions, messages,
 and user AI settings/preferences.
 """
 
-from datetime import datetime
 from typing import Annotated, Literal
 
 from pydantic import Field
 
-from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
-
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # =============================================================================
 # AI MODEL CONFIGURATION
@@ -151,8 +149,21 @@ class StreamingChunk(BaseCreate):
 # =============================================================================
 
 
+class ChatSessionList(BaseList[ChatSessionRead]):
+    """Standardized paginated chat session list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class ChatSessionPage(BaseCreate):
-    """Paginated list of chat sessions."""
+    """Paginated list of chat sessions.
+
+    Deprecated: Use ChatSessionList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[ChatSessionRead]
     total: int
@@ -161,8 +172,21 @@ class ChatSessionPage(BaseCreate):
     pages: int
 
 
+class ChatMessageList(BaseList[ChatMessageRead]):
+    """Standardized paginated chat message list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class ChatMessagePage(BaseCreate):
-    """Paginated list of chat messages."""
+    """Paginated list of chat messages.
+
+    Deprecated: Use ChatMessageList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[ChatMessageRead]
     total: int

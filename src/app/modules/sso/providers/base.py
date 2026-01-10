@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from typing import Any, Dict
+from typing import Any
 
 
 class BaseOAuthProvider(ABC):
@@ -63,11 +63,11 @@ class BaseOAuthProvider(ABC):
         return f"{self.authorization_endpoint}?{urllib.parse.urlencode(params)}"
 
     @abstractmethod
-    async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
+    async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
         """Exchange the authorization code for an access token."""
         pass
 
     @abstractmethod
-    async def get_user_info(self, access_token: str) -> Dict[str, Any]:
+    async def get_user_info(self, access_token: str) -> dict[str, Any]:
         """Retrieve user information using the access token."""
         pass

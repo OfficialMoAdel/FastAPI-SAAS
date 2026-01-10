@@ -5,7 +5,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base.schemas import BaseCreate, BaseRead
+from .._base.schemas import BaseCreate, BaseList, BaseRead
 
 
 class APIKeyBase(BaseModel):
@@ -49,8 +49,21 @@ class APIKeyResponse(BaseModel):
     message: str = "Store this key securely. It will not be shown again."
 
 
+class APIKeyList(BaseList[APIKeyRead]):
+    """Standardized paginated API key list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class APIKeyListResponse(BaseModel):
-    """Schema for listing API keys."""
+    """Schema for listing API keys.
+
+    Deprecated: Use APIKeyList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     data: list[APIKeyRead]
     total_count: int

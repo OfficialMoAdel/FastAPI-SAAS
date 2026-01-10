@@ -272,11 +272,15 @@ class TestUserServiceTier:
         """Test successful user tier update."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
-            patch("src.app.modules.tiers.service.tier_service.get_tier_by_id", new_callable=AsyncMock) as mock_get_tier,
+            patch("src.app.modules.tiers.service.TierService") as mock_tier_cls,
         ):
             mock_crud.get = AsyncMock(return_value=mock_db_user)
             mock_crud.update = AsyncMock()
-            mock_get_tier.return_value = {"id": 2, "name": "Pro"}
+
+            # Mock TierService instance
+            mock_tier_instance = MagicMock()
+            mock_tier_instance.get_tier_by_id = AsyncMock(return_value={"id": 2, "name": "Pro"})
+            mock_tier_cls.return_value = mock_tier_instance
 
             result = await user_service.update_user_tier("testuser", mock_user_tier_update, mock_db)
 
@@ -288,15 +292,22 @@ class TestUserServiceTier:
         """Test getting user with rate limits."""
         with (
             patch("src.app.modules.users.service.crud_users") as mock_crud,
-            patch("src.app.modules.tiers.service.tier_service.get_tier_by_id", new_callable=AsyncMock) as mock_get_tier,
-            patch(
-                "src.app.modules.rate_limits.service.rate_limit_service.get_rate_limits_by_tier_id",
-                new_callable=AsyncMock,
-            ) as mock_get_limits,
+            patch("src.app.modules.tiers.service.TierService") as mock_tier_cls,
+            patch("src.app.modules.rate_limits.service.RateLimitService") as mock_rate_limit_cls,
         ):
             mock_crud.get = AsyncMock(return_value=mock_db_user)
-            mock_get_tier.return_value = {"id": 1, "name": "Basic"}
-            mock_get_limits.return_value = {"data": [{"limit": 100, "name": "api_calls"}]}
+
+            # Mock TierService instance
+            mock_tier_instance = MagicMock()
+            mock_tier_instance.get_tier_by_id = AsyncMock(return_value={"id": 1, "name": "Basic"})
+            mock_tier_cls.return_value = mock_tier_instance
+
+            # Mock RateLimitService instance
+            mock_rate_limit_instance = MagicMock()
+            mock_rate_limit_instance.get_rate_limits_by_tier_id = AsyncMock(
+                return_value={"data": [{"limit": 100, "name": "api_calls"}]}
+            )
+            mock_rate_limit_cls.return_value = mock_rate_limit_instance
 
             result = await user_service.get_user_with_rate_limits("testuser", mock_db)
 

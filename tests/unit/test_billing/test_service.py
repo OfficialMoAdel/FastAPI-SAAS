@@ -95,7 +95,7 @@ class TestStripeSettingsService:
 
                 mock_crud.create.assert_called_once()
                 call_args = mock_crud.create.call_args
-                assert call_args.kwargs["object"]["tenant_id"] == 1
+                assert call_args.kwargs["object"].tenant_id == 1
 
 
 class TestSubscriptionPlanService:
@@ -132,7 +132,7 @@ class TestSubscriptionPlanService:
                 await service.create_plan(data)
 
                 call_args = mock_crud.create.call_args
-                assert call_args.kwargs["object"]["tenant_id"] == 1
+                assert call_args.kwargs["object"].tenant_id == 1
 
     @pytest.mark.asyncio
     async def test_get_plan_raises_not_found(self, mock_db):
@@ -209,7 +209,7 @@ class TestProductService:
                 await service.create_product(data)
 
                 call_args = mock_crud.create.call_args
-                assert call_args.kwargs["object"]["tenant_id"] == 1
+                assert call_args.kwargs["object"].tenant_id == 1
 
     @pytest.mark.asyncio
     async def test_get_product_raises_not_found(self, mock_db):
@@ -306,7 +306,7 @@ class TestBillingRecordService:
                 await service.create_record(data)
 
                 call_args = mock_crud.create.call_args
-                assert call_args.kwargs["object"]["tenant_id"] == 1
+                assert call_args.kwargs["object"].tenant_id == 1
 
     @pytest.mark.asyncio
     async def test_get_user_records_paginates_correctly(self, mock_db):

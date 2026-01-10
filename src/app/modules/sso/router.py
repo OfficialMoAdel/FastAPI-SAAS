@@ -36,8 +36,7 @@ async def initiate_sso(
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow and redirect to provider."""
-    tenant = get_tenant_context()
-    tenant_id = tenant.id if tenant else None
+    # tenant context available via get_tenant_context() if needed
 
     auth_url = await sso_service.get_authorization_url(
         provider=provider,

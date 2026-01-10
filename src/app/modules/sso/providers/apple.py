@@ -11,7 +11,7 @@ Apple Sign-In specifics:
 
 import urllib.parse
 from datetime import UTC, datetime, timedelta
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 import jwt
@@ -158,7 +158,7 @@ class AppleProvider(BaseOAuthProvider):
 
         return jwt.encode(payload, self.private_key, algorithm="ES256", headers=headers)
 
-    async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
+    async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
         """Exchange authorization code for tokens.
 
         Apple returns:
@@ -181,9 +181,7 @@ class AppleProvider(BaseOAuthProvider):
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
-    async def get_user_info(
-        self, id_token: str, user_data: Dict[str, Any] | None = None
-    ) -> AppleUserInfo:
+    async def get_user_info(self, id_token: str, user_data: dict[str, Any] | None = None) -> AppleUserInfo:
         """Extract user info from Apple's id_token JWT.
 
         Unlike other providers, Apple embeds user info in the id_token.
@@ -216,7 +214,7 @@ class AppleProvider(BaseOAuthProvider):
             name=name,
         )
 
-    async def _verify_id_token(self, id_token: str) -> Dict[str, Any]:
+    async def _verify_id_token(self, id_token: str) -> dict[str, Any]:
         """Verify and decode Apple's id_token JWT.
 
         In production, this should verify:
@@ -236,9 +234,7 @@ class AppleProvider(BaseOAuthProvider):
             raise ValueError(f"Invalid id_token: {e}")
 
     # HTTP helper methods for mocking in tests
-    async def _http_post(
-        self, url: str, data: Dict[str, Any], headers: Dict[str, str] | None = None
-    ) -> Dict[str, Any]:
+    async def _http_post(self, url: str, data: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
         """Wrapper for HTTP POST to allow easy mocking."""
         async with httpx.AsyncClient() as client:
             response = await client.post(url, data=data, headers=headers)

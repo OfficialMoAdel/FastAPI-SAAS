@@ -18,7 +18,7 @@ from .models import EmailTemplateOverride, Notification
 from .schemas import (
     EmailTemplateOverrideCreate,
     EmailTemplateOverrideResponse,
-    NotificationListResponse,
+    NotificationList,
     NotificationResponse,
 )
 from .schemas import (
@@ -61,17 +61,17 @@ async def send_notification(
     return NotificationResponse.model_validate(notification)
 
 
-@router.get("", response_model=NotificationListResponse)
+@router.get("", response_model=NotificationList)
 async def list_notifications(
     status: str | None = Query(None, description="Filter by status"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> NotificationListResponse:
+) -> dict:
     """
     List notification history for the current tenant.
 
@@ -94,17 +94,20 @@ async def list_notifications(
     total = total_result.scalar_one()
 
     # Apply pagination
-    query = query.limit(limit).offset(offset)
+    offset = (page - 1) * per_page
+    query = query.limit(per_page).offset(offset)
 
     result = await db.execute(query)
     notifications = result.scalars().all()
 
-    return NotificationListResponse(
-        items=[NotificationResponse.model_validate(n) for n in notifications],
-        total=total,
-        page=(offset // limit) + 1,
-        per_page=limit,
-    )
+    return {
+        "items": [NotificationResponse.model_validate(n) for n in notifications],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/{notification_id}", response_model=NotificationResponse)

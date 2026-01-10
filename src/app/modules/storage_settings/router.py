@@ -7,10 +7,8 @@ All endpoints require MANAGE_STORAGE_SETTINGS permission.
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage_settings.schemas import (
     StorageSettingsCreate,
@@ -21,6 +19,7 @@ from src.app.modules.storage_settings.service import (
     InvalidCredentialsError,
     StorageNotConfiguredError,
     StorageSettingsService,
+    get_storage_settings_service,
 )
 from src.app.modules.tenants import Tenant
 from src.app.modules.users import User
@@ -62,9 +61,9 @@ def require_storage_permission(user: User = Depends(get_current_user)) -> User:
 
 @router.get("", response_model=StorageSettingsRead)
 async def get_storage_settings(
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_storage_permission),
+    service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Get storage settings for the current tenant.
 
@@ -77,8 +76,6 @@ async def get_storage_settings(
         404: If storage settings not configured.
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
     """
-    service = StorageSettingsService(db)
-
     settings = await service.get_settings(tenant.id)
     if not settings:
         raise HTTPException(
@@ -92,9 +89,9 @@ async def get_storage_settings(
 @router.post("", response_model=StorageSettingsRead, status_code=status.HTTP_201_CREATED)
 async def create_storage_settings(
     data: StorageSettingsCreate,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_storage_permission),
+    service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Create storage settings for the current tenant.
 
@@ -111,8 +108,6 @@ async def create_storage_settings(
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
         409: If settings already exist for this tenant.
     """
-    service = StorageSettingsService(db)
-
     # Check if settings already exist
     existing = await service.get_settings(tenant.id)
     if existing:
@@ -141,9 +136,9 @@ async def create_storage_settings(
 @router.patch("", response_model=StorageSettingsRead)
 async def update_storage_settings(
     data: StorageSettingsUpdate,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_storage_permission),
+    service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Update storage settings for the current tenant.
 
@@ -160,8 +155,6 @@ async def update_storage_settings(
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
         404: If storage settings not configured.
     """
-    service = StorageSettingsService(db)
-
     try:
         settings = await service.update_settings(tenant.id, data)
         return service.to_read_schema(settings)

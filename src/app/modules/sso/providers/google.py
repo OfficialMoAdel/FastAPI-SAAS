@@ -1,4 +1,4 @@
-from typing import Any, Dict
+from typing import Any
 
 import httpx
 
@@ -34,7 +34,7 @@ class GoogleProvider(BaseOAuthProvider):
     def requires_verified_email(self) -> bool:
         return True
 
-    async def exchange_code_for_token(self, code: str) -> Dict[str, Any]:
+    async def exchange_code_for_token(self, code: str) -> dict[str, Any]:
         """Exchange authorization code for access token."""
         return await self._http_post(
             self.token_endpoint,
@@ -67,14 +67,14 @@ class GoogleProvider(BaseOAuthProvider):
         return UserInfo(data)
 
     # Helper methods for mocking in tests
-    async def _http_post(self, url: str, data: Dict[str, Any], headers: Dict[str, str] = None) -> Dict[str, Any]:
+    async def _http_post(self, url: str, data: dict[str, Any], headers: dict[str, str] = None) -> dict[str, Any]:
         """Wrapper for HTTP POST to allow easy mocking."""
         async with httpx.AsyncClient() as client:
             response = await client.post(url, data=data, headers=headers)
             response.raise_for_status()
             return response.json()
 
-    async def _http_get(self, url: str, headers: Dict[str, str] = None) -> Dict[str, Any]:
+    async def _http_get(self, url: str, headers: dict[str, str] = None) -> dict[str, Any]:
         """Wrapper for HTTP GET to allow easy mocking."""
         async with httpx.AsyncClient() as client:
             response = await client.get(url, headers=headers)

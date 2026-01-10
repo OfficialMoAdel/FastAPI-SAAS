@@ -7,7 +7,7 @@ from fastapi import APIRouter, Depends
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_tenant_context
-from .schemas import APIKeyCreate, APIKeyListResponse, APIKeyResponse, APIKeyRevokeResponse
+from .schemas import APIKeyCreate, APIKeyList, APIKeyResponse, APIKeyRevokeResponse
 from .service import APIKeyService, get_api_key_service
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
@@ -45,14 +45,14 @@ async def create_api_key(
     )
 
 
-@router.get("", response_model=APIKeyListResponse)
+@router.get("", response_model=APIKeyList)
 async def list_api_keys(
     current_user: Annotated[dict, Depends(get_current_user)],
     tenant_id: Annotated[int, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
     page: int = 1,
-    items_per_page: int = 10,
-) -> APIKeyListResponse:
+    per_page: int = 10,
+) -> dict:
     """List API keys for the current user.
 
     Returns key metadata only - the actual keys are never returned after creation.
@@ -61,12 +61,18 @@ async def list_api_keys(
         user_id=current_user["id"],
         tenant_id=tenant_id,
         page=page,
-        items_per_page=items_per_page,
+        items_per_page=per_page,
     )
-    return APIKeyListResponse(
-        data=result.get("data", []),
-        total_count=result.get("total_count", 0),
-    )
+    data = result.get("data", [])
+    total = result.get("total_count", 0)
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.delete("/{key_id}", response_model=APIKeyRevokeResponse)

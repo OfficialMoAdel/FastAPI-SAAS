@@ -2,7 +2,7 @@ import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.billing.crud import crud_stripe_settings
-from src.app.modules.billing.schemas import StripeSettingsCreate, StripeSettingsUpdate, StripeSettingsCreateInternal
+from src.app.modules.billing.schemas import StripeSettingsCreate, StripeSettingsUpdate, StripeSettingsCreateInternal, StripeSettingsRead
 from src.app.modules.billing.models import StripeSettings
 
 
@@ -22,14 +22,15 @@ async def test_create_get_stripe_settings(db_session: AsyncSession, tenant):
     # Use Internal schema for creation
     obj_in = StripeSettingsCreateInternal(**data)
 
-    settings = await crud_stripe_settings.create(db=db_session, object=obj_in)
+    # FastCRUD v0.20.0 requires schema_to_select to return data
+    settings = await crud_stripe_settings.create(db=db_session, object=obj_in, schema_to_select=StripeSettingsRead)
 
-    assert settings.stripe_customer_id == "cus_test_123"
-    assert settings.tenant_id == tenant.id
-    assert settings.is_active is True
+    assert settings["stripe_customer_id"] == "cus_test_123"
+    assert settings["tenant_id"] == tenant.id
+    assert settings["is_active"] is True
 
     # Get
-    fetched = await crud_stripe_settings.get(db=db_session, id=settings.id)
+    fetched = await crud_stripe_settings.get(db=db_session, id=settings["id"])
     assert fetched is not None
     # CRUD get returns dict by default in this project configuration
     assert fetched["stripe_customer_id"] == "cus_test_123"
@@ -37,10 +38,10 @@ async def test_create_get_stripe_settings(db_session: AsyncSession, tenant):
     # Get by tenant
     fetched_by_tenant = await crud_stripe_settings.get(db=db_session, tenant_id=tenant.id)
     assert fetched_by_tenant is not None
-    assert fetched_by_tenant["id"] == settings.id
+    assert fetched_by_tenant["id"] == settings["id"]
 
     # Cleanup
-    await crud_stripe_settings.db_delete(db=db_session, id=settings.id)
+    await crud_stripe_settings.db_delete(db=db_session, id=settings["id"])
 
 
 @pytest.mark.asyncio
@@ -59,7 +60,7 @@ async def test_update_stripe_settings(db_session: AsyncSession, tenant):
     data = settings_in.model_dump()
     data["tenant_id"] = tenant.id
     obj_in = StripeSettingsCreateInternal(**data)
-    settings = await crud_stripe_settings.create(db=db_session, object=obj_in)
+    settings = await crud_stripe_settings.create(db=db_session, object=obj_in, schema_to_select=StripeSettingsRead)
 
     # Update
     update_data = StripeSettingsUpdate(
@@ -67,7 +68,7 @@ async def test_update_stripe_settings(db_session: AsyncSession, tenant):
         is_active=False
     )
     # CRUD update takes (db, object=update_data_dict/schema, id=xxx)
-    settings_id = settings.id
+    settings_id = settings["id"]
     await crud_stripe_settings.update(db=db_session, object=update_data, id=settings_id)
 
     # FastCRUD update returns None by default, verification happens via fetch
@@ -91,8 +92,8 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     # Create settings for tenant 1
     data1 = {"stripe_customer_id": "cus_t1", "tenant_id": tenant.id, "is_active": True}
     obj1 = StripeSettingsCreateInternal(**data1)
-    s1 = await crud_stripe_settings.create(db=db_session, object=obj1)
-    s1_id = s1.id  # Capture ID before other operations expire the object
+    s1 = await crud_stripe_settings.create(db=db_session, object=obj1, schema_to_select=StripeSettingsRead)
+    s1_id = s1["id"]  # Capture ID before other operations expire the object
 
     # We need a second tenant.
     from src.app.modules.tenants.models import Tenant
@@ -118,8 +119,8 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
 
     data2 = {"stripe_customer_id": "cus_t2", "tenant_id": tenant2_id, "is_active": True}
     obj2 = StripeSettingsCreateInternal(**data2)
-    s2 = await crud_stripe_settings.create(db=db_session, object=obj2)
-    s2_id = s2.id
+    s2 = await crud_stripe_settings.create(db=db_session, object=obj2, schema_to_select=StripeSettingsRead)
+    s2_id = s2["id"]
 
     # Verify isolation
     # Get for tenant 1 should return s1

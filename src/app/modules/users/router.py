@@ -3,14 +3,13 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request
-from fastcrud import PaginatedListResponse, compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
 from .crud import crud_users
-from .schemas import UserCreate, UserRead, UserTierUpdate, UserUpdate
+from .schemas import UserCreate, UserList, UserRead, UserTierUpdate, UserUpdate
 from .service import user_service
 
 router = APIRouter(tags=["users"])
@@ -24,20 +23,29 @@ async def write_user(
     return await user_service.create_user(user, db)
 
 
-@router.get("/users", response_model=PaginatedListResponse[UserRead], dependencies=[Depends(get_current_superuser)])
+@router.get("/users", response_model=UserList, dependencies=[Depends(get_current_superuser)])
 async def read_users(
-    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
+    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, per_page: int = 10
 ) -> dict:
     """Get paginated list of users for the current tenant (superuser only)."""
+    offset = (page - 1) * per_page
     users_data = await crud_users.get_multi(
         db=db,
-        offset=compute_offset(page, items_per_page),
-        limit=items_per_page,
+        offset=offset,
+        limit=per_page,
         is_deleted=False,
     )
 
-    response: dict[str, Any] = paginated_response(crud_data=users_data, page=page, items_per_page=items_per_page)
-    return response
+    data = users_data.get("data", [])
+    total = users_data.get("total_count", len(data))
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/user/me/", response_model=UserRead)

@@ -3,7 +3,6 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from fastcrud import PaginatedListResponse, compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser
@@ -11,6 +10,7 @@ from ...core.db.database import async_get_db
 from .crud import crud_sso_settings
 from .schemas import (
     SSOSettingsCreate,
+    SSOSettingsList,
     SSOSettingsRead,
     SSOSettingsReadWithSecrets,
     SSOSettingsUpdate,
@@ -39,22 +39,31 @@ async def create_sso_settings(
     return await sso_settings_service.create_settings(db, settings, user_id=current_superuser["id"])
 
 
-@router.get("/", response_model=PaginatedListResponse[SSOSettingsRead], dependencies=[Depends(get_current_superuser)])
+@router.get("/", response_model=SSOSettingsList, dependencies=[Depends(get_current_superuser)])
 async def list_sso_settings(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    items_per_page: int = 10,
+    per_page: int = 10,
 ) -> dict:
     """List all SSO provider settings (superuser only)."""
+    offset = (page - 1) * per_page
     settings_data = await crud_sso_settings.get_multi(
         db=db,
-        offset=compute_offset(page, items_per_page),
-        limit=items_per_page,
+        offset=offset,
+        limit=per_page,
     )
 
-    response = paginated_response(crud_data=settings_data, page=page, items_per_page=items_per_page)
-    return response
+    data = settings_data.get("data", [])
+    total = settings_data.get("total_count", len(data))
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/{provider}", response_model=SSOSettingsReadWithSecrets, dependencies=[Depends(get_current_superuser)])

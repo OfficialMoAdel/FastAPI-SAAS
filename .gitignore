@@ -58,7 +58,7 @@ cover/
 *.pot
 
 # Django stuff:
-*.log
+*.log*
 local_settings.py
 db.sqlite3
 db.sqlite3-journal
@@ -187,9 +187,7 @@ IMPLEMENTATION_TASKS
 routes.txt
 Constitution.txt
 coverage_report*
-#IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
-IMPROVED_MIGRATION_PLAN_BASE_PATTERN.md
 sql_app.db*
-
 # Auto Claude data directory
 .auto-claude/
+analysis_report.md

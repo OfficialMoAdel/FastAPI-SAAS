@@ -5,6 +5,7 @@ from src.app.modules.billing.schemas import (
     SubscriptionPlanCreate,
     SubscriptionPlanUpdate,
     SubscriptionPlanCreateInternal,
+    SubscriptionPlanRead,
 )
 
 
@@ -27,19 +28,20 @@ async def test_create_get_subscription_plan(db_session: AsyncSession, tenant):
     # Use Internal schema for creation to include tenant_id
     obj_in = SubscriptionPlanCreateInternal(**data)
 
-    plan = await crud_subscription_plans.create(db=db_session, object=obj_in)
+    # FastCRUD v0.20.0 requires schema_to_select to return data
+    plan = await crud_subscription_plans.create(db=db_session, object=obj_in, schema_to_select=SubscriptionPlanRead)
 
-    assert plan.name == "Pro Plan"
-    assert plan.tenant_id == tenant.id
-    assert plan.price_monthly_cents == 1000
+    assert plan["name"] == "Pro Plan"
+    assert plan["tenant_id"] == tenant.id
+    assert plan["price_monthly_cents"] == 1000
 
     # Get
-    fetched = await crud_subscription_plans.get(db=db_session, id=plan.id)
+    fetched = await crud_subscription_plans.get(db=db_session, id=plan["id"])
     assert fetched is not None
     assert fetched["name"] == "Pro Plan"
 
     # Cleanup
-    await crud_subscription_plans.db_delete(db=db_session, id=plan.id)
+    await crud_subscription_plans.db_delete(db=db_session, id=plan["id"])
 
 
 @pytest.mark.asyncio
@@ -52,8 +54,8 @@ async def test_update_subscription_plan(db_session: AsyncSession, tenant):
     data = plan_in.model_dump()
     data["tenant_id"] = tenant.id
     obj_in = SubscriptionPlanCreateInternal(**data)
-    plan = await crud_subscription_plans.create(db=db_session, object=obj_in)
-    plan_id = plan.id
+    plan = await crud_subscription_plans.create(db=db_session, object=obj_in, schema_to_select=SubscriptionPlanRead)
+    plan_id = plan["id"]
 
     # Update
     update_data = SubscriptionPlanUpdate(name="Updated Plan", price_monthly_cents=600)
@@ -82,8 +84,8 @@ async def test_list_subscription_plans(db_session: AsyncSession, tenant):
         "tenant_id": tenant.id,
     }
     obj1 = SubscriptionPlanCreateInternal(**data1)
-    p1 = await crud_subscription_plans.create(db=db_session, object=obj1)
-    p1_id = p1.id
+    p1 = await crud_subscription_plans.create(db=db_session, object=obj1, schema_to_select=SubscriptionPlanRead)
+    p1_id = p1["id"]
 
     data2 = {
         "name": "Plan B",
@@ -93,8 +95,8 @@ async def test_list_subscription_plans(db_session: AsyncSession, tenant):
         "tenant_id": tenant.id,
     }
     obj2 = SubscriptionPlanCreateInternal(**data2)
-    p2 = await crud_subscription_plans.create(db=db_session, object=obj2)
-    p2_id = p2.id
+    p2 = await crud_subscription_plans.create(db=db_session, object=obj2, schema_to_select=SubscriptionPlanRead)
+    p2_id = p2["id"]
 
     # List
     result = await crud_subscription_plans.get_multi(db=db_session, tenant_id=tenant.id)

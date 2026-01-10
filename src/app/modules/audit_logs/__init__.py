@@ -4,7 +4,7 @@ from .models import AuditLog
 from .schemas import (
     AuditLogCreate,
     AuditLogEventData,
-    AuditLogListResponse,
+    AuditLogList,
     AuditLogResponse,
 )
 from .service import AuditLogService

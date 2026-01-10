@@ -11,9 +11,11 @@ from typing import TYPE_CHECKING
 from uuid import UUID
 
 import structlog
+from fastapi import Depends
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.core.encryption import decrypt_value, encrypt_value
 from src.app.modules.storage.azure_storage import AzureBlobStorage
 from src.app.modules.storage.interfaces import StorageProvider
@@ -372,8 +374,27 @@ class StorageSettingsService:
         raise ValueError(f"Unknown provider: {provider}")
 
 
+def get_storage_settings_service(
+    db: AsyncSession = Depends(async_get_db),
+) -> StorageSettingsService:
+    """Dependency injection factory for StorageSettingsService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    StorageSettingsService
+        Service instance with database session
+    """
+    return StorageSettingsService(db)
+
+
 __all__ = [
     "StorageSettingsService",
     "StorageNotConfiguredError",
     "InvalidCredentialsError",
+    "get_storage_settings_service",
 ]

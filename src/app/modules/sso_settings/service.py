@@ -1,7 +1,9 @@
 from typing import Any
 
+from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import (
     DuplicateValueException,
     NotFoundException,
@@ -24,7 +26,9 @@ class SSOSettingsService:
     """Service for managing SSO provider settings with encryption."""
 
     @audit_action("sso_settings.create", "sso_settings")
-    async def create_settings(self, db: AsyncSession, settings: SSOSettingsCreate, user_id: int, tenant_id: int | None = None) -> SSOSettingsRead:
+    async def create_settings(
+        self, db: AsyncSession, settings: SSOSettingsCreate, user_id: int, tenant_id: int | None = None
+    ) -> SSOSettingsRead:
         """Create new SSO provider settings.
 
         Encrypts client_id and client_secret before storage.
@@ -55,9 +59,7 @@ class SSOSettingsService:
         )
 
         db_obj = SSOSettings(**settings_internal.model_dump())
-        # Manually set tenant_id if available and not in model_dump (FastCRUD/SQLAlchemy usually handles this if context is set,
-        # but for explicit log we want it in kwargs for decorator too).
-        # We don't need to set it on db_obj if the global tenant context is handled by middleware/FastCRUD.
+        # Tenant context handled by middleware/FastCRUD if available
 
         db.add(db_obj)
         await db.commit()
@@ -90,7 +92,9 @@ class SSOSettingsService:
         try:
             # Handle both ORM object and dictionary (FastCRUD might return dict)
             raw_client_id = settings.client_id if hasattr(settings, "client_id") else settings["client_id"]
-            raw_client_secret = settings.client_secret if hasattr(settings, "client_secret") else settings["client_secret"]
+            raw_client_secret = (
+                settings.client_secret if hasattr(settings, "client_secret") else settings["client_secret"]
+            )
 
             client_id = encryption.decrypt_column(raw_client_id.decode("utf-8"))
             client_secret = encryption.decrypt_column(raw_client_secret.decode("utf-8"))
@@ -103,14 +107,21 @@ class SSOSettingsService:
             "provider": settings.provider if hasattr(settings, "provider") else settings["provider"],
             "client_id": client_id,
             "client_secret": client_secret,
-            "additional_config": (settings.additional_config if hasattr(settings, "additional_config") else settings.get("additional_config")) or {},
+            "additional_config": (
+                settings.additional_config
+                if hasattr(settings, "additional_config")
+                else settings.get("additional_config")
+            )
+            or {},
             "is_enabled": settings.is_enabled if hasattr(settings, "is_enabled") else settings["is_enabled"],
             "created_at": settings.created_at if hasattr(settings, "created_at") else settings["created_at"],
             "updated_at": settings.updated_at if hasattr(settings, "updated_at") else settings["updated_at"],
         }
 
     @audit_action("sso_settings.update", "sso_settings")
-    async def update_settings(self, db: AsyncSession, provider: str, settings: SSOSettingsUpdate, user_id: int, tenant_id: int | None = None) -> SSOSettingsRead:
+    async def update_settings(
+        self, db: AsyncSession, provider: str, settings: SSOSettingsUpdate, user_id: int, tenant_id: int | None = None
+    ) -> SSOSettingsRead:
         """Update SSO settings."""
         current = await crud_sso_settings.get(db=db, provider=provider)
         if not current:
@@ -145,7 +156,9 @@ class SSOSettingsService:
         return SSOSettingsRead.model_validate(updated)
 
     @audit_action("sso_settings.delete", "sso_settings")
-    async def delete_settings(self, db: AsyncSession, provider: str, user_id: int, tenant_id: int | None = None) -> None:
+    async def delete_settings(
+        self, db: AsyncSession, provider: str, user_id: int, tenant_id: int | None = None
+    ) -> None:
         """Delete SSO settings."""
         # Determine tenant_id if not passed (for audit log)
         if not tenant_id:
@@ -159,4 +172,21 @@ class SSOSettingsService:
         await crud_sso_settings.delete(db=db, provider=provider)
 
 
+def get_sso_settings_service(db: AsyncSession = Depends(async_get_db)) -> "SSOSettingsService":
+    """Dependency injection factory for SSOSettingsService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    SSOSettingsService
+        Service instance
+    """
+    return SSOSettingsService()
+
+
+# Legacy singleton for backward compatibility - will be removed
 sso_settings_service = SSOSettingsService()

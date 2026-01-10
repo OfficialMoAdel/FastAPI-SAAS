@@ -1,11 +1,16 @@
 """RBAC Role Service - Business logic for role management."""
 
 from collections.abc import Sequence
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...api.dependencies import get_current_tenant
+from ...core.db.database import async_get_db
 from ...core.rbac.dependencies import invalidate_user_permissions_cache
+from ...modules.tenants.models import Tenant
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .models import Permission, Role, RolePermission, UserRole
 from .schemas import RoleCreate, RoleUpdate
@@ -218,3 +223,24 @@ class RoleService:
         )
         result = await self.db.execute(stmt)
         return result.scalars().all()
+
+
+def get_role_service(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    tenant: Annotated[Tenant, Depends(get_current_tenant)],
+) -> RoleService:
+    """Dependency injection factory for RoleService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+    tenant : Tenant
+        Current tenant from get_current_tenant
+
+    Returns
+    -------
+    RoleService
+        Service instance with database session and tenant context
+    """
+    return RoleService(db=db, tenant_id=tenant.id)

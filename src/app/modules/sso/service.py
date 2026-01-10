@@ -1,10 +1,11 @@
 from datetime import timedelta
 from typing import Any
 
-from fastapi import Request
+from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import (
     BadRequestException,
     NotFoundException,
@@ -100,6 +101,7 @@ class SSOService:
             extra_data["user_id"] = user_id
 
         from src.app.core.utils.cache import client as redis_client
+
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
@@ -132,6 +134,7 @@ class SSOService:
             user_data: Optional user data (Apple sends name on first auth)
         """
         from src.app.core.utils.cache import client as redis_client
+
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
@@ -220,7 +223,7 @@ class SSOService:
                 await self._link_account(db, found_user_data["id"], provider, user_info)
 
         if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
-             raise UnauthorizedException("Account is disabled")
+            raise UnauthorizedException("Account is disabled")
 
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
@@ -228,7 +231,9 @@ class SSOService:
             "sub": found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"],
             "id": found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"],
             "email": found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"],
-            "tenant_id": found_user_data.tenant_id if hasattr(found_user_data, "tenant_id") else found_user_data["tenant_id"]
+            "tenant_id": found_user_data.tenant_id
+            if hasattr(found_user_data, "tenant_id")
+            else found_user_data["tenant_id"],
         }
 
         access_token = await create_access_token(
@@ -245,6 +250,7 @@ class SSOService:
             from structlog import get_logger
 
             from src.app.core.events import EventPriority, event_bus
+
             logger = get_logger(__name__)
 
             await event_bus.publish(
@@ -343,11 +349,13 @@ class SSOService:
             # The error 'Field required' for 'enabled' suggests we are sending wrong data structure.
             # Let's assume we return ALL supported providers with their status.
 
-            providers_list.append({
-                "name": provider,
-                "enabled": is_enabled,
-                "display_name": provider.value.title(),
-            })
+            providers_list.append(
+                {
+                    "name": provider,
+                    "enabled": is_enabled,
+                    "display_name": provider.value.title(),
+                }
+            )
 
         return providers_list
 
@@ -427,4 +435,21 @@ class SSOService:
         return connection_count > 1
 
 
+def get_sso_service(db: AsyncSession = Depends(async_get_db)) -> "SSOService":
+    """Dependency injection factory for SSOService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    SSOService
+        Service instance
+    """
+    return SSOService()
+
+
+# Legacy singleton for backward compatibility - will be removed
 sso_service = SSOService()

@@ -244,15 +244,16 @@ class UserService:
             If user or tier not found
         """
         # Use lazy import to avoid circular dependencies while maintaining module boundaries
-        from ...modules.tiers.service import tier_service
+        from ...modules.tiers.service import TierService
 
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        # Validate tier exists by using service layer instead of direct crud access
+        # Validate tier exists by using service layer with DI pattern
+        tier_svc = TierService(db)
         try:
-            await tier_service.get_tier_by_id(values.tier_id, db)
+            await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
@@ -279,8 +280,8 @@ class UserService:
         ModelNotFoundError
             If user or tier not found
         """
-        from ...modules.rate_limits.service import rate_limit_service
-        from ...modules.tiers.service import tier_service
+        from ...modules.rate_limits.service import RateLimitService
+        from ...modules.tiers.service import TierService
 
         db_user = await crud_users.get(db=db, username=username, schema_to_select=UserRead)
         if db_user is None:
@@ -291,9 +292,12 @@ class UserService:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        # Use service layer to get tier and rate limits
-        db_tier = await tier_service.get_tier_by_id(db_user["tier_id"], db)
-        rate_limits_response = await rate_limit_service.get_rate_limits_by_tier_id(db_tier["id"], db)
+        # Use service layer with DI pattern for cross-module access
+        tier_svc = TierService(db)
+        rate_limit_svc = RateLimitService(db)
+
+        db_tier = await tier_svc.get_tier_by_id(db_user["tier_id"])
+        rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_tier["id"])
 
         user_dict["tier_rate_limits"] = rate_limits_response["data"]
         return user_dict

@@ -39,21 +39,27 @@ from src.app.core.config import settings
 from .schemas import (
     BillingRecordCreate,
     BillingRecordCreateInternal,
+    BillingRecordRead,
     CheckoutCreate,
     CheckoutSession,
     PricingCreate,
     PricingCreateInternal,
+    PricingRead,
     PricingUpdate,
     ProductCreate,
     ProductCreateInternal,
+    ProductRead,
     ProductUpdate,
     StripeSettingsCreateInternal,
+    StripeSettingsRead,
     StripeSettingsUpdate,
     SubscriptionPlanCreate,
     SubscriptionPlanCreateInternal,
+    SubscriptionPlanRead,
     SubscriptionPlanUpdate,
     UserSubscriptionCreate,
     UserSubscriptionCreateInternal,
+    UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
 
@@ -94,7 +100,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
             update_data["tenant_id"] = tenant.id
             # Create object must be a Pydantic model for FastCRUD
             create_obj = StripeSettingsCreateInternal(**update_data)
-            return await crud_stripe_settings.create(db=self.db, object=create_obj)
+            return await crud_stripe_settings.create(db=self.db, object=create_obj, schema_to_select=StripeSettingsRead)
         else:
             # Update existing settings
             await crud_stripe_settings.update(db=self.db, object=update_data, id=settings["id"])
@@ -116,7 +122,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
         create_obj = SubscriptionPlanCreateInternal(**plan_data)
-        return await crud_subscription_plans.create(db=self.db, object=create_obj)
+        return await crud_subscription_plans.create(db=self.db, object=create_obj, schema_to_select=SubscriptionPlanRead)
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
@@ -177,7 +183,7 @@ class ProductService(BaseService[Product]):
         product_data = data.model_dump()
         product_data["tenant_id"] = tenant.id
         create_obj = ProductCreateInternal(**product_data)
-        return await crud_products.create(db=self.db, object=create_obj)
+        return await crud_products.create(db=self.db, object=create_obj, schema_to_select=ProductRead)
 
     async def get_product(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID."""
@@ -240,7 +246,7 @@ class ProductService(BaseService[Product]):
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
-        return await crud_pricing.create(db=self.db, object=create_obj)
+        return await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
 
 
 class PricingService(BaseService[Pricing]):
@@ -258,7 +264,7 @@ class PricingService(BaseService[Pricing]):
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
-        return await crud_pricing.create(db=self.db, object=create_obj)
+        return await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
 
     async def get_pricing(self, pricing_id: int) -> dict[str, Any]:
         """Get a pricing tier by ID."""
@@ -300,8 +306,8 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         sub_data["tenant_id"] = tenant.id
         sub_data["user_id"] = user_id
         create_obj = UserSubscriptionCreateInternal(**sub_data)
-        result = await crud_user_subscriptions.create(db=self.db, object=create_obj)
-        logger.info(f"Subscription created: {result.get('id')}")
+        result = await crud_user_subscriptions.create(db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead)
+        logger.info(f"Subscription created: {result.get('id') if result else None}")
         return result
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
@@ -395,7 +401,7 @@ class BillingRecordService(BaseService[BillingRecord]):
         record_data = data.model_dump()
         record_data["tenant_id"] = tenant.id
         create_obj = BillingRecordCreateInternal(**record_data)
-        return await crud_billing_records.create(db=self.db, object=create_obj)
+        return await crud_billing_records.create(db=self.db, object=create_obj, schema_to_select=BillingRecordRead)
 
     async def get_record(self, record_id: int) -> dict[str, Any]:
         """Get a billing record by ID."""

@@ -9,8 +9,7 @@ from typing import Annotated, Literal
 
 from pydantic import Field
 
-from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
-
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # =============================================================================
 # STRIPE SETTINGS SCHEMAS
@@ -27,9 +26,11 @@ class StripeSettingsCreate(BaseCreate):
 
 
 class StripeSettingsCreateInternal(StripeSettingsCreate):
-    """Internal schema for creating Stripe settings with tenant_id."""
+    """Internal schema for creating Stripe settings with tenant_id and encrypted fields."""
 
     tenant_id: int
+    encrypted_secret_key: bytes | None = None
+    updated_at: datetime | None = None
 
 
 class StripeSettingsUpdate(BaseUpdate):
@@ -340,8 +341,21 @@ class CheckoutSession(BaseCreate):
 # =============================================================================
 
 
+class SubscriptionPlanList(BaseList[SubscriptionPlanRead]):
+    """Standardized paginated subscription plan list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class SubscriptionPlanPage(BaseCreate):
-    """Paginated list of subscription plans."""
+    """Paginated list of subscription plans.
+
+    Deprecated: Use SubscriptionPlanList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[SubscriptionPlanRead]
     total: int
@@ -350,8 +364,21 @@ class SubscriptionPlanPage(BaseCreate):
     pages: int
 
 
+class ProductList(BaseList[ProductRead]):
+    """Standardized paginated product list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class ProductPage(BaseCreate):
-    """Paginated list of products."""
+    """Paginated list of products.
+
+    Deprecated: Use ProductList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[ProductRead]
     total: int
@@ -360,8 +387,21 @@ class ProductPage(BaseCreate):
     pages: int
 
 
+class BillingRecordList(BaseList[BillingRecordRead]):
+    """Standardized paginated billing record list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class BillingRecordPage(BaseCreate):
-    """Paginated list of billing records."""
+    """Paginated list of billing records.
+
+    Deprecated: Use BillingRecordList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[BillingRecordRead]
     total: int

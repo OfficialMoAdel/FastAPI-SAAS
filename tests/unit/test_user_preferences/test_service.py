@@ -10,7 +10,7 @@ import pytest
 
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import ThemeOption, UserPreferencesUpdate
-from src.app.modules.user_preferences.service import PreferencesService, preferences_service
+from src.app.modules.user_preferences.service import PreferencesService
 
 
 class TestPreferencesService:
@@ -48,13 +48,9 @@ class TestPreferencesService:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_get_preferences_returns_user_preferences(
-        self, service, mock_db, mock_prefs_record
-    ):
+    async def test_get_preferences_returns_user_preferences(self, service, mock_db, mock_prefs_record):
         """Test get_preferences returns existing user preferences."""
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             mock_crud.get_or_create = AsyncMock(return_value=mock_prefs_record)
 
             result = await service.get_preferences(db=mock_db, user_id=1)
@@ -72,9 +68,7 @@ class TestPreferencesService:
         partial_record.preferences = {"theme": "dark"}  # Only one key set
         partial_record.updated_at = datetime.now(UTC)
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             mock_crud.get_or_create = AsyncMock(return_value=partial_record)
 
             result = await service.get_preferences(db=mock_db, user_id=1)
@@ -92,9 +86,7 @@ class TestPreferencesService:
         empty_record.preferences = None
         empty_record.updated_at = datetime.now(UTC)
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             mock_crud.get_or_create = AsyncMock(return_value=empty_record)
 
             result = await service.get_preferences(db=mock_db, user_id=1)
@@ -108,24 +100,18 @@ class TestPreferencesService:
     # =========================================================================
 
     @pytest.mark.asyncio
-    async def test_update_preferences_partial_update(
-        self, service, mock_db, mock_prefs_record
-    ):
+    async def test_update_preferences_partial_update(self, service, mock_db, mock_prefs_record):
         """Test update_preferences only updates provided fields."""
         updates = UserPreferencesUpdate(theme=ThemeOption.LIGHT)
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             updated_record = MagicMock()
             updated_record.preferences = {**mock_prefs_record.preferences, "theme": "light"}
             updated_record.updated_at = datetime.now(UTC)
 
             mock_crud.update_preferences = AsyncMock(return_value=updated_record)
 
-            result = await service.update_preferences(
-                db=mock_db, user_id=1, updates=updates
-            )
+            result = await service.update_preferences(db=mock_db, user_id=1, updates=updates)
 
             assert result["theme"] == "light"
             mock_crud.update_preferences.assert_called_once()
@@ -141,9 +127,7 @@ class TestPreferencesService:
             email_notifications=False,
         )
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             updated_record = MagicMock()
             updated_record.preferences = {
                 **DEFAULT_PREFERENCES,
@@ -155,24 +139,18 @@ class TestPreferencesService:
 
             mock_crud.update_preferences = AsyncMock(return_value=updated_record)
 
-            result = await service.update_preferences(
-                db=mock_db, user_id=1, updates=updates
-            )
+            result = await service.update_preferences(db=mock_db, user_id=1, updates=updates)
 
             assert result["theme"] == "dark"
             assert result["language"] == "fr"
             assert result["email_notifications"] is False
 
     @pytest.mark.asyncio
-    async def test_update_preferences_empty_update_returns_current(
-        self, service, mock_db, mock_prefs_record
-    ):
+    async def test_update_preferences_empty_update_returns_current(self, service, mock_db, mock_prefs_record):
         """Test empty update returns current preferences without DB update."""
         updates = UserPreferencesUpdate()  # No fields set
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             mock_crud.get_or_create = AsyncMock(return_value=mock_prefs_record)
 
             result = await service.get_preferences(db=mock_db, user_id=1)
@@ -185,9 +163,7 @@ class TestPreferencesService:
         """Test that ThemeOption enum is converted to string value."""
         updates = UserPreferencesUpdate(theme=ThemeOption.SYSTEM)
 
-        with patch(
-            "src.app.modules.user_preferences.service.crud_user_preferences"
-        ) as mock_crud:
+        with patch("src.app.modules.user_preferences.service.crud_user_preferences") as mock_crud:
             updated_record = MagicMock()
             updated_record.preferences = {**DEFAULT_PREFERENCES}
             updated_record.updated_at = datetime.now(UTC)
@@ -201,10 +177,11 @@ class TestPreferencesService:
             assert call_args.kwargs["updates"]["theme"] == "system"
 
 
-class TestPreferencesServiceSingleton:
-    """Test preferences_service singleton."""
+class TestPreferencesServiceFactory:
+    """Test get_preferences_service factory function."""
 
-    def test_singleton_exists(self):
-        """Test that preferences_service singleton is available."""
-        assert preferences_service is not None
-        assert isinstance(preferences_service, PreferencesService)
+    def test_factory_returns_instance(self):
+        """Test that get_preferences_service returns a PreferencesService instance."""
+        service = PreferencesService()
+        assert service is not None
+        assert isinstance(service, PreferencesService)

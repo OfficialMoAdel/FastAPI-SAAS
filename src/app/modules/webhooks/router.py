@@ -13,10 +13,10 @@ from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
 from .models import WebhookDelivery, WebhookEndpoint
 from .schemas import (
-    WebhookDeliveryListResponse,
+    WebhookDeliveryList,
     WebhookDeliveryResponse,
     WebhookEndpointCreate,
-    WebhookEndpointListResponse,
+    WebhookEndpointList,
     WebhookEndpointResponse,
     WebhookEndpointUpdate,
     WebhookTestRequest,
@@ -26,16 +26,16 @@ from .service import WebhookService
 router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
 
 
-@router.get("/", response_model=WebhookEndpointListResponse)
+@router.get("/", response_model=WebhookEndpointList)
 async def list_webhook_endpoints(
     is_active: bool | None = Query(None, description="Filter by active status"),
     event_type: str | None = Query(None, description="Filter by event type"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> WebhookEndpointListResponse:
+) -> dict:
     """List all webhook endpoints for the current tenant."""
     query = select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == current_tenant.id)
 
@@ -52,17 +52,20 @@ async def list_webhook_endpoints(
     total = total_result.scalar_one()
 
     # Apply pagination
-    query = query.limit(limit).offset(offset)
+    offset = (page - 1) * per_page
+    query = query.limit(per_page).offset(offset)
 
     result = await db.execute(query)
     endpoints = result.scalars().all()
 
-    return WebhookEndpointListResponse(
-        items=[WebhookEndpointResponse.model_validate(e) for e in endpoints],
-        total=total,
-        page=(offset // limit) + 1,
-        per_page=limit,
-    )
+    return {
+        "items": [WebhookEndpointResponse.model_validate(e) for e in endpoints],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.post("/", response_model=WebhookEndpointResponse, status_code=201)
@@ -163,19 +166,19 @@ async def delete_webhook_endpoint(
     await db.commit()
 
 
-@router.get("/deliveries", response_model=WebhookDeliveryListResponse)
+@router.get("/deliveries", response_model=WebhookDeliveryList)
 async def list_webhook_deliveries(
     endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
     status: str | None = Query(None, description="Filter by status"),
     event_type: str | None = Query(None, description="Filter by event type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    limit: int = Query(100, ge=1, le=1000, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> WebhookDeliveryListResponse:
+) -> dict:
     """
     List webhook delivery history.
 
@@ -203,17 +206,20 @@ async def list_webhook_deliveries(
     total = total_result.scalar_one()
 
     # Apply pagination
-    query = query.limit(limit).offset(offset)
+    offset = (page - 1) * per_page
+    query = query.limit(per_page).offset(offset)
 
     result = await db.execute(query)
     deliveries = result.scalars().all()
 
-    return WebhookDeliveryListResponse(
-        items=[WebhookDeliveryResponse.model_validate(d) for d in deliveries],
-        total=total,
-        page=(offset // limit) + 1,
-        per_page=limit,
-    )
+    return {
+        "items": [WebhookDeliveryResponse.model_validate(d) for d in deliveries],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/deliveries/{delivery_id}", response_model=WebhookDeliveryResponse)

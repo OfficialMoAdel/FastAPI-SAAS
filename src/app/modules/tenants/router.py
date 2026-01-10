@@ -3,22 +3,21 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
-from fastcrud import paginated_response
 
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
-from .schemas import TenantCreate, TenantListResponse, TenantResponse, TenantUpdate
+from .schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
 from .service import TenantService, get_tenant_service
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 
-@router.get("", response_model=TenantListResponse)
+@router.get("", response_model=TenantList)
 async def list_tenants(
     service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
     _current_user: Annotated[dict, Depends(get_current_user)],
     page: int = Query(default=1, ge=1),
-    items_per_page: int = Query(default=10, ge=1, le=100),
+    per_page: int = Query(default=10, ge=1, le=100),
     is_active: bool | None = Query(default=None),
 ) -> dict[str, Any]:
     """List all tenants with pagination.
@@ -27,16 +26,19 @@ async def list_tenants(
     """
     tenants_data = await service.list_tenants(
         page=page,
-        items_per_page=items_per_page,
+        items_per_page=per_page,
         is_active=is_active,
     )
-
-    response: dict[str, Any] = paginated_response(
-        crud_data=tenants_data,
-        page=page,
-        items_per_page=items_per_page,
-    )
-    return response
+    data = tenants_data.get("data", [])
+    total = tenants_data.get("total_count", len(data))
+    return {
+        "items": data,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.post("", response_model=TenantResponse, status_code=201)

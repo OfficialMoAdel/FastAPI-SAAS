@@ -1,7 +1,7 @@
 
 from pydantic import BaseModel
 
-from .._base import BaseCreate, BaseRead, BaseUpdate
+from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 
 class SSOSettingsBase(BaseModel):
@@ -65,3 +65,9 @@ class SSOSettingsReadWithSecrets(SSOSettingsRead):
 
     client_id: str
     client_secret: str
+
+
+class SSOSettingsList(BaseList[SSOSettingsRead]):
+    """Paginated list of SSO settings."""
+
+    pass

@@ -3,25 +3,13 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_tenant
-from ...core.db.database import async_get_db
 from ...core.rbac.dependencies import requires_permission
 from ...core.rbac.permissions import Permission
-from ...modules.tenants.models import Tenant
 from .schemas import PermissionOut, RoleCreate, RoleOut, RoleUpdate
-from .service import RoleService
+from .service import RoleService, get_role_service
 
 router = APIRouter(prefix="/roles", tags=["RBAC"])
-
-
-async def get_role_service(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    tenant: Annotated[Tenant, Depends(get_current_tenant)],
-) -> RoleService:
-    """Dependency to get RoleService with current tenant context."""
-    return RoleService(db=db, tenant_id=tenant.id)
 
 
 @router.get(

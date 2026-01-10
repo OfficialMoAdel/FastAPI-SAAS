@@ -12,9 +12,11 @@ from typing import TYPE_CHECKING, BinaryIO
 from uuid import UUID
 
 import structlog
+from fastapi import Depends
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
 from src.app.modules.storage.metrics import storage_metrics
@@ -435,8 +437,25 @@ class FileService:
         return result.scalar() or 0
 
 
+def get_file_service(db: AsyncSession = Depends(async_get_db)) -> FileService:
+    """Dependency injection factory for FileService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    FileService
+        Service instance with database session
+    """
+    return FileService(db)
+
+
 __all__ = [
     "FileService",
     "QuotaExceededError",
     "FileNotFoundError",
+    "get_file_service",
 ]

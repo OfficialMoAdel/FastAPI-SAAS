@@ -2,9 +2,11 @@
 
 from typing import Any
 
+from fastapi import Depends
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.db.database import async_get_db
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_rate_limits
@@ -223,7 +225,7 @@ class RateLimitService(BaseService[RateLimit]):
         return {"message": "Rate Limit deleted"}
 
 
-def get_rate_limit_service(db: AsyncSession) -> RateLimitService:
+def get_rate_limit_service(db: AsyncSession = Depends(async_get_db)) -> RateLimitService:
     """Dependency injection factory for RateLimitService.
 
     Parameters
@@ -237,17 +239,3 @@ def get_rate_limit_service(db: AsyncSession) -> RateLimitService:
         Service instance with database session
     """
     return RateLimitService(db)
-
-
-# Legacy singleton for backward compatibility with cross-module imports
-# TODO: Remove after all cross-module calls are updated to use DI
-class _LegacyRateLimitService:
-    """Legacy wrapper that accepts db in method calls for backward compatibility."""
-
-    async def get_rate_limits_by_tier_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
-        """Get rate limits by tier ID - legacy interface."""
-        service = RateLimitService(db)
-        return await service.get_rate_limits_by_tier_id(tier_id)
-
-
-rate_limit_service = _LegacyRateLimitService()

@@ -1,4 +1,5 @@
 import os
+import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -9,13 +10,19 @@ from faker import Faker
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 from pydantic import SecretStr
-from sqlalchemy import Engine, String, create_engine, event, text
-from sqlalchemy.pool import NullPool
+from sqlalchemy import Engine, String, create_engine, event
 from sqlalchemy.dialects.postgresql import ARRAY, BYTEA, INET, JSONB, UUID
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.compiler import compiles
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.session import Session
+from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.expression import TextClause
 
+from src.app.core.config import settings
 
+
+# SQLite type compilers for PostgreSQL types
 @compiles(JSONB, "sqlite")
 def compile_jsonb(type_, compiler, **kw):
     return compiler.visit_JSON(type_, **kw)
@@ -59,21 +66,7 @@ def do_connect(dbapi_connection, connection_record):
         dbapi_connection.create_function("gen_random_uuid", 0, gen_random_uuid)
     except Exception:
         pass
-    try:
-        # Enable Write-Ahead Logging (WAL) for better concurrency
-        cursor = dbapi_connection.cursor()
-        # cursor.execute("PRAGMA journal_mode=WAL")
-        # cursor.execute("PRAGMA synchronous=NORMAL")
-        cursor.close()
-    except Exception:
-        pass
 
-
-from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
-from sqlalchemy.orm import sessionmaker
-from sqlalchemy.orm.session import Session
-
-from src.app.core.config import settings
 
 # Ensure encryption key is set for tests - must be a valid Fernet key
 _test_encryption_key = os.getenv("TEST_ENCRYPTION_KEY")
@@ -83,28 +76,22 @@ settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
 from src.app.main import app
 
-# DATABASE_URI = settings.POSTGRES_URI
-# DATABASE_PREFIX = settings.POSTGRES_SYNC_PREFIX
-# Use test.db specifically for tests to avoid conflicts with sql_app.db
-import os
-
-# Use absolute path for test.db to avoid CWD ambiguity
+# Use SQLite for tests - fresh database each run, no data conflicts
 _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATABASE_URI = os.path.join(_base_dir, "test.db")
-# Ensure URI format for SQLite
+DATABASE_PATH = os.path.join(_base_dir, "test.db")
+
+# Format path for SQLite URI
 if os.name == "nt":
-    # On Windows, we need 3 slashes for absolute path: sqlite:///D:/path/to/db
-    DATABASE_URI_STR = f"/{DATABASE_URI.replace(os.sep, '/')}"
+    DATABASE_URI_STR = f"/{DATABASE_PATH.replace(os.sep, '/')}"
 else:
-    DATABASE_URI_STR = f"/{DATABASE_URI}"
+    DATABASE_URI_STR = f"/{DATABASE_PATH}"
 
-DATABASE_PREFIX = "sqlite://"  # settings.SQLITE_SYNC_PREFIX might be different
-# Result: sqlite:///D:/project/.../test.db
-
-print(f"DEBUG: conftest loaded. DB URI: {DATABASE_PREFIX}{DATABASE_URI_STR}")
+print(f"DEBUG: conftest loaded. Using SQLite: {DATABASE_URI_STR}")
 
 sync_engine = create_engine(
-    f"{DATABASE_PREFIX}{DATABASE_URI_STR}", connect_args={"check_same_thread": False}, poolclass=NullPool
+    f"sqlite://{DATABASE_URI_STR}",
+    connect_args={"check_same_thread": False},
+    poolclass=NullPool,
 )
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
@@ -117,27 +104,10 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 
 
 from src.app.core.db.database import Base
+
+# Import all other models here to ensure they are registered in Base.metadata
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
-from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
-from src.app.modules.posts.models import Post
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.files.models import File
-from src.app.modules.notifications.models import Notification
-from src.app.modules.rbac.models import Role, Permission, UserRole, RolePermission
-from src.app.modules.storage_settings.models import StorageSettings
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
-from src.app.modules.feature_flags.models import FeatureFlag
-from src.app.modules.billing.models import (
-    StripeSettings,
-    SubscriptionPlan,
-    Product,
-    Pricing,
-    UserSubscription,
-    BillingRecord,
-)
-from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings
-# Import all other models here to ensure they are registered in Base.metadata
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 
@@ -151,7 +121,7 @@ def setup_db():
 
     # Remove existing test database file if it exists
     for ext in ["", "-wal", "-shm"]:
-        path = f"{DATABASE_URI}{ext}"
+        path = f"{DATABASE_PATH}{ext}"
         if os.path.exists(path):
             try:
                 os.remove(path)
@@ -186,6 +156,55 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
     """Override database dependency to use test async session."""
     async with TestingSessionLocal() as session:
         yield session
+
+
+@pytest.fixture
+def client() -> Generator[TestClient, Any, None]:
+    """Sync TestClient fixture with standard mocking for general API tests."""
+    fake_tenant = Mock()
+    fake_tenant.id = 1
+    fake_tenant.slug = "test-tenant"
+    fake_tenant.is_active = True
+
+    from src.app.core.db.database import async_get_db
+    from src.app.api.dependencies import get_current_user
+
+    # Mock superuser for auth
+    fake_superuser = MockUser(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=1,
+    )
+
+    async def mock_get_current_user():
+        return fake_superuser
+
+    app.dependency_overrides[async_get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+    ):
+        with TestClient(app) as _client:
+            yield _client
+
+    app.dependency_overrides.pop(async_get_db, None)
+    app.dependency_overrides.pop(get_current_user, None)
 
 
 @pytest.fixture
@@ -233,6 +252,144 @@ def mock_db():
     return Mock(spec=AsyncSession)
 
 
+class MockUser:
+    """Mock user object that supports both attribute and dict-like access."""
+
+    def __init__(
+        self,
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=1,
+        roles=None,
+        permissions=None,
+    ):
+        self.id = id
+        self.username = username
+        self.email = email
+        self.is_superuser = is_superuser
+        self.is_active = is_active
+        self.tenant_id = tenant_id
+        self.roles = roles or []
+        # Default permissions for superuser - all common permissions
+        self.permissions = (
+            permissions
+            if permissions is not None
+            else [
+                "MANAGE_STORAGE_SETTINGS",
+                "MANAGE_SSO_SETTINGS",
+                "MANAGE_WEBHOOKS",
+                "MANAGE_USERS",
+                "MANAGE_ROLES",
+                "MANAGE_TENANTS",
+                "MANAGE_BILLING",
+                "MANAGE_API_KEYS",
+                "VIEW_AUDIT_LOGS",
+            ]
+            if is_superuser
+            else []
+        )
+
+    def __getitem__(self, key):
+        return getattr(self, key)
+
+    def get(self, key, default=None):
+        return getattr(self, key, default)
+
+    def has_permission(self, permission: str) -> bool:
+        """Check if user has a specific permission."""
+        return self.is_superuser or permission in self.permissions
+
+
+@pytest.fixture
+async def full_mock_context():
+    """Full mock context for async integration tests.
+
+    Sets up common mocks: tenant, rate limiting, cache warming, db override, auth.
+    """
+    fake_tenant = Mock()
+    fake_tenant.id = 1
+    fake_tenant.slug = "test-tenant-integration"
+    fake_tenant.is_active = True
+
+    from src.app.core.db.database import async_get_db
+    from src.app.api.dependencies import get_current_user
+
+    # Mock superuser with dict-like access for routes using current_user["id"]
+    fake_superuser = MockUser(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=1,
+    )
+
+    async def mock_get_current_user():
+        return fake_superuser
+
+    app.dependency_overrides[async_get_db] = override_get_db
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+    ):
+        yield
+
+    app.dependency_overrides.pop(async_get_db, None)
+    app.dependency_overrides.pop(get_current_user, None)
+
+
+@pytest.fixture
+async def unauthenticated_mock_context():
+    """Mock context WITHOUT authentication for testing auth-required endpoints.
+
+    Sets up common mocks: tenant, rate limiting, cache warming, db override.
+    Does NOT mock get_current_user - allows real auth dependency to run.
+    """
+    fake_tenant = Mock()
+    fake_tenant.id = 1
+    fake_tenant.slug = "test-tenant-integration"
+    fake_tenant.is_active = True
+
+    from src.app.core.db.database import async_get_db
+
+    app.dependency_overrides[async_get_db] = override_get_db
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+    ):
+        yield
+
+    app.dependency_overrides.pop(async_get_db, None)
+
+
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Async database session fixture."""
@@ -245,6 +402,20 @@ async def async_client(full_mock_context) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture."""
     # Note: ASGITransport(app=app) handles lifespan automatically.
     # We rely on full_mock_context for dependencies/patches, but avoid Nested TestClient usage.
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-ID": "test-tenant-integration"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def unauthenticated_async_client(unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
+    """Async client WITHOUT authentication for testing auth-required endpoints.
+
+    Use this fixture when testing that endpoints correctly reject unauthenticated requests.
+    """
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -278,7 +449,21 @@ def superuser_token_headers(full_mock_context):
 
 @pytest.fixture
 def regular_user_token_headers(full_mock_context):
-    """Headers for regular user requests."""
+    """Headers for regular user requests (non-superuser)."""
+    from src.app.api.dependencies import get_current_user
+
+    # Create regular user (NOT superuser)
+    fake_regular_user = MockUser(
+        id=2,
+        username="regular_user",
+        email="user@example.com",
+        is_superuser=False,
+        is_active=True,
+        tenant_id=1,
+    )
+
+    # Override dependency to return regular user
+    app.dependency_overrides[get_current_user] = lambda: fake_regular_user
     return {
         "Authorization": "Bearer regular",
         "X-Tenant-ID": "test-tenant-integration",
@@ -286,9 +471,12 @@ def regular_user_token_headers(full_mock_context):
 
 
 @pytest.fixture
-def auth_headers(tenant):
-    """Authentication headers for tenant context."""
-    return {"X-Tenant-ID": tenant.slug}
+def auth_headers(tenant, superuser_token_headers):
+    """Authentication headers for tenant context with valid auth token."""
+    return {
+        **superuser_token_headers,
+        "X-Tenant-ID": tenant.slug,
+    }
 
 
 class FakeRedis:
@@ -403,7 +591,6 @@ def mock_user(current_user_dict):
 async def create_test_user(db_session, tenant):
     """Factory fixture to create a test user."""
     from src.app.core.security import get_password_hash
-    from src.app.modules.users.models import User
 
     async def _create_user(email: str = "test@example.com", is_superuser: bool = False, **kwargs):
         kwargs.pop("is_active", None)

@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base import BaseRead, BaseUpdate
+from .._base import BaseList, BaseRead, BaseUpdate
 
 
 class FileUploadResponse(BaseModel):
@@ -65,8 +65,21 @@ class FileUpdate(BaseUpdate):
     description: Annotated[str, Field(max_length=1000)] | None = None
 
 
+class FileList(BaseList[FileRead]):
+    """Standardized paginated file list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class FileListResponse(BaseModel):
-    """Paginated file list response."""
+    """Legacy paginated file list response.
+
+    Deprecated: Use FileList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     items: list[FileRead]
     total: int
@@ -119,6 +132,7 @@ __all__ = [
     "FileUploadResponse",
     "FileRead",
     "FileUpdate",
+    "FileList",
     "FileListResponse",
     "SignedUrlResponse",
 ]

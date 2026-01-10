@@ -6,7 +6,7 @@ including upload, download, deletion, and signed URL generation.
 
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import (
-    FileListResponse,
+    FileList,
     FileRead,
     FileUpdate,
     FileUploadResponse,
@@ -18,6 +18,6 @@ __all__ = [
     "FileRead",
     "FileUpdate",
     "FileUploadResponse",
-    "FileListResponse",
+    "FileList",
     "FileService",
 ]

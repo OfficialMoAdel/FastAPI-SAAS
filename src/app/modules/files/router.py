@@ -8,12 +8,10 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
-from src.app.core.db.database import async_get_db
 from src.app.modules.files.schemas import (
-    FileListResponse,
+    FileList,
     FileRead,
     FileUpdate,
     FileUploadResponse,
@@ -25,6 +23,7 @@ from src.app.modules.files.service import (
 from src.app.modules.files.service import (
     FileService,
     QuotaExceededError,
+    get_file_service,
 )
 from src.app.modules.storage_settings import StorageNotConfiguredError
 from src.app.modules.tenants import Tenant
@@ -52,9 +51,9 @@ def require_delete_permission(user: User = Depends(get_current_user)) -> User:
 @router.post("/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     user: User = Depends(require_write_permission),
+    service: FileService = Depends(get_file_service),
 ) -> FileUploadResponse:
     """Upload a file to tenant storage.
 
@@ -72,8 +71,6 @@ async def upload_file(
         413: If file exceeds size limit.
         507: If quota exceeded.
     """
-    service = FileService(db)
-
     # Read file content
     content = await file.read()
     size_bytes = len(content)
@@ -114,51 +111,52 @@ async def upload_file(
         )
 
 
-@router.get("", response_model=FileListResponse)
+@router.get("", response_model=FileList)
 async def list_files(
     user_id: str | None = Query(None, description="Filter by owner user ID"),
     mime_type: str | None = Query(None, description="Filter by MIME type"),
-    limit: int = Query(50, ge=1, le=100, description="Page size"),
-    offset: int = Query(0, ge=0, description="Page offset"),
-    db: AsyncSession = Depends(async_get_db),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(50, ge=1, le=100, description="Page size"),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_read_permission),
-) -> FileListResponse:
+    service: FileService = Depends(get_file_service),
+) -> dict:
     """List files for the current tenant.
 
     Supports pagination and filtering.
 
     Returns:
-        FileListResponse: Paginated file list.
+        FileList: Paginated file list.
     """
     from uuid import UUID
 
-    service = FileService(db)
-
     user_uuid = UUID(user_id) if user_id else None
+    offset = (page - 1) * per_page
 
     files, total = await service.list_files(
         tenant_id=tenant.id,
         user_id=user_uuid,
         mime_type=mime_type,
-        limit=limit,
+        limit=per_page,
         offset=offset,
     )
 
-    return FileListResponse(
-        items=[FileRead.model_validate(f) for f in files],
-        total=total,
-        limit=limit,
-        offset=offset,
-    )
+    return {
+        "items": [FileRead.model_validate(f) for f in files],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/{file_id}", response_class=StreamingResponse)
 async def download_file(
     file_id: int,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_read_permission),
+    service: FileService = Depends(get_file_service),
 ) -> StreamingResponse:
     """Download a file.
 
@@ -173,8 +171,6 @@ async def download_file(
     Raises:
         404: If file not found.
     """
-    service = FileService(db)
-
     try:
         file = await service.get_file_or_raise(tenant.id, file_id)
 
@@ -197,9 +193,9 @@ async def download_file(
 @router.get("/{file_id}/info", response_model=FileRead)
 async def get_file_info(
     file_id: int,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_read_permission),
+    service: FileService = Depends(get_file_service),
 ) -> FileRead:
     """Get file metadata without downloading.
 
@@ -212,8 +208,6 @@ async def get_file_info(
     Raises:
         404: If file not found.
     """
-    service = FileService(db)
-
     try:
         file = await service.get_file_or_raise(tenant.id, file_id)
         return FileRead.model_validate(file)
@@ -229,9 +223,9 @@ async def get_file_info(
 async def get_signed_url(
     file_id: int,
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_read_permission),
+    service: FileService = Depends(get_file_service),
 ) -> SignedUrlResponse:
     """Get a signed URL for file access.
 
@@ -247,8 +241,6 @@ async def get_signed_url(
     Raises:
         404: If file not found.
     """
-    service = FileService(db)
-
     try:
         url = await service.get_signed_url(tenant.id, file_id, expires_in)
         return SignedUrlResponse(url=url, expires_in=expires_in)
@@ -264,9 +256,9 @@ async def get_signed_url(
 async def update_file(
     file_id: int,
     data: FileUpdate,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_write_permission),
+    service: FileService = Depends(get_file_service),
 ) -> FileRead:
     """Update file metadata.
 
@@ -280,8 +272,6 @@ async def update_file(
     Raises:
         404: If file not found.
     """
-    service = FileService(db)
-
     try:
         file = await service.update_file(tenant.id, file_id, data)
         return FileRead.model_validate(file)
@@ -296,9 +286,9 @@ async def update_file(
 @router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response)
 async def delete_file(
     file_id: int,
-    db: AsyncSession = Depends(async_get_db),
     tenant: Tenant = Depends(get_current_tenant),
     _user: User = Depends(require_delete_permission),
+    service: FileService = Depends(get_file_service),
 ) -> Response:
     """Delete a file.
 
@@ -310,8 +300,6 @@ async def delete_file(
     Raises:
         404: If file not found.
     """
-    service = FileService(db)
-
     try:
         await service.delete_file(tenant.id, file_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)

@@ -14,10 +14,12 @@ Handles:
 import logging
 from typing import Any
 
-from fastapi import HTTPException, UploadFile, status
+from fastapi import Depends, UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
+from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.storage import get_storage
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
@@ -30,6 +32,16 @@ logger = logging.getLogger(__name__)
 # Constants for image upload
 ALLOWED_IMAGE_TYPES = {"image/jpeg", "image/png", "image/gif", "image/webp"}
 MAX_IMAGE_SIZE_BYTES = 5 * 1024 * 1024  # 5 MB
+
+
+class StorageError(Exception):
+    """Raised when storage operations fail."""
+
+    def __init__(self, operation: str, detail: str):
+        self.operation = operation
+        self.detail = detail
+        self.message = f"Storage {operation} failed: {detail}"
+        super().__init__(self.message)
 
 
 class PreferencesService:
@@ -141,10 +153,7 @@ class PreferencesService:
         """
         # 1. Validate file type
         if file.content_type not in ALLOWED_IMAGE_TYPES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Invalid file type. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}",
-            )
+            raise ValidationError(f"Invalid file type '{file.content_type}'. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}")
 
         # 2. Validate file size
         file.file.seek(0, 2)  # Seek to end
@@ -152,9 +161,8 @@ class PreferencesService:
         file.file.seek(0)  # Reset to beginning
 
         if size > MAX_IMAGE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"File too large. Max size: {MAX_IMAGE_SIZE_BYTES / 1024 / 1024} MB",
+            raise ValidationError(
+                f"File too large ({size / 1024 / 1024:.1f} MB). Max size: {MAX_IMAGE_SIZE_BYTES / 1024 / 1024:.0f} MB"
             )
 
         # 3. Upload to storage
@@ -175,10 +183,7 @@ class PreferencesService:
 
         if not result.success:
             logger.error(f"Failed to upload image for user {user_id}: {result.error}")
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to upload image",
-            )
+            raise StorageError("upload", result.error or "Unknown error")
 
         # 4. Get URL
         # For this purpose, we assume get_url gives us a usable URL.
@@ -187,8 +192,7 @@ class PreferencesService:
         # 5. Update User record
         user = await crud_users.get(db=db, id=user_id)
         if not user:
-            # Should happen rarely if authenticated
-            raise HTTPException(status_code=404, detail="User not found")
+            raise ModelNotFoundError("User", user_id)
 
         # Update user.profile_image_url
         await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
@@ -247,11 +251,24 @@ class PreferencesService:
         # Update User record to nullify image_url
         await crud_users.update(
             db=db,
-            db_obj=user,
-            obj_in={"profile_image_url": None},  # Or default URL? Schema default is "https://www.profileimageurl.com"
+            object={"profile_image_url": None},
+            id=user_id,
         )
 
         return None
 
 
-preferences_service = PreferencesService()
+def get_preferences_service(db: AsyncSession = Depends(async_get_db)) -> PreferencesService:
+    """Dependency injection factory for PreferencesService.
+
+    Parameters
+    ----------
+    db : AsyncSession
+        Database session from async_get_db
+
+    Returns
+    -------
+    PreferencesService
+        Service instance
+    """
+    return PreferencesService()

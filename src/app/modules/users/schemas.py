@@ -6,7 +6,7 @@ from typing import Annotated
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
-from .._base import BaseCreate, BaseRead, BaseUpdate
+from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # =============================================================================
 # Base Schema (shared fields)
@@ -143,3 +143,9 @@ class UserRestoreDeleted(BaseModel):
     """Schema for restoring a soft-deleted user."""
 
     is_deleted: bool
+
+
+class UserList(BaseList[UserRead]):
+    """Paginated list of users."""
+
+    pass

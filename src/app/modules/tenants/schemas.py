@@ -4,7 +4,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
+from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 RESERVED_SLUGS = frozenset({"host", "admin", "api"})
@@ -88,8 +88,21 @@ class TenantResponse(BaseRead):
     is_active: bool
 
 
+class TenantList(BaseList[TenantResponse]):
+    """Standardized paginated tenant list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class TenantListResponse(BaseModel):
-    """Schema for paginated tenant list response."""
+    """Schema for paginated tenant list response.
+
+    Deprecated: Use TenantList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     data: list[TenantResponse]
     total: int

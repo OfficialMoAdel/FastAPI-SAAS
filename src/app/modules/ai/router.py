@@ -3,7 +3,7 @@
 import json
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,6 +11,7 @@ from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 
 from .middleware import RateLimitedUser
+from .ollama_client import get_ollama_client
 from .schemas import (
     AIModelsListResponse,
     AIServiceError,
@@ -18,16 +19,16 @@ from .schemas import (
     AISettingsUpdate,
     ChatCompletionRequest,
     ChatCompletionResponse,
-    ChatMessagePage,
-    ChatMessageRead,
+    ChatMessageList,
     ChatSessionCreate,
-    ChatSessionPage,
+    ChatSessionList,
     ChatSessionRead,
     ChatSessionReadWithMessages,
     ChatSessionUpdate,
+)
+from .schemas import (
     RateLimitError as RateLimitErrorSchema,
 )
-from .ollama_client import get_ollama_client
 from .service import (
     ChatCompletionError,
     get_ai_settings_service,
@@ -55,25 +56,25 @@ async def create_chat_session(
     return await service.create_session(current_user["id"], data)
 
 
-@router.get("/sessions", response_model=ChatSessionPage)
+@router.get("/sessions", response_model=ChatSessionList)
 async def list_chat_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    limit: int = 20,
+    per_page: int = 20,
 ) -> dict:
     """List chat sessions for the current user."""
     service = get_chat_session_service(db)
-    result = await service.get_user_sessions(current_user["id"], page=page, limit=limit)
+    result = await service.get_user_sessions(current_user["id"], page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    pages = (total + limit - 1) // limit if limit > 0 else 1
     return {
         "items": data,
         "total": total,
         "page": page,
-        "limit": limit,
-        "pages": pages,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
     }
 
 
@@ -122,13 +123,13 @@ async def delete_chat_session(
 # =============================================================================
 
 
-@router.get("/sessions/{session_id}/messages", response_model=ChatMessagePage)
+@router.get("/sessions/{session_id}/messages", response_model=ChatMessageList)
 async def list_session_messages(
     session_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    limit: int = 50,
+    per_page: int = 50,
 ) -> dict:
     """List messages in a chat session."""
     # First verify session ownership
@@ -136,16 +137,16 @@ async def list_session_messages(
     await session_service.get_session(session_id, current_user["id"])
 
     message_service = get_chat_message_service(db)
-    result = await message_service.get_session_messages(session_id, page=page, limit=limit)
+    result = await message_service.get_session_messages(session_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    pages = (total + limit - 1) // limit if limit > 0 else 1
     return {
         "items": data,
         "total": total,
         "page": page,
-        "limit": limit,
-        "pages": pages,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
     }
 
 

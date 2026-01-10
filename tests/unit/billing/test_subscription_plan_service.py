@@ -94,10 +94,10 @@ async def test_create_update_delete_plan(db_session, tenant):
 
     with patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant):
         plan = await service.create_plan(plan_in)
-        # Capture ID immediately to avoid expiry issues after subsequent commits
-        plan_id = plan.id
+        # FastCRUD v0.20.0 returns dict when schema_to_select is provided
+        plan_id = plan["id"]
 
-        assert plan.name == "Lifecycle Plan"
+        assert plan["name"] == "Lifecycle Plan"
         assert plan_id is not None
 
         # Get

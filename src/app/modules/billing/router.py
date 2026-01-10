@@ -1,41 +1,38 @@
 """Billing & Payments router - HTTP handlers for billing operations."""
 
+import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status, Request, BackgroundTasks
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from redis.asyncio import Redis
-
-from src.app.core.config import settings
-from src.app.core.utils.cache import async_get_redis
-from src.app.core.rbac.dependencies import requires_permission
-from src.app.core.rbac.permissions import Permission
-from src.app.core.db.database import async_get_db
-from .webhook import verify_webhook_signature, handle_webhook_event
-import logging
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
+from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+from src.app.core.utils.cache import async_get_redis
 
 from .schemas import (
-    BillingRecordPage,
+    BillingRecordList,
     BillingRecordRead,
     CheckoutCreate,
     CheckoutSession,
     PricingCreate,
     PricingRead,
     ProductCreate,
-    ProductPage,
+    ProductList,
     ProductRead,
     ProductUpdate,
     StripeSettingsRead,
     StripeSettingsReadFull,
     StripeSettingsUpdate,
     SubscriptionPlanCreate,
-    SubscriptionPlanPage,
+    SubscriptionPlanList,
     SubscriptionPlanRead,
     SubscriptionPlanUpdate,
     UserSubscriptionRead,
-    UserSubscriptionReadWithPlan,
 )
 from .service import (
     get_billing_record_service,
@@ -45,6 +42,7 @@ from .service import (
     get_subscription_plan_service,
     get_user_subscription_service,
 )
+from .webhook import handle_webhook_event, verify_webhook_signature
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 logger = logging.getLogger(__name__)
@@ -166,25 +164,25 @@ async def create_subscription_plan(
     return await service.create_plan(data)
 
 
-@router.get("/plans", response_model=SubscriptionPlanPage)
+@router.get("/plans", response_model=SubscriptionPlanList)
 async def list_subscription_plans(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    limit: int = 20,
+    per_page: int = 20,
     is_active: bool | None = None,
 ) -> dict:
     """List subscription plans (public for pricing page)."""
     service = get_subscription_plan_service(db)
-    result = await service.get_plans(page=page, limit=limit, is_active=is_active)
+    result = await service.get_plans(page=page, limit=per_page, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    pages = (total + limit - 1) // limit if limit > 0 else 1
     return {
         "items": data,
         "total": total,
         "page": page,
-        "limit": limit,
-        "pages": pages,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
     }
 
 
@@ -246,25 +244,25 @@ async def create_product(
     return await service.create_product(data)
 
 
-@router.get("/products", response_model=ProductPage)
+@router.get("/products", response_model=ProductList)
 async def list_products(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    limit: int = 20,
+    per_page: int = 20,
     is_active: bool | None = None,
 ) -> dict:
     """List products."""
     service = get_product_service(db)
-    result = await service.get_products(page=page, limit=limit, is_active=is_active)
+    result = await service.get_products(page=page, limit=per_page, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    pages = (total + limit - 1) // limit if limit > 0 else 1
     return {
         "items": data,
         "total": total,
         "page": page,
-        "limit": limit,
-        "pages": pages,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
     }
 
 
@@ -380,32 +378,32 @@ async def create_portal_session(
     return {"url": url}
 
 
-@router.get("/records", response_model=BillingRecordPage)
+@router.get("/records", response_model=BillingRecordList)
 async def list_billing_records(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = 1,
-    limit: int = 20,
+    per_page: int = 20,
     status: str | None = None,
 ) -> dict:
     """List billing records for the current user.
 
     Args:
         page: Page number (1-indexed)
-        limit: Number of records per page
+        per_page: Number of records per page
         status: Optional filter by status (succeeded, failed, pending, refunded)
     """
     service = get_billing_record_service(db)
-    result = await service.get_user_records(current_user["id"], page=page, limit=limit, status=status)
+    result = await service.get_user_records(current_user["id"], page=page, limit=per_page, status=status)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    pages = (total + limit - 1) // limit if limit > 0 else 1
     return {
         "items": data,
         "total": total,
         "page": page,
-        "limit": limit,
-        "pages": pages,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
     }
 
 

@@ -17,9 +17,9 @@ pytestmark = pytest.mark.asyncio
 class TestSSOSettingsListContract:
     """Contract tests for GET /admin/sso-settings/."""
 
-    async def test_list_returns_403_without_auth(self, async_client: AsyncClient):
-        """Verify 403 when not authenticated."""
-        response = await async_client.get("/api/v1/admin/sso-settings/")
+    async def test_list_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
+        """Verify 401/403 when not authenticated."""
+        response = await unauthenticated_async_client.get("/api/v1/admin/sso-settings/")
 
         # Should require authentication
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
@@ -54,9 +54,9 @@ class TestSSOSettingsListContract:
 class TestSSOSettingsCreateContract:
     """Contract tests for POST /admin/sso-settings/."""
 
-    async def test_create_returns_403_without_auth(self, async_client: AsyncClient):
-        """Verify 403 when not authenticated."""
-        response = await async_client.post(
+    async def test_create_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
+        """Verify 401/403 when not authenticated."""
+        response = await unauthenticated_async_client.post(
             "/api/v1/admin/sso-settings/",
             json={
                 "provider": "google",
@@ -144,9 +144,9 @@ class TestSSOSettingsCreateContract:
 class TestSSOSettingsGetContract:
     """Contract tests for GET /admin/sso-settings/{provider}."""
 
-    async def test_get_returns_403_without_auth(self, async_client: AsyncClient):
-        """Verify 403 when not authenticated."""
-        response = await async_client.get("/api/v1/admin/sso-settings/google")
+    async def test_get_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
+        """Verify 401/403 when not authenticated."""
+        response = await unauthenticated_async_client.get("/api/v1/admin/sso-settings/google")
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
@@ -191,9 +191,9 @@ class TestSSOSettingsGetContract:
 class TestSSOSettingsUpdateContract:
     """Contract tests for PATCH /admin/sso-settings/{provider}."""
 
-    async def test_update_returns_403_without_auth(self, async_client: AsyncClient):
-        """Verify 403 when not authenticated."""
-        response = await async_client.patch(
+    async def test_update_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
+        """Verify 401/403 when not authenticated."""
+        response = await unauthenticated_async_client.patch(
             "/api/v1/admin/sso-settings/google",
             json={"is_enabled": False},
         )
@@ -241,9 +241,9 @@ class TestSSOSettingsUpdateContract:
 class TestSSOSettingsDeleteContract:
     """Contract tests for DELETE /admin/sso-settings/{provider}."""
 
-    async def test_delete_returns_403_without_auth(self, async_client: AsyncClient):
-        """Verify 403 when not authenticated."""
-        response = await async_client.delete("/api/v1/admin/sso-settings/google")
+    async def test_delete_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
+        """Verify 401/403 when not authenticated."""
+        response = await unauthenticated_async_client.delete("/api/v1/admin/sso-settings/google")
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
@@ -305,7 +305,7 @@ class TestSSOSettingsSecurityContract:
             # Secret should not appear as plaintext
             assert "test_client_secret" not in json_str or "has_secret" in json_str
 
-    async def test_all_endpoints_require_authentication(self, async_client: AsyncClient):
+    async def test_all_endpoints_require_authentication(self, unauthenticated_async_client: AsyncClient):
         """Verify all endpoints reject unauthenticated requests."""
         endpoints = [
             ("GET", "/api/v1/admin/sso-settings/"),
@@ -317,13 +317,13 @@ class TestSSOSettingsSecurityContract:
 
         for method, path in endpoints:
             if method == "GET":
-                response = await async_client.get(path)
+                response = await unauthenticated_async_client.get(path)
             elif method == "POST":
-                response = await async_client.post(path, json={})
+                response = await unauthenticated_async_client.post(path, json={})
             elif method == "PATCH":
-                response = await async_client.patch(path, json={})
+                response = await unauthenticated_async_client.patch(path, json={})
             elif method == "DELETE":
-                response = await async_client.delete(path)
+                response = await unauthenticated_async_client.delete(path)
 
             assert response.status_code in [
                 status.HTTP_401_UNAUTHORIZED,

@@ -14,7 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base import BaseCreate, BaseRead, BaseUpdate
+from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # ============================================================================
 # Request Schemas
@@ -67,8 +67,21 @@ class PasskeyCredentialResponse(BaseModel):
     transports: list[str] | None = Field(None, description="Supported transports (usb, nfc, ble, internal, hybrid)")
 
 
+class PasskeyCredentialList(BaseList[PasskeyCredentialResponse]):
+    """Standardized paginated passkey credential list response.
+
+    Inherits from BaseList: items, total, page, per_page, has_next, has_previous
+    """
+
+    pass
+
+
 class PasskeyCredentialListResponse(BaseModel):
-    """Response for listing user's passkey credentials."""
+    """Response for listing user's passkey credentials.
+
+    Deprecated: Use PasskeyCredentialList for new endpoints.
+    This schema is kept for backward compatibility with existing API contracts.
+    """
 
     credentials: list[PasskeyCredentialResponse] = Field(
         default_factory=list,
