@@ -176,9 +176,7 @@ class TestSessionUpdateEndpoint:
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("ChatSession", 9999),
         ):
-            response = client_auth.patch(
-                "/api/v1/ai/sessions/9999", json={"title": "New Title"}
-            )
+            response = client_auth.patch("/api/v1/ai/sessions/9999", json={"title": "New Title"})
             assert response.status_code in [400, 401, 404, 405, 422, 500]
 
 
@@ -263,7 +261,7 @@ class TestSessionMessagesEndpoint:
         }
 
         with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session_messages",
+            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
             new_callable=AsyncMock,
             return_value={"data": mock_messages["items"], "total_count": 2},
         ):
@@ -277,7 +275,7 @@ class TestSessionMessagesEndpoint:
     def test_list_messages_empty_session(self, client_auth) -> None:
         """GET /ai/sessions/{id}/messages should return empty for new session."""
         with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session_messages",
+            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
             new_callable=AsyncMock,
             return_value={"data": [], "total_count": 0},
         ):
@@ -291,7 +289,7 @@ class TestSessionMessagesEndpoint:
     def test_list_messages_pagination(self, client_auth) -> None:
         """GET /ai/sessions/{id}/messages should support pagination."""
         with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session_messages",
+            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
             new_callable=AsyncMock,
             return_value={"data": [], "total_count": 100},
         ):
@@ -336,9 +334,7 @@ class TestSessionOwnershipValidation:
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("ChatSession", 1),
         ):
-            response = client_auth.patch(
-                "/api/v1/ai/sessions/1", json={"title": "Hacked"}
-            )
+            response = client_auth.patch("/api/v1/ai/sessions/1", json={"title": "Hacked"})
             assert response.status_code in [400, 401, 403, 404, 405, 422, 500]
 
 
@@ -368,9 +364,7 @@ class TestSessionValidation:
         """PATCH /ai/sessions/{id} should reject overly long titles."""
         long_title = "x" * 300  # Likely exceeds max length
 
-        response = client_auth.patch(
-            "/api/v1/ai/sessions/1", json={"title": long_title}
-        )
+        response = client_auth.patch("/api/v1/ai/sessions/1", json={"title": long_title})
         # Should fail validation or succeed if no length limit
         assert response.status_code in [200, 400, 401, 404, 405, 422]
 
