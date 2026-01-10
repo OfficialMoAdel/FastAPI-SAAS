@@ -261,42 +261,9 @@ def get_api_key_service(db: AsyncSession) -> APIKeyService:
     return APIKeyService(db)
 
 
-# Legacy singleton for backward compatibility with cross-module imports
-# TODO: Remove after all cross-module calls are updated to use DI
-class _LegacyAPIKeyService:
-    """Legacy wrapper that accepts db in method calls for backward compatibility."""
+# DI factory registration with service registry
+def _register_api_key_service() -> None:
+    """Register APIKeyService with the service registry."""
+    from src.app.core.service_registry import register_service
 
-    KEY_PREFIX_LENGTH = 8
-    KEY_LENGTH = 32
-
-    def _generate_key(self) -> tuple[str, str, str]:
-        raw_key = secrets.token_urlsafe(self.KEY_LENGTH)
-        prefix = raw_key[: self.KEY_PREFIX_LENGTH]
-        hashed = hashlib.sha256(raw_key.encode()).hexdigest()
-        return raw_key, prefix, hashed
-
-    def _hash_key(self, key: str) -> str:
-        return hashlib.sha256(key.encode()).hexdigest()
-
-    async def create_api_key(
-        self, api_key_data: APIKeyCreate, user_id: int, tenant_id: int, db: AsyncSession
-    ) -> APIKeyResponse:
-        service = APIKeyService(db)
-        return await service.create_api_key(api_key_data, user_id, tenant_id)
-
-    async def list_api_keys(
-        self, user_id: int, tenant_id: int, db: AsyncSession, page: int = 1, items_per_page: int = 10
-    ) -> dict[str, Any]:
-        service = APIKeyService(db)
-        return await service.list_api_keys(user_id, tenant_id, page, items_per_page)
-
-    async def revoke_api_key(self, key_id: int, user_id: int, tenant_id: int, db: AsyncSession) -> dict[str, str]:
-        service = APIKeyService(db)
-        return await service.revoke_api_key(key_id, user_id, tenant_id)
-
-    async def validate_api_key(self, api_key: str, db: AsyncSession) -> dict[str, Any] | None:
-        service = APIKeyService(db)
-        return await service.validate_api_key(api_key)
-
-
-api_key_service = _LegacyAPIKeyService()
+    register_service("api_key", lambda db: APIKeyService(db))

@@ -8,7 +8,7 @@ This module provides authentication services including:
 
 Components are imported lazily to avoid circular imports.
 Direct imports:
-    from src.app.modules.auth.service import auth_service
+    from src.app.modules.auth.service import AuthService, get_auth_service
     from src.app.modules.auth.router import router as auth_router
     from src.app.modules.auth.schemas import Token, TokenData
     from src.app.modules.auth.audit import auth_audit
@@ -19,7 +19,8 @@ Direct imports:
 
 __all__ = [
     "auth_router",
-    "auth_service",
+    "AuthService",
+    "get_auth_service",
     "auth_audit",
 ]
 
@@ -30,13 +31,16 @@ def __getattr__(name: str):
         from .router import router as auth_router
 
         return auth_router
-    if name == "auth_service":
-        from .service import auth_service
+    if name == "AuthService":
+        from .service import AuthService
 
-        return auth_service
+        return AuthService
+    if name == "get_auth_service":
+        from .service import get_auth_service
+
+        return get_auth_service
     if name == "auth_audit":
         from .audit import auth_audit
 
         return auth_audit
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
-

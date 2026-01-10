@@ -453,7 +453,3 @@ def get_sso_service(db: AsyncSession = Depends(async_get_db)) -> "SSOService":
         Service instance
     """
     return SSOService()
-
-
-# Legacy singleton for backward compatibility - will be removed
-sso_service = SSOService()

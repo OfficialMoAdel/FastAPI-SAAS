@@ -558,7 +558,3 @@ class AuthService:
         await db.commit()
 
         return {"message": "Email verified successfully."}
-
-
-# Singleton instance for import convenience
-auth_service = AuthService()

@@ -66,6 +66,16 @@ class CircuitBreaker:
         """Check if requests should be allowed."""
         return self.state in (CircuitState.CLOSED, CircuitState.HALF_OPEN)
 
+    @property
+    def last_failure_time(self) -> float:
+        """Get the timestamp of the last recorded failure."""
+        return self._last_failure_time
+
+    @property
+    def failure_count(self) -> int:
+        """Get the current failure count."""
+        return self._failure_count
+
     async def record_success(self) -> None:
         """Record successful call, potentially closing circuit."""
         async with self._lock:
@@ -155,7 +165,7 @@ def circuit_breaker(
 
             # Fast-fail if circuit is open
             if state == CircuitState.OPEN:
-                recovery_in = breaker.recovery_timeout - (time.time() - breaker._last_failure_time)
+                recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
                 raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
 
             try:

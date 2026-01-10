@@ -23,12 +23,12 @@ class EmailService:
         """Get email provider instance."""
         if self._provider is None:
             self._provider = SMTPProvider(
-                host=settings.EMAIL_HOST,
-                port=settings.EMAIL_PORT,
-                username=settings.EMAIL_USERNAME,
-                password=settings.EMAIL_PASSWORD,
-                use_tls=settings.EMAIL_USE_TLS,
-                from_email=settings.EMAIL_FROM,
+                host=settings.SMTP_HOST,
+                port=settings.SMTP_PORT,
+                username=settings.SMTP_USER,
+                password=settings.SMTP_PASSWORD,
+                use_tls=settings.SMTP_USE_TLS,
+                from_email=settings.EMAIL_FROM_ADDRESS,
                 from_name=settings.EMAIL_FROM_NAME,
             )
 
@@ -66,7 +66,7 @@ class EmailService:
             subject=subject,
             html_content=html_content,
             text_content=text_content,
-            from_email=settings.EMAIL_FROM,
+            from_email=settings.EMAIL_FROM_ADDRESS,
             from_name=settings.EMAIL_FROM_NAME,
         )
 
@@ -157,7 +157,7 @@ class EmailService:
                 subject=msg_data["subject"],
                 html_content=msg_data["html_content"],
                 text_content=msg_data.get("text_content"),
-                from_email=settings.EMAIL_FROM,
+                from_email=settings.EMAIL_FROM_ADDRESS,
                 from_name=settings.EMAIL_FROM_NAME,
             )
             email_messages.append(email_message)

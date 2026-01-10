@@ -76,10 +76,11 @@ class BaseService(Generic[T]):
         Args:
             page: Page number (1-indexed).
             per_page: Number of items per page.
-            **kwargs: Additional filter parameters.
+            **kwargs: Additional filter parameters passed to the CRUD layer.
 
         Returns:
-            List of records for the requested page.
+            List of records for the requested page. Returns empty list if no
+            records found. FastCRUD's dict response is unwrapped automatically.
         """
         offset = (page - 1) * per_page
         result = await self.crud.get_multi(
@@ -88,7 +89,7 @@ class BaseService(Generic[T]):
             limit=per_page,
             **kwargs,
         )
-        # FastCRUD returns dict with 'data' key
+        # FastCRUD returns dict with 'data' key containing the records list
         if isinstance(result, dict):
             return result.get("data", [])
         return result

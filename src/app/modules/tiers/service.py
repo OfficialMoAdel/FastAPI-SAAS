@@ -194,15 +194,9 @@ def get_tier_service(db: AsyncSession) -> TierService:
     return TierService(db)
 
 
-# Legacy singleton for backward compatibility with cross-module imports
-# TODO: Remove after all cross-module calls are updated to use DI
-class _LegacyTierService:
-    """Legacy wrapper that accepts db in method calls for backward compatibility."""
+# DI factory registration with service registry
+def _register_tier_service() -> None:
+    """Register TierService with the service registry."""
+    from src.app.core.service_registry import register_service
 
-    async def get_tier_by_id(self, tier_id: int, db: AsyncSession) -> dict[str, Any]:
-        """Get tier by ID - legacy interface."""
-        service = TierService(db)
-        return await service.get_tier_by_id(tier_id)
-
-
-tier_service = _LegacyTierService()
+    register_service("tier", lambda db: TierService(db))

@@ -13,7 +13,7 @@ from ...core.tenancy.context import get_tenant_context
 from ..auth.schemas import AuthTokenResponse
 from .crud import crud_user_sso_connections
 from .schemas import SSOProvider, SSOProvidersResponse
-from .service import sso_service
+from .service import SSOService, get_sso_service
 
 router = APIRouter(prefix="/auth/sso", tags=["sso"])
 
@@ -22,6 +22,7 @@ router = APIRouter(prefix="/auth/sso", tags=["sso"])
 async def list_providers(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> SSOProvidersResponse:
     """List enabled SSO providers."""
     providers = await sso_service.get_enabled_providers(db)
@@ -33,6 +34,7 @@ async def initiate_sso(
     request: Request,
     provider: SSOProvider,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow and redirect to provider."""
@@ -54,6 +56,7 @@ async def handle_callback(
     code: Annotated[str, Query],
     state: Annotated[str, Query],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> AuthTokenResponse:
     """Handle OAuth callback and return authentication tokens."""
     try:
@@ -81,6 +84,7 @@ async def handle_post_callback(
     code: Annotated[str, Form()],
     state: Annotated[str, Form()],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
     user: Annotated[str | None, Form()] = None,
 ) -> AuthTokenResponse:
     """Handle OAuth POST callback (for Apple Sign-In which uses response_mode=form_post).
@@ -121,6 +125,7 @@ async def connect_provider(
     provider: SSOProvider,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Connect SSO provider to existing authenticated account."""
@@ -156,6 +161,7 @@ async def disconnect_provider(
     provider: SSOProvider,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> dict[str, str]:
     """Disconnect SSO provider from account."""
     tenant = get_tenant_context()

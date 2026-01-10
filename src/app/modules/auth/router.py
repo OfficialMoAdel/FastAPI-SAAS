@@ -19,7 +19,13 @@ from .schemas import (
     PasswordResetRequest,
     Token,
 )
-from .service import auth_service
+from .service import AuthService
+
+
+def _get_auth_service() -> AuthService:
+    """Get AuthService instance."""
+    return AuthService()
+
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -31,6 +37,7 @@ async def login_for_access_token(
     form_data: Annotated[OAuth2PasswordRequestForm, Depends()],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     redis: Annotated[Redis, Depends(async_get_redis)],
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Authenticate user and return access token."""
     return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
@@ -38,7 +45,10 @@ async def login_for_access_token(
 
 @router.post("/refresh")
 async def refresh_access_token(
-    response: Response, request: Request, db: AsyncSession = Depends(async_get_db)
+    response: Response,
+    request: Request,
+    db: AsyncSession = Depends(async_get_db),
+    auth_service: AuthService = Depends(_get_auth_service),
 ) -> dict[str, str]:
     """Refresh access token using refresh token from cookie."""
     refresh_token = request.cookies.get("refresh_token")
@@ -52,6 +62,7 @@ async def logout(
     access_token: str = Depends(oauth2_scheme),
     refresh_token: str | None = Cookie(None, alias="refresh_token"),
     db: AsyncSession = Depends(async_get_db),
+    auth_service: AuthService = Depends(_get_auth_service),
 ) -> dict[str, str]:
     """Logout user by blacklisting tokens."""
     return await auth_service.logout(access_token, refresh_token, response, request, db)
@@ -63,6 +74,7 @@ async def change_password(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
     body: PasswordChangeRequest,
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Change current user's password."""
     return await auth_service.change_password(
@@ -77,6 +89,7 @@ async def change_password(
 async def forgot_password(
     body: PasswordResetRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Request password reset email."""
     return await auth_service.request_password_reset(email=body.email, db=db)
@@ -86,6 +99,7 @@ async def forgot_password(
 async def reset_password(
     body: PasswordResetConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Reset password using reset token."""
     return await auth_service.reset_password(token=body.token, new_password=body.new_password, db=db)
@@ -95,6 +109,7 @@ async def reset_password(
 async def send_verification_email(
     body: EmailVerificationRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Send email verification link."""
     return await auth_service.send_verification_email(email=body.email, db=db)
@@ -104,6 +119,7 @@ async def send_verification_email(
 async def verify_email(
     body: EmailVerificationConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    auth_service: Annotated[AuthService, Depends(_get_auth_service)],
 ) -> dict[str, str]:
     """Verify email using verification token."""
     return await auth_service.verify_email(token=body.token, db=db)
