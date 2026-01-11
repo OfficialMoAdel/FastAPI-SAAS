@@ -238,29 +238,23 @@ class MagicLinkService:
                 )
                 logger.info(
                     "magic_link_email_enqueued",
-                    user_id=user_id,
-                    email=email,
+                    extra={"user_id": user_id, "email": email},
                 )
             except Exception as e:
                 logger.error(
                     "failed_to_enqueue_magic_link_email",
-                    user_id=user_id,
-                    email=email,
-                    error=str(e),
+                    extra={"user_id": user_id, "email": email, "error": str(e)},
                 )
                 # Fallback: log the link for development/debugging
                 logger.warning(
                     "magic_link_fallback",
-                    user_id=user_id,
-                    magic_link_url=magic_link_url,
+                    extra={"user_id": user_id, "magic_link_url": magic_link_url},
                 )
         else:
             # ARQ not available - log for development
             logger.warning(
                 "arq_queue_not_available_magic_link",
-                user_id=user_id,
-                email=email,
-                magic_link_url=magic_link_url,
+                extra={"user_id": user_id, "email": email, "magic_link_url": magic_link_url},
             )
 
     async def _create_auth_tokens(self, user: User) -> dict[str, Any]:

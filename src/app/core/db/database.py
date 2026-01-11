@@ -38,6 +38,9 @@ async_engine = create_async_engine(
 
 local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
+# Alias for compatibility with code expecting async_session_maker
+async_session_maker = local_session
+
 
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     async with local_session() as db:

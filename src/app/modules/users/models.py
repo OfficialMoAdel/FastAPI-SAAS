@@ -28,6 +28,7 @@ if TYPE_CHECKING:
     from src.app.modules.notifications.models import Notification
     from src.app.modules.rbac.models import Role
     from src.app.modules.tenants.models import Tenant
+    from src.app.modules.tiers.models import Tier
 
 
 class User(Base):
@@ -66,15 +67,8 @@ class User(Base):
     files: Mapped[list["File"]] = relationship(back_populates="user", init=False)
     # Note: api_keys relationship is defined in APIKey model using back_populates="user"
     # Billing & AI relationships (Phase 3/5)
-    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="user", init=False
-    )
-    billing_records: Mapped[list["BillingRecord"]] = relationship(
-        back_populates="user", init=False
-    )
-    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(
-        back_populates="user", init=False
-    )
-    ai_settings: Mapped["AISettings | None"] = relationship(
-        back_populates="user", uselist=False, init=False
-    )
+    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="user", init=False)
+    billing_records: Mapped[list["BillingRecord"]] = relationship(back_populates="user", init=False)
+    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="user", init=False)
+    ai_settings: Mapped["AISettings | None"] = relationship(back_populates="user", uselist=False, init=False)
+    tier: Mapped["Tier | None"] = relationship(init=False)

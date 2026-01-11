@@ -89,7 +89,11 @@ class AIRateLimiter:
         sha = await self._get_script_sha()
         try:
             result = await self.redis.evalsha(sha, 1, key, window)
-            return (int(result[0]), int(result[1]))
+            # Handle both real Redis (returns list) and FakeRedis (may return int)
+            if isinstance(result, (list, tuple)) and len(result) >= 2:
+                return (int(result[0]), int(result[1]))
+            # FakeRedis doesn't execute Lua properly - fallback
+            raise ResponseError("FakeRedis Lua fallback")
         except NoScriptError:
             # Script was flushed from Redis, reload and retry
             AIRateLimiter._script_sha = None

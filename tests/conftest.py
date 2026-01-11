@@ -149,7 +149,7 @@ def setup_db():
     except Exception:
         pass
 
-    Base.metadata.create_all(bind=sync_engine)
+    Base.metadata.create_all(bind=sync_engine, checkfirst=True)
 
     yield
 
@@ -503,7 +503,7 @@ async def regular_user_token_headers(full_mock_context):
 
 
 @pytest.fixture
-def auth_headers(tenant, superuser_token_headers):
+async def auth_headers(tenant, superuser_token_headers):
     """Authentication headers for tenant context with valid auth token."""
     return {
         **superuser_token_headers,
