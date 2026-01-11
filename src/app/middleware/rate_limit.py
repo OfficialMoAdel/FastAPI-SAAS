@@ -97,57 +97,28 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         return limit, period, key
 
     async def _get_user_tier_name(self, user) -> str | None:
-        """Get tier name for user, with Redis caching.
+        """Get tier name for user from eager-loaded tier object.
+
+        The tier is now eager-loaded in get_current_user via joinedload,
+        eliminating the need for DB queries in middleware.
 
         Args:
-            user: User object or dict
+            user: User object or dict with tier included
 
-        Returns
-        -------
+        Returns:
             Tier name or None
         """
-        # Try to get tier from user object/dict directly
+        # Try to get tier from user object/dict directly (eager-loaded)
         if isinstance(user, dict):
             tier = user.get("tier")
             if tier:
                 return tier.get("name") if isinstance(tier, dict) else tier
-            tier_id = user.get("tier_id")
         else:
             tier = getattr(user, "tier", None)
             if tier:
                 return getattr(tier, "name", None)
-            tier_id = getattr(user, "tier_id", None)
 
-        if not tier_id:
-            return None
-
-        # Look up tier name from cache or DB
-        from src.app.core.utils.cache import client as redis_client
-
-        if redis_client:
-            try:
-                cache_key = f"tier:name:{tier_id}"
-                cached = await redis_client.get(cache_key)
-                if cached:
-                    return cached.decode()
-
-                # Cache miss - query DB
-                from sqlalchemy import select
-
-                from src.app.core.db.database import local_session
-                from src.app.modules.tiers.models import Tier
-
-                async with local_session() as session:
-                    result = await session.execute(select(Tier.name).where(Tier.id == tier_id))
-                    tier_name = result.scalar_one_or_none()
-
-                    if tier_name:
-                        await redis_client.setex(cache_key, 3600, tier_name)
-
-                    return tier_name
-            except Exception as e:
-                logger.warning("Tier lookup failed: %s", e)
-
+        # No tier loaded - return None (will use default rate limit)
         return None
 
     # Trusted proxy IPs - configure based on your infrastructure

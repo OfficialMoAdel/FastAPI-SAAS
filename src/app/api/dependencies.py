@@ -23,14 +23,20 @@ logger = get_logger(__name__)
 async def get_current_user(
     token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, Any]:
+    """Get current authenticated user with tier eager-loaded.
+
+    Uses joinedload to fetch user and tier in single query,
+    eliminating N+1 queries in rate limit middleware.
+    """
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
         raise UnauthorizedException("User not authenticated.")
 
+    # Use eager loading to get user with tier in single query
     if "@" in token_data.username_or_email:
-        user = await crud_users.get(db=db, email=token_data.username_or_email, is_deleted=False)
+        user = await crud_users.get_user_with_tier_eager(db=db, email=token_data.username_or_email)
     else:
-        user = await crud_users.get(db=db, username=token_data.username_or_email, is_deleted=False)
+        user = await crud_users.get_user_with_tier_eager(db=db, username=token_data.username_or_email)
 
     if user:
         return user

@@ -276,6 +276,11 @@ class AISettings(BaseSettings):
     OLLAMA_TIMEOUT: float = 120.0
     OLLAMA_DEFAULT_MODEL: str = "gemma3"
 
+    # HTTP Client Connection Limits (prevents resource exhaustion under load)
+    OLLAMA_MAX_CONNECTIONS: int = 100  # Total concurrent connections to Ollama
+    OLLAMA_MAX_KEEPALIVE: int = 20  # Idle connections kept alive for reuse
+    OLLAMA_KEEPALIVE_EXPIRY: float = 30.0  # Seconds before idle connection closes
+
 
 class Settings(
     AppSettings,

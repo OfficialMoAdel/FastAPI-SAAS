@@ -4,6 +4,7 @@ Business logic for Stripe integration, subscription management,
 products, pricing, and billing records.
 """
 
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -366,7 +367,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             api_key = settings.STRIPE_SECRET_KEY
             if api_key:
                 try:
-                    stripe.Subscription.modify(
+                    # Wrap sync Stripe call in thread to avoid blocking event loop
+                    await asyncio.to_thread(
+                        stripe.Subscription.modify,
                         stripe_subscription_id,
                         api_key=api_key,
                         cancel_at_period_end=True,
@@ -511,7 +514,8 @@ class CheckoutService:
             else:
                 session_params["customer_email"] = user_email
 
-            session = stripe.checkout.Session.create(**session_params)
+            # Wrap sync Stripe call in thread to avoid blocking event loop
+            session = await asyncio.to_thread(stripe.checkout.Session.create, **session_params)
 
             return CheckoutSession(
                 checkout_url=session.url,
@@ -546,7 +550,10 @@ class CheckoutService:
         customer_id = stripe_settings["stripe_customer_id"]
 
         try:
-            session = stripe.billing_portal.Session.create(api_key=api_key, customer=customer_id, return_url=return_url)
+            # Wrap sync Stripe call in thread to avoid blocking event loop
+            session = await asyncio.to_thread(
+                stripe.billing_portal.Session.create, api_key=api_key, customer=customer_id, return_url=return_url
+            )
             return session.url
         except stripe.error.StripeError as e:
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")

@@ -14,6 +14,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ..config import settings
 from ..db.crud_token_blacklist import crud_token_blacklist
 from ..schemas import TokenBlacklistCreate, TokenData
+from .token_blacklist_cache import (
+    add_token_to_blacklist,
+    add_tokens_to_blacklist,
+    is_token_blacklisted,
+)
 
 SECRET_KEY: SecretStr = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
@@ -99,9 +104,16 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     TokenData | None
         TokenData instance if the token is valid, None otherwise.
     """
-    is_blacklisted = await crud_token_blacklist.exists(db, token=token)
-    if is_blacklisted:
+    # Check Redis cache first (O(1) lookup)
+    cache_result = await is_token_blacklisted(token)
+    if cache_result is True:
         return None
+    elif cache_result is None:
+        # Redis unavailable, fall back to DB check
+        is_blacklisted = await crud_token_blacklist.exists(db, token=token)
+        if is_blacklisted:
+            return None
+    # cache_result is False means not in cache, proceed with token validation
 
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
@@ -124,6 +136,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
     """Blacklist both access and refresh tokens.
 
     Validates token signature before blacklisting to prevent database pollution.
+    Adds tokens to both Redis cache (for fast lookup) and database (for persistence).
 
     Parameters
     ----------
@@ -134,6 +147,8 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
     db: AsyncSession
         Database session for performing database operations.
     """
+    tokens_for_cache: list[tuple[str, datetime]] = []
+
     for token in [access_token, refresh_token]:
         try:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
@@ -141,17 +156,27 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
             if exp_timestamp is not None:
                 expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
+                tokens_for_cache.append((token, expires_at))
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
 
+    # Bulk add to Redis cache
+    if tokens_for_cache:
+        await add_tokens_to_blacklist(tokens_for_cache)
+
 
 async def blacklist_token(token: str, db: AsyncSession) -> None:
-    """Blacklist a single token after validating its signature."""
+    """Blacklist a single token after validating its signature.
+
+    Adds token to both Redis cache (for fast lookup) and database (for persistence).
+    """
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
+            # Add to Redis cache
+            await add_token_to_blacklist(token, expires_at)
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)

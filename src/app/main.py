@@ -17,6 +17,27 @@ from .middleware.tenant import TenantMiddleware
 admin = create_admin_interface()
 
 
+async def _warm_token_blacklist_cache() -> None:
+    """Warm the token blacklist Redis cache from database on startup."""
+    import logging
+
+    from .core.db.crud_token_blacklist import crud_token_blacklist
+    from .core.db.database import async_session_maker
+    from .core.security.token_blacklist_cache import warm_cache_from_db
+
+    logger = logging.getLogger(__name__)
+
+    try:
+        async with async_session_maker() as db:
+            # Get all non-expired blacklisted tokens
+            tokens = await crud_token_blacklist.get_active_tokens(db)
+            if tokens:
+                count = await warm_cache_from_db(tokens)
+                logger.info(f"Token blacklist cache warmed with {count} tokens")
+    except Exception as e:
+        logger.warning(f"Failed to warm token blacklist cache: {e}")
+
+
 @asynccontextmanager
 async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     """Custom lifespan that includes admin initialization and pool metrics."""
@@ -53,6 +74,9 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
         if redis_client:
             session_manager.set_redis_client(redis_client)
+
+        # Warm token blacklist cache from database
+        await _warm_token_blacklist_cache()
 
         # Initialize admin interface if it exists
         if admin:
