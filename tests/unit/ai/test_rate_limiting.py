@@ -1,11 +1,16 @@
 """Unit tests for AI rate limiting middleware.
 
 Tests T086: Unit test for rate limiting middleware in tests/unit/ai/test_rate_limiting.py
+
+PERF-R1: Updated to mock Lua script execution (evalsha/script_load) since
+AIRateLimiter now uses atomic Lua scripts by default, with fallback to
+multi-call approach only on script failure.
 """
 
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from redis.exceptions import ResponseError
 
 
 class TestAIRateLimiter:
@@ -13,13 +18,25 @@ class TestAIRateLimiter:
 
     @pytest.fixture
     def mock_redis(self):
-        """Create a mock Redis client."""
+        """Create a mock Redis client with Lua script support.
+
+        The AIRateLimiter uses Lua scripts for atomic operations.
+        We mock evalsha to return [count, ttl] as the script does.
+        """
         redis = AsyncMock()
+        # Standard Redis commands (used in fallback and other methods)
         redis.get = AsyncMock(return_value=None)
         redis.set = AsyncMock(return_value=True)
         redis.incr = AsyncMock(return_value=1)
         redis.expire = AsyncMock(return_value=True)
         redis.ttl = AsyncMock(return_value=60)
+        redis.delete = AsyncMock(return_value=1)
+
+        # Lua script support - AIRateLimiter uses evalsha for atomic ops
+        redis.script_load = AsyncMock(return_value="fake_sha")
+        # Default: first request (count=1, ttl=60)
+        redis.evalsha = AsyncMock(return_value=[1, 60])
+
         return redis
 
     @pytest.mark.asyncio
@@ -27,8 +44,8 @@ class TestAIRateLimiter:
         """Test that first request is always allowed."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 1  # First request
-        mock_redis.ttl.return_value = -2  # No TTL set yet
+        # Lua script returns [count=1, ttl=60] for first request
+        mock_redis.evalsha.return_value = [1, 60]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -41,8 +58,8 @@ class TestAIRateLimiter:
         """Test that requests within limit are allowed."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 30  # 30th request
-        mock_redis.ttl.return_value = 30  # 30 seconds left
+        # Lua script returns [count=30, ttl=30] for 30th request
+        mock_redis.evalsha.return_value = [30, 30]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -55,8 +72,8 @@ class TestAIRateLimiter:
         """Test that request at limit is still allowed."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 60  # Exactly at limit
-        mock_redis.ttl.return_value = 45
+        # Lua script returns [count=60, ttl=45] - exactly at limit
+        mock_redis.evalsha.return_value = [60, 45]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -69,8 +86,8 @@ class TestAIRateLimiter:
         """Test that requests exceeding limit are blocked."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 61  # Over limit
-        mock_redis.ttl.return_value = 45  # 45 seconds until reset
+        # Lua script returns [count=61, ttl=45] - over limit
+        mock_redis.evalsha.return_value = [61, 45]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -84,43 +101,47 @@ class TestAIRateLimiter:
         """Test that rate limit key includes user_id."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 1
-        mock_redis.ttl.return_value = -2
+        mock_redis.evalsha.return_value = [1, 60]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         await limiter.check_rate_limit(user_id=123)
 
-        # Check that incr was called with key containing user_id
-        call_args = mock_redis.incr.call_args
-        key = call_args[0][0] if call_args[0] else call_args.kwargs.get("key", "")
+        # Check that evalsha was called with key containing user_id
+        call_args = mock_redis.evalsha.call_args
+        # evalsha(sha, num_keys, key, window) - key is at index 2
+        key = call_args[0][2] if len(call_args[0]) > 2 else ""
         assert "123" in key or "ai:rate_limit" in key
 
     @pytest.mark.asyncio
     async def test_window_expiry_set_on_first_request(self, mock_redis):
-        """Test that expiry is set on first request."""
+        """Test that expiry is set on first request via Lua script.
+
+        The Lua script handles expiry atomically - if TTL < 0, it sets EXPIRE.
+        We verify the script was called (which handles expiry internally).
+        """
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 1
-        mock_redis.ttl.return_value = -2  # No TTL means first request
+        # Script returns TTL that was just set
+        mock_redis.evalsha.return_value = [1, 60]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         await limiter.check_rate_limit(user_id=1)
 
-        # expire should be called for first request
-        mock_redis.expire.assert_called_once()
+        # evalsha should be called (Lua script handles expire internally)
+        mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_window_expiry_not_reset_on_subsequent_requests(self, mock_redis):
         """Test that expiry is not reset on subsequent requests."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 10  # Not first request
-        mock_redis.ttl.return_value = 45  # TTL already set
+        # Script returns existing TTL (45 seconds remaining)
+        mock_redis.evalsha.return_value = [10, 45]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         await limiter.check_rate_limit(user_id=1)
 
-        # expire should NOT be called when TTL already exists
+        # expire should NOT be called directly (Lua script handles it)
         mock_redis.expire.assert_not_called()
 
     @pytest.mark.asyncio
@@ -129,13 +150,12 @@ class TestAIRateLimiter:
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
         call_count = 0
-        def incr_side_effect(key):
+        def evalsha_side_effect(*args):
             nonlocal call_count
             call_count += 1
-            return call_count
+            return [call_count, 60]
 
-        mock_redis.incr = AsyncMock(side_effect=incr_side_effect)
-        mock_redis.ttl.return_value = -2
+        mock_redis.evalsha = AsyncMock(side_effect=evalsha_side_effect)
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
 
@@ -145,15 +165,15 @@ class TestAIRateLimiter:
         await limiter.check_rate_limit(user_id=2)
 
         # Should have been called twice with different keys
-        assert mock_redis.incr.call_count == 2
+        assert mock_redis.evalsha.call_count == 2
 
     @pytest.mark.asyncio
     async def test_retry_after_header_value(self, mock_redis):
         """Test that retry_after is calculated correctly."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 61
-        mock_redis.ttl.return_value = 30  # 30 seconds remaining
+        # Over limit, 30 seconds remaining in window
+        mock_redis.evalsha.return_value = [61, 30]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -166,8 +186,8 @@ class TestAIRateLimiter:
         """Test default retry_after when TTL is not available."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 61
-        mock_redis.ttl.return_value = -1  # Key exists but no TTL
+        # Over limit, TTL is -1 (key exists but no TTL - edge case)
+        mock_redis.evalsha.return_value = [61, -1]
 
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
@@ -180,8 +200,8 @@ class TestAIRateLimiter:
         """Test custom rate limit configuration."""
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
-        mock_redis.incr.return_value = 101
-        mock_redis.ttl.return_value = 30
+        # 101st request with custom 100 request limit
+        mock_redis.evalsha.return_value = [101, 30]
 
         # Custom: 100 requests per 120 seconds
         limiter = AIRateLimiter(redis_client=mock_redis, max_requests=100, window_seconds=120)
@@ -189,6 +209,24 @@ class TestAIRateLimiter:
 
         assert is_allowed is False
         assert remaining == 0
+
+    @pytest.mark.asyncio
+    async def test_fallback_on_script_error(self, mock_redis):
+        """Test fallback to multi-call approach when Lua script fails."""
+        from src.app.modules.ai.rate_limiter import AIRateLimiter
+
+        # First call fails with ResponseError, triggering fallback
+        mock_redis.evalsha.side_effect = ResponseError("NOSCRIPT")
+        mock_redis.incr.return_value = 5
+        mock_redis.ttl.return_value = 45
+
+        limiter = AIRateLimiter(redis_client=mock_redis, max_requests=60, window_seconds=60)
+        is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=1)
+
+        # Fallback should work
+        assert is_allowed is True
+        assert remaining == 55  # 60 - 5
+        mock_redis.incr.assert_called_once()
 
 
 class TestRateLimitMiddleware:
