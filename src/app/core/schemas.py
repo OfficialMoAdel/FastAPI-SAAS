@@ -67,6 +67,7 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username_or_email: str
+    tier_id: int | None = None  # For Zero-DB rate limiting
 
 
 class TokenBlacklistBase(BaseModel):

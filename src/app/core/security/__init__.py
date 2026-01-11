@@ -123,11 +123,12 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     try:
         username_or_email: str | None = payload.get("sub")
         token_type: str | None = payload.get("token_type")
+        tier_id: int | None = payload.get("tier_id")
 
         if username_or_email is None or token_type != expected_token_type:
             return None
 
-        return TokenData(username_or_email=username_or_email)
+        return TokenData(username_or_email=username_or_email, tier_id=tier_id)
     except Exception:
         return None
 

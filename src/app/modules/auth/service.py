@@ -142,10 +142,13 @@ class AuthService:
         # Clear failed attempts on success
         await redis.delete(login_attempts_key)
 
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = await create_access_token(data={"sub": user["username"]}, expires_delta=access_token_expires)
+        # Include tier_id in JWT claims for Zero-DB rate limiting
+        token_data = {"sub": user["username"], "tier_id": user.get("tier_id")}
 
-        refresh_token = await create_refresh_token(data={"sub": user["username"]})
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token = await create_access_token(data=token_data, expires_delta=access_token_expires)
+
+        refresh_token = await create_refresh_token(data=token_data)
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
         # Cookie security settings based on environment
@@ -181,9 +184,18 @@ class AuthService:
         # Blacklist the used refresh token (Rotation)
         await blacklist_token(token=refresh_token, db=db)
 
+        # Fetch user to get tier_id for Zero-DB rate limiting
+        if "@" in user_data.username_or_email:
+            db_user = await crud_users.get(db=db, email=user_data.username_or_email, is_deleted=False)
+        else:
+            db_user = await crud_users.get(db=db, username=user_data.username_or_email, is_deleted=False)
+
+        tier_id = db_user.get("tier_id") if db_user else None
+        token_data = {"sub": user_data.username_or_email, "tier_id": tier_id}
+
         # Create new tokens
-        new_access_token = await create_access_token(data={"sub": user_data.username_or_email})
-        new_refresh_token = await create_refresh_token(data={"sub": user_data.username_or_email})
+        new_access_token = await create_access_token(data=token_data)
+        new_refresh_token = await create_refresh_token(data=token_data)
 
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
