@@ -4,9 +4,16 @@ T087: Create rate limiting infrastructure in src/app/modules/ai/rate_limiter.py
 
 Provides Redis-based rate limiting for AI endpoints with configurable limits.
 Default: 60 requests per user per minute.
+
+Optimized with Lua script for atomic single-call rate limit checks.
 """
 
+import logging
+
 from redis.asyncio import Redis
+from redis.exceptions import NoScriptError, ResponseError
+
+logger = logging.getLogger(__name__)
 
 
 class RateLimitError(Exception):
@@ -24,12 +31,28 @@ class AIRateLimiter:
     Implements sliding window rate limiting using Redis INCR with expiration.
     Each user has their own rate limit bucket.
 
+    Optimized with Lua script for atomic INCR + TTL + EXPIRE in single call.
+
     Args:
         redis_client: Redis async client instance
         max_requests: Maximum requests allowed per window (default: 60)
         window_seconds: Time window in seconds (default: 60)
         key_prefix: Redis key prefix (default: "ai:rate_limit")
     """
+
+    # Lua script for atomic rate limit check (INCR + TTL + conditional EXPIRE)
+    # Returns [count, ttl] - eliminates race condition between INCR and TTL
+    _RATE_LIMIT_SCRIPT = """
+    local count = redis.call('INCR', KEYS[1])
+    local ttl = redis.call('TTL', KEYS[1])
+    if ttl < 0 then
+        redis.call('EXPIRE', KEYS[1], ARGV[1])
+        ttl = tonumber(ARGV[1])
+    end
+    return {count, ttl}
+    """
+
+    _script_sha: str | None = None
 
     def __init__(
         self,
@@ -47,8 +70,36 @@ class AIRateLimiter:
         """Generate Redis key for user's rate limit bucket."""
         return f"{self.key_prefix}:{user_id}"
 
+    async def _get_script_sha(self) -> str:
+        """Get or load the Lua script SHA for EVALSHA."""
+        if AIRateLimiter._script_sha is None:
+            AIRateLimiter._script_sha = await self.redis.script_load(self._RATE_LIMIT_SCRIPT)
+        return AIRateLimiter._script_sha
+
+    async def _execute_rate_limit_script(self, key: str, window: int) -> tuple[int, int]:
+        """Execute rate limit Lua script atomically.
+
+        Args:
+            key: Redis key for rate limit bucket
+            window: Window size in seconds
+
+        Returns:
+            Tuple of (count, ttl)
+        """
+        sha = await self._get_script_sha()
+        try:
+            result = await self.redis.evalsha(sha, 1, key, window)
+            return (int(result[0]), int(result[1]))
+        except NoScriptError:
+            # Script was flushed from Redis, reload and retry
+            AIRateLimiter._script_sha = None
+            return await self._execute_rate_limit_script(key, window)
+
     async def check_rate_limit(self, user_id: int) -> tuple[bool, int, int]:
         """Check if request is within rate limit.
+
+        Uses atomic Lua script for single Redis call (INCR + TTL + EXPIRE).
+        Falls back to multi-call approach on script failure.
 
         Args:
             user_id: The user making the request
@@ -61,20 +112,13 @@ class AIRateLimiter:
         """
         key = self._get_key(user_id)
 
-        # Increment counter atomically
-        current_count = await self.redis.incr(key)
-
-        # Check TTL to determine if this is a new window
-        ttl = await self.redis.ttl(key)
-
-        if ttl == -2:
-            # Key doesn't exist (shouldn't happen after incr, but handle edge case)
-            await self.redis.expire(key, self.window_seconds)
-            ttl = self.window_seconds
-        elif ttl == -1:
-            # Key exists but has no expiry (first request in window)
-            await self.redis.expire(key, self.window_seconds)
-            ttl = self.window_seconds
+        try:
+            # Atomic single-call rate limit check
+            current_count, ttl = await self._execute_rate_limit_script(key, self.window_seconds)
+        except ResponseError as e:
+            # Fallback to original multi-call approach on script failure
+            logger.warning(f"Lua script failed, using fallback: {e}")
+            current_count, ttl = await self._fallback_check(key)
 
         # Calculate remaining requests
         remaining = max(0, self.max_requests - current_count)
@@ -86,6 +130,20 @@ class AIRateLimiter:
         retry_after = ttl if ttl > 0 else self.window_seconds
 
         return is_allowed, remaining, retry_after
+
+    async def _fallback_check(self, key: str) -> tuple[int, int]:
+        """Fallback rate limit check using multiple Redis calls.
+
+        Used when Lua script execution fails.
+        """
+        current_count = await self.redis.incr(key)
+        ttl = await self.redis.ttl(key)
+
+        if ttl < 0:
+            await self.redis.expire(key, self.window_seconds)
+            ttl = self.window_seconds
+
+        return current_count, ttl
 
     async def get_current_usage(self, user_id: int) -> tuple[int, int]:
         """Get current usage without incrementing counter.

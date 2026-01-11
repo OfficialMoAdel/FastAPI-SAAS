@@ -280,6 +280,8 @@ class UserService(BaseService[User]):
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:
         """Get user with their tier's rate limits.
 
+        Optimized to use eager loading - fetches User + Tier in single query.
+
         Parameters
         ----------
         username : str
@@ -293,25 +295,38 @@ class UserService(BaseService[User]):
         Raises
         ------
         ModelNotFoundError
-            If user or tier not found
+            If user not found
         """
-        # Use service registry for cross-module decoupling
-        from ...core.service_registry import get_service
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
 
-        db_user = await self.crud.get(db=self.db, username=username)
+        from ...core.service_registry import get_service
+        from .models import User
+
+        # Eager load User + Tier in single query (was 2 separate queries)
+        stmt = (
+            select(User)
+            .options(joinedload(User.tier))
+            .where(
+                User.username == username,
+                User.is_deleted.is_(False),
+            )
+        )
+        result = await self.db.execute(stmt)
+        db_user = result.unique().scalar_one_or_none()
+
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
         user_dict = {c.name: getattr(db_user, c.name) for c in db_user.__table__.columns}
-        if db_user.tier_id is None:
+
+        if db_user.tier_id is None or db_user.tier is None:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        tier_svc = get_service("tier", self.db)
+        # Tier already loaded via joinedload - no separate query needed
         rate_limit_svc = get_service("rate_limit", self.db)
-
-        db_tier = await tier_svc.get_tier_by_id(db_user.tier_id)
-        rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_tier["id"])
+        rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_user.tier.id)
 
         user_dict["tier_rate_limits"] = rate_limits_response["data"]
         return user_dict
