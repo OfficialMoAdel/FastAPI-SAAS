@@ -174,7 +174,7 @@ def audit_action(action: str, entity_type: str) -> Callable:
     Example:
         @audit_action("post.created", "post")
         async def create_post(db: AsyncSession, tenant_id: UUID, data: PostCreate):
-            post = Post(**data.dict(), tenant_id=tenant_id)
+            post = Post(**data.model_dump(), tenant_id=tenant_id)
             db.add(post)
             await db.commit()
             return post
@@ -195,6 +195,7 @@ def audit_action(action: str, entity_type: str) -> Callable:
             if not tenant_id:
                 try:
                     from ...core.tenancy.context import get_tenant_context
+
                     tenant = get_tenant_context()
                     if tenant:
                         tenant_id = tenant.id

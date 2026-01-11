@@ -54,10 +54,13 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         if not user:
             return None
 
-        # Manually construct dict to avoid recursion issues with Pydantic models vs SQLAlchemy objects
-        user_dict = {c.key: getattr(user, c.key) for c in User.__table__.columns}
+        # Use Pydantic V2 model_dump with from_attributes for ORM serialization
+        from ..tiers.schemas import TierRead
+        from .schemas import UserRead
+
+        user_dict = UserRead.model_validate(user, from_attributes=True).model_dump()
         if user.tier:
-            user_dict["tier"] = {c.key: getattr(user.tier, c.key) for c in user.tier.__table__.columns}
+            user_dict["tier"] = TierRead.model_validate(user.tier, from_attributes=True).model_dump()
         else:
             user_dict["tier"] = None
 

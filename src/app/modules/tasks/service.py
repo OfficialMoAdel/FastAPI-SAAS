@@ -64,7 +64,8 @@ class TaskService:
         if job_info is None:
             return None
 
-        return job_info.__dict__
+        # Convert ARQ JobResult to dict using vars() for cleaner serialization
+        return vars(job_info)
 
 
 # Singleton instance for import convenience

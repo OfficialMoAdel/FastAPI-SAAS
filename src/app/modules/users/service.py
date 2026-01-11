@@ -318,7 +318,10 @@ class UserService(BaseService[User]):
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        user_dict = {c.name: getattr(db_user, c.name) for c in db_user.__table__.columns}
+        # Use Pydantic V2 model_dump with from_attributes for ORM serialization
+        from .schemas import UserRead
+
+        user_dict = UserRead.model_validate(db_user, from_attributes=True).model_dump()
 
         if db_user.tier_id is None or db_user.tier is None:
             user_dict["tier_rate_limits"] = []
