@@ -68,7 +68,7 @@ class AuditLogService:
 
         self.db.add(log_entry)
         await self.db.commit()
-        await self.db.refresh(log_entry)
+        # Note: refresh() removed - caller discards return value, no server-generated fields needed
 
         logger.info(
             "audit_log_created",
