@@ -132,7 +132,7 @@ class UserService(BaseService[User]):
         user_internal = UserCreateInternal(**user_dict)
         return await self.crud.create(db=self.db, object=user_internal)
 
-    async def get_by_username(self, username: str) -> User:
+    async def get_by_username(self, username: str) -> User | dict[str, Any]:
         """Get a user by username with Redis caching.
 
         Parameters
@@ -142,28 +142,28 @@ class UserService(BaseService[User]):
 
         Returns
         -------
-        User
-            User instance
+        User | dict[str, Any]
+            User instance or cached dict
 
         Raises
         ------
         ModelNotFoundError
             If user not found
         """
-        # Try cache first
+        # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_username_cache_key(username))
         if cached:
             logger.debug(f"Cache hit for username {username}")
+            return cached
 
         db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        if not cached:
-            await self._cache_user(db_user)
+        await self._cache_user(db_user)
         return db_user
 
-    async def get(self, user_id: Any) -> User | None:
+    async def get(self, user_id: Any) -> User | dict[str, Any] | None:
         """Get a user by ID with Redis caching.
 
         Parameters
@@ -173,22 +173,21 @@ class UserService(BaseService[User]):
 
         Returns
         -------
-        User | None
-            User instance or None if not found
+        User | dict[str, Any] | None
+            User instance, cached dict, or None if not found
         """
-        # Try cache first
+        # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_cache_key(user_id))
         if cached:
             logger.debug(f"Cache hit for user {user_id}")
-            # Return cached dict - caller can use it directly
-            return await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+            return cached
 
         user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if user:
             await self._cache_user(user)
         return user
 
-    async def get_by_email(self, email: str) -> User | None:
+    async def get_by_email(self, email: str) -> User | dict[str, Any] | None:
         """Get a user by email address with Redis caching.
 
         Parameters
@@ -198,14 +197,14 @@ class UserService(BaseService[User]):
 
         Returns
         -------
-        User | None
-            User instance or None if not found
+        User | dict[str, Any] | None
+            User instance, cached dict, or None if not found
         """
-        # Try cache first
+        # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_email_cache_key(email))
         if cached:
             logger.debug(f"Cache hit for user email {email}")
-            return await self.crud.get(db=self.db, email=email, is_deleted=False)
+            return cached
 
         user = await self.crud.get(db=self.db, email=email, is_deleted=False)
         if user:
