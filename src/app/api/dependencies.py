@@ -19,22 +19,56 @@ logger = get_logger(__name__)
 
 
 async def get_current_user(
-    token: Annotated[str, Depends(oauth2_scheme)], db: Annotated[AsyncSession, Depends(async_get_db)]
+    request: Request,
+    token: Annotated[str, Depends(oauth2_scheme)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict[str, Any]:
     """Get current authenticated user with tier eager-loaded.
 
     Uses joinedload to fetch user and tier in single query,
     eliminating N+1 queries in rate limit middleware.
+
+    Optimized to reuse JWT payload if already decoded by RateLimitMiddleware,
+    avoiding duplicate cryptographic operations.
     """
-    token_data = await verify_token(token, TokenType.ACCESS, db)
-    if token_data is None:
-        raise UnauthorizedException("User not authenticated.")
+    # Check if JWT was already decoded by RateLimitMiddleware
+    cached_payload = getattr(request.state, "jwt_payload", None)
+
+    if cached_payload:
+        # Reuse cached payload - still need to verify token isn't blacklisted
+        from ..core.db.crud_token_blacklist import crud_token_blacklist
+        from ..core.security.token_blacklist_cache import is_token_blacklisted
+
+        # Check Redis cache first (O(1) lookup)
+        cache_result = await is_token_blacklisted(token)
+        if cache_result is True:
+            raise UnauthorizedException("User not authenticated.")
+        elif cache_result is None:
+            # Redis unavailable, fall back to DB check
+            is_blacklisted = await crud_token_blacklist.exists(db, token=token)
+            if is_blacklisted:
+                raise UnauthorizedException("User not authenticated.")
+
+        # Validate token type
+        token_type = cached_payload.get("token_type")
+        if token_type != TokenType.ACCESS:
+            raise UnauthorizedException("User not authenticated.")
+
+        username_or_email = cached_payload.get("sub")
+        if not username_or_email:
+            raise UnauthorizedException("User not authenticated.")
+    else:
+        # No cached payload - do full verification
+        token_data = await verify_token(token, TokenType.ACCESS, db)
+        if token_data is None:
+            raise UnauthorizedException("User not authenticated.")
+        username_or_email = token_data.username_or_email
 
     # Use eager loading to get user with tier in single query
-    if "@" in token_data.username_or_email:
-        user = await crud_users.get_user_with_tier_eager(db=db, email=token_data.username_or_email)
+    if "@" in username_or_email:
+        user = await crud_users.get_user_with_tier_eager(db=db, email=username_or_email)
     else:
-        user = await crud_users.get_user_with_tier_eager(db=db, username=token_data.username_or_email)
+        user = await crud_users.get_user_with_tier_eager(db=db, username=username_or_email)
 
     if user:
         return user

@@ -87,35 +87,45 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             user_id = getattr(user, "id", None) or user.get("id") if isinstance(user, dict) else None
             tier_name = await self._get_user_tier_name(user)
 
-        # 2. If no user in state, decode JWT directly to get tier info
-        # This fixes the issue where RateLimitMiddleware runs before Auth dependency
+        # 2. If no user in state, check for cached JWT payload first, then decode if needed
+        # This eliminates double JWT decode when auth dependency runs later
         if not user_id:
-            auth_header = request.headers.get("Authorization")
-            if auth_header and auth_header.startswith("Bearer "):
-                try:
-                    import jwt
+            # Check if JWT was already decoded and cached in request state
+            cached_payload = getattr(request.state, "jwt_payload", None)
+            if cached_payload:
+                user_id = cached_payload.get("sub")
+                tier_name = cached_payload.get("tier_name")
+            else:
+                # Decode JWT and cache for later use by auth dependency
+                auth_header = request.headers.get("Authorization")
+                if auth_header and auth_header.startswith("Bearer "):
+                    try:
+                        import jwt
 
-                    token = auth_header.split(" ")[1]
-                    # Decode and verify JWT to extract user and tier info
-                    # Signature verification is important to prevent tier spoofing
-                    key = settings.SECRET_KEY.get_secret_value()
-                    algorithm = settings.ALGORITHM
-                    if algorithm == "RS256" and settings.JWT_PUBLIC_KEY:
-                        key = settings.JWT_PUBLIC_KEY
+                        token = auth_header.split(" ")[1]
+                        # Decode and verify JWT to extract user and tier info
+                        # Signature verification is important to prevent tier spoofing
+                        key = settings.SECRET_KEY.get_secret_value()
+                        algorithm = settings.ALGORITHM
+                        if algorithm == "RS256" and settings.JWT_PUBLIC_KEY:
+                            key = settings.JWT_PUBLIC_KEY
 
-                    payload = jwt.decode(
-                        token,
-                        key,
-                        algorithms=[algorithm],
-                        audience="fastapi-saas-api",
-                    )
+                        payload = jwt.decode(
+                            token,
+                            key,
+                            algorithms=[algorithm],
+                            audience="fastapi-saas-api",
+                        )
 
-                    user_id = payload.get("sub")
-                    # Use tier_name from JWT claim (added during login)
-                    tier_name = payload.get("tier_name")
+                        # Cache payload in request state for auth dependency to reuse
+                        request.state.jwt_payload = payload
 
-                except Exception as e:
-                    logger.debug(f"Rate limit JWT decode failed: {e}")
+                        user_id = payload.get("sub")
+                        # Use tier_name from JWT claim (added during login)
+                        tier_name = payload.get("tier_name")
+
+                    except Exception as e:
+                        logger.debug(f"Rate limit JWT decode failed: {e}")
 
         if user_id:
             # Authenticated user - use tier-based limits
