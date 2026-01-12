@@ -1,7 +1,6 @@
 from typing import Any
 
-import httpx
-
+from src.app.modules.sso.http_client import sso_http_get, sso_http_post
 from src.app.modules.sso.providers.base import BaseOAuthProvider
 
 
@@ -97,17 +96,11 @@ class GitHubProvider(BaseOAuthProvider):
 
         return UserInfo(data)
 
-    # Helper methods for mocking in tests
-    async def _http_post(self, url: str, data: dict[str, Any], headers: dict[str, str] = None) -> dict[str, Any]:
-        """Wrapper for HTTP POST to allow easy mocking."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, data=data, headers=headers)
-            response.raise_for_status()
-            return response.json()
+    # Helper methods using shared HTTP client for connection pooling
+    async def _http_post(self, url: str, data: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
+        """Wrapper for HTTP POST using shared client."""
+        return await sso_http_post(url, data=data, headers=headers)
 
-    async def _http_get(self, url: str, headers: dict[str, str] = None) -> dict[str, Any]:
-        """Wrapper for HTTP GET to allow easy mocking."""
-        async with httpx.AsyncClient() as client:
-            response = await client.get(url, headers=headers)
-            response.raise_for_status()
-            return response.json()
+    async def _http_get(self, url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
+        """Wrapper for HTTP GET using shared client."""
+        return await sso_http_get(url, headers=headers)

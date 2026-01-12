@@ -13,9 +13,9 @@ import urllib.parse
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-import httpx
 import jwt
 
+from src.app.modules.sso.http_client import sso_http_post
 from src.app.modules.sso.providers.base import BaseOAuthProvider
 
 
@@ -233,10 +233,7 @@ class AppleProvider(BaseOAuthProvider):
         except jwt.DecodeError as e:
             raise ValueError(f"Invalid id_token: {e}")
 
-    # HTTP helper methods for mocking in tests
+    # HTTP helper methods using shared HTTP client for connection pooling
     async def _http_post(self, url: str, data: dict[str, Any], headers: dict[str, str] | None = None) -> dict[str, Any]:
-        """Wrapper for HTTP POST to allow easy mocking."""
-        async with httpx.AsyncClient() as client:
-            response = await client.post(url, data=data, headers=headers)
-            response.raise_for_status()
-            return response.json()
+        """Wrapper for HTTP POST using shared client."""
+        return await sso_http_post(url, data=data, headers=headers)

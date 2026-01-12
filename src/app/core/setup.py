@@ -160,6 +160,11 @@ def lifespan_factory(
             if isinstance(settings, RedisRateLimiterSettings):
                 await close_redis_rate_limit_pool()
 
+            # Close SSO HTTP client pool
+            from src.app.modules.sso.http_client import close_sso_http_client
+
+            await close_sso_http_client()
+
     return lifespan
 
 
