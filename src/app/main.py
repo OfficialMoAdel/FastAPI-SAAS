@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
+from fastapi.responses import ORJSONResponse
 
 from .admin.initialize import create_admin_interface
 from .api import router
@@ -86,7 +87,12 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         yield
 
 
-app = create_application(router=router, settings=settings, lifespan=lifespan_with_admin)
+app = create_application(
+    router=router,
+    settings=settings,
+    lifespan=lifespan_with_admin,
+    default_response_class=ORJSONResponse,
+)
 
 # Add tenant middleware for multi-tenancy support
 app.add_middleware(TenantMiddleware)

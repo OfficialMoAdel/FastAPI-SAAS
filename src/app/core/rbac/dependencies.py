@@ -6,7 +6,7 @@ Uses Redis caching for performance.
 """
 
 import json
-from collections.abc import Callable
+from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from fastapi import Depends, HTTPException, status
@@ -179,7 +179,7 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> Non
 # Private helpers
 
 
-async def _get_db() -> AsyncSession:
+async def _get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
     from ...core.db.database import async_get_db
 

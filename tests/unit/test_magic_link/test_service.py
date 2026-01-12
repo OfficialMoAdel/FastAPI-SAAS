@@ -69,13 +69,16 @@ class TestMagicLinkService:
 
     @pytest.fixture
     def mock_user(self):
-        """Create a mock user for testing."""
-        user = Mock()
-        user.id = 1
-        user.email = "test@example.com"
-        user.is_active = True
-        user.is_deleted = False
-        return user
+        """Create a mock user dict for testing."""
+        return {
+            "id": 1,
+            "email": "test@example.com",
+            "username": "testuser",
+            "is_active": True,
+            "is_deleted": False,
+            "tier_id": 1,
+            "tier": {"name": "basic"},
+        }
 
     def test_magic_link_service_exists(self):
         """Verify MagicLinkService can be imported."""

@@ -256,9 +256,7 @@ async def chat_completion_stream(
 
     async def generate():
         try:
-            async for chunk in service.complete_stream(
-                session_id, current_user["id"], request
-            ):
+            async for chunk in service.complete_stream(session_id, current_user["id"], request):
                 yield f"data: {json.dumps(chunk)}\n\n"
         except ChatCompletionError as e:
             error = {

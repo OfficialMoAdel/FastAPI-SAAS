@@ -90,7 +90,7 @@ class AIRateLimiter:
         try:
             result = await self.redis.evalsha(sha, 1, key, window)
             # Handle both real Redis (returns list) and FakeRedis (may return int)
-            if isinstance(result, (list, tuple)) and len(result) >= 2:
+            if isinstance(result, list | tuple) and len(result) >= 2:
                 return (int(result[0]), int(result[1]))
             # FakeRedis doesn't execute Lua properly - fallback
             raise ResponseError("FakeRedis Lua fallback")

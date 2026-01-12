@@ -16,16 +16,17 @@ Usage:
 from typing import Any, Generic, TypeVar
 
 from fastcrud import FastCRUD
+from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.tenancy.context import get_tenant_context
 
 ModelType = TypeVar("ModelType")
-CreateSchemaType = TypeVar("CreateSchemaType")
-UpdateSchemaType = TypeVar("UpdateSchemaType")
-UpdateSchemaInternalType = TypeVar("UpdateSchemaInternalType")
-DeleteSchemaType = TypeVar("DeleteSchemaType")
-SelectSchemaType = TypeVar("SelectSchemaType")
+CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
+UpdateSchemaType = TypeVar("UpdateSchemaType", bound=BaseModel)
+UpdateSchemaInternalType = TypeVar("UpdateSchemaInternalType", bound=BaseModel)
+DeleteSchemaType = TypeVar("DeleteSchemaType", bound=BaseModel)
+SelectSchemaType = TypeVar("SelectSchemaType", bound=BaseModel)
 
 
 class TenantAwareCRUD(

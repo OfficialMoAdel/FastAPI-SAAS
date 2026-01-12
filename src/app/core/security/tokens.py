@@ -32,7 +32,7 @@ from __future__ import annotations
 import json
 import logging
 import secrets
-from typing import Any
+from typing import Any, cast
 
 from redis.asyncio import Redis
 
@@ -195,7 +195,7 @@ class SSOStateManager:
         await self._redis.delete(key)
 
         try:
-            state_data = json.loads(data)
+            state_data = cast(dict[str, Any], json.loads(data))
             logger.debug(
                 "SSO state validated successfully",
                 extra={
@@ -303,7 +303,7 @@ class MagicLinkManager:
         await self._redis.delete(key)
 
         try:
-            token_data = json.loads(data)
+            token_data = cast(dict[str, Any], json.loads(data))
             logger.debug(
                 "Magic link validated successfully",
                 extra={

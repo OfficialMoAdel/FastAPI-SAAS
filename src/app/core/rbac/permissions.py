@@ -41,4 +41,3 @@ class Permission(str, Enum):
     # Audit Logs (Phase 7)
     AUDIT_LOGS_VIEW_ONLY = "audit_logs:read"
     AUDIT_LOGS_DOWNLOAD = "audit_logs:export"
-

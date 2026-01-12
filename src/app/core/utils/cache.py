@@ -1,14 +1,14 @@
 import functools
-import json
 import re
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
-from fastapi import Request
+from fastapi import Request, Response
 from fastapi.encoders import jsonable_encoder
 from redis.asyncio import ConnectionPool, Redis
 
 from ..exceptions.cache_exceptions import CacheIdentificationInferenceError, InvalidRequestError, MissingClientError
+from ..json_utils import json_dumps, json_loads
 
 pool: ConnectionPool | None = None
 client: Redis | None = None
@@ -155,7 +155,7 @@ async def get_with_stampede_protection(
                 # Refresh in background, return stale data
                 asyncio.create_task(_refresh_cache(key, fetch_func, ttl))
 
-        return json.loads(cached)
+        return json_loads(cached)
 
     # Cache miss - fetch and cache
     return await _refresh_cache(key, fetch_func, ttl)
@@ -167,7 +167,7 @@ async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> A
         return await fetch_func()
 
     data = await fetch_func()
-    serialized = json.dumps(jsonable_encoder(data))
+    serialized = json_dumps(jsonable_encoder(data))
     await client.setex(key, ttl, serialized)
     return data
 
@@ -201,7 +201,7 @@ async def get_with_lock(
     # Try cache first
     cached = await client.get(key)
     if cached is not None:
-        return json.loads(cached)
+        return json_loads(cached)
 
     # Cache miss - try to acquire lock
     lock_key = f"{key}:lock"
@@ -211,7 +211,7 @@ async def get_with_lock(
         try:
             # We got the lock - fetch and cache
             data = await fetch_func()
-            serialized = json.dumps(jsonable_encoder(data))
+            serialized = json_dumps(jsonable_encoder(data))
             await client.setex(key, ttl, serialized)
             return data
         finally:
@@ -222,7 +222,7 @@ async def get_with_lock(
             await asyncio.sleep(0.1)
             cached = await client.get(key)
             if cached is not None:
-                return json.loads(cached)
+                return json_loads(cached)
 
         # Lock timeout - fetch anyway
         stampede_logger.warning("Cache lock timeout, fetching anyway", key=key)
@@ -519,18 +519,19 @@ def cache(
 
                 cached_data = await client.get(cache_key)
                 if cached_data:
-                    return json.loads(cached_data.decode())
+                    # P6: Skip re-parse - return raw JSON bytes directly
+                    return Response(content=cached_data, media_type="application/json")
 
             result = await func(request, *args, **kwargs)
 
             if request.method == "GET":
                 serializable_data = jsonable_encoder(result)
-                serialized_data = json.dumps(serializable_data)
+                serialized_data = json_dumps(serializable_data)
 
                 await client.set(cache_key, serialized_data)
                 await client.expire(cache_key, expiration)
 
-                return json.loads(serialized_data)
+                return result  # Return original result, not re-parsed
 
             else:
                 await client.delete(cache_key)

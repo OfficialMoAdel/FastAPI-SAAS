@@ -13,8 +13,6 @@ from ..core.utils.rate_limit import rate_limiter
 from ..modules.rate_limits.crud import crud_rate_limits
 from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
 from ..modules.tenants.models import Tenant
-from ..modules.tiers.crud import crud_tiers
-from ..modules.tiers.schemas import TierRead
 from ..modules.users.crud import crud_users
 
 logger = get_logger(__name__)
@@ -113,7 +111,8 @@ async def rate_limiter_dependency(
     path = sanitize_path(request.url.path)
     if user:
         user_id = user["id"]
-        tier = await crud_tiers.get(db, id=user["tier_id"], schema_to_select=TierRead)
+        # Use already eager-loaded tier from get_user_with_tier_eager() - no DB query needed
+        tier = user.get("tier")
         if tier:
             rate_limit = await crud_rate_limits.get(
                 db=db, tier_id=tier["id"], path=path, schema_to_select=RateLimitRead

@@ -81,9 +81,7 @@ def _get_salt() -> bytes:
 
     # SECURITY: Fail fast in production if salt not configured
     if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
-        raise ValueError(
-            "ENCRYPTION_SALT must be set in production. Generate with: openssl rand -hex 32"
-        )
+        raise ValueError("ENCRYPTION_SALT must be set in production. Generate with: openssl rand -hex 32")
 
     # Fallback: generate random salt per process (dev/staging only)
     if _FALLBACK_SALT is None:
@@ -108,9 +106,7 @@ def _derive_key(secret: str, salt: bytes) -> bytes:
 
 def _get_key_from_settings() -> bytes:
     """Get or derive Fernet key from settings."""
-    key_str = (
-        settings.ENCRYPTION_KEY.get_secret_value() if settings.ENCRYPTION_KEY else None
-    )
+    key_str = settings.ENCRYPTION_KEY.get_secret_value() if settings.ENCRYPTION_KEY else None
 
     if not key_str:
         # Fallback: derive from SECRET_KEY (not recommended for prod rotation but safe functionality)
@@ -130,11 +126,7 @@ def _get_previous_key_from_settings() -> bytes | None:
         prev_key_value = prev_key_str.get_secret_value()
         if prev_key_value:
             try:
-                return (
-                    prev_key_value.encode()
-                    if isinstance(prev_key_value, str)
-                    else prev_key_value
-                )
+                return prev_key_value.encode() if isinstance(prev_key_value, str) else prev_key_value
             except Exception as e:
                 logger.warning(f"Invalid ENCRYPTION_KEY_PREVIOUS format: {e}")
     return None
@@ -182,9 +174,7 @@ class CredentialEncryption:
         if previous_key:
             try:
                 fernets.append(Fernet(previous_key))
-                logger.info(
-                    "Key rotation active: using previous key as fallback for decryption"
-                )
+                logger.info("Key rotation active: using previous key as fallback for decryption")
             except Exception as e:
                 logger.warning(f"Failed to initialize previous key: {e}")
 

@@ -52,9 +52,7 @@ class AzureBlobStorage(StorageProvider):
             ContainerClient for the configured container.
         """
         if self._service_client is None:
-            self._service_client = BlobServiceClient.from_connection_string(
-                self._connection_string
-            )
+            self._service_client = BlobServiceClient.from_connection_string(self._connection_string)
         return self._service_client.get_container_client(self._container_name)
 
     async def upload(

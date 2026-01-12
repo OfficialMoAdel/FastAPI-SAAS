@@ -8,6 +8,7 @@ import logging
 import os
 import sys
 from logging.handlers import RotatingFileHandler
+from typing import cast
 
 import structlog
 from structlog.types import Processor
@@ -115,7 +116,7 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
         logger = get_logger(__name__)
         logger.info("User logged in", user_id=123, ip="1.2.3.4")
     """
-    return structlog.get_logger(name)
+    return cast(structlog.stdlib.BoundLogger, structlog.get_logger(name))
 
 
 # Initialize logging on module import

@@ -493,18 +493,27 @@ class PasskeyService:
         credential.last_used_at = datetime.now(UTC)
         await db.commit()
 
-    async def _get_user_for_credential(self, db: AsyncSession, credential: Any) -> Any:
-        """Get the user associated with a passkey credential."""
+    async def _get_user_for_credential(self, db: AsyncSession, credential: Any) -> dict | None:
+        """Get the user associated with a passkey credential with tier eager-loaded."""
         from src.app.modules.users.crud import crud_users
 
-        return await crud_users.get(db=db, id=credential.user_id)
+        return await crud_users.get_user_with_tier_eager(db=db, id=credential.user_id)
 
-    async def _generate_auth_tokens(self, user: Any) -> dict[str, Any]:
-        """Generate JWT authentication tokens for a user."""
+    async def _generate_auth_tokens(self, user: dict) -> dict[str, Any]:
+        """Generate JWT authentication tokens for a user with tier info for rate limiting."""
         from src.app.core.security import create_access_token, create_refresh_token
 
-        access_token = await create_access_token(data={"sub": str(user.id)})
-        refresh_token = await create_refresh_token(data={"sub": str(user.id)})
+        # Include tier info in JWT claims for Zero-DB rate limiting
+        tier = user.get("tier")
+        tier_name = tier.get("name") if tier else None
+        token_data = {
+            "sub": user["username"],
+            "tier_id": user.get("tier_id"),
+            "tier_name": tier_name,
+        }
+
+        access_token = await create_access_token(data=token_data)
+        refresh_token = await create_refresh_token(data=token_data)
 
         return {
             "access_token": access_token,

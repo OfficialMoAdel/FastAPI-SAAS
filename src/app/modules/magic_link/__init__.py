@@ -38,11 +38,17 @@ def __getattr__(name: str):
         from .models import MagicLink
 
         return MagicLink
-    if name in ("InvalidMagicLinkError", "MagicLinkAlreadyUsedError",
-                "MagicLinkRateLimitError", "MagicLinkUserInactiveError"):
+    if name in (
+        "InvalidMagicLinkError",
+        "MagicLinkAlreadyUsedError",
+        "MagicLinkRateLimitError",
+        "MagicLinkUserInactiveError",
+    ):
         from . import exceptions
+
         return getattr(exceptions, name)
     if name in ("MagicLinkSendRequest", "MagicLinkSendResponse", "MagicLinkVerifyRequest"):
         from . import schemas
+
         return getattr(schemas, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

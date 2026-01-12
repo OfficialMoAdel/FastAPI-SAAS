@@ -32,6 +32,7 @@ class CRUDPasskeyCredential(
     ]
 ):
     """CRUD operations for passkey credentials."""
+
     MAX_PASSKEYS_PER_USER = 10
 
     async def get(

@@ -51,13 +51,7 @@ class Tenant(Base):
     )
     files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False)
     # Billing & AI relationships (Phase 3/5)
-    stripe_settings: Mapped["StripeSettings | None"] = relationship(
-        back_populates="tenant", uselist=False, init=False
-    )
-    subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(
-        back_populates="tenant", init=False
-    )
+    stripe_settings: Mapped["StripeSettings | None"] = relationship(back_populates="tenant", uselist=False, init=False)
+    subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(back_populates="tenant", init=False)
     products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False)
-    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(
-        back_populates="tenant", init=False
-    )
+    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False)

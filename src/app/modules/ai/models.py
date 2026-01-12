@@ -23,12 +23,8 @@ class AIChatSession(Base):
     __tablename__ = "ai_chat_sessions"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(
-        ForeignKey("tenants.id"), index=True, nullable=False
-    )
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id"), index=True, nullable=False
-    )
+    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, nullable=False)
 
     title: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
@@ -39,9 +35,7 @@ class AIChatSession(Base):
         nullable=False,
         index=True,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None, nullable=True
-    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_sessions", init=False)
@@ -67,15 +61,11 @@ class AIChatMessage(Base):
     )
 
     # Required fields (no defaults) must come first
-    role: Mapped[str] = mapped_column(
-        String(10), nullable=False
-    )  # user, assistant, system
+    role: Mapped[str] = mapped_column(String(10), nullable=False)  # user, assistant, system
     content: Mapped[str] = mapped_column(Text, nullable=False)
 
     # Optional fields (with defaults) come after
-    token_count: Mapped[int | None] = mapped_column(
-        Integer, nullable=True, default=None
-    )
+    token_count: Mapped[int | None] = mapped_column(Integer, nullable=True, default=None)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
@@ -97,9 +87,7 @@ class AISettings(Base):
     __tablename__ = "ai_settings"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id"), index=True, unique=True, nullable=False
-    )
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, unique=True, nullable=False)
 
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
@@ -111,9 +99,7 @@ class AISettings(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), default=None, nullable=True
-    )
+    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="ai_settings", init=False)

@@ -1,0 +1,113 @@
+"""High-performance JSON utilities using orjson.
+
+This module provides optimized JSON serialization/deserialization
+with support for common Python types (UUID, datetime, Decimal, Pydantic models).
+
+Usage:
+    from src.app.core.json_utils import json_dumps, json_loads, orjson_dumps_default
+
+    # Serialize to bytes (fastest)
+    data_bytes = json_dumps({"key": "value"})
+
+    # Serialize to string
+    data_str = json_dumps({"key": "value"}, as_str=True)
+
+    # Deserialize
+    data = json_loads(data_bytes)
+"""
+
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any
+from uuid import UUID
+
+import orjson
+from pydantic import BaseModel
+
+
+def orjson_dumps_default(obj: Any) -> Any:
+    """Default serializer for types not natively supported by orjson.
+
+    Handles:
+    - UUID -> string
+    - Decimal -> float
+    - datetime/date -> ISO format string
+    - Pydantic models -> dict
+    - Sets -> list
+
+    Parameters
+    ----------
+    obj : Any
+        Object to serialize
+
+    Returns
+    -------
+    Any
+        Serializable representation
+
+    Raises
+    ------
+    TypeError
+        If object type is not supported
+    """
+    if isinstance(obj, UUID):
+        return str(obj)
+    if isinstance(obj, Decimal):
+        return float(obj)
+    if isinstance(obj, datetime | date):
+        return obj.isoformat()
+    if isinstance(obj, BaseModel):
+        return obj.model_dump(mode="json")
+    if isinstance(obj, set):
+        return list(obj)
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
+
+
+def json_dumps(obj: Any, *, as_str: bool = False) -> bytes | str:
+    """Serialize object to JSON bytes or string using orjson.
+
+    Parameters
+    ----------
+    obj : Any
+        Object to serialize
+    as_str : bool, optional
+        If True, return UTF-8 string instead of bytes, by default False
+
+    Returns
+    -------
+    bytes | str
+        JSON bytes (default) or string if as_str=True
+
+    Examples
+    --------
+    >>> json_dumps({"id": UUID("..."), "amount": Decimal("10.5")})
+    b'{"id":"...","amount":10.5}'
+    """
+    result = orjson.dumps(
+        obj,
+        default=orjson_dumps_default,
+        option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_UTC_Z,
+    )
+    return result.decode("utf-8") if as_str else result
+
+
+def json_loads(data: bytes | str | memoryview) -> Any:
+    """Deserialize JSON bytes/string to Python object using orjson.
+
+    Parameters
+    ----------
+    data : bytes | str | memoryview
+        JSON data to parse
+
+    Returns
+    -------
+    Any
+        Parsed Python object
+    """
+    return orjson.loads(data)
+
+
+# Re-export orjson constants for advanced usage
+OPT_INDENT_2 = orjson.OPT_INDENT_2
+OPT_SORT_KEYS = orjson.OPT_SORT_KEYS
+OPT_APPEND_NEWLINE = orjson.OPT_APPEND_NEWLINE

@@ -228,7 +228,7 @@ class TestAuthServiceTokenRefresh:
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
-            mock_crud_users.get = AsyncMock(return_value={"tier_id": 1})
+            mock_crud_users.get_user_with_tier_eager = AsyncMock(return_value={"tier_id": 1, "username": "testuser", "tier": {"name": "basic"}})
 
             result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
 

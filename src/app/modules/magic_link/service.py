@@ -7,7 +7,7 @@ Handles token generation, email queueing, and token verification.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,9 +27,6 @@ from .exceptions import (
     MagicLinkUserInactiveError,
 )
 from .schemas import MagicLinkSendResponse
-
-if TYPE_CHECKING:
-    from src.app.modules.users.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -92,10 +89,10 @@ class MagicLinkService:
             )
 
         # Check if user is active
-        if getattr(user, "is_deleted", False):
+        if user.get("is_deleted", False):
             logger.debug(
                 "Magic link requested for deleted user",
-                extra={"operation": "send_magic_link", "user_id": user.id},
+                extra={"operation": "send_magic_link", "user_id": user["id"]},
             )
             return MagicLinkSendResponse(
                 message="If an account exists, a magic link has been sent",
@@ -108,7 +105,7 @@ class MagicLinkService:
             email=email,
             action="login",
             extra_data={
-                "user_id": user.id,
+                "user_id": user["id"],
                 "ip_address": ip_address,
                 "user_agent": user_agent,
             },
@@ -118,14 +115,14 @@ class MagicLinkService:
         await self._queue_magic_link_email(
             email=email,
             token=token,
-            user_id=user.id,
+            user_id=user["id"],
         )
 
         logger.info(
             "Magic link created and email queued",
             extra={
                 "operation": "send_magic_link",
-                "user_id": user.id,
+                "user_id": user["id"],
             },
         )
 
@@ -171,7 +168,7 @@ class MagicLinkService:
             raise InvalidMagicLinkError("User not found")
 
         # Check if user is active
-        if getattr(user, "is_deleted", False):
+        if user.get("is_deleted", False):
             raise MagicLinkUserInactiveError("User account is inactive")
 
         # Create auth tokens
@@ -181,7 +178,7 @@ class MagicLinkService:
             "Magic link verified successfully",
             extra={
                 "operation": "verify_magic_link",
-                "user_id": user.id,
+                "user_id": user["id"],
             },
         )
 
@@ -195,16 +192,16 @@ class MagicLinkService:
         """
         return MagicLinkManager(redis=self.redis)
 
-    async def _get_user_by_email(self, email: str) -> User | None:
-        """Get user by email address.
+    async def _get_user_by_email(self, email: str) -> dict | None:
+        """Get user by email address with tier eager-loaded.
 
         Args:
             email: User email address.
 
         Returns:
-            User if found, None otherwise.
+            User dict with tier if found, None otherwise.
         """
-        result = await crud_users.get(db=self.db, email=email, is_deleted=False)
+        result = await crud_users.get_user_with_tier_eager(db=self.db, email=email)
         return result
 
     async def _queue_magic_link_email(
@@ -257,19 +254,22 @@ class MagicLinkService:
                 extra={"user_id": user_id, "email": email, "magic_link_url": magic_link_url},
             )
 
-    async def _create_auth_tokens(self, user: User) -> dict[str, Any]:
-        """Create access and refresh tokens for user.
+    async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:
+        """Create access and refresh tokens for user with tier info for rate limiting.
 
         Args:
-            user: User to create tokens for.
+            user: User dict with tier eager-loaded.
 
         Returns:
             Dict with access_token, refresh_token, token_type, expires_in.
         """
-        # Token payload
+        # Include tier info in JWT claims for Zero-DB rate limiting
+        tier = user.get("tier")
+        tier_name = tier.get("name") if tier else None
         token_data = {
-            "sub": str(user.id),
-            "username": user.username if hasattr(user, "username") else user.email,
+            "sub": user["username"],
+            "tier_id": user.get("tier_id"),
+            "tier_name": tier_name,
         }
 
         # Create tokens

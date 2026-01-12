@@ -131,7 +131,14 @@ async def warm_cache_from_db(db_tokens: list[tuple[str, datetime]]) -> int:
 
     # Filter out already-expired tokens
     now = datetime.now(UTC)
-    active_tokens = [(t, exp) for t, exp in db_tokens if exp > now]
+    active_tokens = []
+    for t, exp in db_tokens:
+        # Handle naive datetimes from DB (assume UTC)
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=UTC)
+
+        if exp > now:
+            active_tokens.append((t, exp))
 
     if not active_tokens:
         return 0

@@ -62,10 +62,7 @@ def get_storage(
 
     if provider not in providers:
         supported = ", ".join(providers.keys())
-        raise ValueError(
-            f"Unsupported storage provider: {provider}. "
-            f"Supported providers: {supported}"
-        )
+        raise ValueError(f"Unsupported storage provider: {provider}. Supported providers: {supported}")
 
     storage_class = providers[provider]
     return storage_class(**kwargs)

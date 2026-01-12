@@ -30,11 +30,15 @@ class AuthService:
     """Service class for authentication-related business logic."""
 
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict | bool:
-        """Authenticate user by checking database and password."""
+        """Authenticate user by checking database and password.
+
+        Uses eager loading to include tier data for rate limiting in JWT claims.
+        """
+        # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         if "@" in username_or_email:
-            db_user = await crud_users.get(db=db, email=username_or_email, is_deleted=False)
+            db_user = await crud_users.get_user_with_tier_eager(db=db, email=username_or_email)
         else:
-            db_user = await crud_users.get(db=db, username=username_or_email, is_deleted=False)
+            db_user = await crud_users.get_user_with_tier_eager(db=db, username=username_or_email)
 
         if not db_user:
             return False
@@ -142,8 +146,15 @@ class AuthService:
         # Clear failed attempts on success
         await redis.delete(login_attempts_key)
 
-        # Include tier_id in JWT claims for Zero-DB rate limiting
-        token_data = {"sub": user["username"], "tier_id": user.get("tier_id")}
+        # Include tier info in JWT claims for Zero-DB rate limiting
+        # tier_name allows middleware to apply correct limits without DB lookup
+        tier = user.get("tier")
+        tier_name = tier.get("name") if tier else None
+        token_data = {
+            "sub": user["username"],
+            "tier_id": user.get("tier_id"),
+            "tier_name": tier_name,
+        }
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = await create_access_token(data=token_data, expires_delta=access_token_expires)
@@ -184,14 +195,20 @@ class AuthService:
         # Blacklist the used refresh token (Rotation)
         await blacklist_token(token=refresh_token, db=db)
 
-        # Fetch user to get tier_id for Zero-DB rate limiting
+        # Fetch user with tier for Zero-DB rate limiting
         if "@" in user_data.username_or_email:
-            db_user = await crud_users.get(db=db, email=user_data.username_or_email, is_deleted=False)
+            db_user = await crud_users.get_user_with_tier_eager(db=db, email=user_data.username_or_email)
         else:
-            db_user = await crud_users.get(db=db, username=user_data.username_or_email, is_deleted=False)
+            db_user = await crud_users.get_user_with_tier_eager(db=db, username=user_data.username_or_email)
 
-        tier_id = db_user.get("tier_id") if db_user else None
-        token_data = {"sub": user_data.username_or_email, "tier_id": tier_id}
+        # Include tier info in JWT claims for Zero-DB rate limiting
+        tier = db_user.get("tier") if db_user else None
+        tier_name = tier.get("name") if tier else None
+        token_data = {
+            "sub": user_data.username_or_email,
+            "tier_id": db_user.get("tier_id") if db_user else None,
+            "tier_name": tier_name,
+        }
 
         # Create new tokens
         new_access_token = await create_access_token(data=token_data)

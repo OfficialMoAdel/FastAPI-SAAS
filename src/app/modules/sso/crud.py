@@ -56,9 +56,13 @@ class CRUDUserSSOConnection(
         tenant_id: int | None = None,
     ) -> bool:
         """Check if SSO connection exists for user and provider."""
-        query = select(func.count()).select_from(self.model).where(
-            self.model.user_id == user_id,
-            self.model.provider == provider,
+        query = (
+            select(func.count())
+            .select_from(self.model)
+            .where(
+                self.model.user_id == user_id,
+                self.model.provider == provider,
+            )
         )
         if tenant_id is not None:
             query = query.where(self.model.tenant_id == tenant_id)
@@ -75,7 +79,7 @@ class CRUDUserSSOConnection(
     ) -> int:
         """Count SSO connections for a user."""
         if user_id is None and "id" in kwargs:
-             return await super().count(db, **kwargs)
+            return await super().count(db, **kwargs)
 
         query = select(func.count()).select_from(self.model)
         if user_id is not None:

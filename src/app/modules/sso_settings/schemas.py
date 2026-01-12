@@ -1,4 +1,3 @@
-
 from pydantic import BaseModel
 
 from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate

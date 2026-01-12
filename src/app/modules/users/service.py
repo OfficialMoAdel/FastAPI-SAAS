@@ -1,18 +1,43 @@
 """User service layer - encapsulates all user business logic."""
 
+import logging
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException
+from ...core.json_utils import json_dumps, json_loads
 from ...core.security import blacklist_token, get_password_hash
 from ...core.tenancy.context import get_tenant_context
+from ...core.utils.cache import client as redis_client
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_users
 from .models import User
-from .schemas import UserCreate, UserCreateInternal, UserTierUpdate, UserUpdate
+from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
+
+logger = logging.getLogger(__name__)
+
+# Cache configuration
+USER_CACHE_TTL = 60  # seconds
+USER_CACHE_PREFIX = "user:profile"
+
+
+def _user_cache_key(user_id: UUID | str) -> str:
+    """Generate cache key for user profile."""
+    return f"{USER_CACHE_PREFIX}:{user_id}"
+
+
+def _user_email_cache_key(email: str) -> str:
+    """Generate cache key for user by email."""
+    return f"{USER_CACHE_PREFIX}:email:{email}"
+
+
+def _user_username_cache_key(username: str) -> str:
+    """Generate cache key for user by username."""
+    return f"{USER_CACHE_PREFIX}:username:{username}"
 
 
 class UserService(BaseService[User]):
@@ -21,6 +46,49 @@ class UserService(BaseService[User]):
     def __init__(self, db: AsyncSession):
         super().__init__(User, db)
         self.crud = crud_users
+
+    async def _cache_user(self, user: User) -> None:
+        """Cache user profile in Redis."""
+        if redis_client is None:
+            return
+
+        try:
+            user_data = UserRead.model_validate(user, from_attributes=True).model_dump(mode="json")
+            serialized = json_dumps(user_data)
+
+            # Cache by all lookup keys
+            await redis_client.set(_user_cache_key(user.id), serialized, ex=USER_CACHE_TTL)
+            await redis_client.set(_user_email_cache_key(user.email), serialized, ex=USER_CACHE_TTL)
+            await redis_client.set(_user_username_cache_key(user.username), serialized, ex=USER_CACHE_TTL)
+        except Exception as e:
+            logger.warning(f"Failed to cache user {user.id}: {e}")
+
+    async def _invalidate_user_cache(self, user: User) -> None:
+        """Invalidate all cache entries for a user."""
+        if redis_client is None:
+            return
+
+        try:
+            await redis_client.delete(
+                _user_cache_key(user.id),
+                _user_email_cache_key(user.email),
+                _user_username_cache_key(user.username),
+            )
+        except Exception as e:
+            logger.warning(f"Failed to invalidate cache for user {user.id}: {e}")
+
+    async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
+        """Get cached user data if available."""
+        if redis_client is None:
+            return None
+
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached:
+                return json_loads(cached)
+        except Exception as e:
+            logger.warning(f"Failed to get cached user: {e}")
+        return None
 
     async def create(self, user: UserCreate) -> User:
         """Create a new user with validation and password hashing.
@@ -65,7 +133,7 @@ class UserService(BaseService[User]):
         return await self.crud.create(db=self.db, object=user_internal)
 
     async def get_by_username(self, username: str) -> User:
-        """Get a user by username.
+        """Get a user by username with Redis caching.
 
         Parameters
         ----------
@@ -82,13 +150,21 @@ class UserService(BaseService[User]):
         ModelNotFoundError
             If user not found
         """
+        # Try cache first
+        cached = await self._get_cached_user(_user_username_cache_key(username))
+        if cached:
+            logger.debug(f"Cache hit for username {username}")
+
         db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if db_user is None:
             raise ModelNotFoundError("User", username)
+
+        if not cached:
+            await self._cache_user(db_user)
         return db_user
 
     async def get(self, user_id: Any) -> User | None:
-        """Get a user by ID.
+        """Get a user by ID with Redis caching.
 
         Parameters
         ----------
@@ -100,10 +176,20 @@ class UserService(BaseService[User]):
         User | None
             User instance or None if not found
         """
-        return await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+        # Try cache first
+        cached = await self._get_cached_user(_user_cache_key(user_id))
+        if cached:
+            logger.debug(f"Cache hit for user {user_id}")
+            # Return cached dict - caller can use it directly
+            return await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+
+        user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+        if user:
+            await self._cache_user(user)
+        return user
 
     async def get_by_email(self, email: str) -> User | None:
-        """Get a user by email address.
+        """Get a user by email address with Redis caching.
 
         Parameters
         ----------
@@ -115,7 +201,16 @@ class UserService(BaseService[User]):
         User | None
             User instance or None if not found
         """
-        return await self.crud.get(db=self.db, email=email, is_deleted=False)
+        # Try cache first
+        cached = await self._get_cached_user(_user_email_cache_key(email))
+        if cached:
+            logger.debug(f"Cache hit for user email {email}")
+            return await self.crud.get(db=self.db, email=email, is_deleted=False)
+
+        user = await self.crud.get(db=self.db, email=email, is_deleted=False)
+        if user:
+            await self._cache_user(user)
+        return user
 
     async def update(
         self,
@@ -170,6 +265,10 @@ class UserService(BaseService[User]):
                 raise DuplicateError("username", values.username)
 
         await self.crud.update(db=self.db, object=values, username=username)
+
+        # Invalidate cache after update
+        await self._invalidate_user_cache(db_user)
+
         return {"message": "User updated"}
 
     async def delete(
@@ -208,6 +307,9 @@ class UserService(BaseService[User]):
         if username != current_user["username"]:
             raise ForbiddenException()
 
+        # Invalidate cache before delete
+        await self._invalidate_user_cache(db_user)
+
         await self.crud.delete(db=self.db, username=username)
         await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted"}
@@ -235,6 +337,11 @@ class UserService(BaseService[User]):
         db_user = await self.crud.exists(db=self.db, username=username)
         if not db_user:
             raise ModelNotFoundError("User", username)
+
+        # Get full user for cache invalidation before hard delete
+        full_user = await self.crud.get(db=self.db, username=username)
+        if full_user:
+            await self._invalidate_user_cache(full_user)
 
         await self.crud.db_delete(db=self.db, username=username)
         await blacklist_token(token=token, db=self.db)
