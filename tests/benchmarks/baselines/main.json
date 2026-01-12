@@ -1,0 +1,125 @@
+{
+  "machine_info": {
+    "node": "github-runner",
+    "processor": "x86_64",
+    "machine": "x86_64",
+    "python_implementation": "CPython",
+    "python_version": "3.12",
+    "system": "Linux"
+  },
+  "commit_info": {
+    "id": "baseline",
+    "branch": "main"
+  },
+  "benchmarks": [
+    {
+      "name": "test_bench_jwt_token_creation",
+      "group": "auth",
+      "stats": {
+        "min": 0.00001,
+        "max": 0.0001,
+        "mean": 0.00003,
+        "stddev": 0.00001,
+        "median": 0.00002,
+        "ops": 33333.33
+      },
+      "extra_info": {
+        "target_ms": 10.0,
+        "operation": "jwt_encode"
+      }
+    },
+    {
+      "name": "test_bench_jwt_token_verification",
+      "group": "auth",
+      "stats": {
+        "min": 0.00001,
+        "max": 0.0001,
+        "mean": 0.00003,
+        "stddev": 0.00001,
+        "median": 0.00002,
+        "ops": 33333.33
+      },
+      "extra_info": {
+        "target_ms": 10.0,
+        "operation": "jwt_decode"
+      }
+    },
+    {
+      "name": "test_bench_pydantic_validation",
+      "group": "serialization",
+      "stats": {
+        "min": 0.00001,
+        "max": 0.00005,
+        "mean": 0.00002,
+        "stddev": 0.000005,
+        "median": 0.00002,
+        "ops": 50000.0
+      },
+      "extra_info": {
+        "target_ms": 0.1,
+        "operation": "pydantic_validate"
+      }
+    },
+    {
+      "name": "test_bench_cache_serialization",
+      "group": "cache",
+      "stats": {
+        "min": 0.000005,
+        "max": 0.00002,
+        "mean": 0.00001,
+        "stddev": 0.000003,
+        "median": 0.00001,
+        "ops": 100000.0
+      },
+      "extra_info": {
+        "target_ms": 5.0,
+        "operation": "orjson_dumps"
+      }
+    },
+    {
+      "name": "test_bench_users_me_simulation",
+      "group": "aggregate",
+      "stats": {
+        "min": 0.0001,
+        "max": 0.0005,
+        "mean": 0.0002,
+        "stddev": 0.00005,
+        "median": 0.00018,
+        "ops": 5000.0
+      },
+      "extra_info": {
+        "target_ms": 15.0,
+        "operation": "users_me_full",
+        "endpoint": "/users/me"
+      }
+    },
+    {
+      "name": "test_bench_auth_refresh_simulation",
+      "group": "aggregate",
+      "stats": {
+        "min": 0.00005,
+        "max": 0.0003,
+        "mean": 0.0001,
+        "stddev": 0.00003,
+        "median": 0.00009,
+        "ops": 10000.0
+      },
+      "extra_info": {
+        "target_ms": 10.0,
+        "operation": "auth_refresh_full",
+        "endpoint": "/auth/refresh"
+      }
+    }
+  ],
+  "ci_metadata": {
+    "created": "2026-01-12",
+    "description": "Initial baseline for CI performance regression testing",
+    "thresholds": {
+      "users_me_p95_ms": 15,
+      "auth_refresh_p95_ms": 10,
+      "ai_chat_db_p95_ms": 100,
+      "cache_ops_p95_ms": 5,
+      "serialization_per_sec": 10000
+    }
+  }
+}

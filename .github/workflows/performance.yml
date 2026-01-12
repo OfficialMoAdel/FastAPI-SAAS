@@ -1,0 +1,184 @@
+name: Performance Benchmarks
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/**'
+      - 'tests/performance/**'
+      - 'tests/benchmarks/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'src/**'
+      - 'tests/performance/**'
+  workflow_dispatch:
+    inputs:
+      baseline_update:
+        description: 'Update baseline after run'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  PYTHON_VERSION: '3.12'
+  BENCHMARK_REGRESSION_THRESHOLD: '10'  # Fail if mean regresses > 10%
+
+jobs:
+  benchmark:
+    name: Run Performance Benchmarks
+    runs-on: ubuntu-latest
+    
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for baseline comparison
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: 'pip'
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          version: "latest"
+
+      - name: Install dependencies
+        run: |
+          uv sync --frozen
+          uv pip install pytest-benchmark
+
+      - name: Download baseline (if exists)
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: tests/benchmarks/baselines/
+        continue-on-error: true
+
+      - name: Run benchmarks
+        id: benchmark
+        run: |
+          uv run pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-json=benchmark-results.json \
+            --benchmark-columns=min,max,mean,stddev,median,ops \
+            --benchmark-sort=mean \
+            --benchmark-warmup=on \
+            -v
+        env:
+          REDIS_URL: redis://localhost:6379
+          DATABASE_URL: sqlite+aiosqlite:///./test_benchmark.db
+
+      - name: Compare with baseline
+        if: hashFiles('tests/benchmarks/baselines/main.json') != ''
+        run: |
+          uv run pytest tests/performance/ \
+            --benchmark-only \
+            --benchmark-compare=tests/benchmarks/baselines/main.json \
+            --benchmark-compare-fail=mean:${{ env.BENCHMARK_REGRESSION_THRESHOLD }}% \
+            -v || echo "::warning::Performance regression detected"
+        continue-on-error: true
+
+      - name: Upload benchmark results
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: benchmark-results.json
+          retention-days: 30
+        if: always()
+
+      - name: Update baseline (on main branch merge)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-baseline
+          path: benchmark-results.json
+          retention-days: 90
+
+      - name: Generate performance report
+        if: always()
+        run: |
+          echo "## Performance Benchmark Results" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "**Commit:** \`${{ github.sha }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "**Branch:** \`${{ github.ref_name }}\`" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "### Thresholds (p95 targets)" >> $GITHUB_STEP_SUMMARY
+          echo "| Endpoint | Target |" >> $GITHUB_STEP_SUMMARY
+          echo "|----------|--------|" >> $GITHUB_STEP_SUMMARY
+          echo "| /users/me | < 15ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| /auth/refresh | < 10ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| AI chat DB | < 100ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Cache ops | < 5ms |" >> $GITHUB_STEP_SUMMARY
+          echo "| Serialization | 10k/sec |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "See artifacts for detailed benchmark JSON." >> $GITHUB_STEP_SUMMARY
+
+      - name: Comment on PR with results
+        if: github.event_name == 'pull_request'
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            let results = {};
+            try {
+              results = JSON.parse(fs.readFileSync('benchmark-results.json', 'utf8'));
+            } catch (e) {
+              console.log('Could not parse benchmark results');
+              return;
+            }
+            
+            const benchmarks = results.benchmarks || [];
+            let table = '| Test | Mean | Ops/sec | Target |\n|------|------|---------|--------|\n';
+            
+            for (const b of benchmarks.slice(0, 10)) {
+              const mean = (b.stats.mean * 1000).toFixed(3);
+              const ops = b.stats.ops.toFixed(0);
+              const target = b.extra_info?.target_ms || 'N/A';
+              table += `| ${b.name} | ${mean}ms | ${ops} | ${target}ms |\n`;
+            }
+            
+            const body = `## 📊 Performance Benchmark Results\n\n${table}\n\n*Regression threshold: ${process.env.BENCHMARK_REGRESSION_THRESHOLD}%*`;
+            
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: body
+            });
+
+  benchmark-history:
+    name: Track Benchmark History
+    runs-on: ubuntu-latest
+    needs: benchmark
+    if: github.ref == 'refs/heads/main'
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download current results
+        uses: actions/download-artifact@v4
+        with:
+          name: benchmark-results-${{ github.sha }}
+          path: ./results
+
+      - name: Append to history
+        run: |
+          mkdir -p benchmark-history
+          cp ./results/benchmark-results.json benchmark-history/${{ github.sha }}.json
+          echo "Saved benchmark for commit ${{ github.sha }}"

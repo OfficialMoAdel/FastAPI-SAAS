@@ -24,6 +24,7 @@ class TestConnectionReleasePattern:
     def test_complete_method_has_commit_call(self) -> None:
         """Verify complete() method commits before LLM call."""
         import inspect
+
         from src.app.modules.ai.service import ChatCompletionService
 
         source = inspect.getsource(ChatCompletionService.complete)
@@ -41,6 +42,7 @@ class TestConnectionReleasePattern:
     def test_complete_uses_local_session_for_write(self) -> None:
         """Verify complete() uses local_session for response write."""
         import inspect
+
         from src.app.modules.ai.service import ChatCompletionService
 
         source = inspect.getsource(ChatCompletionService.complete)
@@ -54,6 +56,7 @@ class TestConnectionReleasePattern:
     def test_stream_method_has_commit_call(self) -> None:
         """Verify complete_stream() method commits before LLM streaming."""
         import inspect
+
         from src.app.modules.ai.service import ChatCompletionService
 
         source = inspect.getsource(ChatCompletionService.complete_stream)
@@ -74,6 +77,7 @@ class TestAsyncioGatherParallelFetch:
     def test_complete_uses_asyncio_gather(self) -> None:
         """Verify complete() uses asyncio.gather for parallel fetch."""
         import inspect
+
         from src.app.modules.ai.service import ChatCompletionService
 
         source = inspect.getsource(ChatCompletionService.complete)
@@ -88,6 +92,7 @@ class TestAsyncioGatherParallelFetch:
     def test_stream_uses_asyncio_gather(self) -> None:
         """Verify complete_stream() uses asyncio.gather for parallel fetch."""
         import inspect
+
         from src.app.modules.ai.service import ChatCompletionService
 
         source = inspect.getsource(ChatCompletionService.complete_stream)

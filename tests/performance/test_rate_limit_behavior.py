@@ -136,7 +136,6 @@ class TestRateLimitEnforcement:
     @pytest.mark.asyncio
     async def test_rate_limit_window_reset(self) -> None:
         """Verify rate limit resets after window expires."""
-        import time
 
         window_seconds = 0.1  # Short window for testing
         request_count = 0
