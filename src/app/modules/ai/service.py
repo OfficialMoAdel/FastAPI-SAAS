@@ -3,6 +3,7 @@
 Business logic for AI chat sessions, messages, and user settings.
 """
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
@@ -10,6 +11,7 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import local_session
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
@@ -289,6 +291,9 @@ class ChatCompletionService:
     ) -> dict[str, Any]:
         """Generate a chat completion for a session.
 
+        C2: Releases DB connection during LLM call to prevent pool exhaustion.
+        Pattern: fetch→commit→LLM→fresh_session→write
+
         Args:
             session_id: The chat session ID
             user_id: The user making the request (for ownership check)
@@ -298,26 +303,22 @@ class ChatCompletionService:
             Dict with assistant response, model, token_count
         """
         logger.info(f"Chat completion request for session {session_id} by user {user_id}")
-        # Verify session ownership
-        session = await self._session_service.get_session(session_id, user_id)
 
-        # Get user settings for defaults
-        user_settings = await self._settings_service.get_or_create_settings(user_id)
+        # P5: Parallel fetch of session, settings, and messages using asyncio.gather()
+        session_coro = self._session_service.get_session(session_id, user_id)
+        settings_coro = self._settings_service.get_or_create_settings(user_id)
+        messages_coro = self._message_service.get_session_messages(session_id, limit=50)
 
-        # Determine model and parameters
+        session, user_settings, messages_result = await asyncio.gather(session_coro, settings_coro, messages_coro)
+
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature or user_settings.get("temperature", 0.7)
         max_tokens = request.max_tokens or user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        # Get existing messages for context
-        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
         history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
-
-        # Add the new user message
         history.append({"role": "user", "content": request.message})
 
-        # T097: Truncate context to fit within context window
         history = truncate_context(
             messages=history,
             max_tokens=DEFAULT_CONTEXT_WINDOW,
@@ -325,13 +326,16 @@ class ChatCompletionService:
             reserve_for_response=max_tokens,
         )
 
-        # Save user message to database
+        # Save user message before releasing connection
         await self._message_service.add_message(
             session_id=session_id,
             data=ChatMessageCreate(role="user", content=request.message),
         )
 
-        # Call Ollama
+        # C2: Commit and release DB connection before LLM call
+        await self.db.commit()
+
+        # Phase 2: Call LLM (connection released, no DB hold during inference)
         try:
             logger.debug(f"Calling Ollama with model={model}, temperature={temperature}")
             result = await self.ollama.chat(
@@ -343,31 +347,33 @@ class ChatCompletionService:
             )
             logger.info(f"Chat completion successful, tokens={result.get('token_count')}")
 
-            # Save assistant response to database
-            await self._message_service.add_message(
+        except OllamaError as e:
+            logger.error(f"Chat completion failed: {e.message} ({e.error_code})")
+            raise ChatCompletionError(e.message, e.error_code, model) from e
+
+        # Phase 3: Get fresh session for writing response
+        async with local_session() as fresh_db:
+            message_service = ChatMessageService(fresh_db)
+            await message_service.add_message(
                 session_id=session_id,
                 data=ChatMessageCreate(role="assistant", content=result["message"]),
                 token_count=result.get("token_count"),
             )
 
-            # Update session timestamp
             await crud_chat_sessions.update(
-                db=self.db,
+                db=fresh_db,
                 object={"updated_at": datetime.now(UTC)},
                 id=session_id,
             )
+            await fresh_db.commit()
 
-            return {
-                "message": result["message"],
-                "role": "assistant",
-                "token_count": result.get("token_count"),
-                "model": result.get("model", model),
-                "finish_reason": result.get("finish_reason"),
-            }
-
-        except OllamaError as e:
-            logger.error(f"Chat completion failed: {e.message} ({e.error_code})")
-            raise ChatCompletionError(e.message, e.error_code, model) from e
+        return {
+            "message": result["message"],
+            "role": "assistant",
+            "token_count": result.get("token_count"),
+            "model": result.get("model", model),
+            "finish_reason": result.get("finish_reason"),
+        }
 
     async def complete_stream(
         self,
@@ -377,28 +383,26 @@ class ChatCompletionService:
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Stream a chat completion for a session.
 
+        C2: Releases DB connection during LLM streaming to prevent pool exhaustion.
+        P5: Uses asyncio.gather() for parallel data fetching.
+
         Yields dicts with 'content', 'done', and optionally 'token_count'.
         """
-        # Verify session ownership
-        session = await self._session_service.get_session(session_id, user_id)
+        # P5: Parallel fetch of session, settings, and messages using asyncio.gather()
+        session_coro = self._session_service.get_session(session_id, user_id)
+        settings_coro = self._settings_service.get_or_create_settings(user_id)
+        messages_coro = self._message_service.get_session_messages(session_id, limit=50)
 
-        # Get user settings for defaults
-        user_settings = await self._settings_service.get_or_create_settings(user_id)
+        session, user_settings, messages_result = await asyncio.gather(session_coro, settings_coro, messages_coro)
 
-        # Determine model and parameters
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature or user_settings.get("temperature", 0.7)
         max_tokens = request.max_tokens or user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        # Get existing messages for context
-        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
         history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
-
-        # Add the new user message
         history.append({"role": "user", "content": request.message})
 
-        # T097: Truncate context to fit within context window
         history = truncate_context(
             messages=history,
             max_tokens=DEFAULT_CONTEXT_WINDOW,
@@ -406,13 +410,16 @@ class ChatCompletionService:
             reserve_for_response=max_tokens,
         )
 
-        # Save user message to database
+        # Save user message before releasing connection
         await self._message_service.add_message(
             session_id=session_id,
             data=ChatMessageCreate(role="user", content=request.message),
         )
 
-        # Stream from Ollama
+        # C2: Commit and release DB connection before LLM streaming
+        await self.db.commit()
+
+        # Phase 2: Stream from Ollama (connection released)
         full_response = ""
         token_count = None
 
@@ -429,20 +436,22 @@ class ChatCompletionService:
                     token_count = chunk.get("token_count")
                 yield chunk
 
-            # Save complete assistant response to database
+            # Phase 3: Get fresh session for writing response
             if full_response:
-                await self._message_service.add_message(
-                    session_id=session_id,
-                    data=ChatMessageCreate(role="assistant", content=full_response),
-                    token_count=token_count,
-                )
+                async with local_session() as fresh_db:
+                    message_service = ChatMessageService(fresh_db)
+                    await message_service.add_message(
+                        session_id=session_id,
+                        data=ChatMessageCreate(role="assistant", content=full_response),
+                        token_count=token_count,
+                    )
 
-                # Update session timestamp
-                await crud_chat_sessions.update(
-                    db=self.db,
-                    object={"updated_at": datetime.now(UTC)},
-                    id=session_id,
-                )
+                    await crud_chat_sessions.update(
+                        db=fresh_db,
+                        object={"updated_at": datetime.now(UTC)},
+                        id=session_id,
+                    )
+                    await fresh_db.commit()
 
         except OllamaError as e:
             raise ChatCompletionError(e.message, e.error_code, model) from e
