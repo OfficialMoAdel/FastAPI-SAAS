@@ -2,10 +2,9 @@
 RBAC Permission Dependency for FastAPI.
 
 Provides permission checking via requires_permission() factory.
-Uses Redis caching for performance.
+Uses Redis Sets for O(1) permission lookups.
 """
 
-import json
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
@@ -55,19 +54,23 @@ async def get_cached_permissions(
     db: AsyncSession,
 ) -> set[str]:
     """
-    Get user permissions with Redis caching.
+    Get user permissions with Redis caching using native Sets.
+
+    Uses Redis SMEMBERS for O(1) retrieval instead of JSON deserialization.
     Returns cached permissions if available, otherwise queries DB and caches result.
     """
     from ...core.utils.cache import client as redis_client
 
     cache_key = get_user_permissions_cache_key(user_id, tenant_id)
 
-    # Try to get from cache
+    # Try to get from cache using Redis Sets
     if redis_client is not None:
         try:
-            cached = await redis_client.get(cache_key)
-            if cached:
-                return set(json.loads(cached))
+            # Check if set exists and get all members in one call
+            if await redis_client.exists(cache_key):
+                members = await redis_client.smembers(cache_key)  # type: ignore[misc]
+                # Redis returns bytes, decode to strings
+                return {m.decode() if isinstance(m, bytes) else m for m in members}  # type: ignore[union-attr]
         except Exception as e:
             # Log cache read failure but continue to DB query
             logger.warning(
@@ -80,11 +83,15 @@ async def get_cached_permissions(
     # Query from database
     permissions = await get_user_permissions(user_id, tenant_id, db)
 
-    # Cache the result
-    if redis_client is not None:
+    # Cache the result using Redis Sets
+    if redis_client is not None and permissions:
         try:
-            await redis_client.set(cache_key, json.dumps(list(permissions)))
-            await redis_client.expire(cache_key, PERMISSIONS_CACHE_TTL)
+            # Use pipeline for atomic set + expire
+            pipe = redis_client.pipeline()
+            pipe.delete(cache_key)  # Clear any existing data
+            pipe.sadd(cache_key, *permissions)
+            pipe.expire(cache_key, PERMISSIONS_CACHE_TTL)
+            await pipe.execute()  # type: ignore[union-attr]
         except Exception as e:
             # Log cache write failure but continue successfully (permissions already retrieved)
             logger.warning(
