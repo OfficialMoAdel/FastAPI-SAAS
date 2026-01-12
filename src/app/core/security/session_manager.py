@@ -5,6 +5,7 @@ Tracks active sessions in Redis with automatic expiration.
 """
 
 import json
+from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -74,9 +75,9 @@ class SessionManager:
 
         session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
 
-        # Get current sessions
+        # Get current sessions - use deque for O(1) popleft
         sessions_raw = await self._redis_client.get(session_key)
-        sessions: list[dict] = json.loads(sessions_raw) if sessions_raw else []
+        sessions: deque[dict] = deque(json.loads(sessions_raw)) if sessions_raw else deque()
 
         # Check if session already exists
         existing_ids = [s["session_id"] for s in sessions]
@@ -92,9 +93,9 @@ class SessionManager:
 
         invalidated_sessions = []
 
-        # Remove oldest sessions if at limit
+        # Remove oldest sessions if at limit - O(1) with deque.popleft()
         while len(sessions) >= self._max_sessions:
-            oldest = sessions.pop(0)  # Remove oldest (FIFO)
+            oldest = sessions.popleft()  # O(1) removal from front
             invalidated_sessions.append(oldest)
             logger.info(
                 "Session invalidated due to limit",
@@ -109,7 +110,7 @@ class SessionManager:
         await self._redis_client.setex(
             session_key,
             self.SESSION_TTL_SECONDS,
-            json.dumps(sessions),
+            json.dumps(list(sessions)),
         )
 
         logger.info(
