@@ -224,36 +224,25 @@ class FileService:
         mime_type: str | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> tuple[list[File], int]:
-        """List files with optional filtering.
+    ) -> dict[str, Any]:
+        """List files with optional filtering."""
+        from src.app.modules.files.schemas import FileRead
 
-        Args:
-            tenant_id: The tenant UUID.
-            user_id: Optional filter by owner.
-            mime_type: Optional filter by MIME type.
-            limit: Page size.
-            offset: Page offset.
-
-        Returns:
-            Tuple of (files, total_count).
-        """
-        query = select(File).where(File.tenant_id == tenant_id)
-
+        filters = {"tenant_id": tenant_id}
         if user_id:
-            query = query.where(File.user_id == user_id)
+            filters["user_id"] = user_id
         if mime_type:
-            query = query.where(File.mime_type == mime_type)
+            filters["mime_type"] = mime_type
 
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total = (await self.db.execute(count_query)).scalar() or 0
-
-        # Get paginated items
-        query = query.order_by(File.created_at.desc()).limit(limit).offset(offset)
-        result = await self.db.execute(query)
-        files = list(result.scalars().all())
-
-        return files, total
+        return await self.crud.get_multi(
+            db=self.db,
+            offset=offset,
+            limit=limit,
+            sort_columns=["created_at"],
+            sort_orders=["desc"],
+            schema_to_select=FileRead,
+            **filters,
+        )
 
     async def download_file(
         self,

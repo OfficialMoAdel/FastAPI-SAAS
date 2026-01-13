@@ -166,8 +166,12 @@ class ChatSessionService(BaseService[AIChatSession]):
 
     async def get_user_sessions(self, user_id: int, page: int = 1, limit: int = 20) -> dict[str, Any]:
         """Get paginated chat sessions for a user."""
+        from .schemas import ChatSessionRead
+
         offset = (page - 1) * limit
-        return await crud_chat_sessions.get_multi(db=self.db, user_id=user_id, offset=offset, limit=limit)
+        return await crud_chat_sessions.get_multi(
+            db=self.db, user_id=user_id, offset=offset, limit=limit, schema_to_select=ChatSessionRead
+        )
 
     async def update_session(self, session_id: int, user_id: int, data: ChatSessionUpdate) -> dict[str, Any]:
         """Update a chat session."""
@@ -203,8 +207,12 @@ class ChatMessageService(BaseService[AIChatMessage]):
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
         """Get paginated messages for a session."""
+        from .schemas import ChatMessageRead
+
         offset = (page - 1) * limit
-        return await crud_chat_messages.get_multi(db=self.db, session_id=session_id, offset=offset, limit=limit)
+        return await crud_chat_messages.get_multi(
+            db=self.db, session_id=session_id, offset=offset, limit=limit, schema_to_select=ChatMessageRead
+        )
 
 
 class AISettingsService(BaseService[AISettings]):
@@ -304,12 +312,10 @@ class ChatCompletionService:
         """
         logger.info(f"Chat completion request for session {session_id} by user {user_id}")
 
-        # P5: Parallel fetch of session, settings, and messages using asyncio.gather()
-        session_coro = self._session_service.get_session(session_id, user_id)
-        settings_coro = self._settings_service.get_or_create_settings(user_id)
-        messages_coro = self._message_service.get_session_messages(session_id, limit=50)
-
-        session, user_settings, messages_result = await asyncio.gather(session_coro, settings_coro, messages_coro)
+        # Sequential fetch to avoid SQLAlchemy AsyncSession concurrency issues
+        session = await self._session_service.get_session(session_id, user_id)
+        user_settings = await self._settings_service.get_or_create_settings(user_id)
+        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature or user_settings.get("temperature", 0.7)
@@ -388,12 +394,10 @@ class ChatCompletionService:
 
         Yields dicts with 'content', 'done', and optionally 'token_count'.
         """
-        # P5: Parallel fetch of session, settings, and messages using asyncio.gather()
-        session_coro = self._session_service.get_session(session_id, user_id)
-        settings_coro = self._settings_service.get_or_create_settings(user_id)
-        messages_coro = self._message_service.get_session_messages(session_id, limit=50)
-
-        session, user_settings, messages_result = await asyncio.gather(session_coro, settings_coro, messages_coro)
+        # Sequential fetch to avoid SQLAlchemy AsyncSession concurrency issues
+        session = await self._session_service.get_session(session_id, user_id)
+        user_settings = await self._settings_service.get_or_create_settings(user_id)
+        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature or user_settings.get("temperature", 0.7)

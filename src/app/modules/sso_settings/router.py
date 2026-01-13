@@ -52,6 +52,7 @@ async def list_sso_settings(
         db=db,
         offset=offset,
         limit=per_page,
+        schema_to_select=SSOSettingsRead,
     )
 
     data = settings_data.get("data", [])

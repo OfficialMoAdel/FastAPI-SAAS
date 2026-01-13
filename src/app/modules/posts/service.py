@@ -102,6 +102,7 @@ class PostService(BaseService[Post]):
             limit=items_per_page,
             created_by_user_id=user_id,
             is_deleted=False,
+            schema_to_select=PostRead,
         )
 
         response: dict[str, Any] = paginated_response(crud_data=posts_data, page=page, items_per_page=items_per_page)

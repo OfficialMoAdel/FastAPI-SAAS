@@ -144,7 +144,7 @@ class TenantService(BaseService[Tenant]):
         if is_active is not None:
             kwargs["is_active"] = is_active
 
-        return await self.crud.get_multi(**kwargs)
+        return await self.crud.get_multi(**kwargs, schema_to_select=TenantResponse)
 
     async def update_tenant(
         self,

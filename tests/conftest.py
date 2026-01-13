@@ -19,6 +19,7 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
 
 from src.app.core.config import settings
+from src.app.main import app
 
 
 # SQLite type compilers for PostgreSQL types
@@ -73,26 +74,46 @@ if not _test_encryption_key:
     _test_encryption_key = Fernet.generate_key().decode()
 settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool, StaticPool
 
-from src.app.main import app
+# Use SQLite for tests - fresh database each run, no data conflicts
+# We use a file-based DB to allow sharing between sync engine (setup) and async engine (app)
+import os
+import uuid
 
-# Use in-memory SQLite for tests - fresh database each run, no data conflicts
-DATABASE_URI_STR = ":memory:"
+_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+# Use a unique filename to avoid file locking issues on Windows during concurrent runs or rapid re-runs
+DB_FILENAME = f"test_{uuid.uuid4().hex}.db"
+DATABASE_PATH = os.path.join(_base_dir, DB_FILENAME)
+
+# Format path for SQLite URI
+if os.name == "nt":
+    DATABASE_URI_STR = f"/{DATABASE_PATH.replace(os.sep, '/')}"
+else:
+    DATABASE_URI_STR = f"/{DATABASE_PATH}"
 
 print(f"DEBUG: conftest loaded. Using SQLite: {DATABASE_URI_STR}")
 
+# Sync engine for setup (create tables)
 sync_engine = create_engine(
-    f"sqlite:///{DATABASE_URI_STR}",
+    f"sqlite://{DATABASE_URI_STR}",
     connect_args={"check_same_thread": False},
-    poolclass=StaticPool,
+    poolclass=NullPool,  # Close connections immediately after use
 )
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
 # Async Engine for tests
 test_async_engine = create_async_engine(
-    f"sqlite+aiosqlite:///{DATABASE_URI_STR}",
-    poolclass=StaticPool,
+    f"sqlite+aiosqlite://{DATABASE_URI_STR}",
+    poolclass=NullPool,  # Close connections immediately after use
+)
+local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
+
+# Async Engine for tests
+test_async_engine = create_async_engine(
+    f"sqlite+aiosqlite://{DATABASE_URI_STR}",
+    poolclass=NullPool,
+    connect_args={"check_same_thread": False},
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_async_engine, class_=AsyncSession)
 
@@ -100,8 +121,35 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 from src.app.core.db.database import Base
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
-from src.app.modules.tenants.models import Tenant
+# Core & Auth
 from src.app.modules.users.models import User
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
+
+# Features
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.billing.models import (
+    BillingRecord,
+    Pricing,
+    Product,
+    StripeSettings,
+    SubscriptionPlan,
+    UserSubscription,
+)
+from src.app.modules.files.models import File
+from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+from src.app.modules.posts.models import Post
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.sso.models import UserSSOConnection
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.tiers.models import Tier
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
+from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
+
+# Debug: Print registered tables to verify imports
+print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")
 
 fake = Faker()
 
@@ -109,21 +157,18 @@ fake = Faker()
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """Ensure fresh database schema for tests."""
-    # Dispose engines to release file locks on Windows
-    sync_engine.dispose()
-
-    try:
-        Base.metadata.drop_all(bind=sync_engine)
-    except Exception:
-        pass
-
-    # Re-create all tables
-    Base.metadata.create_all(bind=sync_engine, checkfirst=True)
+    # Create all tables
+    Base.metadata.create_all(bind=sync_engine)
 
     yield
 
-    # Cleanup file after tests
+    # Cleanup
     sync_engine.dispose()
+    try:
+        if os.path.exists(DATABASE_PATH):
+            os.remove(DATABASE_PATH)
+    except Exception as e:
+        print(f"Warning: Could not remove test database {DATABASE_PATH}: {e}")
     # if os.path.exists(DATABASE_PATH):
     #     try:
     #         os.remove(DATABASE_PATH)

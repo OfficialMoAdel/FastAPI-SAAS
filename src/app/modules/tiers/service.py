@@ -73,7 +73,9 @@ class TierService(BaseService[Tier]):
         dict[str, Any]
             Paginated tiers response
         """
-        tiers_data = await crud_tiers.get_multi(db=self.db, offset=(page - 1) * items_per_page, limit=items_per_page)
+        tiers_data = await crud_tiers.get_multi(
+            db=self.db, offset=(page - 1) * items_per_page, limit=items_per_page, schema_to_select=TierRead
+        )
         response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
         return response
 

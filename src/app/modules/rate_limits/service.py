@@ -147,6 +147,7 @@ class RateLimitService(BaseService[RateLimit]):
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
             tier_id=db_tier["id"],
+            schema_to_select=RateLimitRead,
         )
 
         response: dict[str, Any] = paginated_response(

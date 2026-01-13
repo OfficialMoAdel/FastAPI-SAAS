@@ -13,7 +13,7 @@ from .._base.exceptions import ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_api_keys
 from .models import APIKey
-from .schemas import APIKeyCreate, APIKeyResponse
+from .schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 
 
 class APIKeyService(BaseService[APIKey]):
@@ -136,6 +136,7 @@ class APIKeyService(BaseService[APIKey]):
             is_deleted=False,
             offset=(page - 1) * items_per_page,
             limit=items_per_page,
+            schema_to_select=APIKeyRead,
         )
 
     async def revoke_api_key(

@@ -133,7 +133,7 @@ async def list_files(
     user_uuid = UUID(user_id) if user_id else None
     offset = (page - 1) * per_page
 
-    files, total = await service.list_files(
+    files_data = await service.list_files(
         tenant_id=tenant.id,
         user_id=user_uuid,
         mime_type=mime_type,
@@ -141,8 +141,11 @@ async def list_files(
         offset=offset,
     )
 
+    data = files_data.get("data", [])
+    total = files_data.get("total_count", 0)
+
     return {
-        "items": [FileRead.model_validate(f) for f in files],
+        "items": data,
         "total": total,
         "page": page,
         "per_page": per_page,

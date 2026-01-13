@@ -39,6 +39,7 @@ async def read_users(
         offset=offset,
         limit=per_page,
         is_deleted=False,
+        schema_to_select=UserRead,
     )
 
     data = users_data.get("data", [])

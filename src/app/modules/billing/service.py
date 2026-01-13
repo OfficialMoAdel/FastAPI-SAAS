@@ -144,7 +144,12 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         # T063: Sort by sort_order
         return await crud_subscription_plans.get_multi(
-            db=self.db, offset=offset, limit=limit, sort_columns=["sort_order"], **filters
+            db=self.db,
+            offset=offset,
+            limit=limit,
+            sort_columns=["sort_order"],
+            schema_to_select=SubscriptionPlanRead,
+            **filters,
         )
 
     async def update_plan(self, plan_id: int, data: SubscriptionPlanUpdate) -> dict[str, Any]:
@@ -202,7 +207,9 @@ class ProductService(BaseService[Product]):
         filters: dict[str, Any] = {}
         if is_active is not None:
             filters["is_active"] = is_active
-        return await crud_products.get_multi(db=self.db, offset=offset, limit=limit, **filters)
+        return await crud_products.get_multi(
+            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, **filters
+        )
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
         """Update a product."""
@@ -279,7 +286,7 @@ class PricingService(BaseService[Pricing]):
 
     async def get_product_pricing(self, product_id: int) -> dict[str, Any]:
         """Get all pricing tiers for a product."""
-        return await crud_pricing.get_multi(db=self.db, product_id=product_id)
+        return await crud_pricing.get_multi(db=self.db, product_id=product_id, schema_to_select=PricingRead)
 
     async def update_pricing(self, pricing_id: int, data: PricingUpdate) -> dict[str, Any]:
         """Update a pricing tier."""
@@ -325,7 +332,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:
         """Get all subscriptions for a user."""
-        return await crud_user_subscriptions.get_multi(db=self.db, user_id=user_id)
+        return await crud_user_subscriptions.get_multi(
+            db=self.db, user_id=user_id, schema_to_select=UserSubscriptionRead
+        )
 
     async def update_subscription(self, subscription_id: int, data: UserSubscriptionUpdate) -> dict[str, Any]:
         """Update a subscription."""
@@ -440,7 +449,13 @@ class BillingRecordService(BaseService[BillingRecord]):
             filters["status"] = status
 
         return await crud_billing_records.get_multi(
-            db=self.db, offset=offset, limit=limit, sort_columns=["created_at"], sort_orders=["desc"], **filters
+            db=self.db,
+            offset=offset,
+            limit=limit,
+            sort_columns=["created_at"],
+            sort_orders=["desc"],
+            schema_to_select=BillingRecordRead,
+            **filters,
         )
 
 
