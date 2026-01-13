@@ -35,6 +35,19 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID) -> str:
             raise e
 
 
+async def migrate_sessions_task(ctx: Worker) -> str:
+    """Background task to migrate sessions to hash format."""
+    from src.app.core.security.session_manager import session_manager
+
+    logging.info("Starting session migration task")
+    try:
+        count = await session_manager.migrate_to_hash()
+        return f"Migrated {count} users to hash format."
+    except Exception as e:
+        logging.error(f"Session migration failed: {e}")
+        raise e
+
+
 # -------- base functions --------
 async def startup(ctx: Worker) -> None:
     logging.info("Worker Started")

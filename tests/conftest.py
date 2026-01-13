@@ -16,7 +16,6 @@ from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
-from sqlalchemy.pool import NullPool
 from sqlalchemy.sql.expression import TextClause
 
 from src.app.core.config import settings
@@ -74,31 +73,26 @@ if not _test_encryption_key:
     _test_encryption_key = Fernet.generate_key().decode()
 settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
+from sqlalchemy.pool import StaticPool
+
 from src.app.main import app
 
-# Use SQLite for tests - fresh database each run, no data conflicts
-_base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-DATABASE_PATH = os.path.join(_base_dir, "test.db")
-
-# Format path for SQLite URI
-if os.name == "nt":
-    DATABASE_URI_STR = f"/{DATABASE_PATH.replace(os.sep, '/')}"
-else:
-    DATABASE_URI_STR = f"/{DATABASE_PATH}"
+# Use in-memory SQLite for tests - fresh database each run, no data conflicts
+DATABASE_URI_STR = ":memory:"
 
 print(f"DEBUG: conftest loaded. Using SQLite: {DATABASE_URI_STR}")
 
 sync_engine = create_engine(
-    f"sqlite://{DATABASE_URI_STR}",
+    f"sqlite:///{DATABASE_URI_STR}",
     connect_args={"check_same_thread": False},
-    poolclass=NullPool,
+    poolclass=StaticPool,
 )
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
 # Async Engine for tests
 test_async_engine = create_async_engine(
-    f"sqlite+aiosqlite://{DATABASE_URI_STR}",
-    poolclass=NullPool,
+    f"sqlite+aiosqlite:///{DATABASE_URI_STR}",
+    poolclass=StaticPool,
 )
 TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_async_engine, class_=AsyncSession)
 
@@ -115,26 +109,15 @@ fake = Faker()
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """Ensure fresh database schema for tests."""
-    import os
-    import time
-
     # Dispose engines to release file locks on Windows
     sync_engine.dispose()
-
-    # Remove existing test database file if it exists
-    for ext in ["", "-wal", "-shm"]:
-        path = f"{DATABASE_PATH}{ext}"
-        if os.path.exists(path):
-            try:
-                os.remove(path)
-            except Exception as e:
-                print(f"Warning: Could not remove {path}: {e}")
 
     try:
         Base.metadata.drop_all(bind=sync_engine)
     except Exception:
         pass
 
+    # Re-create all tables
     Base.metadata.create_all(bind=sync_engine, checkfirst=True)
 
     yield

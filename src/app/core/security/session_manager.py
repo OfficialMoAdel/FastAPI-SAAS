@@ -25,6 +25,8 @@ class SessionManager:
 
     # Redis key prefix for user sessions
     SESSION_KEY_PREFIX = "user_sessions:"
+    # Redis key prefix for user sessions (Hash implementation)
+    SESSION_HASH_PREFIX = "user_sessions_v2:"
     # Default max concurrent sessions per user
     DEFAULT_MAX_SESSIONS = 5
     # Session TTL in seconds (24 hours)
@@ -113,6 +115,27 @@ class SessionManager:
             json.dumps(list(sessions)),
         )
 
+        # Dual-write: Save to Redis Hash (v2)
+        try:
+            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+            # Check for limit on Hash (since we can't trust the deque state for the hash)
+            # But during dual-write, we can just mirror the "new_session" addition
+            # and rely on the deque logic to tell us what to remove?
+            # Actually, `invalidated_sessions` tells us what was removed.
+
+            # 1. Remove invalidated sessions from Hash
+            if invalidated_sessions:
+                await self._redis_client.hdel(hash_key, *[s["session_id"] for s in invalidated_sessions])
+
+            # 2. Add new session to Hash
+            await self._redis_client.hset(hash_key, session_id, json.dumps(new_session))
+
+            # 3. Set Expiry on Hash
+            await self._redis_client.expire(hash_key, self.SESSION_TTL_SECONDS)
+
+        except Exception as e:
+            logger.error(f"Failed to dual-write session to hash: {e}")
+
         logger.info(
             "Session registered",
             user_id=user_id,
@@ -196,6 +219,15 @@ class SessionManager:
         else:
             await self._redis_client.delete(session_key)
 
+        # Dual-write: Remove from Hash (v2)
+        try:
+            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+            await self._redis_client.hdel(hash_key, session_id)
+            # If empty, maybe delete key? Redis hashes automatically delete when empty,
+            # but we might want to ensure it? hdel handles it.
+        except Exception as e:
+            logger.error(f"Failed to dual-write invalidation to hash: {e}")
+
         logger.info("Session invalidated", user_id=user_id, session_id=session_id)
         return True
 
@@ -221,6 +253,13 @@ class SessionManager:
         sessions = json.loads(sessions_raw)
         count = len(sessions)
         await self._redis_client.delete(session_key)
+
+        # Dual-write: Delete Hash (v2)
+        try:
+            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+            await self._redis_client.delete(hash_key)
+        except Exception as e:
+            logger.error(f"Failed to dual-write delete-all to hash: {e}")
 
         logger.info(
             "All sessions invalidated",
@@ -252,6 +291,97 @@ class SessionManager:
         from typing import cast
 
         return cast(list[dict[str, Any]], json.loads(sessions_raw))
+
+    async def count_active_sessions(self, user_id: int | str) -> int:
+        """Count active sessions for a user (optimized).
+
+        Args:
+            user_id: User identifier
+
+        Returns
+        -------
+            Number of active sessions
+        """
+        if not self._redis_client:
+            return 0
+
+        # Try Hash first (v2) if we are in read-from-hash mode (not yet)
+        # For now, stick to v1 unless we want to test v2 reading
+
+        # v1 implementation
+        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
+        sessions_raw = await self._redis_client.get(session_key)
+        if not sessions_raw:
+            return 0
+        return len(json.loads(sessions_raw))
+
+    async def migrate_to_hash(self, batch_size: int = 100) -> int:
+        """Migrate all legacy sessions to Redis Hash format.
+
+        Iterates over all keys matching the legacy prefix and converts
+        them to the new Hash format.
+
+        Args:
+            batch_size: Number of keys to process per batch (pipeline)
+
+        Returns
+        -------
+            Number of users migrated
+        """
+        if not self._redis_client:
+            logger.warning("Redis not configured, skipping migration")
+            return 0
+
+        logger.info("Starting session migration to Hash format")
+        count = 0
+
+        # Scan for legacy keys
+        # Pattern: user_sessions:*
+
+        match_pattern = f"{self.SESSION_KEY_PREFIX}*"
+
+        async for key in self._redis_client.scan_iter(match=match_pattern):
+            # Skip if it's already a v2 key (though prefix should prevent this if distinct)
+            if key.startswith(self.SESSION_HASH_PREFIX):
+                continue
+
+            try:
+                # Extract user_id from key
+                # key is like "user_sessions:123"
+                user_id = key.replace(self.SESSION_KEY_PREFIX, "")
+
+                # Get legacy sessions
+                sessions_raw = await self._redis_client.get(key)
+                if not sessions_raw:
+                    continue
+
+                sessions = json.loads(sessions_raw)
+                if not sessions:
+                    continue
+
+                # Prepare Hash structure
+                hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+
+                # Use pipeline for atomicity per user
+                async with self._redis_client.pipeline(transaction=True) as pipe:
+                    # Add all sessions to hash
+                    for session in sessions:
+                        pipe.hset(hash_key, session["session_id"], json.dumps(session))
+
+                    # Set TTL (refresh it)
+                    pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+
+                    await pipe.execute()
+
+                count += 1
+                if count % 100 == 0:
+                    logger.info(f"Migrated {count} users")
+
+            except Exception as e:
+                logger.error(f"Failed to migrate session key {key}: {e}")
+
+        logger.info(f"Session migration completed. Migrated {count} users.")
+        return count
 
 
 # Global session manager instance

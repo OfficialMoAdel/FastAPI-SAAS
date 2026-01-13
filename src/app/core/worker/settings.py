@@ -1,14 +1,14 @@
 from arq.connections import RedisSettings
 
 from ...core.config import settings
-from .functions import deliver_webhook_task, sample_background_task, shutdown, startup
+from .functions import deliver_webhook_task, migrate_sessions_task, sample_background_task, shutdown, startup
 
 REDIS_QUEUE_HOST = settings.REDIS_QUEUE_HOST
 REDIS_QUEUE_PORT = settings.REDIS_QUEUE_PORT
 
 
 class WorkerSettings:
-    functions = [sample_background_task, deliver_webhook_task]
+    functions = [sample_background_task, deliver_webhook_task, migrate_sessions_task]
     redis_settings = RedisSettings(host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT)
     on_startup = startup
     on_shutdown = shutdown
