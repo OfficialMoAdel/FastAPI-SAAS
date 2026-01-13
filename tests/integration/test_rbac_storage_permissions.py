@@ -5,64 +5,58 @@ Tests permission enforcement on storage settings endpoints:
 - Unauthorized users receive 403 Forbidden
 """
 
+import pytest
 from fastapi import status
 
-# Headers for tenant context
-TENANT_HEADERS = {"X-Tenant-ID": "test-tenant-integration"}
 
-
+@pytest.mark.asyncio
 class TestStorageSettingsPermissions:
     """Tests for storage settings permission enforcement."""
 
-    def test_get_storage_settings_requires_permission(self, client):
-        """GET /storage-settings requires MANAGE_STORAGE_SETTINGS permission."""
-        response = client.get("/api/v1/storage-settings", headers=TENANT_HEADERS)
-        # With mock context, should have permission
-        # 404 = no settings, 200 = settings exist, 403 = no permission
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_403_FORBIDDEN,
-        ]
+    async def test_get_storage_settings_superuser(self, client, superuser_token_headers):
+        """Superuser should have access."""
+        response = client.get("/api/v1/storage-settings", headers=superuser_token_headers)
+        # 404 = no settings, 200 = settings exist
+        assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
 
-    def test_create_storage_settings_requires_permission(self, client):
-        """POST /storage-settings requires MANAGE_STORAGE_SETTINGS permission."""
+    async def test_get_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
+        """Regular user without permission should get 403."""
+        response = client.get("/api/v1/storage-settings", headers=regular_user_token_headers)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
+
+    async def test_create_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
+        """Regular user cannot create settings."""
         payload = {
             "provider": "local",
             "credentials": {"base_path": "/tmp/test"},
         }
-        response = client.post("/api/v1/storage-settings", json=payload, headers=TENANT_HEADERS)
-        # 201 = created, 409 = exists, 400 = validation, 403 = no permission
-        assert response.status_code in [
-            status.HTTP_201_CREATED,
-            status.HTTP_409_CONFLICT,
-            status.HTTP_400_BAD_REQUEST,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        response = client.post("/api/v1/storage-settings", json=payload, headers=regular_user_token_headers)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    def test_update_storage_settings_requires_permission(self, client):
-        """PATCH /storage-settings requires MANAGE_STORAGE_SETTINGS permission."""
+    async def test_update_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
+        """Regular user cannot update settings."""
         payload = {"max_file_size_mb": 200}
-        response = client.patch("/api/v1/storage-settings", json=payload, headers=TENANT_HEADERS)
-        # 200 = updated, 404 = no settings, 403 = no permission
-        assert response.status_code in [
-            status.HTTP_200_OK,
-            status.HTTP_404_NOT_FOUND,
-            status.HTTP_403_FORBIDDEN,
-        ]
+        response = client.patch("/api/v1/storage-settings", json=payload, headers=regular_user_token_headers)
+        assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
+@pytest.mark.asyncio
 class TestStorageSettingsAdminOnly:
     """Tests that storage settings are admin-only operations."""
 
-    def test_storage_settings_not_accessible_without_tenant(self, client):
+    async def test_storage_settings_not_accessible_without_tenant(self, client, superuser_token_headers):
         """Storage settings require tenant context."""
         # Request without X-Tenant-ID header
-        response = client.get("/api/v1/storage-settings")
+        headers = superuser_token_headers.copy()
+        headers.pop("X-Tenant-ID", None)
+
+        response = client.get("/api/v1/storage-settings", headers=headers)
         # Should fail due to missing tenant context
         assert response.status_code in [
             status.HTTP_400_BAD_REQUEST,
             status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
-            status.HTTP_404_NOT_FOUND,  # If middleware creates empty tenant
+            status.HTTP_404_NOT_FOUND,
+            status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
         ]

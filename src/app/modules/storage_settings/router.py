@@ -8,7 +8,8 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import get_current_tenant
+from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage_settings.schemas import (
     StorageSettingsCreate,
@@ -22,41 +23,17 @@ from src.app.modules.storage_settings.service import (
     get_storage_settings_service,
 )
 from src.app.modules.tenants import Tenant
-from src.app.modules.users import User
 
 router = APIRouter(prefix="/storage-settings", tags=["Storage Settings"])
 
 
-def require_storage_permission(user: User = Depends(get_current_user)) -> User:
-    """Dependency to check MANAGE_STORAGE_SETTINGS permission.
-
-    Args:
-        user: Current authenticated user.
-
-    Returns:
-        User if authorized.
-
-    Raises:
-        HTTPException: If user lacks permission.
-    """
-    # Check if user has MANAGE_STORAGE_SETTINGS permission
-    if not hasattr(user, "has_permission"):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="MANAGE_STORAGE_SETTINGS permission required",
-        )
-    elif not user.has_permission(Permission.MANAGE_STORAGE_SETTINGS):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="MANAGE_STORAGE_SETTINGS permission required",
-        )
-    return user
-
-
-@router.get("", response_model=StorageSettingsRead)
+@router.get(
+    "",
+    response_model=StorageSettingsRead,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
+)
 async def get_storage_settings(
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_storage_permission),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Get storage settings for the current tenant.
@@ -80,11 +57,15 @@ async def get_storage_settings(
     return service.to_read_schema(settings)
 
 
-@router.post("", response_model=StorageSettingsRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=StorageSettingsRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
+)
 async def create_storage_settings(
     data: StorageSettingsCreate,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_storage_permission),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Create storage settings for the current tenant.
@@ -127,11 +108,14 @@ async def create_storage_settings(
         )
 
 
-@router.patch("", response_model=StorageSettingsRead)
+@router.patch(
+    "",
+    response_model=StorageSettingsRead,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
+)
 async def update_storage_settings(
     data: StorageSettingsUpdate,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_storage_permission),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Update storage settings for the current tenant.
