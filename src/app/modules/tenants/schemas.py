@@ -1,6 +1,6 @@
 import re
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -26,17 +26,24 @@ class TenantCreate(TenantBase, BaseCreate):
         Field(
             min_length=3,
             max_length=50,
-            pattern=r"^[a-z0-9][a-z0-9-]*[a-z0-9]$",
             examples=["acme-corp"],
             description="URL-safe identifier for X-Tenant-ID header (lowercase alphanumeric with hyphens)",
         ),
     ]
 
+    @field_validator("slug", mode="before")
+    @classmethod
+    def normalize_slug(cls, v: Any) -> Any:
+        """Normalize slug to lowercase and stripped before validation."""
+        if isinstance(v, str):
+            return v.lower().strip()
+        return v
+
     @field_validator("slug")
     @classmethod
     def validate_slug(cls, v: str) -> str:
         """Validate slug format and reserved values."""
-        v = v.lower()
+        # v is already normalized by normalize_slug
         if not SLUG_PATTERN.match(v):
             raise ValueError("Slug must be lowercase alphanumeric with hyphens, starting and ending with alphanumeric")
         if v in RESERVED_SLUGS:

@@ -101,7 +101,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     content={"detail": f"Missing required header: {TENANT_HEADER}"},
                 )
 
-            tenant_slug = tenant_slug.strip()
+            # Normalize slug to ensure case-insensitive lookup
+            tenant_slug = tenant_slug.strip().lower()
 
             tenant = await self._get_tenant_by_slug(tenant_slug)
 

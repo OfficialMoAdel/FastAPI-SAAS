@@ -47,6 +47,10 @@ class TenantService(BaseService[Tenant]):
         DuplicateError
             If slug already exists
         """
+        # Normalize slug (defense in depth, even if schema handles it)
+        if tenant.slug:
+            tenant.slug = tenant.slug.lower().strip()
+
         slug_exists = await self.crud.exists(db=self.db, slug=tenant.slug)
         if slug_exists:
             logger.warning(
@@ -106,7 +110,8 @@ class TenantService(BaseService[Tenant]):
         dict[str, Any] | None
             Tenant data or None if not found
         """
-        return await self.crud.get(db=self.db, slug=slug, schema_to_select=TenantResponse)
+        normalized_slug = slug.lower().strip()
+        return await self.crud.get(db=self.db, slug=normalized_slug, schema_to_select=TenantResponse)
 
     async def list_tenants(
         self,
