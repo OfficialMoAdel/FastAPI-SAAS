@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
@@ -212,10 +213,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
                         await redis_client.setex(cache_key, 3600, cache_data)
                         logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
                     else:
-                        # Cache Failure (Negative Cache - 1 minute)
+                        # Cache Failure (Negative Cache)
                         # Prevent Cache Penetration DoS
-                        await redis_client.setex(cache_key, 60, "null")
-                        logger.debug("Tenant negative cache set | slug=%s", slug)
+                        ttl = settings.TENANT_NEGATIVE_CACHE_TTL
+                        await redis_client.setex(cache_key, ttl, "null")
+                        logger.debug("Tenant negative cache set | slug=%s | ttl=%s", slug, ttl)
 
                 except Exception as e:
                     logger.warning("Tenant cache write error: %s", e)
