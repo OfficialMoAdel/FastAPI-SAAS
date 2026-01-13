@@ -528,8 +528,7 @@ def cache(
                 serializable_data = jsonable_encoder(result)
                 serialized_data = json_dumps(serializable_data)
 
-                await client.set(cache_key, serialized_data)
-                await client.expire(cache_key, expiration)
+                await client.setex(cache_key, expiration, serialized_data)
 
                 return result  # Return original result, not re-parsed
 
