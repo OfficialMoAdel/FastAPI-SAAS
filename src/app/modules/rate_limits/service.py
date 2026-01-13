@@ -1,5 +1,6 @@
 """Rate limit service layer - encapsulates all rate limit business logic."""
 
+import json
 from typing import Any
 
 from fastapi import Depends
@@ -7,6 +8,7 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.db.database import async_get_db
+from ...core.utils import cache
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_rate_limits
@@ -35,10 +37,17 @@ class RateLimitService(BaseService[RateLimit]):
         tier_service = get_service("tier", self.db)
         return await tier_service.get_tier(tier_name)
 
+    async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
+        """Invalidate rate limits cache for a tier."""
+        if cache.client:
+            cache_key = f"rate_limits:tier:{tier_id}"
+            await cache.client.delete(cache_key)
+
     async def get_rate_limits_by_tier_id(self, tier_id: int) -> dict[str, Any]:
         """Get all rate limits for a tier by tier ID.
 
         This is an interface method for cross-module access.
+        Results are cached for 1 hour.
 
         Parameters
         ----------
@@ -50,7 +59,20 @@ class RateLimitService(BaseService[RateLimit]):
         dict[str, Any]
             Rate limits data with 'data' key containing list
         """
+        cache_key = f"rate_limits:tier:{tier_id}"
+
+        # Try cache first
+        if cache.client:
+            cached = await cache.client.get(cache_key)
+            if cached:
+                return json.loads(cached)
+
         rate_limits_data = await crud_rate_limits.get_multi(db=self.db, tier_id=tier_id)
+
+        # Cache result (1 hour TTL)
+        if cache.client:
+            await cache.client.setex(cache_key, 3600, json.dumps(rate_limits_data))
+
         return rate_limits_data
 
     async def create_rate_limit(self, tier_name: str, rate_limit: RateLimitCreate) -> dict[str, Any]:
@@ -91,6 +113,8 @@ class RateLimitService(BaseService[RateLimit]):
 
         if created_rate_limit is None:
             raise ModelNotFoundError("RateLimit", "new")
+
+        await self._invalidate_tier_rate_limits_cache(db_tier["id"])
 
         return created_rate_limit
 
@@ -191,6 +215,7 @@ class RateLimitService(BaseService[RateLimit]):
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         await crud_rate_limits.update(db=self.db, object=values, id=rate_limit_id)
+        await self._invalidate_tier_rate_limits_cache(db_tier["id"])
         return {"message": "Rate Limit updated"}
 
     async def delete_rate_limit(self, tier_name: str, rate_limit_id: int) -> dict[str, str]:
@@ -222,6 +247,7 @@ class RateLimitService(BaseService[RateLimit]):
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         await crud_rate_limits.delete(db=self.db, id=rate_limit_id)
+        await self._invalidate_tier_rate_limits_cache(db_tier["id"])
         return {"message": "Rate Limit deleted"}
 
 

@@ -116,6 +116,10 @@ fake = Faker()
 def setup_db():
     """Ensure fresh database schema for tests."""
     import os
+    import time
+
+    # Dispose engines to release file locks on Windows
+    sync_engine.dispose()
 
     # Remove existing test database file if it exists
     for ext in ["", "-wal", "-shm"]:
@@ -123,8 +127,8 @@ def setup_db():
         if os.path.exists(path):
             try:
                 os.remove(path)
-            except Exception:
-                pass
+            except Exception as e:
+                print(f"Warning: Could not remove {path}: {e}")
 
     try:
         Base.metadata.drop_all(bind=sync_engine)
@@ -135,10 +139,11 @@ def setup_db():
 
     yield
 
-    # Cleanup file after tests (optional, kept for now to inspect if needed)
-    # if os.path.exists(DATABASE_URI):
+    # Cleanup file after tests
+    sync_engine.dispose()
+    # if os.path.exists(DATABASE_PATH):
     #     try:
-    #         os.remove(DATABASE_URI)
+    #         os.remove(DATABASE_PATH)
     #     except Exception:
     #         pass
 
