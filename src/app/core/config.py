@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from pydantic import SecretStr, computed_field, model_validator
+from pydantic import Field, SecretStr, computed_field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,6 +59,7 @@ class CryptSettings(BaseSettings):
 class DatabaseSettings(BaseSettings):
     DB_POOL_SIZE: int = 20
     DB_MAX_OVERFLOW: int = 10
+    DB_POOL_TIMEOUT: int = Field(default=30, ge=5, le=120)
 
 
 class SQLiteSettings(DatabaseSettings):

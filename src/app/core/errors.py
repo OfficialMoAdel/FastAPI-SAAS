@@ -16,6 +16,7 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
+from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from structlog import get_logger
 
@@ -314,6 +315,28 @@ def setup_exception_handlers(app: FastAPI) -> None:
             message=str(exc),
             status_code=429,
             details=details,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(SQLAlchemyTimeoutError)
+    async def db_timeout_exception_handler(request: Request, exc: SQLAlchemyTimeoutError) -> JSONResponse:
+        """Handle database pool timeout errors.
+
+        Returns HTTP 503 Service Unavailable when the DB pool is exhausted.
+        """
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.error(
+            "Database connection pool exhausted",
+            error=str(exc),
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.SERVICE_UNAVAILABLE,
+            message="Database connection pool exhausted. Please try again later.",
+            status_code=503,
             request_id=request_id,
         )
 
