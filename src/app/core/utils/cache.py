@@ -177,6 +177,9 @@ async def get_with_lock(
     fetch_func: Callable[[], Any],
     ttl: int = 3600,
     lock_timeout: int = 10,
+    base_delay: float = 0.05,
+    max_delay: float = 1.0,
+    jitter: float = 0.25,
 ) -> Any:
     """Get cached value with lock-based stampede protection.
 
@@ -190,6 +193,9 @@ async def get_with_lock(
         fetch_func: Async function to fetch fresh data if cache miss
         ttl: Time-to-live in seconds
         lock_timeout: Maximum time to hold lock in seconds
+        base_delay: Initial wait delay in seconds (default: 50ms)
+        max_delay: Maximum wait delay in seconds (default: 1s)
+        jitter: Jitter factor (0-1) to randomize wait time (default: 0.25)
 
     Returns
     -------
@@ -217,12 +223,24 @@ async def get_with_lock(
         finally:
             await client.delete(lock_key)
     else:
-        # Another process has the lock - wait and retry
-        for _ in range(lock_timeout * 10):  # Poll every 100ms
-            await asyncio.sleep(0.1)
+        # Another process has the lock - wait and retry with exponential backoff
+        elapsed = 0.0
+        delay = base_delay
+
+        while elapsed < lock_timeout:
+            # Add jitter to prevent thundering herd on lock release
+            # Randomize delay by +/- jitter factor
+            actual_delay = delay * (1 + random.uniform(-jitter, jitter))
+
+            await asyncio.sleep(actual_delay)
+            elapsed += actual_delay
+
             cached = await client.get(key)
             if cached is not None:
                 return json_loads(cached)
+
+            # Exponential backoff: double the delay, capped at max_delay
+            delay = min(delay * 2, max_delay)
 
         # Lock timeout - fetch anyway
         stampede_logger.warning("Cache lock timeout, fetching anyway", key=key)
