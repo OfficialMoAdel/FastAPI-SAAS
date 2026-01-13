@@ -96,7 +96,7 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
 # =============================================================================
 
 import asyncio
-import secrets
+import random
 
 from structlog import get_logger
 
@@ -145,7 +145,7 @@ async def get_with_stampede_protection(
         if delta > 0:
             # Probability increases as we approach expiration
             probability = beta * (delta / ttl) ** 2
-            if secrets.randbelow(1000) / 1000 < probability:
+            if random.random() < probability:
                 stampede_logger.debug(
                     "Cache early refresh triggered",
                     key=key,
