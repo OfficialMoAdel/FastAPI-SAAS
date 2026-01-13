@@ -1,9 +1,15 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
+from src.app.modules.sso.http_client import sso_http_get, sso_http_post
+
 
 class BaseOAuthProvider(ABC):
-    """Abstract base class for OAuth2 providers."""
+    """Abstract base class for OAuth2 providers.
+
+    Uses shared httpx.AsyncClient for connection pooling and performance.
+    Subclasses should use _http_post() and _http_get() helper methods.
+    """
 
     def __init__(
         self,
@@ -61,6 +67,40 @@ class BaseOAuthProvider(ABC):
             "state": state,
         }
         return f"{self.authorization_endpoint}?{urllib.parse.urlencode(params)}"
+
+    async def _http_post(
+        self,
+        url: str,
+        data: dict[str, Any] | None = None,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Make HTTP POST request using shared connection pool.
+
+        Args:
+            url: Target URL for the POST request
+            data: Form data to send
+            headers: Optional headers to include
+
+        Returns:
+            JSON response as dictionary
+        """
+        return await sso_http_post(url, data=data, headers=headers)
+
+    async def _http_get(
+        self,
+        url: str,
+        headers: dict[str, str] | None = None,
+    ) -> dict[str, Any]:
+        """Make HTTP GET request using shared connection pool.
+
+        Args:
+            url: Target URL for the GET request
+            headers: Optional headers to include
+
+        Returns:
+            JSON response as dictionary
+        """
+        return await sso_http_get(url, headers=headers)
 
     @abstractmethod
     async def exchange_code_for_token(self, code: str) -> dict[str, Any]:

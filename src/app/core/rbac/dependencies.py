@@ -104,6 +104,54 @@ async def get_cached_permissions(
     return permissions
 
 
+async def has_permission_cached(
+    user_id: int,
+    tenant_id: int,
+    permission_slug: str,
+    db: AsyncSession,
+) -> bool:
+    """
+    Check if a user has a specific permission using O(1) Redis SISMEMBER.
+
+    This is more efficient than get_cached_permissions() when checking a single
+    permission, as it avoids transferring all permissions over the network.
+
+    Args:
+        user_id: The user's ID
+        tenant_id: The tenant's ID
+        permission_slug: The permission to check (e.g., "users:read")
+        db: Database session for fallback query
+
+    Returns:
+        True if user has the permission, False otherwise
+    """
+    from ...core.utils.cache import client as redis_client
+
+    cache_key = get_user_permissions_cache_key(user_id, tenant_id)
+
+    # Try O(1) SISMEMBER check first
+    if redis_client is not None:
+        try:
+            # Check if cache exists
+            cache_exists = await redis_client.exists(cache_key)
+            if cache_exists:
+                # O(1) membership check - much faster than smembers for single permission
+                result: int = await redis_client.sismember(cache_key, permission_slug)  # type: ignore[misc]
+                return bool(result)
+        except Exception as e:
+            logger.warning(
+                "Failed to check permission in cache",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                permission=permission_slug,
+                error=str(e),
+            )
+
+    # Fallback: get all permissions and check (also populates cache)
+    permissions = await get_cached_permissions(user_id, tenant_id, db)
+    return permission_slug in permissions
+
+
 def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     FastAPI dependency factory that checks if the current user has a specific permission.
@@ -147,11 +195,11 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             # We already failed at _get_current_user_from_token
             tenant_id = 0
 
-        # 3. Get permissions (from cache or DB)
-        user_permissions = await get_cached_permissions(current_user["id"], tenant_id, db)
+        # 3. Check permission using O(1) SISMEMBER
+        has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)
 
-        # 4. Check permission
-        if permission_slug not in user_permissions:
+        # 4. Raise if permission denied
+        if not has_perm:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
                 detail=f"Permission denied: {permission_slug}",

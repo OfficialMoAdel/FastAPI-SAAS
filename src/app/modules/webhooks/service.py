@@ -14,7 +14,6 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID
 
-import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -22,6 +21,7 @@ from ...core.logger import get_logger
 from ...core.security.encryption import decrypt_data, encrypt_data
 from ...core.security.url_validator import SSRFProtectionError, validate_webhook_url
 from .._base import ModelNotFoundError
+from .http_client import get_webhook_http_client
 from .models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
@@ -228,23 +228,23 @@ class WebhookService:
 
         # Attempt delivery with circuit breaker tracking
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                response = await client.post(endpoint.url, json=delivery.payload, headers=headers)
+            client = get_webhook_http_client()
+            response = await client.post(endpoint.url, json=delivery.payload, headers=headers)
 
-                delivery.attempt_count += 1
-                delivery.response_status = response.status_code
-                delivery.response_body = response.text[:1000]  # Limit to 1KB
+            delivery.attempt_count += 1
+            delivery.response_status = response.status_code
+            delivery.response_body = response.text[:1000]  # Limit to 1KB
 
-                if 200 <= response.status_code < 300:  # HTTP success range
-                    # Success - record with circuit breaker
-                    await webhook_circuit.record_success()
-                    delivery.status = WebhookDeliveryStatus.DELIVERED
-                    delivery.delivered_at = datetime.now(UTC)
-                    logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
-                else:
-                    # HTTP error - record failure and retry if attempts remain
-                    await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
-                    await self._handle_delivery_failure(delivery, attempt)
+            if 200 <= response.status_code < 300:  # HTTP success range
+                # Success - record with circuit breaker
+                await webhook_circuit.record_success()
+                delivery.status = WebhookDeliveryStatus.DELIVERED
+                delivery.delivered_at = datetime.now(UTC)
+                logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
+            else:
+                # HTTP error - record failure and retry if attempts remain
+                await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
+                await self._handle_delivery_failure(delivery, attempt)
 
         except CircuitBreakerOpen as e:
             # Circuit opened during delivery attempt

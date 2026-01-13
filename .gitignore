@@ -165,14 +165,7 @@ Specify.md
 .agent
 .claude
 specs
-specs/001*
-specs/002*
-specs/003*
-specs/004*
-specs/005*
-specs/006*
-specs/007*
-specs/008*
+specs/0*
 .specify
 .archived
 claudedocs
@@ -191,3 +184,6 @@ sql_app.db*
 Advanced Code Optimization Workflow.md
 PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1*
 ERROR.text
+test.db-journal
+tmpclaude*
+UNIQUE_ISSUES_NOT_IN_OPUS*

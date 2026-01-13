@@ -1,0 +1,1 @@
+D:/project/FastAPI_saas/AGENTS.md

@@ -6,9 +6,9 @@ Tests cover:
 - Permission checking with cache hit/miss
 - Permission denied scenarios
 - Cache invalidation
+- Redis Sets operations (smembers, sadd, pipeline)
 """
 
-import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +17,10 @@ from fastapi import HTTPException
 from src.app.core.rbac.dependencies import (
     get_cached_permissions,
     get_user_permissions,
+    get_user_permissions_cache_key,
+    has_permission_cached,
     invalidate_user_permissions_cache,
+    requires_permission,
 )
 from src.app.core.rbac.permissions import Permission
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
@@ -78,41 +81,67 @@ class TestGetUserPermissions:
 
 
 class TestGetCachedPermissions:
-    """Tests for cached permission fetching."""
+    """Tests for cached permission fetching using Redis Sets."""
 
     @pytest.mark.asyncio
     async def test_returns_cached_permissions_on_hit(self):
-        """Should return cached permissions without hitting DB."""
+        """Should return cached permissions from Redis Set without hitting DB."""
         mock_db = AsyncMock()
-        cached_perms = ["users:read", "roles:read"]
+        cached_perms = {b"users:read", b"roles:read"}  # Redis returns bytes
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = json.dumps(cached_perms)
+        mock_redis.exists.return_value = True
+        mock_redis.smembers.return_value = cached_perms
 
         # Patch at the source module where client is defined
         with patch("src.app.core.utils.cache.client", mock_redis):
             permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
 
-            assert permissions == set(cached_perms)
+            assert permissions == {"users:read", "roles:read"}
             mock_db.execute.assert_not_called()  # DB should not be queried
+            mock_redis.smembers.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_queries_db_and_caches_on_miss(self):
-        """Should query DB and cache result on cache miss."""
+        """Should query DB and cache result using Redis Set on cache miss."""
         mock_db = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read"]
+        mock_result.scalars.return_value.all.return_value = ["users:read", "roles:read"]
         mock_db.execute.return_value = mock_result
 
-        mock_redis = AsyncMock()
-        mock_redis.get.return_value = None  # Cache miss
+        # Redis client with async methods except pipeline() which is sync
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=False)  # Cache miss
+        # Pipeline returns a sync object with async execute
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock_redis.pipeline.return_value = mock_pipeline
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
 
-            assert permissions == {"users:read"}
+            assert permissions == {"users:read", "roles:read"}
             mock_db.execute.assert_called_once()
-            mock_redis.set.assert_called_once()
-            mock_redis.expire.assert_called_once()
+            # Verify pipeline operations for atomic set caching
+            mock_redis.pipeline.assert_called_once()
+            mock_pipeline.delete.assert_called_once()
+            mock_pipeline.sadd.assert_called_once()
+            mock_pipeline.expire.assert_called_once()
+            mock_pipeline.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handles_string_permissions_from_redis(self):
+        """Should handle both bytes and string returns from Redis."""
+        mock_db = AsyncMock()
+        # Some Redis clients return strings instead of bytes
+        cached_perms = {"users:read", "roles:read"}
+        mock_redis = AsyncMock()
+        mock_redis.exists.return_value = True
+        mock_redis.smembers.return_value = cached_perms
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
+
+            assert permissions == {"users:read", "roles:read"}
 
     @pytest.mark.asyncio
     async def test_works_without_redis(self):
@@ -127,6 +156,62 @@ class TestGetCachedPermissions:
 
             assert permissions == {"users:read"}
             mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handles_cache_read_error_gracefully(self):
+        """Should fall back to DB on cache read error."""
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = ["users:read"]
+        mock_db.execute.return_value = mock_result
+
+        mock_redis = AsyncMock()
+        mock_redis.exists.side_effect = Exception("Redis connection error")
+        mock_pipeline = AsyncMock()
+        mock_redis.pipeline.return_value = mock_pipeline
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
+
+            assert permissions == {"users:read"}
+            mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_handles_cache_write_error_gracefully(self):
+        """Should return permissions even if cache write fails."""
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = ["users:read"]
+        mock_db.execute.return_value = mock_result
+
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=False)
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock(side_effect=Exception("Redis write error"))
+        mock_redis.pipeline.return_value = mock_pipeline
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
+
+            # Should still return permissions despite cache error
+            assert permissions == {"users:read"}
+
+    @pytest.mark.asyncio
+    async def test_does_not_cache_empty_permissions(self):
+        """Should not cache when user has no permissions."""
+        mock_db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = []
+        mock_db.execute.return_value = mock_result
+
+        mock_redis = AsyncMock()
+        mock_redis.exists.return_value = False
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
+
+            assert permissions == set()
+            mock_redis.pipeline.assert_not_called()  # No caching for empty set
 
 
 class TestInvalidateUserPermissionsCache:
@@ -255,3 +340,126 @@ class TestCacheTTL:
     def test_cache_ttl_is_reasonable(self):
         """Cache TTL should be a reasonable value (5-30 minutes)."""
         assert 300 <= PERMISSIONS_CACHE_TTL <= 1800  # 5-30 minutes
+
+
+class TestHasPermissionCached:
+    """Tests for O(1) SISMEMBER permission check."""
+
+    @pytest.fixture
+    def mock_db(self):
+        """Create a mock database session."""
+        db = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalars.return_value.all.return_value = ["users:read", "users:write"]
+        db.execute.return_value = mock_result
+        return db
+
+    @pytest.mark.asyncio
+    async def test_uses_sismember_for_cached_permissions(self, mock_db):
+        """Should use O(1) SISMEMBER when cache exists."""
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=True)
+        mock_redis.sismember = AsyncMock(return_value=1)  # 1 = member exists
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="users:read",
+                db=mock_db,
+            )
+
+            assert result is True
+            mock_redis.sismember.assert_called_once()
+            # Should NOT call smembers or database
+            mock_db.execute.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_for_missing_permission(self, mock_db):
+        """Should return False when permission not in set."""
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=True)
+        mock_redis.sismember = AsyncMock(return_value=0)  # 0 = not a member
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="admin:delete",
+                db=mock_db,
+            )
+
+            assert result is False
+            mock_redis.sismember.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_to_db_when_cache_empty(self, mock_db):
+        """Should query DB and check when cache doesn't exist."""
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=False)  # Cache miss
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock_redis.pipeline.return_value = mock_pipeline
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="users:read",
+                db=mock_db,
+            )
+
+            assert result is True  # users:read is in mock DB permissions
+            mock_db.execute.assert_called_once()
+            # Should NOT use sismember when cache doesn't exist
+            mock_redis.sismember.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_falls_back_on_redis_error(self, mock_db):
+        """Should fall back to DB query on Redis error."""
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(side_effect=Exception("Redis connection lost"))
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock_redis.pipeline.return_value = mock_pipeline
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="users:read",
+                db=mock_db,
+            )
+
+            assert result is True
+            mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_works_without_redis(self, mock_db):
+        """Should work when Redis is unavailable."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="users:write",
+                db=mock_db,
+            )
+
+            assert result is True
+            mock_db.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_false_for_nonexistent_permission(self, mock_db):
+        """Should return False when checking non-existent permission."""
+        mock_redis = MagicMock()
+        mock_redis.exists = AsyncMock(return_value=False)
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await has_permission_cached(
+                user_id=1,
+                tenant_id=1,
+                permission_slug="nonexistent:permission",
+                db=mock_db,
+            )
+
+            assert result is False

@@ -8,6 +8,7 @@ from ..core.db.database import async_get_db
 from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
 from ..core.logger import get_logger
 from ..core.security import TokenType, oauth2_scheme, verify_token
+from ..core.security.jwt_utils import get_cached_jwt_payload
 from ..core.tenancy.context import get_tenant_context
 from ..core.utils.rate_limit import rate_limiter
 from ..modules.rate_limits.crud import crud_rate_limits
@@ -31,8 +32,8 @@ async def get_current_user(
     Optimized to reuse JWT payload if already decoded by RateLimitMiddleware,
     avoiding duplicate cryptographic operations.
     """
-    # Check if JWT was already decoded by RateLimitMiddleware
-    cached_payload = getattr(request.state, "jwt_payload", None)
+    # Check if JWT was already decoded by RateLimitMiddleware using jwt_utils
+    cached_payload = get_cached_jwt_payload(request)
 
     if cached_payload:
         # Reuse cached payload - still need to verify token isn't blacklisted
