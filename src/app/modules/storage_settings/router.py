@@ -41,16 +41,10 @@ def require_storage_permission(user: User = Depends(get_current_user)) -> User:
     """
     # Check if user has MANAGE_STORAGE_SETTINGS permission
     if not hasattr(user, "has_permission"):
-        # Fallback: check roles directly
-        has_perm = any(
-            Permission.MANAGE_STORAGE_SETTINGS.value in [p.value for p in role.permissions]
-            for role in (user.roles or [])
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="MANAGE_STORAGE_SETTINGS permission required",
         )
-        if not has_perm:
-            raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="MANAGE_STORAGE_SETTINGS permission required",
-            )
     elif not user.has_permission(Permission.MANAGE_STORAGE_SETTINGS):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
