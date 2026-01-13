@@ -243,6 +243,11 @@ All 21 modules have dedicated AGENTS.md files:
 - NEVER say "ready to push when you are" - YOU must push
 - If push fails, resolve and retry until it succeeds
 
+## Plan Mode
+
+- Make the plan extremely concise. Sacrifice grammar for the sake of concision.
+- At the end of each plan, give me a list of unresolved questions to answer, if any.
+
 ## 📚 Required Skills & Best Practices
 
 You are expected to apply the expert skills located in the `.opencode/skill/` directory (or wherever you placed them).
