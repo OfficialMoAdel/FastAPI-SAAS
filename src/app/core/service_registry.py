@@ -8,6 +8,7 @@ Benefits:
 - Enables easy mocking in tests
 - Provides clear dependency boundaries
 - Supports lazy initialization
+- Reuse service instances within the same request (via session caching)
 
 Usage:
     # In service that needs cross-module access:
@@ -18,6 +19,7 @@ Usage:
 """
 
 from typing import TYPE_CHECKING, Any, Protocol, TypeVar, cast
+from weakref import WeakKeyDictionary
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -53,6 +55,10 @@ class UserServiceProtocol(Protocol):
 # Service factory registry - maps service names to factory functions
 _SERVICE_FACTORIES: dict[str, Any] = {}
 
+# Cache: db_session -> {service_name: service_instance}
+# Uses WeakKeyDictionary to automatically clean up when DB session is closed/garbage collected
+_service_cache: WeakKeyDictionary[AsyncSession, dict[str, Any]] = WeakKeyDictionary()
+
 
 def register_service(name: str, factory: Any) -> None:
     """Register a service factory.
@@ -68,6 +74,7 @@ def get_service(name: str, db: AsyncSession) -> Any:
     """Get a service instance by name.
 
     This function provides lazy loading of services, avoiding circular imports.
+    It caches service instances per database session to reduce object allocation overhead.
 
     Args:
         name: Service identifier
@@ -87,7 +94,14 @@ def get_service(name: str, db: AsyncSession) -> Any:
     if factory is None:
         raise KeyError(f"Service '{name}' not registered. Available: {list(_SERVICE_FACTORIES.keys())}")
 
-    return factory(db)
+    # Get or create cache for this session
+    session_cache = _service_cache.setdefault(db, {})
+
+    # Return cached instance or create new
+    if name not in session_cache:
+        session_cache[name] = factory(db)
+
+    return session_cache[name]
 
 
 def _register_default_services() -> None:
