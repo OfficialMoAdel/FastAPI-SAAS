@@ -408,18 +408,12 @@ class UserService(BaseService[User]):
         from sqlalchemy import select
         from sqlalchemy.orm import joinedload
 
-        from ...core.service_registry import get_service
+        from ..tiers.models import Tier
         from .models import User
 
-        # Eager load User + Tier in single query (was 2 separate queries)
-        stmt = (
-            select(User)
-            .options(joinedload(User.tier))
-            .where(
-                User.username == username,
-                User.is_deleted.is_(False),
-            )
-        )
+        # Eager load User + Tier + RateLimits in single query
+        # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
+        stmt = select(User).options(joinedload(User.tier).joinedload(Tier.rate_limits))
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 
@@ -429,17 +423,22 @@ class UserService(BaseService[User]):
         # Use Pydantic V2 model_dump with from_attributes for ORM serialization
         from .schemas import UserRead
 
+        # Serialization
         user_dict = UserRead.model_validate(db_user, from_attributes=True).model_dump()
 
         if db_user.tier_id is None or db_user.tier is None:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
-        # Tier already loaded via joinedload - no separate query needed
-        rate_limit_svc = get_service("rate_limit", self.db)
-        rate_limits_response = await rate_limit_svc.get_rate_limits_by_tier_id(db_user.tier.id)
+        # Rate limits are already loaded via joinedload
+        # Convert to list of dicts using RateLimitRead schema
+        from ..rate_limits.schemas import RateLimitRead
 
-        user_dict["tier_rate_limits"] = rate_limits_response["data"]
+        user_dict["tier_rate_limits"] = [
+            RateLimitRead.model_validate(rl, from_attributes=True).model_dump(mode="json")
+            for rl in db_user.tier.rate_limits
+        ]
+
         return user_dict
 
     async def get_with_tier(self, username: str) -> dict[str, Any] | None:

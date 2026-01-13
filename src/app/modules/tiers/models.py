@@ -1,9 +1,13 @@
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, String
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
+
+if TYPE_CHECKING:
+    from ...app.modules.rate_limits.models import RateLimit
 
 
 class Tier(Base):
@@ -14,3 +18,10 @@ class Tier(Base):
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
     updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+
+    rate_limits: Mapped[list["RateLimit"]] = relationship(
+        "RateLimit",
+        back_populates="tier",
+        lazy="noload",  # Don't load by default
+        init=False,
+    )

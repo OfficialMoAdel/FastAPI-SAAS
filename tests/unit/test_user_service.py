@@ -364,10 +364,26 @@ class TestUserServiceTierAndRateLimits:
     @pytest.mark.asyncio
     async def test_get_with_rate_limits(self, user_service, mock_db, mock_existing_user):
         """Test retrieving user with rate limits."""
+        from datetime import datetime
+
         # Setup mock user with tier relationship
         mock_existing_user.tier_id = 1
         mock_tier = MagicMock()
         mock_tier.id = 1
+        mock_tier.name = "Free"
+
+        # Setup rate limits on the tier (New Requirement due to eager loading)
+        mock_rate_limit = MagicMock()
+        mock_rate_limit.id = 1
+        mock_rate_limit.name = "api_calls"
+        mock_rate_limit.path = "/api"
+        mock_rate_limit.limit = 100
+        mock_rate_limit.period = 60
+        mock_rate_limit.tier_id = 1
+        mock_rate_limit.created_at = datetime.now(UTC)
+        mock_rate_limit.updated_at = None
+
+        mock_tier.rate_limits = [mock_rate_limit]
         mock_existing_user.tier = mock_tier
 
         # Mock db.execute() to return user (the service uses direct SQLAlchemy, not CRUD)
@@ -375,21 +391,14 @@ class TestUserServiceTierAndRateLimits:
         mock_result.unique.return_value.scalar_one_or_none.return_value = mock_existing_user
         mock_db.execute.return_value = mock_result
 
-        # Mock Service Registry - patch the source since it is imported inside the function
-        with patch("src.app.core.service_registry.get_service") as mock_get_service:
-            rate_limit_svc = AsyncMock()
+        # No need to mock Service Registry for rate_limit service anymore
 
-            def get_service_side_effect(name, db):
-                if name == "rate_limit":
-                    return rate_limit_svc
-                return None
+        result = await user_service.get_with_rate_limits(username="testuser")
 
-            mock_get_service.side_effect = get_service_side_effect
-            rate_limit_svc.get_rate_limits_by_tier_id.return_value = {"data": [{"limit": 100, "name": "api_calls"}]}
-
-            result = await user_service.get_with_rate_limits(username="testuser")
-
-            assert result["tier_rate_limits"] == [{"limit": 100, "name": "api_calls"}]
+        # Verify result contains rate limits from the relationship
+        assert len(result["tier_rate_limits"]) == 1
+        assert result["tier_rate_limits"][0]["name"] == "api_calls"
+        assert result["tier_rate_limits"][0]["limit"] == 100
 
     @pytest.mark.asyncio
     async def test_get_with_rate_limits_not_found(self, user_service, mock_db):
