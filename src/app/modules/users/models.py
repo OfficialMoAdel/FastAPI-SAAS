@@ -2,7 +2,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint
+from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -33,7 +33,11 @@ if TYPE_CHECKING:
 
 class User(Base):
     __tablename__ = "user"
-    __table_args__ = (UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),)
+    __table_args__ = (
+        UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
+        Index("idx_users_tenant_email", "tenant_id", "email"),
+        Index("idx_users_tenant_deleted", "tenant_id", "is_deleted"),
+    )
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
 

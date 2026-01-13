@@ -7,7 +7,7 @@ All models follow row-level multi-tenancy via tenant_id foreign key.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -142,6 +142,8 @@ class UserSubscription(Base):
     """User subscription status and lifecycle tracking."""
 
     __tablename__ = "user_subscriptions"
+
+    __table_args__ = (Index("idx_subscription_tenant_user_status", "tenant_id", "user_id", "status"),)
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)

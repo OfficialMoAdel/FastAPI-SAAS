@@ -1,7 +1,7 @@
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 
-from sqlalchemy import UUID, DateTime, ForeignKey, String
+from sqlalchemy import UUID, DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 from uuid6 import uuid7
 
@@ -10,6 +10,8 @@ from ...core.db.database import Base
 
 class Post(Base):
     __tablename__ = "post"
+
+    __table_args__ = (Index("idx_posts_tenant_user_deleted", "tenant_id", "created_by_user_id", "is_deleted"),)
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)

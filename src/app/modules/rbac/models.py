@@ -52,4 +52,8 @@ class UserRole(Base):
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True, index=True)
 
     # Composite index for efficient permission lookups by tenant+user
-    __table_args__ = (Index("idx_user_roles_tenant_user", "tenant_id", "user_id"),)
+    __table_args__ = (
+        Index("idx_user_roles_tenant_user", "tenant_id", "user_id"),
+        Index("idx_user_roles_role_tenant", "role_id", "tenant_id"),
+        Index("idx_user_roles_user_role", "user_id", "role_id"),
+    )

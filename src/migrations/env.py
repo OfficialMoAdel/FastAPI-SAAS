@@ -8,8 +8,36 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 # Import all models for autogenerate to detect them
 # Core models
-from app.core.config import settings
-from app.core.db.database import Base
+from src.app.core.config import settings
+from src.app.core.db.database import Base
+from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
+
+# Import all modules models to register them with Base.metadata
+from src.app.modules.api_keys import models  # noqa: F401
+from src.app.modules.audit_logs import models  # noqa: F401
+from src.app.modules.auth import models  # noqa: F401
+from src.app.modules.billing import models  # noqa: F401
+from src.app.modules.feature_flags import models  # noqa: F401
+from src.app.modules.files import models  # noqa: F401
+from src.app.modules.magic_link import models  # noqa: F401
+from src.app.modules.notifications import models  # noqa: F401
+from src.app.modules.passkey import models  # noqa: F401
+from src.app.modules.posts import models  # noqa: F401
+from src.app.modules.rate_limits import models  # noqa: F401
+from src.app.modules.rbac import models  # noqa: F401
+from src.app.modules.sso import models  # noqa: F401
+from src.app.modules.sso_settings import models  # noqa: F401
+from src.app.modules.storage_settings import models  # noqa: F401
+from src.app.modules.tenants import models  # noqa: F401
+from src.app.modules.tiers import models  # noqa: F401
+from src.app.modules.user_preferences import models  # noqa: F401
+from src.app.modules.users import models  # noqa: F401
+from src.app.modules.webhooks import models  # noqa: F401
+from src.app.modules.ai import models  # noqa: F401
+
+# Debug: Print registered tables
+# print("Registered tables:", Base.metadata.tables.keys())
+
 
 # this is the Alembic Config object, which provides
 # access to the values within the .ini file in use.

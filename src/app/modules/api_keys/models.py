@@ -2,7 +2,7 @@
 
 from datetime import UTC, datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from ...core.db.database import Base
@@ -16,6 +16,8 @@ class APIKey(Base):
     """
 
     __tablename__ = "api_keys"
+
+    __table_args__ = (Index("idx_api_keys_tenant_active", "tenant_id", "is_active"),)
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 
