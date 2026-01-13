@@ -56,10 +56,12 @@ class UserService(BaseService[User]):
             user_data = UserRead.model_validate(user, from_attributes=True).model_dump(mode="json")
             serialized = json_dumps(user_data)
 
-            # Cache by all lookup keys
-            await redis_client.set(_user_cache_key(user.id), serialized, ex=USER_CACHE_TTL)
-            await redis_client.set(_user_email_cache_key(user.email), serialized, ex=USER_CACHE_TTL)
-            await redis_client.set(_user_username_cache_key(user.username), serialized, ex=USER_CACHE_TTL)
+            # Cache by all lookup keys using a pipeline for single round-trip
+            async with redis_client.pipeline(transaction=False) as pipe:
+                pipe.setex(_user_cache_key(user.id), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_email_cache_key(user.email), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_username_cache_key(user.username), USER_CACHE_TTL, serialized)
+                await pipe.execute()
         except Exception as e:
             logger.warning(f"Failed to cache user {user.id}: {e}")
 

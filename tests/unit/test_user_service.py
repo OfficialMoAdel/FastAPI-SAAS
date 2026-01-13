@@ -8,6 +8,7 @@ Tests cover:
 - Rate limit and tier retrieval
 """
 
+from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -56,7 +57,7 @@ def mock_user_update():
 @pytest.fixture
 def mock_existing_user():
     """Mock existing user object."""
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     user = MagicMock()
     user.id = 1
@@ -68,8 +69,8 @@ def mock_existing_user():
     user.is_superuser = False
     user.tenant_id = 1
     user.tier_id = 1
-    user.created_at = datetime.now(timezone.utc)
-    user.updated_at = datetime.now(timezone.utc)
+    user.created_at = datetime.now(UTC)
+    user.updated_at = datetime.now(UTC)
 
     # Configure __table__.columns for get_with_rate_limits
     # This mock needs to be robust enough for getattr(user, col.name)
@@ -343,14 +344,18 @@ class TestUserServiceDelete:
         with patch.object(user_service.crud, "exists", new_callable=AsyncMock) as mock_exists:
             mock_exists.return_value = mock_existing_user
 
-            with patch.object(user_service.crud, "db_delete", new_callable=AsyncMock) as mock_delete:
-                mock_delete.return_value = None
+            # Fix: mock get() as it is now called to fetch user for cache invalidation
+            with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+                mock_get.return_value = mock_existing_user
 
-                with patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
-                    result = await user_service.hard_delete(username="testuser", token="token")
+                with patch.object(user_service.crud, "db_delete", new_callable=AsyncMock) as mock_delete:
+                    mock_delete.return_value = None
 
-                    assert "deleted from the database" in result["message"].lower()
-                    mock_delete.assert_called_once()
+                    with patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
+                        result = await user_service.hard_delete(username="testuser", token="token")
+
+                        assert "deleted from the database" in result["message"].lower()
+                        mock_delete.assert_called_once()
 
 
 class TestUserServiceTierAndRateLimits:
