@@ -99,13 +99,12 @@ class FileService:
         if settings.allowed_file_types and mime_type not in settings.allowed_file_types:
             raise QuotaExceededError(f"File type {mime_type} not allowed. Allowed: {settings.allowed_file_types}")
 
-        # Check file count quota
-        current_count = await self._get_file_count(tenant_id)
+        # Check quotas (count and size) in one query
+        current_count, current_size = await self._get_quota_stats(tenant_id)
+
         if current_count >= settings.max_file_count:
             raise QuotaExceededError(f"File count limit reached ({settings.max_file_count} files)")
 
-        # Check storage quota
-        current_size = await self._get_total_size(tenant_id)
         if current_size + size_bytes > settings.storage_quota_bytes:
             raise QuotaExceededError(
                 f"Storage quota exceeded. Used: {current_size}, Limit: {settings.storage_quota_bytes}"
@@ -424,13 +423,37 @@ class FileService:
         logger.info(f"Transferred {len(files)} files from {from_user_id} to {to_user_id}")
         return len(files)
 
+    async def _get_quota_stats(self, tenant_id: UUID) -> tuple[int, int]:
+        """Get file count and total size in single query.
+
+        Args:
+            tenant_id: Tenant UUID
+
+        Returns:
+            Tuple of (file_count, total_size_bytes)
+        """
+        result = await self.db.execute(
+            select(
+                func.count().label("file_count"),
+                func.coalesce(func.sum(File.size_bytes), 0).label("total_size"),
+            ).where(File.tenant_id == tenant_id)
+        )
+        row = result.one()
+        return row.file_count, row.total_size
+
     async def _get_file_count(self, tenant_id: UUID) -> int:
-        """Get total file count for tenant."""
+        """Get total file count for tenant.
+
+        Deprecated: Use _get_quota_stats instead.
+        """
         result = await self.db.execute(select(func.count()).where(File.tenant_id == tenant_id))
         return result.scalar() or 0
 
     async def _get_total_size(self, tenant_id: UUID) -> int:
-        """Get total storage usage in bytes for tenant."""
+        """Get total storage usage in bytes for tenant.
+
+        Deprecated: Use _get_quota_stats instead.
+        """
         result = await self.db.execute(
             select(func.coalesce(func.sum(File.size_bytes), 0)).where(File.tenant_id == tenant_id)
         )

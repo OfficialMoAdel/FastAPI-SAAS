@@ -44,7 +44,7 @@ class File(Base):
 
     __tablename__ = "files"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 
     # Tenant relationship (CASCADE delete - files deleted with tenant)
     tenant_id: Mapped[int] = mapped_column(
