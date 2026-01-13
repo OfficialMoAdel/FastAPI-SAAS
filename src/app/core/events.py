@@ -5,6 +5,7 @@ Supports priority-based event handling:
 - NORMAL/LOW: Asynchronous via ARQ queue (emails, webhooks)
 """
 
+import asyncio
 import json
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
@@ -206,7 +207,8 @@ class EventBus:
             data: Event payload
             handlers: List of handler functions
         """
-        for handler in handlers:
+
+        async def _call_handler(handler: Callable) -> None:
             try:
                 await handler(data)
                 logger.debug(
@@ -222,7 +224,12 @@ class EventBus:
                     error=str(e),
                     exc_info=True,
                 )
-                # Continue with other handlers even if one fails
+
+        if not handlers:
+            return
+
+        # Execute all handlers in parallel
+        await asyncio.gather(*[_call_handler(h) for h in handlers], return_exceptions=True)
 
     async def _publish_async(
         self,
