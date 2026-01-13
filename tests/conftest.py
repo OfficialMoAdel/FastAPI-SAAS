@@ -108,24 +108,6 @@ from src.app.core.db.database import Base
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
-from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
-from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
-from src.app.modules.api_keys.models import APIKey
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.billing.models import SubscriptionPlan, UserSubscription, Product, Pricing, StripeSettings
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
-from src.app.modules.files.models import File
-from src.app.modules.magic_link.models import MagicLink
-from src.app.modules.notifications.models import Notification
-from src.app.modules.passkey.models import PasskeyCredential
-from src.app.modules.posts.models import Post
-from src.app.modules.rate_limits.models import RateLimit
-from src.app.modules.sso.models import UserSSOConnection
-from src.app.modules.sso_settings.models import SSOSettings
-from src.app.modules.storage_settings.models import StorageSettings
-from src.app.modules.tiers.models import Tier
-from src.app.modules.user_preferences.models import UserPreferences
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
 
 fake = Faker()
 
@@ -601,12 +583,9 @@ def mock_redis():
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
         patch("src.app.core.setup.create_redis_queue_pool", new=AsyncMock()),
-        patch("src.app.core.setup.create_redis_rate_limit_pool", new=AsyncMock()),
         patch("src.app.core.setup.close_redis_cache_pool", new=AsyncMock()),
         patch("src.app.core.setup.close_redis_queue_pool", new=AsyncMock()),
-        patch("src.app.core.setup.close_redis_rate_limit_pool", new=AsyncMock()),
         patch("src.app.core.utils.cache.client", new=fake_redis),
-        patch("src.app.core.utils.rate_limit.rate_limiter.client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
     ):

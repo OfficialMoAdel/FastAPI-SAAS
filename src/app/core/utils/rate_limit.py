@@ -1,11 +1,12 @@
 from datetime import UTC, datetime
 from typing import Optional
 
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.logger import logging
 from ...modules.rate_limits.schemas import sanitize_path
+from . import cache
 
 logger = logging.getLogger(__name__)
 
@@ -23,8 +24,6 @@ return current
 
 class RateLimiter:
     _instance: Optional["RateLimiter"] = None
-    pool: ConnectionPool | None = None
-    client: Redis | None = None
     _rate_limit_script_sha: str | None = None
 
     def __new__(cls) -> "RateLimiter":
@@ -33,19 +32,11 @@ class RateLimiter:
         return cls._instance
 
     @classmethod
-    def initialize(cls, redis_url: str) -> None:
-        instance = cls()
-        if instance.pool is None:
-            instance.pool = ConnectionPool.from_url(redis_url)
-            instance.client = Redis(connection_pool=instance.pool)
-
-    @classmethod
     def get_client(cls) -> Redis:
-        instance = cls()
-        if instance.client is None:
+        if cache.client is None:
             logger.error("Redis client is not initialized.")
             raise Exception("Redis client is not initialized.")
-        return instance.client
+        return cache.client
 
     async def _get_script_sha(self, client: Redis) -> str:
         """Get or create the Lua script SHA for atomic rate limiting."""
