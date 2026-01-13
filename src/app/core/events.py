@@ -16,6 +16,7 @@ from typing import Any
 
 from structlog import get_logger
 
+from .config import settings
 from .utils.circuit_breaker import arq_circuit
 
 logger = get_logger(__name__)
@@ -218,12 +219,25 @@ class EventBus:
 
         async def _call_handler(handler: Callable) -> None:
             try:
-                await handler(data)
+                # Apply timeout protection
+                await asyncio.wait_for(
+                    handler(data),
+                    timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                )
                 logger.debug(
                     "Event handler success",
                     event_name=event_name,
                     handler=handler.__name__,
                 )
+            except asyncio.TimeoutError:
+                logger.error(
+                    "Event handler timed out",
+                    event_name=event_name,
+                    handler=handler.__name__,
+                    timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                )
+                # We do not re-raise TimeoutError to prevent blocking other handlers
+                # in the gather group (though return_exceptions=True handles that too).
             except Exception as e:
                 logger.error(
                     "Event handler failed",
@@ -529,7 +543,22 @@ async def process_event_handler(
 
         module = importlib.import_module(handler_module)
         handler = getattr(module, handler_name)
-        await handler(data)
+
+        # Apply timeout protection for async worker execution
+        try:
+            timeout_val = settings.EVENT_HANDLER_TIMEOUT_SECONDS
+            await asyncio.wait_for(
+                handler(data),
+                timeout=timeout_val,
+            )
+        except asyncio.TimeoutError:
+            logger.error(
+                "ARQ event handler timed out",
+                event_name=event_name,
+                handler=f"{handler_module}.{handler_name}",
+                timeout=timeout_val,
+            )
+            raise TimeoutError(f"Handler timed out after {timeout_val}s")
 
         logger.info(
             "ARQ event handler success",

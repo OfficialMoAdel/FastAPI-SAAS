@@ -286,6 +286,13 @@ class AISettings(BaseSettings):
     OLLAMA_KEEPALIVE_EXPIRY: float = 30.0  # Seconds before idle connection closes
 
 
+class EventSettings(BaseSettings):
+    """Settings for event handling."""
+
+    EVENT_HANDLER_TIMEOUT_SECONDS: float = 30.0
+    EVENT_HANDLER_TIMEOUT_CRITICAL: float = 60.0  # For known slow handlers
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -306,6 +313,7 @@ class Settings(
     StorageSettings,
     BillingSettings,
     AISettings,
+    EventSettings,
     CORSSettings,
 ):
     model_config = SettingsConfigDict(
