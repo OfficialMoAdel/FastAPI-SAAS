@@ -36,6 +36,7 @@ async def health():
 
 @router.get("/ready", response_model=ReadyCheck)
 async def ready(redis: Annotated[Redis, Depends(async_get_redis)], db: Annotated[AsyncSession, Depends(async_get_db)]):
+    from ...core.events import event_bus
     from ...core.health import check_redis_queue_health
 
     database_status = await check_database_health(db=db)
@@ -44,8 +45,12 @@ async def ready(redis: Annotated[Redis, Depends(async_get_redis)], db: Annotated
     LOGGER.debug(f"Redis health check status: {redis_status}")
     queue_status = await check_redis_queue_health()
     LOGGER.debug(f"Redis queue health check status: {queue_status}")
+    events_status = event_bus.is_ready
+    LOGGER.debug(f"Event bus readiness status: {events_status}")
 
-    overall_status = STATUS_HEALTHY if (database_status and redis_status and queue_status) else STATUS_UNHEALTHY
+    overall_status = (
+        STATUS_HEALTHY if (database_status and redis_status and queue_status and events_status) else STATUS_UNHEALTHY
+    )
     http_status = status.HTTP_200_OK if overall_status == STATUS_HEALTHY else status.HTTP_503_SERVICE_UNAVAILABLE
 
     response = {
@@ -56,6 +61,7 @@ async def ready(redis: Annotated[Redis, Depends(async_get_redis)], db: Annotated
         "database": STATUS_HEALTHY if database_status else STATUS_UNHEALTHY,
         "redis": STATUS_HEALTHY if redis_status else STATUS_UNHEALTHY,
         "queue": STATUS_HEALTHY if queue_status else STATUS_UNHEALTHY,
+        "events": STATUS_HEALTHY if events_status else STATUS_UNHEALTHY,
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 

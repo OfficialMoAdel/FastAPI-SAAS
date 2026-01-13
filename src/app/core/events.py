@@ -6,10 +6,12 @@ Supports priority-based event handling:
 """
 
 import asyncio
+import importlib
 import json
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from enum import Enum
+from pathlib import Path
 from typing import Any
 
 from structlog import get_logger
@@ -52,6 +54,12 @@ class EventBus:
         self._handlers: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
         self._arq_queue = None
         self._redis_client = None  # Set via set_redis_client()
+        self._registration_complete = False
+
+    @property
+    def is_ready(self) -> bool:
+        """Check if event handlers have been registered."""
+        return self._registration_complete
 
     def set_redis_client(self, redis_client: Any) -> None:
         """Set Redis client for DLQ persistence.
@@ -428,6 +436,68 @@ class EventBus:
         count = await self._redis_client.llen(self.DLQ_REDIS_KEY)
         await self._redis_client.delete(self.DLQ_REDIS_KEY)
         return count
+
+    def _scan_handler_modules(self) -> list[str]:
+        """Scan for service modules that might contain event handlers.
+
+        Returns
+        -------
+            List of module paths (e.g. "src.app.modules.users.service")
+        """
+
+        # Find the modules directory
+        current_file = Path(__file__)
+        modules_dir = current_file.parent.parent / "modules"
+
+        if not modules_dir.exists():
+            logger.warning("Modules directory not found for event handler scanning", path=str(modules_dir))
+            return []
+
+        logger.info("Scanning for event handlers", modules_dir=str(modules_dir))
+
+        module_paths = []
+        for item in modules_dir.iterdir():
+            if item.is_dir() and (item / "__init__.py").exists():
+                module_name = item.name
+                # Skip __pycache__ and private modules
+                if module_name.startswith("_"):
+                    continue
+
+                # Check if service.py exists
+                if (item / "service.py").exists():
+                    module_paths.append(f"src.app.modules.{module_name}.service")
+
+        return module_paths
+
+    def register_all_handlers(self) -> None:
+        """Pre-register all event handlers during startup.
+
+        Scans the `src.app.modules` package for `service` modules and imports them.
+        This triggers the `@event_bus.subscribe` decorators, registering the handlers.
+        """
+
+        service_modules = self._scan_handler_modules()
+        count = 0
+
+        for service_module_path in service_modules:
+            try:
+                importlib.import_module(service_module_path)
+                count += 1
+                logger.debug("Imported module for event handlers", module=service_module_path)
+            except Exception as e:
+                # Log error but don't fail startup completely
+                logger.error(
+                    "Failed to import module during event handler registration",
+                    module=service_module_path,
+                    error=str(e),
+                )
+
+        logger.info(
+            "Event handler registration complete",
+            modules_scanned=count,
+            total_handlers=sum(len(handlers) for handlers in self._handlers.values()),
+        )
+        self._registration_complete = True
 
 
 # Global event bus instance

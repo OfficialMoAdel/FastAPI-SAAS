@@ -20,6 +20,8 @@ class ReadyCheck(BaseModel):
     app: str
     database: str
     redis: str
+    queue: str
+    events: str
     timestamp: str
 
 

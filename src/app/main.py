@@ -70,6 +70,10 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         if redis_client:
             event_bus.set_redis_client(redis_client)
 
+        # Pre-register event handlers to avoid cold start penalties
+        # This scans modules and registers @event_bus.subscribe decorated functions
+        event_bus.register_all_handlers()
+
         # Initialize session manager for concurrent session limiting
         from .core.security.session_manager import session_manager
 
