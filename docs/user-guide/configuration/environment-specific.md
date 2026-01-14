@@ -49,8 +49,6 @@ REDIS_CACHE_HOST="localhost"
 REDIS_CACHE_PORT=6379
 REDIS_QUEUE_HOST="localhost"
 REDIS_QUEUE_PORT=6379
-REDIS_RATE_LIMIT_HOST="localhost"
-REDIS_RATE_LIMIT_PORT=6379
 
 # ------------- caching -------------
 CLIENT_CACHE_MAX_AGE=0  # Disable caching for development
@@ -156,8 +154,6 @@ REDIS_CACHE_HOST="staging-redis.example.com"
 REDIS_CACHE_PORT=6379
 REDIS_QUEUE_HOST="staging-redis.example.com"
 REDIS_QUEUE_PORT=6379
-REDIS_RATE_LIMIT_HOST="staging-redis.example.com"
-REDIS_RATE_LIMIT_PORT=6379
 
 # ------------- caching -------------
 CLIENT_CACHE_MAX_AGE=300  # 5 minutes
@@ -268,8 +264,6 @@ REDIS_CACHE_HOST="prod-redis.example.com"
 REDIS_CACHE_PORT=6380  # Custom port for security
 REDIS_QUEUE_HOST="prod-redis.example.com"
 REDIS_QUEUE_PORT=6380
-REDIS_RATE_LIMIT_HOST="prod-redis.example.com"
-REDIS_RATE_LIMIT_PORT=6380
 
 # ------------- caching -------------
 CLIENT_CACHE_MAX_AGE=3600  # 1 hour

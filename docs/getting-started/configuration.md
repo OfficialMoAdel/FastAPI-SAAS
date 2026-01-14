@@ -99,10 +99,6 @@ CLIENT_CACHE_MAX_AGE=30          # Default: 30 seconds
 # Redis Job Queue
 REDIS_QUEUE_HOST="localhost"     # Use "redis" for Docker Compose
 REDIS_QUEUE_PORT=6379
-
-# Redis Rate Limiting
-REDIS_RATE_LIMIT_HOST="localhost"  # Use "redis" for Docker Compose
-REDIS_RATE_LIMIT_PORT=6379
 ```
 
 !!! warning "Redis in Production"
@@ -159,7 +155,6 @@ If using Docker Compose, use these values instead:
 POSTGRES_SERVER="db"
 REDIS_CACHE_HOST="redis"
 REDIS_QUEUE_HOST="redis"
-REDIS_RATE_LIMIT_HOST="redis"
 ```
 
 ## Optional Services

@@ -107,10 +107,6 @@ REDIS_CACHE_PORT=6379
 # ------------- redis queue -------------
 REDIS_QUEUE_HOST="localhost"  # Use "redis" for Docker Compose
 REDIS_QUEUE_PORT=6379
-
-# ------------- redis rate limit -------------
-REDIS_RATE_LIMIT_HOST="localhost"  # Use "redis" for Docker Compose
-REDIS_RATE_LIMIT_PORT=6379
 ```
 
 **Best Practices:**
@@ -122,7 +118,6 @@ REDIS_RATE_LIMIT_PORT=6379
 # Production example with separate instances
 REDIS_CACHE_HOST="cache.redis.example.com"
 REDIS_QUEUE_HOST="queue.redis.example.com"
-REDIS_RATE_LIMIT_HOST="ratelimit.redis.example.com"
 ```
 
 ### Caching Settings

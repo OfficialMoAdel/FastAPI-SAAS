@@ -109,8 +109,8 @@ REDIS_QUEUE_HOST="localhost"
 REDIS_QUEUE_PORT=6379
 
 # Rate limiting  
-REDIS_RATE_LIMIT_HOST="localhost"
-REDIS_RATE_LIMIT_PORT=6379
+# REDIS_RATE_LIMIT_HOST="localhost"
+# REDIS_RATE_LIMIT_PORT=6379
 ```
 
 ### Application Settings

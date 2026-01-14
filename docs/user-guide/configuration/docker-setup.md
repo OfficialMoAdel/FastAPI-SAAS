@@ -454,7 +454,6 @@ Services communicate using service names:
 POSTGRES_SERVER=db      # Not localhost
 REDIS_CACHE_HOST=redis  # Not localhost
 REDIS_QUEUE_HOST=redis
-REDIS_RATE_LIMIT_HOST=redis
 ```
 
 ### Port Management

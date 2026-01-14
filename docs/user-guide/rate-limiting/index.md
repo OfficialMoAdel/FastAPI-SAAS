@@ -209,11 +209,6 @@ def sanitize_path(path: str) -> str:
 # Rate Limiting Settings
 DEFAULT_RATE_LIMIT_LIMIT=100      # Default requests per period
 DEFAULT_RATE_LIMIT_PERIOD=3600    # Default period (1 hour)
-
-# Redis Rate Limiter Settings  
-REDIS_RATE_LIMITER_HOST=localhost
-REDIS_RATE_LIMITER_PORT=6379
-REDIS_RATE_LIMITER_DB=2           # Separate from cache/queue
 ```
 
 ### Creating User Tiers
@@ -386,9 +381,6 @@ lightweight_endpoints = {
 ### Production Considerations
 
 ```python
-# Use separate Redis database for rate limiting
-REDIS_RATE_LIMITER_DB=2  # Isolate from cache and queues
-
 # Set appropriate Redis memory policies
 # maxmemory-policy volatile-lru  # Remove expired rate limit keys first
 
