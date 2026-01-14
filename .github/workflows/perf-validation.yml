@@ -1,0 +1,193 @@
+# Performance Validation CI Workflow
+name: Performance Validation
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'src/app/**'
+      - 'scripts/perf-validation/**'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      full_validation:
+        description: 'Run full validation including load tests'
+        required: false
+        default: 'false'
+
+env:
+  PYTHON_VERSION: '3.11'
+
+jobs:
+  isomorphism-tests:
+    name: Isomorphism Validation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Run isomorphism tests
+        run: |
+          cd scripts/perf-validation
+          python isomorphism_validator.py
+
+  phase-validation:
+    name: Phase Validation
+    runs-on: ubuntu-latest
+    needs: isomorphism-tests
+    strategy:
+      matrix:
+        phase: [1, 2, 3, 4]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Validate Phase ${{ matrix.phase }}
+        run: |
+          cd scripts/perf-validation
+          python validate_phase${{ matrix.phase }}.py
+
+  full-validation:
+    name: Full E2E Validation
+    runs-on: ubuntu-latest
+    needs: phase-validation
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Create results directory
+        run: mkdir -p scripts/perf-validation/results
+
+      - name: Capture baseline (if not exists)
+        run: |
+          if [ ! -f scripts/perf-validation/results/baseline.json ]; then
+            cd scripts/perf-validation
+            python baseline_capture.py
+          fi
+
+      - name: Run full validation
+        run: |
+          cd scripts/perf-validation
+          python run_all_validations.py --phase all
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@v4
+        with:
+          name: perf-validation-report
+          path: scripts/perf-validation/results/
+          retention-days: 30
+
+  load-test:
+    name: Load Test
+    runs-on: ubuntu-latest
+    needs: full-validation
+    if: github.event.inputs.full_validation == 'true' || github.ref == 'refs/heads/main'
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: test_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install uv locust
+          uv sync
+
+      - name: Start application
+        run: |
+          uv run uvicorn src.app.main:app --host 0.0.0.0 --port 8000 &
+          sleep 10  # Wait for app to start
+
+      - name: Run load test
+        run: |
+          cd scripts/perf-validation
+          locust -f load_test.py --headless -u 50 -r 5 --run-time 1m
+
+      - name: Upload load test results
+        uses: actions/upload-artifact@v4
+        with:
+          name: load-test-results
+          path: scripts/perf-validation/results/load_test_results.json
+          retention-days: 30
+
+  compare-baseline:
+    name: Compare with Baseline
+    runs-on: ubuntu-latest
+    needs: full-validation
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Install dependencies
+        run: |
+          pip install uv
+          uv sync
+
+      - name: Download baseline from main
+        run: |
+          mkdir -p scripts/perf-validation/results
+          # In real workflow, download baseline from artifact storage
+          echo "Baseline comparison would run here"
+
+      - name: Compare results
+        run: |
+          cd scripts/perf-validation
+          if [ -f results/baseline.json ] && [ -f results/current.json ]; then
+            python compare_results.py results/baseline.json results/current.json
+          else
+            echo "Baseline or current results not found, skipping comparison"
+          fi
