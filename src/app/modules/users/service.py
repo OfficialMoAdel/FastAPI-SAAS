@@ -11,7 +11,7 @@ from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.json_utils import json_dumps, json_loads
 from ...core.security import blacklist_token, get_password_hash
 from ...core.tenancy.context import get_tenant_context
-from ...core.utils.cache import client as redis_client
+from ...core.utils import cache
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_users
@@ -23,6 +23,8 @@ logger = logging.getLogger(__name__)
 # Cache configuration
 USER_CACHE_TTL = 60  # seconds
 USER_CACHE_PREFIX = "user:profile"
+AUTH_INFO_CACHE_TTL = 3600  # 1 hour
+AUTH_INFO_CACHE_PREFIX = "user:auth"
 
 
 def _user_cache_key(user_id: UUID | str) -> str:
@@ -40,6 +42,11 @@ def _user_username_cache_key(username: str) -> str:
     return f"{USER_CACHE_PREFIX}:username:{username}"
 
 
+def _user_auth_cache_key(username: str) -> str:
+    """Generate cache key for user auth info."""
+    return f"{AUTH_INFO_CACHE_PREFIX}:{username}"
+
+
 class UserService(BaseService[User]):
     """Service class for user-related business logic."""
 
@@ -47,45 +54,69 @@ class UserService(BaseService[User]):
         super().__init__(User, db)
         self.crud = crud_users
 
-    async def _cache_user(self, user: User) -> None:
+    async def _cache_user(self, user: User | dict[str, Any]) -> None:
         """Cache user profile in Redis."""
-        if redis_client is None:
+        if cache.client is None:
             return
 
         try:
-            user_data = UserRead.model_validate(user, from_attributes=True).model_dump(mode="json")
+            # Handle both ORM object and dict
+            if isinstance(user, dict):
+                user_data = user
+                user_id = user["id"]
+                email = user["email"]
+                username = user["username"]
+            else:
+                user_data = UserRead.model_validate(user, from_attributes=True).model_dump(mode="json")
+                user_id = user.id
+                email = user.email
+                username = user.username
+
             serialized = json_dumps(user_data)
 
             # Cache by all lookup keys using a pipeline for single round-trip
-            async with redis_client.pipeline(transaction=False) as pipe:
-                pipe.setex(_user_cache_key(user.id), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_email_cache_key(user.email), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_username_cache_key(user.username), USER_CACHE_TTL, serialized)
+            async with cache.client.pipeline(transaction=False) as pipe:
+                pipe.setex(_user_cache_key(user_id), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_email_cache_key(email), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_username_cache_key(username), USER_CACHE_TTL, serialized)
                 await pipe.execute()
         except Exception as e:
-            logger.warning(f"Failed to cache user {user.id}: {e}")
+            user_id_log = user["id"] if isinstance(user, dict) else user.id
+            logger.warning(f"Failed to cache user {user_id_log}: {e}")
 
-    async def _invalidate_user_cache(self, user: User) -> None:
+    async def _invalidate_user_cache(self, user: User | dict[str, Any]) -> None:
         """Invalidate all cache entries for a user."""
-        if redis_client is None:
+        if cache.client is None:
             return
 
         try:
-            await redis_client.delete(
-                _user_cache_key(user.id),
-                _user_email_cache_key(user.email),
-                _user_username_cache_key(user.username),
+            # Handle both ORM object and dict
+            if isinstance(user, dict):
+                user_id = user["id"]
+                email = user["email"]
+                username = user["username"]
+            else:
+                user_id = user.id
+                email = user.email
+                username = user.username
+
+            await cache.client.delete(
+                _user_cache_key(user_id),
+                _user_email_cache_key(email),
+                _user_username_cache_key(username),
+                _user_auth_cache_key(username),
             )
         except Exception as e:
-            logger.warning(f"Failed to invalidate cache for user {user.id}: {e}")
+            user_id_log = user["id"] if isinstance(user, dict) else user.id
+            logger.warning(f"Failed to invalidate cache for user {user_id_log}: {e}")
 
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
-        if redis_client is None:
+        if cache.client is None:
             return None
 
         try:
-            cached = await redis_client.get(cache_key)
+            cached = await cache.client.get(cache_key)
             if cached:
                 return json_loads(cached)
         except Exception as e:
@@ -133,6 +164,30 @@ class UserService(BaseService[User]):
 
         user_internal = UserCreateInternal(**user_dict)
         return await self.crud.create(db=self.db, object=user_internal)
+
+    async def get_user_auth_info(self, username: str) -> dict[str, Any] | None:
+        """Get user with tier info for authentication (cached)."""
+        cache_key = _user_auth_cache_key(username)
+
+        # Try cache
+        cached = await self._get_cached_user(cache_key)
+        if cached:
+            return cached
+
+        # Fetch from DB (using eager loading)
+        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
+        if not user_with_tier:
+            return None
+
+        # Cache it
+        if cache.client:
+            try:
+                serialized = json_dumps(user_with_tier)
+                await cache.client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
+            except Exception as e:
+                logger.warning(f"Failed to cache auth info for {username}: {e}")
+
+        return user_with_tier
 
     async def get_by_username(self, username: str) -> User | dict[str, Any]:
         """Get a user by username with Redis caching.
@@ -248,8 +303,12 @@ class UserService(BaseService[User]):
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        db_username = db_user.username
-        db_email = db_user.email
+        if isinstance(db_user, dict):
+            db_username = db_user["username"]
+            db_email = db_user["email"]
+        else:
+            db_username = db_user.username
+            db_email = db_user.email
 
         # Ownership check
         if db_username != current_user["username"]:
@@ -383,6 +442,10 @@ class UserService(BaseService[User]):
             raise ModelNotFoundError("Tier", values.tier_id)
 
         await self.crud.update(db=self.db, object=values.model_dump(), username=username)
+
+        # Invalidate cache
+        await self._invalidate_user_cache(db_user)
+
         return {"message": f"User {db_user.name} Tier updated"}
 
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:

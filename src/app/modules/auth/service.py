@@ -22,6 +22,7 @@ from ...core.security import (
     verify_token,
 )
 from ...modules.users.crud import crud_users
+from ...modules.users.service import get_user_service
 
 logger = get_logger(__name__)
 
@@ -35,10 +36,12 @@ class AuthService:
         Uses eager loading to include tier data for rate limiting in JWT claims.
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
+        # Use UserService to benefit from auth info caching
+        user_service = get_user_service(db)
         if "@" in username_or_email:
             db_user = await crud_users.get_user_with_tier_eager(db=db, email=username_or_email)
         else:
-            db_user = await crud_users.get_user_with_tier_eager(db=db, username=username_or_email)
+            db_user = await user_service.get_user_auth_info(username_or_email)
 
         if not db_user:
             return False
@@ -196,10 +199,14 @@ class AuthService:
         await blacklist_token(token=refresh_token, db=db)
 
         # Fetch user with tier for Zero-DB rate limiting
+        # Use UserService to benefit from auth info caching
+        user_service = get_user_service(db)
         if "@" in user_data.username_or_email:
+            # Fallback for email-based subjects (rare but safe)
             db_user = await crud_users.get_user_with_tier_eager(db=db, email=user_data.username_or_email)
         else:
-            db_user = await crud_users.get_user_with_tier_eager(db=db, username=user_data.username_or_email)
+            # Optimized cached path for username-based subjects (standard)
+            db_user = await user_service.get_user_auth_info(user_data.username_or_email)
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = db_user.get("tier") if db_user else None
