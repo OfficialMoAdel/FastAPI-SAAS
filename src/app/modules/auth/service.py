@@ -357,6 +357,10 @@ class AuthService:
         new_hashed = await get_password_hash(new_password)
         await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed})
 
+        # Invalidate auth cache so new password works immediately
+        user_service = get_user_service(db)
+        await user_service._invalidate_user_cache(user)
+
         return {"message": "Password changed successfully"}
 
     async def request_password_reset(
@@ -479,6 +483,10 @@ class AuthService:
         new_hashed = await get_password_hash(new_password)
         await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed})
 
+        # Invalidate auth cache
+        user_service = get_user_service(db)
+        await user_service._invalidate_user_cache(user)
+
         # Mark token as used
         reset_token.used = True
         await db.commit()
@@ -588,6 +596,10 @@ class AuthService:
 
         # Update user status
         await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True})
+
+        # Invalidate auth cache
+        user_service = get_user_service(db)
+        await user_service._invalidate_user_cache(user)
 
         # Delete token (it's single use)
         await db.delete(verification_token)
