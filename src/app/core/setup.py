@@ -43,7 +43,6 @@ from .config import (
     EnvironmentSettings,
     RedisCacheSettings,
     RedisQueueSettings,
-    RedisRateLimiterSettings,
     settings,
 )
 from .db.database import Base
@@ -100,7 +99,6 @@ def lifespan_factory(
         | ClientSideCacheSettings
         | CORSSettings
         | RedisQueueSettings
-        | RedisRateLimiterSettings
         | EnvironmentSettings
     ),
     create_tables_on_start: bool = True,
@@ -166,7 +164,6 @@ def create_application(
         | ClientSideCacheSettings
         | CORSSettings
         | RedisQueueSettings
-        | RedisRateLimiterSettings
         | EnvironmentSettings
     ),
     create_tables_on_start: bool = True,
@@ -193,7 +190,6 @@ def create_application(
         - ClientSideCacheSettings: Integrates middleware for client-side caching.
         - CORSSettings: Integrates CORS middleware with specified origins.
         - RedisQueueSettings: Sets up event handlers for creating and closing a Redis queue pool.
-        - RedisRateLimiterSettings: Sets up event handlers for creating and closing a Redis rate limiter pool.
         - EnvironmentSettings: Conditionally sets documentation URLs and integrates custom routes for API documentation
           based on the environment type.
 

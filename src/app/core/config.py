@@ -148,18 +148,6 @@ class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_PASSWORD: str | None = None
 
 
-class RedisRateLimiterSettings(BaseSettings):
-    REDIS_RATE_LIMIT_ENABLED: bool = True
-    REDIS_RATE_LIMIT_HOST: str = "localhost"  # Override via REDIS_RATE_LIMIT_HOST in .env
-    REDIS_RATE_LIMIT_PORT: int = 6379
-    REDIS_RATE_LIMIT_PASSWORD: str | None = None
-
-    @computed_field  # type: ignore[prop-decorator]
-    @property
-    def REDIS_RATE_LIMIT_URL(self) -> str:
-        return f"redis://{self.REDIS_RATE_LIMIT_HOST}:{self.REDIS_RATE_LIMIT_PORT}"
-
-
 class DefaultRateLimitSettings(BaseSettings):
     DEFAULT_RATE_LIMIT_LIMIT: int = 10
     DEFAULT_RATE_LIMIT_PERIOD: int = 3600
@@ -304,7 +292,6 @@ class Settings(
     RedisCacheSettings,
     ClientSideCacheSettings,
     RedisQueueSettings,
-    RedisRateLimiterSettings,
     DefaultRateLimitSettings,
     CRUDAdminSettings,
     EmailSettings,

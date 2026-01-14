@@ -1,126 +1,51 @@
-from unittest.mock import patch
-
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.app.core.config import settings
-from src.app.core.utils.rate_limit import rate_limiter
 from src.app.main import app
 
 
-class FakeRedis:
-    def __init__(self):
-        self.store = {}
-        self._script_sha = "fake_sha"
+@pytest.mark.asyncio
+async def test_rate_limit_headers(mock_redis):
+    """Test rate limit headers are present."""
+    # Reset redis state
+    mock_redis.store.clear()
 
-    async def get(self, key):
-        return self.store.get(key)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Hit /openapi.json usually safe public endpoint
+        response = await ac.get("/openapi.json")
 
-    async def incr(self, key):
-        val = self.store.get(key, 0)
-        val = int(val) + 1
-        self.store[key] = str(val)
-        return val
+        # Fallback if 404 (though openapi usually exists)
+        if response.status_code == 404:
+            response = await ac.get("/docs")
 
-    async def expire(self, key, seconds):
-        return True
+        assert response.status_code == 200
 
-    async def delete(self, key):
-        if key in self.store:
-            del self.store[key]
-        return True
+        limit = settings.DEFAULT_RATE_LIMIT_LIMIT
 
-    async def set(self, key, value, *args, **kwargs):
-        self.store[key] = value
-        return True
+        assert "X-RateLimit-Limit" in response.headers
+        assert response.headers["X-RateLimit-Limit"] == str(limit)
+        assert "X-RateLimit-Remaining" in response.headers
+        # 1st request
+        assert response.headers["X-RateLimit-Remaining"] == str(limit - 1)
 
-    async def aclose(self):
-        pass
-
-    async def script_load(self, script):
-        """Mock script_load for Lua scripts."""
-        return self._script_sha
-
-    async def evalsha(self, sha, numkeys, *keys_and_args):
-        """Mock evalsha to implement rate limiting logic.
-
-        Mimics the Lua script:
-        local current = redis.call('INCR', KEYS[1])
-        if current == 1 then
-            redis.call('EXPIRE', KEYS[1], ARGV[1])
-        end
-        return current
-        """
-        key = keys_and_args[0]
-        # period = keys_and_args[1]  # Not used in mock
-
-        # Increment the counter
-        current = self.store.get(key, 0)
-        if isinstance(current, str):
-            current = int(current)
-        current += 1
-        self.store[key] = current
-
-        return current
-
-fake_redis_instance = FakeRedis()
-
-import pytest_asyncio
-
-
-@pytest_asyncio.fixture
-async def async_client_with_mocked_redis():
-    # Store original client and pool
-    original_client = rate_limiter.client
-    original_pool = rate_limiter.pool
-    original_script_sha = rate_limiter._rate_limit_script_sha
-
-    # Inject fake client and clear cached script SHA
-    rate_limiter.client = fake_redis_instance
-    rate_limiter._rate_limit_script_sha = None
-
-    with patch("src.app.core.utils.rate_limit.RateLimiter.initialize") as mock_init:
-        mock_init.return_value = None
-        fake_redis_instance.store.clear()
-
-        async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
-            yield ac
-
-    # Restore original
-    rate_limiter.client = original_client
-    rate_limiter.pool = original_pool
-    rate_limiter._rate_limit_script_sha = original_script_sha
 
 @pytest.mark.asyncio
-async def test_rate_limit_headers(async_client_with_mocked_redis):
-    # Hit /openapi.json usually safe public endpoint
-    response = await async_client_with_mocked_redis.get("/openapi.json")
-
-    # Fallback if 404 (though openapi usually exists)
-    if response.status_code == 404:
-        response = await async_client_with_mocked_redis.get("/docs")
-
-    assert response.status_code == 200
+async def test_rate_limit_exceeded(mock_redis):
+    """Test rate limit exceeded behavior."""
+    # Reset redis state
+    mock_redis.store.clear()
 
     limit = settings.DEFAULT_RATE_LIMIT_LIMIT
 
-    assert "X-RateLimit-Limit" in response.headers
-    assert response.headers["X-RateLimit-Limit"] == str(limit)
-    assert "X-RateLimit-Remaining" in response.headers
-    # 1st request
-    assert response.headers["X-RateLimit-Remaining"] == str(limit - 1)
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as ac:
+        # Use /api/v1/health endpoint which is rate-limited
+        # Consume all (limit is 10)
+        for i in range(limit):
+            await ac.get("/api/v1/health")
 
-@pytest.mark.asyncio
-async def test_rate_limit_exceeded(async_client_with_mocked_redis):
-    limit = settings.DEFAULT_RATE_LIMIT_LIMIT
-
-    # Use /api/v1/health endpoint which is rate-limited
-    # Consume all (limit is 10)
-    for i in range(limit):
-        await async_client_with_mocked_redis.get("/api/v1/health")
-
-    # Next one should be rate limited
-    response = await async_client_with_mocked_redis.get("/api/v1/health")
-    assert response.status_code == 429
-    assert "Too Many Requests" in response.text or response.status_code == 429
-    assert response.headers.get("X-RateLimit-Remaining", "0") == "0"
+        # Next one should be rate limited
+        response = await ac.get("/api/v1/health")
+        assert response.status_code == 429
+        assert "Too Many Requests" in response.text or response.status_code == 429
+        assert response.headers.get("X-RateLimit-Remaining", "0") == "0"
