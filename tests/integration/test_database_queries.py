@@ -2,6 +2,9 @@
 
 Tests: U5 (Composite Indexes), U6 (N+1 Elimination), U7 (Quota Fusion),
        U8 (Pool Timeout), U11 (Negative Cache), U23 (Storage Settings N+1)
+
+Note: Some tests require specific tables to exist in test_db.
+Run `scripts/init_test_db.py` to create them.
 """
 
 import asyncio
@@ -10,8 +13,21 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 import structlog
 from sqlalchemy import text
+from sqlalchemy.exc import ProgrammingError
 
 logger = structlog.get_logger(__name__)
+
+
+# Helper to skip if table doesn't exist
+async def table_exists(session, table_name: str) -> bool:
+    """Check if a table exists in the database."""
+    result = await session.execute(
+        text(
+            "SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = :table)"
+        ).bindparams(table=table_name)
+    )
+    row = result.fetchone()
+    return row[0] if row else False
 
 
 # =============================================================================
@@ -121,13 +137,16 @@ class TestFilesQuotaFusion:
     @pytest.mark.asyncio
     async def test_quota_stats_single_query(self, real_postgres, query_counter):
         """Verify quota stats fetched in single query."""
+        if not await table_exists(real_postgres, "files"):
+            pytest.skip("files table not found - run scripts/init_test_db.py")
+
         query_counter.reset()
 
         # Fused query: COUNT + SUM in single SELECT
         result = await real_postgres.execute(
             text("""
                 SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_size
-                FROM file
+                FROM files
                 WHERE tenant_id = 1 AND is_deleted = false
             """)
         )
@@ -139,19 +158,22 @@ class TestFilesQuotaFusion:
     @pytest.mark.asyncio
     async def test_quota_fusion_isomorphism(self, real_postgres):
         """Verify fused query returns same as separate queries."""
+        if not await table_exists(real_postgres, "files"):
+            pytest.skip("files table not found - run scripts/init_test_db.py")
+
         # Fused
         fused = await real_postgres.execute(
             text("""
                 SELECT COUNT(*), COALESCE(SUM(size_bytes), 0)
-                FROM file WHERE tenant_id = 1
+                FROM files WHERE tenant_id = 1
             """)
         )
         fused_row = fused.fetchone()
 
         # Separate (baseline)
-        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM file WHERE tenant_id = 1"))
+        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM files WHERE tenant_id = 1"))
         size_result = await real_postgres.execute(
-            text("SELECT COALESCE(SUM(size_bytes), 0) FROM file WHERE tenant_id = 1")
+            text("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE tenant_id = 1")
         )
 
         count_row = count_result.fetchone()
@@ -253,6 +275,9 @@ class TestStorageSettingsN1:
     @pytest.mark.asyncio
     async def test_storage_settings_single_query(self, real_postgres, query_counter):
         """Verify storage settings fetched in single query."""
+        if not await table_exists(real_postgres, "storage_settings"):
+            pytest.skip("storage_settings table not found - run scripts/init_test_db.py")
+
         query_counter.reset()
 
         await real_postgres.execute(
@@ -275,6 +300,9 @@ class TestStorageSettingsN1:
     @pytest.mark.asyncio
     async def test_storage_settings_isomorphism(self, real_postgres):
         """Verify same settings returned for same tenant."""
+        if not await table_exists(real_postgres, "storage_settings"):
+            pytest.skip("storage_settings table not found - run scripts/init_test_db.py")
+
         # Two queries for same tenant should return same result
         result1 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = 1"))
         result2 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = 1"))

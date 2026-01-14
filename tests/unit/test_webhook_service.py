@@ -274,20 +274,25 @@ class TestWebhookServiceDelivery:
 
         # Mock validation
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
-            # Mock HTTP request
+            # Mock HTTP client (service uses get_webhook_http_client, not context manager)
             mock_response = MagicMock()
             mock_response.status_code = 200
             mock_response.text = "OK"
 
             mock_client = AsyncMock()
-            mock_client.__aenter__.return_value.post.return_value = mock_response
+            mock_client.post.return_value = mock_response
 
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+            with patch("src.app.modules.webhooks.service.get_webhook_http_client", return_value=mock_client):
+                # Also mock the circuit breaker (imported inside deliver_webhook method)
+                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
+                    mock_circuit.is_closed = True
+                    mock_circuit.record_success = AsyncMock()
 
-                assert result.status == WebhookDeliveryStatus.DELIVERED
-                assert result.response_status == 200
-                mock_db.commit.assert_called()
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+
+                    assert result.status == WebhookDeliveryStatus.DELIVERED
+                    assert result.response_status == 200
+                    mock_db.commit.assert_called()
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_http_error_retries(

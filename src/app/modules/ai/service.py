@@ -199,11 +199,25 @@ class ChatMessageService(BaseService[AIChatMessage]):
         self, session_id: int, data: ChatMessageCreate, token_count: int | None = None
     ) -> dict[str, Any]:
         """Add a message to a chat session."""
-        message_data = data.model_dump()
-        message_data["session_id"] = session_id
-        if token_count is not None:
-            message_data["token_count"] = token_count
-        return await crud_chat_messages.create(db=self.db, object=message_data)
+        # Use ChatMessageInternal schema that includes session_id
+        from pydantic import BaseModel
+
+        class ChatMessageInternal(BaseModel):
+            session_id: int
+            role: str
+            content: str
+            token_count: int | None = None
+
+        # Handle both enum and string roles
+        role_str = data.role.value if hasattr(data.role, "value") else str(data.role)
+
+        internal_data = ChatMessageInternal(
+            session_id=session_id,
+            role=role_str,
+            content=data.content,
+            token_count=token_count,
+        )
+        return await crud_chat_messages.create(db=self.db, object=internal_data)
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
         """Get paginated messages for a session."""

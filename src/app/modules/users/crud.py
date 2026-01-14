@@ -64,8 +64,10 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             "name": user.name,
             "username": user.username,
             "email": user.email,
+            "hashed_password": user.hashed_password,  # Required for auth service password verification
             "profile_image_url": user.profile_image_url,
             "tier_id": user.tier_id,
+            "tenant_id": user.tenant_id,  # Required for auth service JWT claims
             "is_superuser": user.is_superuser,
         }
 

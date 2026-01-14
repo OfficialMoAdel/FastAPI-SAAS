@@ -188,5 +188,5 @@ test.db-journal
 tmpclaude*
 UNIQUE_ISSUES_NOT_IN_OPUS*
 *.db
-test_*.db
+test_*.db*
 skill

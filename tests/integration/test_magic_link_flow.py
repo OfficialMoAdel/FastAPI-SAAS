@@ -58,9 +58,8 @@ class TestMagicLinkE2EFlow:
                 "src.app.modules.magic_link.service.MagicLinkService._get_magic_link_manager",
             ) as mock_manager,
         ):
-            # Setup mock user
-            mock_user = Mock(**test_user_data)
-            mock_get_user.return_value = mock_user
+            # Setup mock user as dict (service uses dict-style access)
+            mock_get_user.return_value = test_user_data
 
             # Setup mock manager to return token
             mock_token = "test_magic_link_token_12345678901234567890"
@@ -93,11 +92,9 @@ class TestMagicLinkE2EFlow:
                 new_callable=AsyncMock,
             ) as mock_create_tokens,
         ):
-            # Setup mocks
-            mock_user = Mock(**test_user_data)
-            # Add is_deleted attribute to avoid soft delete check failures
-            mock_user.is_deleted = False
-            mock_get_user.return_value = mock_user
+            # Setup mocks - use dict with is_deleted added (service uses dict-style access)
+            user_data_with_delete = {**test_user_data, "is_deleted": False}
+            mock_get_user.return_value = user_data_with_delete
 
             mock_magic_link_manager = AsyncMock()
             mock_magic_link_manager.validate_token.return_value = {

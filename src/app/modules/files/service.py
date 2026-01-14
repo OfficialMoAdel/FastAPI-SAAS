@@ -226,23 +226,34 @@ class FileService:
         offset: int = 0,
     ) -> dict[str, Any]:
         """List files with optional filtering."""
+        from typing import Any
+
         from src.app.modules.files.schemas import FileRead
 
-        filters = {"tenant_id": tenant_id}
-        if user_id:
-            filters["user_id"] = user_id
-        if mime_type:
-            filters["mime_type"] = mime_type
+        # Build query with SQLAlchemy
+        query = select(File).where(File.tenant_id == tenant_id)
 
-        return await self.crud.get_multi(
-            db=self.db,
-            offset=offset,
-            limit=limit,
-            sort_columns=["created_at"],
-            sort_orders=["desc"],
-            schema_to_select=FileRead,
-            **filters,
-        )
+        if user_id:
+            query = query.where(File.user_id == user_id)
+        if mime_type:
+            query = query.where(File.mime_type == mime_type)
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total_count = total_result.scalar() or 0
+
+        # Apply sorting and pagination
+        query = query.order_by(File.created_at.desc())
+        query = query.offset(offset).limit(limit)
+
+        result = await self.db.execute(query)
+        files = result.scalars().all()
+
+        return {
+            "data": [FileRead.model_validate(f) for f in files],
+            "total_count": total_count,
+        }
 
     async def download_file(
         self,

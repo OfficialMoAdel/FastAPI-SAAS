@@ -22,6 +22,13 @@ logger = structlog.get_logger(__name__)
 
 
 # -----------------------------------------------------------------------------
+# Event Loop Configuration - CRITICAL for session-scoped async fixtures
+# -----------------------------------------------------------------------------
+# NOTE: pytest-asyncio >= 0.23 uses loop_scope parameter on fixtures instead
+# of the deprecated event_loop fixture. See real_postgres_engine and real_redis.
+
+
+# -----------------------------------------------------------------------------
 # Baseline Performance Metrics (from task description)
 # -----------------------------------------------------------------------------
 @pytest.fixture
@@ -44,13 +51,24 @@ def baseline_metrics() -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 # Database Fixtures
 # -----------------------------------------------------------------------------
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def real_postgres_engine():
     """Create real PostgreSQL engine for integration tests."""
-    # Use test database URL (port 5433 for test container)
-    test_db_url = str(settings.POSTGRES_URI).replace(":5432", ":5433")
-    if "test" not in test_db_url:
-        test_db_url = test_db_url.replace("/postgres", "/test_db")
+    # Build full async URL with scheme prefix
+    # Use TEST_POSTGRES_PORT env var if set, otherwise use main POSTGRES_PORT
+    import os
+    test_port = os.getenv("TEST_POSTGRES_PORT", str(settings.POSTGRES_PORT))
+    test_db = os.getenv("TEST_POSTGRES_DB", "test_db")
+
+    base_uri = str(settings.POSTGRES_URI)
+    # Replace port if TEST_POSTGRES_PORT is different
+    if test_port != str(settings.POSTGRES_PORT):
+        base_uri = base_uri.replace(f":{settings.POSTGRES_PORT}", f":{test_port}")
+    # Replace database name with test database
+    base_uri = base_uri.replace(f"/{settings.POSTGRES_DB}", f"/{test_db}")
+
+    # Add async scheme prefix
+    test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{base_uri}"
 
     engine = create_async_engine(
         test_db_url,
@@ -64,7 +82,7 @@ async def real_postgres_engine():
     await engine.dispose()
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, None]:
     """Real PostgreSQL session for integration tests."""
     async_session = sessionmaker(
@@ -117,7 +135,7 @@ def query_logger(real_postgres, query_counter):
     sqla_event.remove(engine.sync_engine, "before_cursor_execute", log_query)
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def clean_db(real_postgres):
     """Clean database state between tests."""
     # Truncate relevant tables
@@ -133,23 +151,33 @@ async def clean_db(real_postgres):
 # -----------------------------------------------------------------------------
 # Redis Fixtures
 # -----------------------------------------------------------------------------
-@pytest_asyncio.fixture(scope="session")
+@pytest_asyncio.fixture(scope="session", loop_scope="session")
 async def real_redis() -> AsyncGenerator[Redis, None]:
     """Real Redis connection for integration tests."""
-    # Use test Redis (port 6380 for test container)
+    import os
+    # Use TEST_REDIS_PORT env var if set, otherwise use main REDIS_CACHE_PORT
+    test_port = int(os.getenv("TEST_REDIS_PORT", str(settings.REDIS_CACHE_PORT)))
+    test_password = os.getenv("TEST_REDIS_PASSWORD", settings.REDIS_CACHE_PASSWORD)
+
     redis = Redis(
-        host=settings.REDIS_HOST,
-        port=6380,  # Test container port
+        host=settings.REDIS_CACHE_HOST,
+        port=test_port,
+        password=test_password if test_password else None,
         db=0,
         decode_responses=True,
     )
 
     yield redis
 
-    await redis.aclose()
+    # Handle event loop closed during teardown (common with session-scoped fixtures)
+    try:
+        await redis.aclose()
+    except RuntimeError:
+        # Event loop may be closed during test session teardown
+        pass
 
 
-@pytest_asyncio.fixture
+@pytest_asyncio.fixture(loop_scope="session")
 async def clean_redis(real_redis):
     """Clean Redis state between tests."""
     await real_redis.flushdb()
@@ -319,13 +347,18 @@ def skip_without_services(request):
     if "integration" in [m.name for m in request.node.iter_markers()]:
         # Check if Redis is available
         try:
+            import os
             import socket
+
+            # Use TEST_REDIS_PORT or main REDIS_CACHE_PORT
+            test_port = int(os.getenv("TEST_REDIS_PORT", str(settings.REDIS_CACHE_PORT)))
+            redis_host = settings.REDIS_CACHE_HOST
 
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             sock.settimeout(1)
-            result = sock.connect_ex(("localhost", 6380))
+            result = sock.connect_ex((redis_host, test_port))
             sock.close()
             if result != 0:
-                pytest.skip("Redis test container not available on port 6380")
+                pytest.skip(f"Redis not available at {redis_host}:{test_port}")
         except Exception:
             pytest.skip("Cannot check Redis availability")

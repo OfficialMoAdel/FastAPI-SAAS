@@ -17,15 +17,20 @@ from src.app.main import app
 @pytest_asyncio.fixture
 async def client() -> AsyncClient:
     """Create async HTTP client."""
-    # Mock Redis rate limiter to avoid initialization error
-    mock_rate_limiter = MagicMock()
-    mock_rate_limiter.initialize = AsyncMock()
-    mock_rate_limiter.client = AsyncMock()
+    # Mock Redis cache client used by RateLimiter via cache.client
+    mock_redis = AsyncMock()
+    mock_redis.evalsha = AsyncMock(return_value=1)  # Below rate limit
+    mock_redis.script_load = AsyncMock(return_value="fake_sha")
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.setex = AsyncMock(return_value=True)
+    # T024: Fix permission caching mocks for RBAC tests
+    mock_redis.exists = AsyncMock(return_value=False)  # Cache miss - force DB lookup
+    mock_redis.sismember = AsyncMock(return_value=0)  # Permission not found
+    mock_redis.smembers = AsyncMock(return_value=set())  # Empty permissions set
+    mock_redis.pipeline = MagicMock(return_value=AsyncMock())  # For cache write
 
-    # We need to patch where it's imported in the valid code
-    # It might be in src.app.core.utils.rate_limit.rate_limiter or similar
-    with patch("src.app.core.utils.rate_limit.rate_limiter.client", new=AsyncMock()):
-        # Also need to mock the Cache middleware or internal cache calls if any
+    with patch("src.app.core.utils.cache.client", mock_redis):
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac

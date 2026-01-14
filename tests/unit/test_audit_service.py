@@ -57,7 +57,7 @@ class TestAuditLogServiceCreation:
 
         audit_service.db.add.assert_called_once()
         audit_service.db.commit.assert_called_once()
-        audit_service.db.refresh.assert_called_once()
+        # Note: refresh() was intentionally removed from service - no server-generated fields needed
 
     @pytest.mark.asyncio
     async def test_create_audit_log_full_fields(self, audit_service, sample_tenant, sample_user) -> None:

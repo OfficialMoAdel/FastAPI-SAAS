@@ -64,7 +64,19 @@ class TestB7ParallelReads:
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.update = AsyncMock()
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
-                await service.complete(session_id=1, user_id=1, request=request)
+                # Patch local_session to avoid real DB calls in Phase 3
+                with patch("src.app.modules.ai.service.local_session") as mock_local_session:
+                    mock_fresh_db = AsyncMock()
+                    mock_fresh_db.__aenter__ = AsyncMock(return_value=mock_fresh_db)
+                    mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
+                    mock_fresh_db.commit = AsyncMock()
+                    mock_local_session.return_value = mock_fresh_db
+                    # Also patch ChatMessageService in the fresh session context
+                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+                        mock_msg_instance = AsyncMock()
+                        mock_msg_instance.add_message = AsyncMock()
+                        MockMsgService.return_value = mock_msg_instance
+                        await service.complete(session_id=1, user_id=1, request=request)
 
         # Assert - all 3 reads should have been called
         service._session_service.get_session.assert_called_once_with(1, 1)
@@ -152,7 +164,19 @@ class TestB7UserMessageTiming:
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.update = AsyncMock()
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
-                await service.complete(session_id=1, user_id=1, request=request)
+                # Patch local_session to avoid real DB calls in Phase 3
+                with patch("src.app.modules.ai.service.local_session") as mock_local_session:
+                    mock_fresh_db = AsyncMock()
+                    mock_fresh_db.__aenter__ = AsyncMock(return_value=mock_fresh_db)
+                    mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
+                    mock_fresh_db.commit = AsyncMock()
+                    mock_local_session.return_value = mock_fresh_db
+                    # Also patch ChatMessageService in the fresh session context
+                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+                        mock_msg_instance = AsyncMock()
+                        mock_msg_instance.add_message = AsyncMock()
+                        MockMsgService.return_value = mock_msg_instance
+                        await service.complete(session_id=1, user_id=1, request=request)
 
         # Assert - user message must come before ollama
         user_msg_index = call_order.index("add_user_message")
@@ -201,15 +225,33 @@ class TestB7BatchedWrites:
 
         request = ChatCompletionRequest(message="Hello")
 
+        # Track calls to verify both user and assistant messages
+        add_message_calls = []
+
         # Act
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.update = AsyncMock()
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
-                await service.complete(session_id=1, user_id=1, request=request)
+                # Patch local_session to avoid real DB calls in Phase 3
+                with patch("src.app.modules.ai.service.local_session") as mock_local_session:
+                    mock_fresh_db = AsyncMock()
+                    mock_fresh_db.__aenter__ = AsyncMock(return_value=mock_fresh_db)
+                    mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
+                    mock_fresh_db.commit = AsyncMock()
+                    mock_local_session.return_value = mock_fresh_db
+                    # Track ChatMessageService calls in Phase 3
+                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+                        mock_msg_instance = MagicMock()
+                        async def track_assistant_msg(*args, **kwargs):
+                            add_message_calls.append(("assistant", kwargs))
+                        mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
+                        MockMsgService.return_value = mock_msg_instance
+                        await service.complete(session_id=1, user_id=1, request=request)
 
             # Assert - both post-Ollama operations should be called
-            # add_message should be called twice (user + assistant)
-            assert service._message_service.add_message.call_count == 2
+            # User message via original service, assistant via fresh service
+            service._message_service.add_message.assert_called_once()
+            assert len(add_message_calls) == 1  # Assistant message via fresh session
             mock_crud.update.assert_called_once()
 
         logger.info("Verified: Post-Ollama writes both executed")
@@ -244,18 +286,30 @@ class TestB7BatchedWrites:
 
         request = ChatCompletionRequest(message="Hello")
 
+        # Track assistant message to verify token count
+        assistant_message_kwargs = {}
+
         with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
             mock_crud.update = AsyncMock()
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
-                await service.complete(session_id=1, user_id=1, request=request)
+                # Patch local_session to avoid real DB calls in Phase 3
+                with patch("src.app.modules.ai.service.local_session") as mock_local_session:
+                    mock_fresh_db = AsyncMock()
+                    mock_fresh_db.__aenter__ = AsyncMock(return_value=mock_fresh_db)
+                    mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
+                    mock_fresh_db.commit = AsyncMock()
+                    mock_local_session.return_value = mock_fresh_db
+                    # Track ChatMessageService calls in Phase 3
+                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+                        mock_msg_instance = MagicMock()
+                        async def track_assistant_msg(*args, **kwargs):
+                            assistant_message_kwargs.update(kwargs)
+                        mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
+                        MockMsgService.return_value = mock_msg_instance
+                        await service.complete(session_id=1, user_id=1, request=request)
 
-        # Check the second call (assistant message)
-        calls = service._message_service.add_message.call_args_list
-        assert len(calls) == 2
-
-        # Second call should have token_count
-        _, kwargs = calls[1]
-        assert kwargs.get("token_count") == expected_token_count
+        # Check the assistant message was saved with correct token count
+        assert assistant_message_kwargs.get("token_count") == expected_token_count
 
         logger.info(f"Verified: Assistant message saved with token_count={expected_token_count}")
 
