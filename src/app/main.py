@@ -98,20 +98,26 @@ app = create_application(
     default_response_class=ORJSONResponse,
 )
 
-# Add tenant middleware for multi-tenancy support
-app.add_middleware(TenantMiddleware)
+# Middleware stack (LIFO - last added runs first on request, first on response)
+# Execution order: GZip -> Security -> BodyLimit -> Tenant -> RateLimit -> RequestID -> Handler
+#
+# Key ordering decisions:
+# - GZip: Outermost for compression of all responses
+# - Security: Early headers before any processing
+# - BodyLimit: Reject oversized requests before expensive processing
+# - Tenant: Extract tenant context BEFORE rate limiting (P2-5 optimization)
+# - RateLimit: Can now use tenant context for per-tenant limits
+# - RequestID: Innermost for accurate request tracing
 
-
-# Request ID must be first (outermost) for tracing
-app.add_middleware(RequestIDMiddleware)
-app.add_middleware(RateLimitMiddleware)
-app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
-app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
-
-# GZip compression for responses > 500 bytes
+# GZip compression for responses > 500 bytes (runs first on request)
 from fastapi.middleware.gzip import GZipMiddleware
 
 app.add_middleware(GZipMiddleware, minimum_size=500)
+app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
+app.add_middleware(TenantMiddleware)  # Tenant context before rate limiting (P2-5)
+app.add_middleware(RateLimitMiddleware)  # Can access tenant context
+app.add_middleware(RequestIDMiddleware)  # Request ID must be last (innermost) for tracing
 
 # Mount admin interface if enabled
 if admin:
