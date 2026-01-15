@@ -218,7 +218,7 @@ class TestAuthServiceTokenRefresh:
             patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
-            patch("src.app.modules.auth.service.crud_users") as mock_crud_users,
+            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
         ):
             from src.app.core.config import EnvironmentOption
 
@@ -228,9 +228,19 @@ class TestAuthServiceTokenRefresh:
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
-            mock_crud_users.get_user_with_tier_eager = AsyncMock(
-                return_value={"tier_id": 1, "username": "testuser", "tier": {"name": "basic"}}
+
+            # Mock the UserService returned by get_user_service
+            mock_user_service = MagicMock()
+            mock_user_service.get_user_auth_info = AsyncMock(
+                return_value={
+                    "id": 1,
+                    "username": "testuser",
+                    "tier_id": 1,
+                    "tier": {"name": "basic"},
+                    "is_deleted": False,
+                }
             )
+            mock_get_user_service.return_value = mock_user_service
 
             result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
 
