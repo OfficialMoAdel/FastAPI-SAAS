@@ -6,7 +6,6 @@ including credential encryption, validation, and provider factory.
 
 from __future__ import annotations
 
-import json
 from typing import TYPE_CHECKING
 
 import structlog
@@ -16,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
 from src.app.core.encryption import decrypt_value, encrypt_value
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.modules.storage.azure_storage import AzureBlobStorage
 from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
@@ -114,7 +114,7 @@ class StorageSettingsService:
         await self._validate_credentials(data.provider, credentials)
 
         # Encrypt credentials
-        encrypted = encrypt_value(json.dumps(credentials))
+        encrypted = encrypt_value(json_dumps(credentials, as_str=True))
 
         # Create settings
         settings = StorageSettings(
@@ -173,7 +173,7 @@ class StorageSettingsService:
             await self._validate_credentials(provider, new_credentials)
 
             # Encrypt with current key (handles rotation automatically)
-            settings.credentials_encrypted = encrypt_value(json.dumps(new_credentials))
+            settings.credentials_encrypted = encrypt_value(json_dumps(new_credentials, as_str=True))
 
             # Update bucket/container name if changed
             settings.bucket_name = (
@@ -308,7 +308,7 @@ class StorageSettingsService:
         if not settings.credentials_encrypted:
             return {}
         decrypted = decrypt_value(settings.credentials_encrypted)
-        return json.loads(decrypted)
+        return json_loads(decrypted)
 
     async def _validate_credentials(
         self,

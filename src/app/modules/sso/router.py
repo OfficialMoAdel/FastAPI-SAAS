@@ -7,6 +7,8 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, sta
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.json_utils import json_loads
+
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_tenant_context
@@ -97,7 +99,7 @@ async def handle_post_callback(
         user_data = None
         if user:
             try:
-                user_data = json.loads(user)
+                user_data = json_loads(user)
             except json.JSONDecodeError:
                 pass
 

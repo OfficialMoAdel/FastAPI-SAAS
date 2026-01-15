@@ -2,8 +2,9 @@
 
 import hashlib
 import hmac
-import json
 from typing import Any
+
+from src.app.core.json_utils import json_dumps
 
 
 def generate_webhook_signature(payload: dict[str, Any], secret: str) -> str:
@@ -18,7 +19,7 @@ def generate_webhook_signature(payload: dict[str, Any], secret: str) -> str:
     -------
         Hexadecimal signature string
     """
-    payload_str = json.dumps(payload, separators=(",", ":"))
+    payload_str = json_dumps(payload, as_str=True)
     signature = hmac.new(secret.encode("utf-8"), payload_str.encode("utf-8"), hashlib.sha256).hexdigest()
 
     return signature

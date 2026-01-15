@@ -63,7 +63,11 @@ def tenant_cache_pattern(tenant_id: int | str, prefix: str = "*") -> str:
 
 
 async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = None) -> int:
-    """Invalidate all cache entries for a tenant.
+    """Invalidate all cache entries for a tenant using set-based indexing.
+
+    This uses a Redis Set to track all keys for a tenant, enabling O(|S|)
+    invalidation where S is the number of keys for that tenant, instead
+    of O(K) where K is total keys in Redis.
 
     Args:
         tenant_id: Tenant identifier
@@ -76,19 +80,238 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     if client is None:
         return 0
 
-    pattern = tenant_cache_pattern(tenant_id, prefix or "*")
-    deleted = 0
+    # Get the index set key
+    index_key = _tenant_index_key(tenant_id)
+
+    # Get all keys from the index
+    keys: set[str] = await client.smembers(index_key)  # type: ignore[misc, assignment]
+    if not keys:
+        return 0
+
+    # If prefix specified, filter keys
+    if prefix:
+        filter_prefix = f"tenant:{tenant_id}:{prefix}:"
+        keys = {k for k in keys if k.startswith(filter_prefix)}
+
+    if not keys:
+        return 0
+
+    # Delete all matching keys in a pipeline for efficiency
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.delete(*keys)
+        # Remove deleted keys from index
+        pipe.srem(index_key, *keys)
+        results = await pipe.execute()
+
+    return results[0] if results else 0
+
+
+def _tenant_index_key(tenant_id: int | str) -> str:
+    """Get the Redis Set key that indexes all cache keys for a tenant.
+
+    Args:
+        tenant_id: Tenant identifier
+
+    Returns
+    -------
+        Index set key like 'tenant_index:123'
+    """
+    return f"tenant_index:{tenant_id}"
+
+
+async def add_to_tenant_index(tenant_id: int | str, cache_key: str) -> bool:
+    """Add a cache key to the tenant's index set.
+
+    Should be called whenever a tenant-scoped key is written to cache.
+
+    Args:
+        tenant_id: Tenant identifier
+        cache_key: The cache key to add to the index
+
+    Returns
+    -------
+        True if added successfully, False if Redis unavailable
+    """
+    if client is None:
+        return False
+
+    index_key = _tenant_index_key(tenant_id)
+    await client.sadd(index_key, cache_key)  # type: ignore[misc]
+    return True
+
+
+async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool:
+    """Remove a cache key from the tenant's index set.
+
+    Should be called when a specific tenant key is deleted.
+
+    Args:
+        tenant_id: Tenant identifier
+        cache_key: The cache key to remove from the index
+
+    Returns
+    -------
+        True if removed successfully, False if Redis unavailable
+    """
+    if client is None:
+        return False
+
+    index_key = _tenant_index_key(tenant_id)
+    await client.srem(index_key, cache_key)  # type: ignore[misc]
+    return True
+
+
+async def set_tenant_cache(
+    tenant_id: int | str,
+    prefix: str,
+    key_parts: tuple[str | int, ...],
+    value: str,
+    ttl: int = 3600,
+) -> bool:
+    """Set a tenant-scoped cache value with automatic index tracking.
+
+    This is the preferred way to set tenant cache values as it automatically
+    maintains the tenant key index for efficient invalidation.
+
+    Args:
+        tenant_id: Tenant identifier
+        prefix: Cache key prefix (e.g., 'user', 'permissions')
+        key_parts: Additional key parts
+        value: Serialized value to cache
+        ttl: Time-to-live in seconds (default: 1 hour)
+
+    Returns
+    -------
+        True if set successfully, False if Redis unavailable
+    """
+    if client is None:
+        return False
+
+    cache_key = tenant_cache_key(tenant_id, prefix, *key_parts)
+
+    # Use pipeline for atomic set + index add
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.setex(cache_key, ttl, value)
+        pipe.sadd(_tenant_index_key(tenant_id), cache_key)
+        await pipe.execute()
+
+    return True
+
+
+async def get_tenant_cache(
+    tenant_id: int | str,
+    prefix: str,
+    *key_parts: str | int,
+) -> str | None:
+    """Get a tenant-scoped cache value.
+
+    Args:
+        tenant_id: Tenant identifier
+        prefix: Cache key prefix
+        *key_parts: Additional key parts
+
+    Returns
+    -------
+        Cached value or None if not found
+    """
+    if client is None:
+        return None
+
+    cache_key = tenant_cache_key(tenant_id, prefix, *key_parts)
+    result: str | None = await client.get(cache_key)  # type: ignore[assignment]
+    return result
+
+
+async def delete_tenant_cache(
+    tenant_id: int | str,
+    prefix: str,
+    *key_parts: str | int,
+) -> bool:
+    """Delete a specific tenant-scoped cache value.
+
+    Also removes the key from the tenant index.
+
+    Args:
+        tenant_id: Tenant identifier
+        prefix: Cache key prefix
+        *key_parts: Additional key parts
+
+    Returns
+    -------
+        True if deleted, False if Redis unavailable
+    """
+    if client is None:
+        return False
+
+    cache_key = tenant_cache_key(tenant_id, prefix, *key_parts)
+
+    # Use pipeline for atomic delete + index remove
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.delete(cache_key)
+        pipe.srem(_tenant_index_key(tenant_id), cache_key)
+        await pipe.execute()
+
+    return True
+
+
+async def migrate_tenant_cache_index(tenant_id: int | str | None = None) -> dict[str, int]:
+    """Migrate existing tenant cache keys to the set-based index.
+
+    This scans for existing tenant:* keys and adds them to the appropriate
+    index sets. Run this once during deployment to populate indexes for
+    existing cached data.
+
+    Args:
+        tenant_id: Optional specific tenant to migrate. If None, migrates all.
+
+    Returns
+    -------
+        Dict with migration stats: {'tenants_migrated': N, 'keys_indexed': M}
+    """
+    if client is None:
+        return {"tenants_migrated": 0, "keys_indexed": 0}
+
+    pattern = f"tenant:{tenant_id}:*" if tenant_id else "tenant:*"
+    tenants_seen: set[str] = set()
+    keys_indexed = 0
     cursor = 0
 
     while True:
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
-        if keys:
-            await client.delete(*keys)
-            deleted += len(keys)
+        for key in keys:
+            # Extract tenant_id from key (format: tenant:123:prefix:...)
+            parts = key.split(":", 2)
+            if len(parts) >= 2:
+                tid = parts[1]
+                tenants_seen.add(tid)
+                index_key = f"tenant_index:{tid}"
+                await client.sadd(index_key, key)  # type: ignore[misc]
+                keys_indexed += 1
+
         if cursor == 0:
             break
 
-    return deleted
+    return {"tenants_migrated": len(tenants_seen), "keys_indexed": keys_indexed}
+
+
+async def get_tenant_index_size(tenant_id: int | str) -> int:
+    """Get the number of cached keys for a tenant.
+
+    Useful for monitoring and debugging.
+
+    Args:
+        tenant_id: Tenant identifier
+
+    Returns
+    -------
+        Number of keys in the tenant's index
+    """
+    if client is None:
+        return 0
+
+    index_key = _tenant_index_key(tenant_id)
+    count: int = await client.scard(index_key)  # type: ignore[misc, assignment]
+    return count
 
 
 # =============================================================================

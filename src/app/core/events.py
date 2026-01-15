@@ -7,7 +7,6 @@ Supports priority-based event handling:
 
 import asyncio
 import importlib
-import json
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from enum import Enum
@@ -15,6 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from structlog import get_logger
+
+from src.app.core.json_utils import json_dumps, json_loads
 
 from .config import settings
 from .utils.circuit_breaker import arq_circuit
@@ -229,7 +230,7 @@ class EventBus:
                     event_name=event_name,
                     handler=handler.__name__,
                 )
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 logger.error(
                     "Event handler timed out",
                     event_name=event_name,
@@ -250,8 +251,10 @@ class EventBus:
         if not handlers:
             return
 
-        # Execute all handlers in parallel
-        await asyncio.gather(*[_call_handler(h) for h in handlers], return_exceptions=True)
+        # Fire-and-forget: Schedule handlers as background tasks
+        # Do NOT await - this allows the request to return immediately
+        for handler in handlers:
+            asyncio.create_task(_call_handler(handler))
 
     async def _publish_async(
         self,
@@ -380,7 +383,7 @@ class EventBus:
 
         if self._redis_client:
             # Persist to Redis for production reliability
-            await self._redis_client.lpush(self.DLQ_REDIS_KEY, json.dumps(dlq_entry))
+            await self._redis_client.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
         else:
             logger.warning(
                 "Redis not configured for DLQ, event will be lost on restart",
@@ -409,7 +412,7 @@ class EventBus:
             return []
 
         entries = await self._redis_client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
-        return [json.loads(entry) for entry in entries]
+        return [json_loads(entry) for entry in entries]
 
     async def get_dlq_size(self) -> int:
         """Get the number of entries in the DLQ.
@@ -434,7 +437,7 @@ class EventBus:
 
         entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
         if entry:
-            return json.loads(entry)
+            return json_loads(entry)
         return None
 
     async def clear_dlq(self) -> int:
@@ -551,7 +554,7 @@ async def process_event_handler(
                 handler(data),
                 timeout=timeout_val,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError:
             logger.error(
                 "ARQ event handler timed out",
                 event_name=event_name,

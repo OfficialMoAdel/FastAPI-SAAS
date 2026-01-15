@@ -36,6 +36,8 @@ from typing import Any, cast
 
 from redis.asyncio import Redis
 
+from src.app.core.json_utils import json_dumps, json_loads
+
 logger = logging.getLogger(__name__)
 
 
@@ -144,7 +146,7 @@ class SSOStateManager:
         state = TokenGenerator.generate_sso_state()
 
         # Build state data
-        state_data = {
+        state_data: dict[str, Any] = {
             "provider": provider,
             "redirect_uri": redirect_uri,
         }
@@ -156,7 +158,7 @@ class SSOStateManager:
         await self._redis.setex(
             key,
             self.STATE_EXPIRY,
-            json.dumps(state_data),
+            json_dumps(state_data, as_str=True),
         )
 
         logger.debug(
@@ -195,7 +197,7 @@ class SSOStateManager:
         await self._redis.delete(key)
 
         try:
-            state_data = cast(dict[str, Any], json.loads(data))
+            state_data = cast(dict[str, Any], json_loads(data))
             logger.debug(
                 "SSO state validated successfully",
                 extra={
@@ -252,7 +254,7 @@ class MagicLinkManager:
         token = TokenGenerator.generate_magic_link_token()
 
         # Build token data
-        token_data = {
+        token_data: dict[str, Any] = {
             "email": email,
             "action": action,
         }
@@ -264,7 +266,7 @@ class MagicLinkManager:
         await self._redis.setex(
             key,
             self.TOKEN_EXPIRY,
-            json.dumps(token_data),
+            json_dumps(token_data, as_str=True),
         )
 
         logger.debug(
@@ -303,7 +305,7 @@ class MagicLinkManager:
         await self._redis.delete(key)
 
         try:
-            token_data = cast(dict[str, Any], json.loads(data))
+            token_data = cast(dict[str, Any], json_loads(data))
             logger.debug(
                 "Magic link validated successfully",
                 extra={

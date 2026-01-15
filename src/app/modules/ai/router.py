@@ -1,6 +1,5 @@
 """AI Features router - HTTP handlers for AI chat operations."""
 
-import json
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -9,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.json_utils import json_dumps
 
 from .middleware import RateLimitedUser
 from .ollama_client import get_ollama_client
@@ -257,7 +257,7 @@ async def chat_completion_stream(
     async def generate():
         try:
             async for chunk in service.complete_stream(session_id, current_user["id"], request):
-                yield f"data: {json.dumps(chunk)}\n\n"
+                yield f"data: {json_dumps(chunk, as_str=True)}\n\n"
         except ChatCompletionError as e:
             error = {
                 "error": True,
@@ -265,7 +265,7 @@ async def chat_completion_stream(
                 "error_code": e.error_code,
                 "model": e.model,
             }
-            yield f"data: {json.dumps(error)}\n\n"
+            yield f"data: {json_dumps(error, as_str=True)}\n\n"
 
     return StreamingResponse(
         generate(),

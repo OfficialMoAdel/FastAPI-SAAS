@@ -4,12 +4,13 @@ Prevents account sharing by limiting the number of concurrent sessions per user.
 Tracks active sessions in Redis with automatic expiration.
 """
 
-import json
 from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
 from structlog import get_logger
+
+from src.app.core.json_utils import json_dumps, json_loads
 
 logger = get_logger(__name__)
 
@@ -79,7 +80,7 @@ class SessionManager:
 
         # Get current sessions - use deque for O(1) popleft
         sessions_raw = await self._redis_client.get(session_key)
-        sessions: deque[dict] = deque(json.loads(sessions_raw)) if sessions_raw else deque()
+        sessions: deque[dict] = deque(json_loads(sessions_raw)) if sessions_raw else deque()
 
         # Check if session already exists
         existing_ids = [s["session_id"] for s in sessions]
@@ -112,7 +113,7 @@ class SessionManager:
         await self._redis_client.setex(
             session_key,
             self.SESSION_TTL_SECONDS,
-            json.dumps(list(sessions)),
+            json_dumps(list(sessions), as_str=True),
         )
 
         # Dual-write: Save to Redis Hash (v2)
@@ -128,7 +129,7 @@ class SessionManager:
                 await self._redis_client.hdel(hash_key, *[s["session_id"] for s in invalidated_sessions])
 
             # 2. Add new session to Hash
-            await self._redis_client.hset(hash_key, session_id, json.dumps(new_session))
+            await self._redis_client.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
 
             # 3. Set Expiry on Hash
             await self._redis_client.expire(hash_key, self.SESSION_TTL_SECONDS)
@@ -180,7 +181,7 @@ class SessionManager:
         if not sessions_raw:
             return False
 
-        sessions = json.loads(sessions_raw)
+        sessions = json_loads(sessions_raw)
         return any(s["session_id"] == session_id for s in sessions)
 
     async def invalidate_session(self, user_id: int | str, session_id: str) -> bool:
@@ -203,7 +204,7 @@ class SessionManager:
         if not sessions_raw:
             return False
 
-        sessions = json.loads(sessions_raw)
+        sessions = json_loads(sessions_raw)
         original_count = len(sessions)
         sessions = [s for s in sessions if s["session_id"] != session_id]
 
@@ -214,7 +215,7 @@ class SessionManager:
             await self._redis_client.setex(
                 session_key,
                 self.SESSION_TTL_SECONDS,
-                json.dumps(sessions),
+                json_dumps(sessions, as_str=True),
             )
         else:
             await self._redis_client.delete(session_key)
@@ -250,7 +251,7 @@ class SessionManager:
         if not sessions_raw:
             return 0
 
-        sessions = json.loads(sessions_raw)
+        sessions = json_loads(sessions_raw)
         count = len(sessions)
         await self._redis_client.delete(session_key)
 
@@ -290,7 +291,7 @@ class SessionManager:
         # Cast for mypy strictness
         from typing import cast
 
-        return cast(list[dict[str, Any]], json.loads(sessions_raw))
+        return cast(list[dict[str, Any]], json_loads(sessions_raw))
 
     async def count_active_sessions(self, user_id: int | str) -> int:
         """Count active sessions for a user (optimized).
@@ -313,7 +314,7 @@ class SessionManager:
         sessions_raw = await self._redis_client.get(session_key)
         if not sessions_raw:
             return 0
-        return len(json.loads(sessions_raw))
+        return len(json_loads(sessions_raw))
 
     async def migrate_to_hash(self, batch_size: int = 100) -> int:
         """Migrate all legacy sessions to Redis Hash format.
@@ -355,7 +356,7 @@ class SessionManager:
                 if not sessions_raw:
                     continue
 
-                sessions = json.loads(sessions_raw)
+                sessions = json_loads(sessions_raw)
                 if not sessions:
                     continue
 
@@ -366,7 +367,7 @@ class SessionManager:
                 async with self._redis_client.pipeline(transaction=True) as pipe:
                     # Add all sessions to hash
                     for session in sessions:
-                        pipe.hset(hash_key, session["session_id"], json.dumps(session))
+                        pipe.hset(hash_key, session["session_id"], json_dumps(session, as_str=True))
 
                     # Set TTL (refresh it)
                     pipe.expire(hash_key, self.SESSION_TTL_SECONDS)

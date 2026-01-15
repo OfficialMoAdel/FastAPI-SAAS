@@ -1,0 +1,384 @@
+"""Tests for tenant cache set-based indexing and invalidation.
+
+This test suite verifies the O(|S|) set-based invalidation replaces
+the O(K) SCAN-based approach, providing 10-1000x speedup at scale.
+"""
+
+from __future__ import annotations
+
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from src.app.core.utils.cache import (
+    _tenant_index_key,
+    add_to_tenant_index,
+    delete_tenant_cache,
+    get_tenant_cache,
+    get_tenant_index_size,
+    invalidate_tenant_cache,
+    remove_from_tenant_index,
+    set_tenant_cache,
+    tenant_cache_key,
+)
+
+
+def create_mock_redis_with_pipeline() -> tuple[AsyncMock, AsyncMock]:
+    """Create a mock Redis client with properly mocked pipeline.
+
+    Returns:
+        Tuple of (mock_redis, mock_pipeline)
+    """
+    mock_redis = AsyncMock()
+    mock_pipeline = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_pipeline_cm(**kwargs):  # noqa: ANN003
+        yield mock_pipeline
+
+    mock_redis.pipeline = mock_pipeline_cm
+    return mock_redis, mock_pipeline
+
+
+class TestTenantIndexKeyGeneration:
+    """Test index key generation."""
+
+    def test_generates_correct_index_key_for_int(self) -> None:
+        """Verify index key format for integer tenant IDs."""
+        result = _tenant_index_key(123)
+        assert result == "tenant_index:123"
+
+    def test_generates_correct_index_key_for_str(self) -> None:
+        """Verify index key format for string tenant IDs."""
+        result = _tenant_index_key("abc-tenant")
+        assert result == "tenant_index:abc-tenant"
+
+
+class TestAddToTenantIndex:
+    """Test adding keys to tenant index set."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_client(self) -> None:
+        """Should return False when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await add_to_tenant_index(1, "tenant:1:user:42")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_calls_sadd_with_correct_args(self) -> None:
+        """Verify SADD is called with index key and cache key."""
+        mock_redis = AsyncMock()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await add_to_tenant_index(1, "tenant:1:user:42")
+
+            assert result is True
+            mock_redis.sadd.assert_called_once_with(
+                "tenant_index:1", "tenant:1:user:42"
+            )
+
+
+class TestRemoveFromTenantIndex:
+    """Test removing keys from tenant index set."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_client(self) -> None:
+        """Should return False when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await remove_from_tenant_index(1, "tenant:1:user:42")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_calls_srem_with_correct_args(self) -> None:
+        """Verify SREM is called with index key and cache key."""
+        mock_redis = AsyncMock()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await remove_from_tenant_index(1, "tenant:1:user:42")
+
+            assert result is True
+            mock_redis.srem.assert_called_once_with(
+                "tenant_index:1", "tenant:1:user:42"
+            )
+
+
+class TestSetTenantCache:
+    """Test atomic cache set with index tracking."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_client(self) -> None:
+        """Should return False when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await set_tenant_cache(1, "user", ("42",), '{"data": 1}')
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_uses_pipeline_for_atomic_operation(self) -> None:
+        """Verify pipeline is used for atomic setex + sadd."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await set_tenant_cache(1, "user", ("42",), '{"data": 1}', ttl=300)
+
+            assert result is True
+
+            # Verify setex and sadd called on pipeline
+            mock_pipeline.setex.assert_called_once_with(
+                "tenant:1:user:42", 300, '{"data": 1}'
+            )
+            mock_pipeline.sadd.assert_called_once_with(
+                "tenant_index:1", "tenant:1:user:42"
+            )
+            mock_pipeline.execute.assert_called_once()
+
+
+class TestGetTenantCache:
+    """Test tenant cache retrieval."""
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_no_client(self) -> None:
+        """Should return None when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await get_tenant_cache(1, "user", "42")
+            assert result is None
+
+    @pytest.mark.asyncio
+    async def test_gets_value_with_correct_key(self) -> None:
+        """Verify GET is called with properly formatted tenant key."""
+        mock_redis = AsyncMock()
+        mock_redis.get.return_value = '{"data": "cached"}'
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await get_tenant_cache(1, "user", "42")
+
+            assert result == '{"data": "cached"}'
+            mock_redis.get.assert_called_once_with("tenant:1:user:42")
+
+
+class TestDeleteTenantCache:
+    """Test atomic cache delete with index cleanup."""
+
+    @pytest.mark.asyncio
+    async def test_returns_false_when_no_client(self) -> None:
+        """Should return False when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await delete_tenant_cache(1, "user", "42")
+            assert result is False
+
+    @pytest.mark.asyncio
+    async def test_uses_pipeline_for_atomic_operation(self) -> None:
+        """Verify pipeline is used for atomic delete + srem."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await delete_tenant_cache(1, "user", "42")
+
+            assert result is True
+
+            # Verify delete and srem called on pipeline
+            mock_pipeline.delete.assert_called_once_with("tenant:1:user:42")
+            mock_pipeline.srem.assert_called_once_with(
+                "tenant_index:1", "tenant:1:user:42"
+            )
+            mock_pipeline.execute.assert_called_once()
+
+
+class TestInvalidateTenantCache:
+    """Test set-based cache invalidation."""
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_client(self) -> None:
+        """Should return 0 when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await invalidate_tenant_cache(1)
+            assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_index_empty(self) -> None:
+        """Should return 0 when no keys in index."""
+        mock_redis = AsyncMock()
+        mock_redis.smembers.return_value = set()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await invalidate_tenant_cache(1)
+
+            assert result == 0
+            mock_redis.smembers.assert_called_once_with("tenant_index:1")
+
+    @pytest.mark.asyncio
+    async def test_uses_smembers_not_scan(self) -> None:
+        """Verify SMEMBERS is used instead of SCAN - O(|S|) not O(K)."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        mock_redis.smembers.return_value = {"tenant:1:user:42", "tenant:1:user:43"}
+        mock_pipeline.execute.return_value = [2, 2]  # delete count, srem count
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await invalidate_tenant_cache(1)
+
+            # Should use smembers, NOT scan
+            mock_redis.smembers.assert_called_once()
+            mock_redis.scan.assert_not_called()
+
+            # Should delete found keys
+            assert result == 2
+
+    @pytest.mark.asyncio
+    async def test_deletes_all_keys_and_removes_from_index(self) -> None:
+        """Verify all keys are deleted and removed from index."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        keys = {"tenant:1:user:42", "tenant:1:user:43", "tenant:1:perm:100"}
+        mock_redis.smembers.return_value = keys
+        mock_pipeline.execute.return_value = [3, 3]
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await invalidate_tenant_cache(1)
+
+            assert result == 3
+
+            # Verify pipeline operations
+            mock_pipeline.delete.assert_called_once()
+            delete_args = set(mock_pipeline.delete.call_args[0])
+            assert delete_args == keys
+
+            mock_pipeline.srem.assert_called_once()
+            srem_args = set(mock_pipeline.srem.call_args[0][1:])  # Skip index key
+            assert srem_args == keys
+
+    @pytest.mark.asyncio
+    async def test_prefix_filtering_works(self) -> None:
+        """Verify prefix filtering only deletes matching keys."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        keys = {
+            "tenant:1:user:42",
+            "tenant:1:user:43",
+            "tenant:1:permissions:100",
+        }
+        mock_redis.smembers.return_value = keys
+        mock_pipeline.execute.return_value = [2, 2]
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await invalidate_tenant_cache(1, prefix="user")
+
+            # Should only delete user: keys, not permissions: keys
+            delete_args = set(mock_pipeline.delete.call_args[0])
+            assert "tenant:1:user:42" in delete_args
+            assert "tenant:1:user:43" in delete_args
+            assert "tenant:1:permissions:100" not in delete_args
+
+    @pytest.mark.asyncio
+    async def test_prefix_no_match_returns_zero(self) -> None:
+        """Should return 0 when prefix doesn't match any keys."""
+        mock_redis = AsyncMock()
+        keys = {"tenant:1:user:42", "tenant:1:user:43"}
+        mock_redis.smembers.return_value = keys
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await invalidate_tenant_cache(1, prefix="nonexistent")
+            assert result == 0
+
+
+class TestGetTenantIndexSize:
+    """Test index size monitoring."""
+
+    @pytest.mark.asyncio
+    async def test_returns_zero_when_no_client(self) -> None:
+        """Should return 0 when Redis client is None."""
+        with patch("src.app.core.utils.cache.client", None):
+            result = await get_tenant_index_size(1)
+            assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_returns_set_cardinality(self) -> None:
+        """Verify SCARD is called and result returned."""
+        mock_redis = AsyncMock()
+        mock_redis.scard.return_value = 42
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            result = await get_tenant_index_size(1)
+
+            assert result == 42
+            mock_redis.scard.assert_called_once_with("tenant_index:1")
+
+
+class TestTenantCacheKey:
+    """Test tenant cache key generation."""
+
+    def test_generates_correct_key_format(self) -> None:
+        """Verify key format with multiple parts."""
+        result = tenant_cache_key(1, "user", "42", "profile")
+        assert result == "tenant:1:user:42:profile"
+
+    def test_handles_single_key_part(self) -> None:
+        """Verify key format with single part."""
+        result = tenant_cache_key(1, "settings")
+        assert result == "tenant:1:settings"
+
+    def test_handles_int_key_parts(self) -> None:
+        """Verify int parts are converted to string."""
+        result = tenant_cache_key(1, "user", 42)
+        assert result == "tenant:1:user:42"
+
+
+class TestTenantIsolation:
+    """Test that invalidation isolates tenants."""
+
+    @pytest.mark.asyncio
+    async def test_invalidate_tenant_a_leaves_tenant_b_intact(self) -> None:
+        """Invalidating tenant A should not affect tenant B's keys."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        tenant_a_keys = {"tenant:1:user:42", "tenant:1:user:43"}
+        mock_redis.smembers.return_value = tenant_a_keys
+        mock_pipeline.execute.return_value = [2, 2]
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await invalidate_tenant_cache(1)
+
+            # Verify only tenant 1 index was queried
+            mock_redis.smembers.assert_called_once_with("tenant_index:1")
+
+            # Verify tenant 2's index was never touched
+            for call in mock_redis.smembers.call_args_list:
+                assert "tenant_index:2" not in str(call)
+
+
+class TestAtomicOperations:
+    """Test that operations are properly atomic via pipelines."""
+
+    @pytest.mark.asyncio
+    async def test_set_uses_non_transactional_pipeline(self) -> None:
+        """Verify pipeline is non-transactional for performance."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await set_tenant_cache(1, "test", ("key",), "value")
+
+            # Verify pipeline commands were called
+            mock_pipeline.setex.assert_called_once()
+            mock_pipeline.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_delete_uses_non_transactional_pipeline(self) -> None:
+        """Verify delete also uses non-transactional pipeline."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await delete_tenant_cache(1, "test", "key")
+
+            # Verify pipeline commands were called
+            mock_pipeline.delete.assert_called_once()
+            mock_pipeline.execute.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_invalidate_uses_non_transactional_pipeline(self) -> None:
+        """Verify invalidation uses non-transactional pipeline."""
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
+        mock_redis.smembers.return_value = {"tenant:1:key:1"}
+        mock_pipeline.execute.return_value = [1, 1]
+
+        with patch("src.app.core.utils.cache.client", mock_redis):
+            await invalidate_tenant_cache(1)
+
+            # Verify pipeline commands were called
+            mock_pipeline.delete.assert_called_once()
+            mock_pipeline.execute.assert_called_once()

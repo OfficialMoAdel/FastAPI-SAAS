@@ -1,6 +1,5 @@
 """Notification service for sending emails with template support."""
 
-import json
 from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -14,6 +13,8 @@ from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
+
+from src.app.core.json_utils import json_dumps, json_loads
 
 from ...core.config import settings
 from ...core.events import EventPriority, event_bus
@@ -63,7 +64,7 @@ class NotificationService:
             try:
                 cached = await redis_client.get(cache_key)
                 if cached:
-                    return tuple(json.loads(cached))
+                    return tuple(json_loads(cached))
             except Exception as e:
                 logger.debug(f"Cache get failed: {e}")
 
@@ -100,7 +101,7 @@ class NotificationService:
         # Update cache (1 hour TTL)
         if redis_client:
             try:
-                await redis_client.set(cache_key, json.dumps(data), ex=3600)
+                await redis_client.set(cache_key, json_dumps(data, as_str=True), ex=3600)
             except Exception as e:
                 logger.debug(f"Cache set failed: {e}")
 

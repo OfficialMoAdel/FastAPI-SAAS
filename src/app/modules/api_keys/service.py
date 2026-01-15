@@ -1,7 +1,6 @@
 """API Key service layer - business logic for API key management."""
 
 import hashlib
-import json
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -9,11 +8,17 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.exceptions.http_exceptions import ForbiddenException
+from ...core.json_utils import json_dumps, json_loads
+from ...core.utils.cache import client as redis_client
 from .._base.exceptions import ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_api_keys
 from .models import APIKey
 from .schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
+
+# Cache configuration for API key validation
+API_KEY_CACHE_PREFIX = "api_key"
+API_KEY_CACHE_TTL = 300  # 5 minutes
 
 
 class APIKeyService(BaseService[APIKey]):
@@ -78,7 +83,7 @@ class APIKeyService(BaseService[APIKey]):
         full_key, prefix, hashed_key = self._generate_key()
 
         # Prepare scopes as JSON string if provided
-        scopes_json = json.dumps(api_key_data.scopes) if api_key_data.scopes else None
+        scopes_json = json_dumps(api_key_data.scopes) if api_key_data.scopes else None
 
         # Create the API key record
         key_record = await crud_api_keys.create(
@@ -176,6 +181,11 @@ class APIKeyService(BaseService[APIKey]):
         if key["user_id"] != user_id or key["tenant_id"] != tenant_id:
             raise ForbiddenException("You don't have permission to revoke this key")
 
+        # Invalidate cache before revoking (using hashed_key from DB record)
+        if redis_client is not None and key.get("hashed_key"):
+            cache_key = self._get_cache_key(key["hashed_key"])
+            await redis_client.delete(cache_key)
+
         await crud_api_keys.update(
             db=self.db,
             id=key_id,
@@ -184,6 +194,14 @@ class APIKeyService(BaseService[APIKey]):
 
         return {"message": "API key revoked successfully"}
 
+    def _get_cache_key(self, api_key_hash: str) -> str:
+        """Get Redis cache key for an API key hash.
+
+        Uses first 16 chars of hash to keep key size reasonable while
+        maintaining collision resistance.
+        """
+        return f"{API_KEY_CACHE_PREFIX}:{api_key_hash[:16]}"
+
     async def validate_api_key(
         self,
         api_key: str,
@@ -191,6 +209,7 @@ class APIKeyService(BaseService[APIKey]):
         """Validate an API key and return the associated user info.
 
         Security: Verifies tenant is active to prevent suspended tenant access.
+        Performance: Uses Redis caching with 5-minute TTL to reduce DB load.
 
         Parameters
         ----------
@@ -202,19 +221,75 @@ class APIKeyService(BaseService[APIKey]):
         dict | None
             User info if valid, None otherwise
         """
+        hashed = self._hash_key(api_key)
+        cache_key = self._get_cache_key(hashed)
+
+        # Check cache first (O(1) lookup)
+        if redis_client is not None:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                result = json_loads(cached)
+                # Check expiration on cached data
+                if result.get("expires_at"):
+                    expires_at = datetime.fromisoformat(result["expires_at"])
+                    if expires_at < datetime.now(UTC):
+                        # Expired - delete from cache and return None
+                        await redis_client.delete(cache_key)
+                        return None
+                return {
+                    "user_id": result["user_id"],
+                    "tenant_id": result["tenant_id"],
+                    "scopes": result["scopes"],
+                    "key_id": result["key_id"],
+                }
+
+        # Cache miss - query database
+        result = await self._validate_from_db(hashed)
+        if result is None:
+            return None
+
+        # Cache the result
+        if redis_client is not None:
+            cache_data = {
+                "user_id": result["user_id"],
+                "tenant_id": result["tenant_id"],
+                "scopes": result["scopes"],
+                "key_id": result["key_id"],
+                "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
+            }
+            await redis_client.setex(cache_key, API_KEY_CACHE_TTL, json_dumps(cache_data))
+
+        return {
+            "user_id": result["user_id"],
+            "tenant_id": result["tenant_id"],
+            "scopes": result["scopes"],
+            "key_id": result["key_id"],
+        }
+
+    async def _validate_from_db(self, hashed_key: str) -> dict[str, Any] | None:
+        """Validate API key from database.
+
+        Parameters
+        ----------
+        hashed_key : str
+            SHA-256 hash of the API key
+
+        Returns
+        -------
+        dict | None
+            Key info if valid, None otherwise
+        """
         from sqlalchemy import select
 
         from ...modules.tenants.models import Tenant
         from .models import APIKey
-
-        hashed = self._hash_key(api_key)
 
         # JOIN with tenant to check tenant.is_active
         stmt = (
             select(APIKey)
             .join(Tenant, APIKey.tenant_id == Tenant.id)
             .where(
-                APIKey.hashed_key == hashed,
+                APIKey.hashed_key == hashed_key,
                 APIKey.is_active.is_(True),
                 Tenant.is_active.is_(True),  # Prevent suspended tenant access
             )
@@ -230,19 +305,19 @@ class APIKeyService(BaseService[APIKey]):
         if key.expires_at and key.expires_at < datetime.now(UTC):
             return None
 
-        # Update last used timestamp
+        # Update last used timestamp (fire-and-forget, don't block validation)
         await crud_api_keys.update(
             db=self.db,
             id=key.id,
             object={"last_used_at": datetime.now(UTC)},
         )
 
-        # Return user info for authentication
         return {
             "user_id": key.user_id,
             "tenant_id": key.tenant_id,
-            "scopes": json.loads(key.scopes) if key.scopes else [],
+            "scopes": json_loads(key.scopes) if key.scopes else [],
             "key_id": key.id,
+            "expires_at": key.expires_at,
         }
 
 

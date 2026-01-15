@@ -42,9 +42,9 @@ def _user_username_cache_key(username: str) -> str:
     return f"{USER_CACHE_PREFIX}:username:{username}"
 
 
-def _user_auth_cache_key(username: str) -> str:
-    """Generate cache key for user auth info."""
-    return f"{AUTH_INFO_CACHE_PREFIX}:{username}"
+def _user_auth_cache_key(identifier: str) -> str:
+    """Generate cache key for user auth info by username or email."""
+    return f"{AUTH_INFO_CACHE_PREFIX}:{identifier}"
 
 
 class UserService(BaseService[User]):
@@ -105,6 +105,7 @@ class UserService(BaseService[User]):
                 _user_email_cache_key(email),
                 _user_username_cache_key(username),
                 _user_auth_cache_key(username),
+                _user_auth_cache_key(email),  # Also invalidate email-based auth cache
             )
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
@@ -165,9 +166,28 @@ class UserService(BaseService[User]):
         user_internal = UserCreateInternal(**user_dict)
         return await self.crud.create(db=self.db, object=user_internal)
 
-    async def get_user_auth_info(self, username: str) -> dict[str, Any] | None:
-        """Get user with tier info for authentication (cached)."""
-        cache_key = _user_auth_cache_key(username)
+    async def get_user_auth_info(
+        self, *, username: str | None = None, email: str | None = None
+    ) -> dict[str, Any] | None:
+        """Get user with tier info for authentication (cached).
+
+        Parameters
+        ----------
+        username : str | None
+            Username to look up (mutually exclusive with email)
+        email : str | None
+            Email to look up (mutually exclusive with username)
+
+        Returns
+        -------
+        dict[str, Any] | None
+            User dict with tier info, or None if not found
+        """
+        identifier = email if email else username
+        if not identifier:
+            return None
+
+        cache_key = _user_auth_cache_key(identifier)
 
         # Try cache
         cached = await self._get_cached_user(cache_key)
@@ -175,7 +195,9 @@ class UserService(BaseService[User]):
             return cached
 
         # Fetch from DB (using eager loading)
-        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
+        user_with_tier = await self.crud.get_user_with_tier_eager(
+            db=self.db, username=username, email=email
+        )
         if not user_with_tier:
             return None
 
@@ -185,7 +207,7 @@ class UserService(BaseService[User]):
                 serialized = json_dumps(user_with_tier)
                 await cache.client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
             except Exception as e:
-                logger.warning(f"Failed to cache auth info for {username}: {e}")
+                logger.warning(f"Failed to cache auth info for {identifier}: {e}")
 
         return user_with_tier
 

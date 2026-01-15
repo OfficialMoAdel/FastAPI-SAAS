@@ -39,9 +39,9 @@ class AuthService:
         # Use UserService to benefit from auth info caching
         user_service = get_user_service(db)
         if "@" in username_or_email:
-            db_user = await crud_users.get_user_with_tier_eager(db=db, email=username_or_email)
+            db_user = await user_service.get_user_auth_info(email=username_or_email)
         else:
-            db_user = await user_service.get_user_auth_info(username_or_email)
+            db_user = await user_service.get_user_auth_info(username=username_or_email)
 
         if not db_user:
             return False
@@ -203,10 +203,10 @@ class AuthService:
         user_service = get_user_service(db)
         if "@" in user_data.username_or_email:
             # Fallback for email-based subjects (rare but safe)
-            db_user = await crud_users.get_user_with_tier_eager(db=db, email=user_data.username_or_email)
+            db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
         else:
             # Optimized cached path for username-based subjects (standard)
-            db_user = await user_service.get_user_auth_info(user_data.username_or_email)
+            db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = db_user.get("tier") if db_user else None
@@ -343,7 +343,6 @@ class AuthService:
             If current password is incorrect
         """
         from ...core.security import get_password_hash, verify_password
-        from ...modules.users.crud import crud_users
 
         user = await crud_users.get(db=db, id=user_id, is_deleted=False)
         if not user:
@@ -385,7 +384,6 @@ class AuthService:
         import logging
 
         from ...core.events import EventPriority, event_bus
-        from ...modules.users.crud import crud_users
         from .models import PasswordResetToken
 
         logger = logging.getLogger(__name__)
@@ -455,7 +453,6 @@ class AuthService:
         from sqlalchemy import select
 
         from ...core.security import get_password_hash
-        from ...modules.users.crud import crud_users
         from .models import PasswordResetToken
 
         logger = logging.getLogger(__name__)
@@ -516,7 +513,6 @@ class AuthService:
         """
 
         from ...core.events import EventPriority, event_bus
-        from ...modules.users.crud import crud_users
         from .models import EmailVerificationToken
 
         user = await crud_users.get(db=db, email=email, is_deleted=False)
@@ -576,7 +572,6 @@ class AuthService:
         """
         from sqlalchemy import select
 
-        from ...modules.users.crud import crud_users
         from .models import EmailVerificationToken
 
         # Find token in database

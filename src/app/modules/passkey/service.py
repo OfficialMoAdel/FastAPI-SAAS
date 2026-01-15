@@ -9,7 +9,6 @@ Handles:
 - Limit enforcement
 """
 
-import json
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -37,6 +36,7 @@ from webauthn.helpers.structs import (
 
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, NotFoundException
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.modules.passkey.crud import crud_passkey_credentials
 from src.app.modules.passkey.schemas import PasskeyCredentialCreate
 
@@ -104,7 +104,7 @@ class PasskeyService:
         if redis:
             await self._store_challenge(redis, user_id, options.challenge, device_type)
 
-        return json.loads(options_to_json(options))
+        return json_loads(options_to_json(options))
 
     async def verify_registration(
         self,
@@ -228,7 +228,7 @@ class PasskeyService:
         if redis:
             await self._store_auth_challenge(redis, options.challenge)
 
-        return json.loads(options_to_json(options))
+        return json_loads(options_to_json(options))
 
     async def verify_authentication(
         self,
@@ -330,7 +330,7 @@ class PasskeyService:
             "challenge": bytes_to_base64url(challenge),
             "device_type": device_type,
         }
-        await redis.setex(key, CHALLENGE_TTL, json.dumps(data))
+        await redis.setex(key, CHALLENGE_TTL, json_dumps(data, as_str=True))
 
     async def _get_stored_challenge(self, redis: Redis, user_id: int) -> dict[str, Any] | None:
         """Retrieve registration challenge from Redis."""
@@ -339,7 +339,7 @@ class PasskeyService:
         if not data:
             return None
 
-        parsed = json.loads(data)
+        parsed = json_loads(data)
         # Convert challenge back to bytes (base64url decoded) from stored string
         # Note: webauthn expects bytes for expected_challenge
         from webauthn.helpers import base64url_to_bytes

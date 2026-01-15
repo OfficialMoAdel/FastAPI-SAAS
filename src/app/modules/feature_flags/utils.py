@@ -1,10 +1,11 @@
 """Feature flags utility functions."""
 
-import json
 from typing import Any
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.core.json_utils import json_dumps, json_loads
 
 from ...core.logger import get_logger
 from ...core.utils.cache import client as redis_client
@@ -79,7 +80,7 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         try:
             cached_value = await redis_client.get(cache_key)
             if cached_value:
-                return json.loads(cached_value)
+                return json_loads(cached_value)
         except Exception as e:
             logger.debug(f"Cache get failed: {e}")
 
@@ -93,7 +94,7 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
     # Update cache
     if redis_client:
         try:
-            await redis_client.setex(cache_key, CACHE_TTL, json.dumps(flags))
+            await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
         except Exception as e:
             logger.debug(f"Cache operation failed: {e}")
 

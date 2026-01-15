@@ -1,11 +1,12 @@
 """Rate limit service layer - encapsulates all rate limit business logic."""
 
-import json
 from typing import Any
 
 from fastapi import Depends
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.core.json_utils import json_dumps, json_loads
 
 from ...core.db.database import async_get_db
 from ...core.utils import cache
@@ -65,13 +66,13 @@ class RateLimitService(BaseService[RateLimit]):
         if cache.client:
             cached = await cache.client.get(cache_key)
             if cached:
-                return json.loads(cached)
+                return json_loads(cached)
 
         rate_limits_data = await crud_rate_limits.get_multi(db=self.db, tier_id=tier_id)
 
         # Cache result (1 hour TTL)
         if cache.client:
-            await cache.client.setex(cache_key, 3600, json.dumps(rate_limits_data))
+            await cache.client.setex(cache_key, 3600, json_dumps(rate_limits_data, as_str=True))
 
         return rate_limits_data
 

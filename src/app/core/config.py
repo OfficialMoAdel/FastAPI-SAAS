@@ -22,6 +22,8 @@ class CryptSettings(BaseSettings):
     ALGORITHM: str = "HS256"  # Options: HS256 (symmetric), RS256 (asymmetric)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # Bcrypt work factor: 8=30ms(dev), 10=100ms, 12=250ms(default), 14=1000ms
+    BCRYPT_ROUNDS: int = Field(default=12, ge=8, le=14)
     # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
     ENCRYPTION_KEY: SecretStr | None = None
     # SECURITY: Set unique salt per deployment for key derivation

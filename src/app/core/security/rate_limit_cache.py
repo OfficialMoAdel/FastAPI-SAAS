@@ -5,10 +5,10 @@ during request processing. Policies are loaded on app startup
 and can be refreshed when tiers are updated.
 """
 
-import json
 import logging
 from typing import Any
 
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.utils.cache import client as redis_client
 
 logger = logging.getLogger(__name__)
@@ -33,7 +33,7 @@ async def cache_tier_policy(tier_id: int, policies: list[dict[str, Any]]) -> boo
 
     try:
         key = f"{POLICY_KEY_PREFIX}{tier_id}"
-        await redis_client.setex(key, 3600, json.dumps(policies))  # 1 hour TTL
+        await redis_client.setex(key, 3600, json_dumps(policies, as_str=True))  # 1 hour TTL
         return True
     except Exception as e:
         logger.warning(f"Failed to cache tier policy: {e}")
@@ -56,7 +56,7 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
         key = f"{POLICY_KEY_PREFIX}{tier_id}"
         data = await redis_client.get(key)
         if data:
-            result: list[dict[str, Any]] = json.loads(data)
+            result: list[dict[str, Any]] = json_loads(data)
             return result
         return None
     except Exception as e:

@@ -61,7 +61,11 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 async def get_password_hash(password: str) -> str:
     """Hash password asynchronously without blocking the event loop."""
-    hashed_password: bytes = await asyncio.to_thread(bcrypt.hashpw, password.encode(), bcrypt.gensalt())
+    hashed_password: bytes = await asyncio.to_thread(
+        bcrypt.hashpw,
+        password.encode(),
+        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+    )
     return hashed_password.decode()
 
 
