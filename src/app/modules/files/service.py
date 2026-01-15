@@ -226,7 +226,6 @@ class FileService:
         offset: int = 0,
     ) -> dict[str, Any]:
         """List files with optional filtering."""
-        from typing import Any
 
         from src.app.modules.files.schemas import FileRead
 

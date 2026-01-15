@@ -5,11 +5,8 @@ Revises: 009_add_ai_tables, c002_perf_idx
 Create Date: 2026-01-13 18:50:20.886631
 
 """
-from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
-
+from collections.abc import Sequence
+from typing import Union
 
 # revision identifiers, used by Alembic.
 revision: str = 'a07bb481f1a9'

@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from src.app.core.config import settings
 from src.app.core.db.database import Base
 from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
+from src.app.modules.ai import models  # noqa: F401
 
 # Import all modules models to register them with Base.metadata
 from src.app.modules.api_keys import models  # noqa: F401
@@ -33,7 +34,6 @@ from src.app.modules.tiers import models  # noqa: F401
 from src.app.modules.user_preferences import models  # noqa: F401
 from src.app.modules.users import models  # noqa: F401
 from src.app.modules.webhooks import models  # noqa: F401
-from src.app.modules.ai import models  # noqa: F401
 
 # Debug: Print registered tables
 # print("Registered tables:", Base.metadata.tables.keys())

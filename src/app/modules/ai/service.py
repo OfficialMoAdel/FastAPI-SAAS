@@ -3,7 +3,6 @@
 Business logic for AI chat sessions, messages, and user settings.
 """
 
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
