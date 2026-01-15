@@ -195,9 +195,7 @@ class UserService(BaseService[User]):
             return cached
 
         # Fetch from DB (using eager loading)
-        user_with_tier = await self.crud.get_user_with_tier_eager(
-            db=self.db, username=username, email=email
-        )
+        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username, email=email)
         if not user_with_tier:
             return None
 
@@ -468,7 +466,9 @@ class UserService(BaseService[User]):
         # Invalidate cache
         await self._invalidate_user_cache(db_user)
 
-        return {"message": f"User {db_user.name} Tier updated"}
+        # A3 FIX: Handle both ORM objects and dict responses
+        user_name = db_user["name"] if isinstance(db_user, dict) else db_user.name
+        return {"message": f"User {user_name} Tier updated"}
 
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:
         """Get user with their tier's rate limits.

@@ -208,6 +208,10 @@ class AuthService:
             # Optimized cached path for username-based subjects (standard)
             db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
+        # A1 SECURITY FIX: Block token refresh for deleted or non-existent users
+        if not db_user or db_user.get("is_deleted", False):
+            raise UnauthorizedException("User account is no longer active.")
+
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = db_user.get("tier") if db_user else None
         tier_name = tier.get("name") if tier else None

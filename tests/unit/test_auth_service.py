@@ -228,7 +228,9 @@ class TestAuthServiceTokenRefresh:
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"
-            mock_crud_users.get_user_with_tier_eager = AsyncMock(return_value={"tier_id": 1, "username": "testuser", "tier": {"name": "basic"}})
+            mock_crud_users.get_user_with_tier_eager = AsyncMock(
+                return_value={"tier_id": 1, "username": "testuser", "tier": {"name": "basic"}}
+            )
 
             result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
 
@@ -426,3 +428,111 @@ class TestAuthServiceEmailFlows:
             await auth_service.verify_email("invalid_token", mock_db)
 
         assert "Invalid verification token" in str(exc_info.value.detail)
+
+
+class TestAuthServiceSecurityBugFixes:
+    """Tests for A1-A3 auth bug fixes (PHASE-AUTH-BUGS).
+
+    A1: Token refresh for deleted users (SECURITY CRITICAL)
+    A2: Missing is_email_verified in cached auth info
+    A3: AttributeError in update_tier with dict response
+    """
+
+    @pytest.mark.asyncio
+    async def test_a1_token_refresh_blocks_deleted_users(self, auth_service, mock_db, mock_response):
+        """A1 SECURITY: Token refresh must reject deleted users."""
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+        mock_token_data = MagicMock()
+        mock_token_data.username_or_email = "deleteduser"
+
+        with (
+            patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
+            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+        ):
+            mock_verify.return_value = mock_token_data
+
+            # Simulate deleted user in cache
+            mock_user_service = MagicMock()
+            mock_user_service.get_user_auth_info = AsyncMock(
+                return_value={
+                    "id": 1,
+                    "username": "deleteduser",
+                    "is_deleted": True,  # User was deleted
+                    "tier_id": 1,
+                    "tier": {"name": "basic"},
+                }
+            )
+            mock_get_user_service.return_value = mock_user_service
+
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
+
+            assert "no longer active" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_a1_token_refresh_blocks_nonexistent_users(self, auth_service, mock_db, mock_response):
+        """A1 SECURITY: Token refresh must reject users that no longer exist."""
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+        mock_token_data = MagicMock()
+        mock_token_data.username_or_email = "ghostuser"
+
+        with (
+            patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
+            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+        ):
+            mock_verify.return_value = mock_token_data
+
+            # User not found (returns None)
+            mock_user_service = MagicMock()
+            mock_user_service.get_user_auth_info = AsyncMock(return_value=None)
+            mock_get_user_service.return_value = mock_user_service
+
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
+
+            assert "no longer active" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_a1_token_refresh_allows_active_users(self, auth_service, mock_db, mock_response):
+        """A1: Token refresh should work for active (non-deleted) users."""
+        mock_token_data = MagicMock()
+        mock_token_data.username_or_email = "activeuser"
+
+        with (
+            patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
+            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
+            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
+            patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
+            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+        ):
+            from src.app.core.config import EnvironmentOption
+
+            mock_settings.ENVIRONMENT = EnvironmentOption.LOCAL
+            mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
+            mock_verify.return_value = mock_token_data
+            mock_create_access.return_value = "new_access_token"
+            mock_create_refresh.return_value = "new_refresh_token"
+
+            # Active user (is_deleted=False)
+            mock_user_service = MagicMock()
+            mock_user_service.get_user_auth_info = AsyncMock(
+                return_value={
+                    "id": 1,
+                    "username": "activeuser",
+                    "is_deleted": False,
+                    "is_email_verified": True,
+                    "tier_id": 1,
+                    "tier": {"name": "premium"},
+                }
+            )
+            mock_get_user_service.return_value = mock_user_service
+
+            result = await auth_service.refresh_access_token("valid_refresh_token", mock_response, mock_db)
+
+            assert result["access_token"] == "new_access_token"
+            assert result["token_type"] == "bearer"

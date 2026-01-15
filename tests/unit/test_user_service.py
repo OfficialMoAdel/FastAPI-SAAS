@@ -460,3 +460,39 @@ class TestUserServiceTierAndRateLimits:
                     )
 
                     assert "updated" in result["message"]
+
+    @pytest.mark.asyncio
+    async def test_a3_update_tier_with_dict_response(self, user_service):
+        """A3 FIX: update_tier must handle dict response from crud.get without AttributeError."""
+
+        tier_update = UserTierUpdate(tier_id=2)
+
+        # Mock crud.get returning a dict (as it does when data comes from cache)
+        mock_user_dict = {
+            "id": 1,
+            "username": "testuser",
+            "email": "test@example.com",
+            "name": "Test User",
+            "tier_id": 1,
+        }
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_user_dict
+
+            with patch("src.app.core.service_registry.get_service") as mock_get_service:
+                tier_svc = AsyncMock()
+                mock_get_service.return_value = tier_svc
+                tier_svc.get_tier_by_id.return_value = {"id": 2}
+
+                with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
+                    mock_update.return_value = None
+
+                    # This should NOT raise AttributeError: 'dict' object has no attribute 'name'
+                    result = await user_service.update_tier(
+                        username="testuser",
+                        values=tier_update,
+                    )
+
+                    # A3 fix uses dict["name"] instead of db_user.name
+                    assert "Test User" in result["message"]
+                    assert "updated" in result["message"].lower()
