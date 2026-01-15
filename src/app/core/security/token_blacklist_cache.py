@@ -7,6 +7,7 @@ Design principles:
 - FAIL OPEN: Redis outage returns False (not blacklisted) to avoid blocking auth
 - TTL-aware: Tokens stored with expiry timestamp as score for efficient cleanup
 - Cache warming: Load active blacklisted tokens from DB on startup
+- P2-4: Negative caching for verified tokens to reduce Redis calls
 """
 
 import logging
@@ -18,6 +19,10 @@ logger = logging.getLogger(__name__)
 
 # Redis key for the blacklist sorted set
 BLACKLIST_KEY = "token:blacklist"
+# P2-4: Negative cache key prefix - stores tokens verified as NOT blacklisted
+# Short TTL since we want to re-check periodically but reduce hot-path Redis calls
+NEGATIVE_CACHE_KEY = "token:verified:"
+NEGATIVE_CACHE_TTL = 60  # 60 seconds - balance between performance and security
 
 
 async def is_token_blacklisted(token: str) -> bool | None:
@@ -33,9 +38,16 @@ async def is_token_blacklisted(token: str) -> bool | None:
         return None  # Redis not configured, fall back to DB
 
     try:
+        # P2-4: Check negative cache first (token recently verified as not blacklisted)
+        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"  # Use first 32 chars as key
+        if await redis_client.exists(negative_key):
+            return False  # Token was recently verified as not blacklisted
+
         # ZSCORE returns the score if member exists, None otherwise
         score = await redis_client.zscore(BLACKLIST_KEY, token)
         if score is None:
+            # P2-4: Cache the negative result to avoid repeated lookups
+            await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
             return False
 
         # Check if token has expired (score is expiry timestamp)
@@ -68,6 +80,9 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         # Use expiry timestamp as score for sorted set
         score = expires_at.timestamp()
         await redis_client.zadd(BLACKLIST_KEY, {token: score})
+        # P2-4: Invalidate negative cache for this token
+        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"
+        await redis_client.delete(negative_key)
         return True
     except Exception as e:
         logger.warning(f"Failed to add token to Redis blacklist: {e}")

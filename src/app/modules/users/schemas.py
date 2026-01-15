@@ -1,5 +1,6 @@
 """User schemas for API request/response validation."""
 
+import re
 from datetime import datetime
 from typing import Annotated
 
@@ -7,6 +8,15 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
 from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
+
+# =============================================================================
+# P2-1: Pre-compiled password validation regex patterns (performance optimization)
+# Compiling once at module load vs. re-compiling on every validation call
+# =============================================================================
+_PASSWORD_LOWERCASE_RE = re.compile(r"[a-z]")
+_PASSWORD_UPPERCASE_RE = re.compile(r"[A-Z]")
+_PASSWORD_DIGIT_RE = re.compile(r"\d")
+_PASSWORD_SPECIAL_RE = re.compile(r"[^a-zA-Z0-9]")
 
 # =============================================================================
 # Base Schema (shared fields)
@@ -93,16 +103,17 @@ class UserCreate(UserBase, BaseCreate):
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, v: str) -> str:
-        """Validate password contains required character types."""
-        import re
+        """Validate password contains required character types.
 
-        if not re.search(r"[a-z]", v):
+        Uses pre-compiled regex patterns for better performance.
+        """
+        if not _PASSWORD_LOWERCASE_RE.search(v):
             raise ValueError("Password must contain at least one lowercase letter")
-        if not re.search(r"[A-Z]", v):
+        if not _PASSWORD_UPPERCASE_RE.search(v):
             raise ValueError("Password must contain at least one uppercase letter")
-        if not re.search(r"\d", v):
+        if not _PASSWORD_DIGIT_RE.search(v):
             raise ValueError("Password must contain at least one digit")
-        if not re.search(r"[^a-zA-Z0-9]", v):
+        if not _PASSWORD_SPECIAL_RE.search(v):
             raise ValueError("Password must contain at least one special character")
         return v
 

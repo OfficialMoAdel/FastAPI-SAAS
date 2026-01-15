@@ -1,7 +1,7 @@
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String
+from sqlalchemy import DateTime, ForeignKey, Index, Integer, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
@@ -12,6 +12,8 @@ if TYPE_CHECKING:
 
 class RateLimit(Base):
     __tablename__ = "rate_limit"
+    # P2-3: Composite index for tier+path lookups (common query pattern)
+    __table_args__ = (Index("ix_rate_limit_tier_path", "tier_id", "path"),)
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
     tier_id: Mapped[int] = mapped_column(ForeignKey("tier.id"), index=True)
