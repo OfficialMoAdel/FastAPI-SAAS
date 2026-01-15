@@ -4,7 +4,6 @@ from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from fastapi import Request, Response
-from fastapi.encoders import jsonable_encoder
 from redis.asyncio import ConnectionPool, Redis
 
 from ..exceptions.cache_exceptions import CacheIdentificationInferenceError, InvalidRequestError, MissingClientError
@@ -12,6 +11,11 @@ from ..json_utils import json_dumps, json_loads
 
 pool: ConnectionPool | None = None
 client: Redis | None = None
+
+# =============================================================================
+# U5: Pre-compiled regex patterns for cache decorator (performance optimization)
+# =============================================================================
+_BRACKET_PATTERN = re.compile(r"{(.*?)}")
 
 
 # =============================================================================
@@ -390,7 +394,8 @@ async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> A
         return await fetch_func()
 
     data = await fetch_func()
-    serialized = json_dumps(jsonable_encoder(data))
+    # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
+    serialized = json_dumps(data)
     await client.setex(key, ttl, serialized)
     return data
 
@@ -440,7 +445,8 @@ async def get_with_lock(
         try:
             # We got the lock - fetch and cache
             data = await fetch_func()
-            serialized = json_dumps(jsonable_encoder(data))
+            # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
+            serialized = json_dumps(data)
             await client.setex(key, ttl, serialized)
             return data
         finally:
@@ -526,8 +532,8 @@ def _extract_data_inside_brackets(input_string: str) -> list[str]:
     >>> _extract_data_inside_brackets("The {quick} brown {fox} jumps over the {lazy} dog.")
     ['quick', 'fox', 'lazy']
     """
-    data_inside_brackets = re.findall(r"{(.*?)}", input_string)
-    return data_inside_brackets
+    # U5: Use pre-compiled pattern for better performance
+    return _BRACKET_PATTERN.findall(input_string)
 
 
 def _construct_data_dict(data_inside_brackets: list[str], kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -766,8 +772,8 @@ def cache(
             result = await func(request, *args, **kwargs)
 
             if request.method == "GET":
-                serializable_data = jsonable_encoder(result)
-                serialized_data = json_dumps(serializable_data)
+                # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
+                serialized_data = json_dumps(result)
 
                 await client.setex(cache_key, expiration, serialized_data)
 

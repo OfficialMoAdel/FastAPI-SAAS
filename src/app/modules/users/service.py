@@ -16,7 +16,7 @@ from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_users
 from .models import User
-from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
+from .schemas import UserCreate, UserCreateInternal, UserTierUpdate, UserUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +67,18 @@ class UserService(BaseService[User]):
                 email = user["email"]
                 username = user["username"]
             else:
-                user_data = UserRead.model_validate(user, from_attributes=True).model_dump(mode="json")
+                # U7: Direct dict construction instead of Pydantic validate+dump
+                # ORM data is already validated, skip redundant Pydantic overhead
+                user_data = {
+                    "id": user.id,
+                    "created_at": user.created_at.isoformat() if user.created_at else None,
+                    "updated_at": user.updated_at.isoformat() if user.updated_at else None,
+                    "name": user.name,
+                    "username": user.username,
+                    "email": user.email,
+                    "profile_image_url": user.profile_image_url,
+                    "tier_id": user.tier_id,
+                }
                 user_id = user.id
                 email = user.email
                 username = user.username
@@ -505,22 +516,34 @@ class UserService(BaseService[User]):
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
-        # Use Pydantic V2 model_dump with from_attributes for ORM serialization
-        from .schemas import UserRead
-
-        # Serialization
-        user_dict = UserRead.model_validate(db_user, from_attributes=True).model_dump()
+        # U7: Direct dict construction instead of Pydantic validate+dump
+        # ORM data is already validated, skip redundant Pydantic overhead
+        user_dict = {
+            "id": db_user.id,
+            "created_at": db_user.created_at,
+            "updated_at": db_user.updated_at,
+            "name": db_user.name,
+            "username": db_user.username,
+            "email": db_user.email,
+            "profile_image_url": db_user.profile_image_url,
+            "tier_id": db_user.tier_id,
+        }
 
         if db_user.tier_id is None or db_user.tier is None:
             user_dict["tier_rate_limits"] = []
             return user_dict
 
         # Rate limits are already loaded via joinedload
-        # Convert to list of dicts using RateLimitRead schema
-        from ..rate_limits.schemas import RateLimitRead
-
+        # U7: Direct dict construction for rate limits
         user_dict["tier_rate_limits"] = [
-            RateLimitRead.model_validate(rl, from_attributes=True).model_dump(mode="json")
+            {
+                "id": rl.id,
+                "tier_id": rl.tier_id,
+                "name": rl.name,
+                "path": rl.path,
+                "limit": rl.limit,
+                "period": rl.period,
+            }
             for rl in db_user.tier.rate_limits
         ]
 
