@@ -546,3 +546,87 @@ class TestAuthServiceSecurityBugFixes:
 
             assert result["access_token"] == "new_access_token"
             assert result["token_type"] == "bearer"
+
+
+class TestA2CachedAuthInfoFields:
+    """Test suite for A2: is_email_verified and is_deleted in cached auth data.
+
+    These fields must be present in cached user data to support:
+    - Token refresh security checks (is_deleted)
+    - Email verification status in JWT claims (is_email_verified)
+    """
+
+    @pytest.mark.asyncio
+    async def test_a2_cached_auth_info_contains_required_fields(self):
+        """A2: Cached auth info must include is_deleted and is_email_verified."""
+        from src.app.modules.users.crud import crud_users
+
+        # Mock the database session
+        mock_db = AsyncMock()
+
+        # Create a mock user ORM object with all required fields
+        mock_user = MagicMock()
+        mock_user.id = 1
+        mock_user.created_at = MagicMock()
+        mock_user.updated_at = None
+        mock_user.name = "Test User"
+        mock_user.username = "testuser"
+        mock_user.email = "test@example.com"
+        mock_user.hashed_password = "hashed"
+        mock_user.profile_image_url = None
+        mock_user.tier_id = 1
+        mock_user.tenant_id = 1
+        mock_user.is_superuser = False
+        mock_user.is_deleted = False  # A2: Must be in result
+        mock_user.is_email_verified = True  # A2: Must be in result
+        mock_user.tier = MagicMock()
+        mock_user.tier.name = "basic"
+
+        # Mock the query result
+        mock_result = MagicMock()
+        mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        # Call the method that should include A2 fields
+        result = await crud_users.get_user_with_tier_eager(db=mock_db, username="testuser")
+
+        # A2 Assertions: These fields MUST be present
+        assert result is not None, "Result should not be None"
+        assert "is_deleted" in result, "A2 FIX: is_deleted must be in cached auth info"
+        assert "is_email_verified" in result, "A2 FIX: is_email_verified must be in cached auth info"
+        assert result["is_deleted"] is False
+        assert result["is_email_verified"] is True
+
+    @pytest.mark.asyncio
+    async def test_a2_deleted_user_flag_propagates_correctly(self):
+        """A2: is_deleted=True must propagate to cached data for security checks."""
+        from src.app.modules.users.crud import crud_users
+
+        mock_db = AsyncMock()
+
+        # Create deleted user
+        mock_user = MagicMock()
+        mock_user.id = 99
+        mock_user.created_at = MagicMock()
+        mock_user.updated_at = None
+        mock_user.name = "Deleted User"
+        mock_user.username = "deleteduser"
+        mock_user.email = "deleted@example.com"
+        mock_user.hashed_password = "hashed"
+        mock_user.profile_image_url = None
+        mock_user.tier_id = 1
+        mock_user.tenant_id = 1
+        mock_user.is_superuser = False
+        mock_user.is_deleted = True  # User is deleted
+        mock_user.is_email_verified = False
+        mock_user.tier = MagicMock()
+        mock_user.tier.name = "basic"
+
+        mock_result = MagicMock()
+        mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
+        mock_db.execute = AsyncMock(return_value=mock_result)
+
+        result = await crud_users.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
+
+        # A2 Security: is_deleted=True must propagate
+        assert result["is_deleted"] is True, "A2 SECURITY: is_deleted=True must propagate"
