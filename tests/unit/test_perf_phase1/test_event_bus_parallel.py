@@ -46,11 +46,13 @@ async def test_parallel_execution_performance(fresh_event_bus):
 @pytest.mark.asyncio
 async def test_parallel_exception_isolation(fresh_event_bus):
     """Verify one failure doesn't stop others in parallel mode."""
-    results = []
+    # Use a dict to store results - more reliable than list append in async context
+    results = {"handlers_completed": 0, "success1": False, "success2": False}
 
     @fresh_event_bus.subscribe("parallel.error")
     async def handler_success_1(data: dict):
-        results.append("success1")
+        results["success1"] = True
+        results["handlers_completed"] += 1
 
     @fresh_event_bus.subscribe("parallel.error")
     async def handler_fail(data: dict):
@@ -58,10 +60,16 @@ async def test_parallel_exception_isolation(fresh_event_bus):
 
     @fresh_event_bus.subscribe("parallel.error")
     async def handler_success_2(data: dict):
-        results.append("success2")
+        results["success2"] = True
+        results["handlers_completed"] += 1
 
     await fresh_event_bus.publish("parallel.error", {}, priority=EventPriority.CRITICAL)
 
-    assert "success1" in results
-    assert "success2" in results
-    assert len(results) == 2
+    # _publish_sync uses asyncio.create_task() for fire-and-forget execution
+    # We need to yield control to allow background tasks to complete
+    await asyncio.sleep(0.05)
+
+    # Both success handlers should complete despite the failure
+    assert results["success1"], "handler_success_1 should have completed"
+    assert results["success2"], "handler_success_2 should have completed"
+    assert results["handlers_completed"] == 2, "Both success handlers should complete"

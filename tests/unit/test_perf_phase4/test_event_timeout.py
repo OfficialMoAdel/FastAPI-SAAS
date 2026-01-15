@@ -35,6 +35,10 @@ async def test_sync_handler_timeout_protection(fresh_event_bus):
         # Execute critical event (sync execution)
         await fresh_event_bus.publish("test.timeout", {}, priority=EventPriority.CRITICAL)
 
+        # _publish_sync uses asyncio.create_task() for fire-and-forget execution
+        # We need to yield control to allow background tasks to start
+        await asyncio.sleep(0.05)
+
         # Verify both were called (parallel execution started)
         assert slow_handler_called
         assert fast_handler_called

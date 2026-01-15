@@ -29,10 +29,7 @@ async def test_migrate_sessions_to_hash(session_manager, mock_redis):
     ]
     sessions_2 = [{"session_id": "s3", "device_info": "d3", "created_at": "2024-01-03"}]
 
-    # Mock SCAN to return keys
-    # scan_iter is an async generator or returns an async iterator
-    # We need to mock scan_iter properly
-
+    # Mock SCAN to return keys - scan_iter is an async generator
     async def mock_scan_iter(match):
         yield f"user_sessions:{user_id_1}"
         yield f"user_sessions:{user_id_2}"
@@ -49,20 +46,21 @@ async def test_migrate_sessions_to_hash(session_manager, mock_redis):
 
     mock_redis.get = AsyncMock(side_effect=mock_get)
 
-    # Mock pipeline
-    # redis.pipeline() is synchronous and returns a Pipeline object
-    # The Pipeline object is an async context manager
+    # Mock pipeline - redis.pipeline() returns an async context manager
     mock_pipeline = MagicMock()
     mock_pipeline.execute = AsyncMock()
-    # Mock return value of __aenter__ to be the pipeline itself
-    mock_pipeline.__aenter__.return_value = mock_pipeline
-    mock_pipeline.__aexit__.return_value = None
+    mock_pipeline.hset = MagicMock()
+    mock_pipeline.expire = MagicMock()
 
-    # Configure mock_redis.pipeline to return the mock_pipeline object immediately (sync)
-    mock_redis.pipeline = MagicMock(return_value=mock_pipeline)
+    # Create an async context manager for the pipeline
+    async_cm = AsyncMock()
+    async_cm.__aenter__.return_value = mock_pipeline
+    async_cm.__aexit__.return_value = None
+
+    # redis.pipeline() should return the async context manager
+    mock_redis.pipeline = MagicMock(return_value=async_cm)
 
     # Execute migration
-    # Assuming we add this method
     count = await session_manager.migrate_to_hash()
 
     # Verify results
@@ -72,17 +70,13 @@ async def test_migrate_sessions_to_hash(session_manager, mock_redis):
     assert mock_pipeline.execute.called
 
     # Check that HSET was called for user 1
-    # We can't easily check exact calls on pipeline due to batching,
-    # but we can check logic flow via the method implementation.
-
-    # Let's verify hset calls on pipeline
-    # user 1
+    # Note: The implementation uses json_dumps which produces compact JSON (no spaces)
     hash_key_1 = f"user_sessions_v2:{user_id_1}"
-    mock_pipeline.hset.assert_any_call(hash_key_1, "s1", json.dumps(sessions_1[0]))
-    mock_pipeline.hset.assert_any_call(hash_key_1, "s2", json.dumps(sessions_1[1]))
+    mock_pipeline.hset.assert_any_call(hash_key_1, "s1", json.dumps(sessions_1[0], separators=(",", ":")))
+    mock_pipeline.hset.assert_any_call(hash_key_1, "s2", json.dumps(sessions_1[1], separators=(",", ":")))
     mock_pipeline.expire.assert_any_call(hash_key_1, session_manager.SESSION_TTL_SECONDS)
 
     # user 2
     hash_key_2 = f"user_sessions_v2:{user_id_2}"
-    mock_pipeline.hset.assert_any_call(hash_key_2, "s3", json.dumps(sessions_2[0]))
+    mock_pipeline.hset.assert_any_call(hash_key_2, "s3", json.dumps(sessions_2[0], separators=(",", ":")))
     mock_pipeline.expire.assert_any_call(hash_key_2, session_manager.SESSION_TTL_SECONDS)

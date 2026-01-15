@@ -20,21 +20,22 @@ async def test_cache_user_uses_pipeline():
     user.name = "Test User"  # Must be str
     user.is_deleted = False
     user.is_superuser = False
+    user.is_email_verified = True
     user.profile_image_url = "https://example.com/profile.jpg"  # Must be str
     user.hashed_password = "hash"
-    user.created_at = "2023-01-01"
-    user.updated_at = "2023-01-01"
+    user.created_at = MagicMock()
+    user.created_at.isoformat.return_value = "2023-01-01T00:00:00"
+    user.updated_at = None
     user.tenant_id = 1
     user.tier_id = 1
 
-    # Mock the Redis client
-    with patch("src.app.modules.users.service.redis_client", new_callable=AsyncMock) as mock_redis:
+    # Mock the cache.client (not redis_client - service uses cache.client via import)
+    with patch("src.app.core.utils.cache.client", new_callable=MagicMock) as mock_redis:
         # Create a mock pipeline object
         mock_pipeline = MagicMock()
         mock_pipeline.execute = AsyncMock()
 
         # Configure __aenter__ and __aexit__ for async context manager usage
-        # __aenter__ must be an async function (or AsyncMock) that returns the pipeline
         mock_pipeline.__aenter__ = AsyncMock(return_value=mock_pipeline)
         mock_pipeline.__aexit__ = AsyncMock(return_value=None)
 
