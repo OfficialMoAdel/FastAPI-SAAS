@@ -23,8 +23,15 @@ async def sample_background_task(ctx: Worker, name: str) -> str:
     return f"Task {name} is complete!"
 
 
-async def deliver_webhook_task(ctx: Worker, delivery_id: UUID) -> str:
-    """Background task to deliver a webhook."""
+async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
+    """Background task to deliver a webhook.
+
+    Note: delivery_id may be str after orjson deserialization (UUID → str → str).
+    """
+    # Convert string to UUID if needed (orjson deserializes UUID as string)
+    if isinstance(delivery_id, str):
+        delivery_id = UUID(delivery_id)
+
     async with local_session() as db:
         service = WebhookService(db)
         try:
