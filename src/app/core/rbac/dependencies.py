@@ -2,7 +2,13 @@
 RBAC Permission Dependency for FastAPI.
 
 Provides permission checking via requires_permission() factory.
-Uses Redis Sets for O(1) permission lookups.
+Uses bitmask integers for O(1) permission lookups with minimal Redis memory.
+
+Bitmask Strategy:
+- Each permission maps to a bit position (0-63)
+- User's permissions stored as single integer in Redis
+- Permission check: (user_mask & permission_bit) != 0
+- Multiple role masks combined with OR
 """
 
 from collections.abc import AsyncGenerator, Callable
@@ -14,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..logger import get_logger
+from .bitmask import PermissionBitmask
 from .permissions import Permission as PermissionEnum
 from .utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
 
@@ -104,6 +111,72 @@ async def get_cached_permissions(
     return permissions
 
 
+def _get_bitmask_cache_key(user_id: int, tenant_id: int) -> str:
+    """Get Redis key for bitmask-based permission cache."""
+    return f"perms:bitmask:{tenant_id}:{user_id}"
+
+
+async def get_cached_permissions_bitmask(
+    user_id: int,
+    tenant_id: int,
+    db: AsyncSession,
+) -> int:
+    """
+    Get user permissions as bitmask with Redis caching.
+
+    Benefits over Redis Sets:
+    - Single integer vs set of 20+ strings (lower memory)
+    - Single GET vs SMEMBERS (faster retrieval)
+    - Bitwise operations for permission checks (no network round-trip per check)
+
+    Args:
+        user_id: The user's ID
+        tenant_id: The tenant's ID
+        db: Database session for fallback query
+
+    Returns:
+        Integer bitmask with bits set for each permission
+    """
+    from ...core.utils.cache import client as redis_client
+
+    cache_key = _get_bitmask_cache_key(user_id, tenant_id)
+
+    # Try to get bitmask from cache
+    if redis_client is not None:
+        try:
+            cached = await redis_client.get(cache_key)
+            if cached is not None:
+                # Decode bytes to int
+                return int(cached.decode() if isinstance(cached, bytes) else cached)
+        except Exception as e:
+            logger.warning(
+                "Failed to read bitmask from cache",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                error=str(e),
+            )
+
+    # Query from database
+    permissions = await get_user_permissions(user_id, tenant_id, db)
+
+    # Encode to bitmask
+    mask = PermissionBitmask.encode(permissions)
+
+    # Cache the bitmask
+    if redis_client is not None:
+        try:
+            await redis_client.setex(cache_key, PERMISSIONS_CACHE_TTL, str(mask))
+        except Exception as e:
+            logger.warning(
+                "Failed to cache bitmask",
+                user_id=user_id,
+                tenant_id=tenant_id,
+                error=str(e),
+            )
+
+    return mask
+
+
 async def has_permission_cached(
     user_id: int,
     tenant_id: int,
@@ -111,10 +184,13 @@ async def has_permission_cached(
     db: AsyncSession,
 ) -> bool:
     """
-    Check if a user has a specific permission using O(1) Redis SISMEMBER.
+    Check if a user has a specific permission using O(1) bitmask check.
 
-    This is more efficient than get_cached_permissions() when checking a single
-    permission, as it avoids transferring all permissions over the network.
+    Uses cached bitmask for pure in-memory bitwise check after initial Redis GET.
+    This is more efficient than Redis SISMEMBER as it:
+    - Retrieves single integer vs checking membership
+    - Enables multiple permission checks without additional network calls
+    - Uses less Redis memory (single integer vs set of strings)
 
     Args:
         user_id: The user's ID
@@ -125,31 +201,11 @@ async def has_permission_cached(
     Returns:
         True if user has the permission, False otherwise
     """
-    from ...core.utils.cache import client as redis_client
+    # Get user's permission bitmask (from cache or DB)
+    mask = await get_cached_permissions_bitmask(user_id, tenant_id, db)
 
-    cache_key = get_user_permissions_cache_key(user_id, tenant_id)
-
-    # Try O(1) SISMEMBER check first
-    if redis_client is not None:
-        try:
-            # Check if cache exists
-            cache_exists = await redis_client.exists(cache_key)
-            if cache_exists:
-                # O(1) membership check - much faster than smembers for single permission
-                result: int = await redis_client.sismember(cache_key, permission_slug)  # type: ignore[misc]
-                return bool(result)
-        except Exception as e:
-            logger.warning(
-                "Failed to check permission in cache",
-                user_id=user_id,
-                tenant_id=tenant_id,
-                permission=permission_slug,
-                error=str(e),
-            )
-
-    # Fallback: get all permissions and check (also populates cache)
-    permissions = await get_cached_permissions(user_id, tenant_id, db)
-    return permission_slug in permissions
+    # O(1) bitwise check: (mask & permission_bit) != 0
+    return PermissionBitmask.has_permission(mask, permission_slug)
 
 
 def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
@@ -195,7 +251,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             # We already failed at _get_current_user_from_token
             tenant_id = 0
 
-        # 3. Check permission using O(1) SISMEMBER
+        # 3. Check permission using O(1) bitmask
         has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)
 
         # 4. Raise if permission denied
@@ -211,6 +267,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
 async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> None:
     """
     Invalidate the cached permissions for a user in a specific tenant.
+    Clears both Set-based cache and bitmask cache for backward compatibility.
     Call this when user roles are modified.
     """
     from ...core.utils.cache import client as redis_client
@@ -218,9 +275,15 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> Non
     if redis_client is None:
         return
 
-    cache_key = get_user_permissions_cache_key(user_id, tenant_id)
+    set_cache_key = get_user_permissions_cache_key(user_id, tenant_id)
+    bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
+
     try:
-        await redis_client.delete(cache_key)
+        # Delete both cache types atomically
+        pipe = redis_client.pipeline()
+        pipe.delete(set_cache_key)
+        pipe.delete(bitmask_cache_key)
+        await pipe.execute()  # type: ignore[union-attr]
     except Exception as e:
         # Log cache invalidation failure
         logger.warning(
