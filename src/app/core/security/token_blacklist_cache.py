@@ -8,12 +8,15 @@ Design principles:
 - TTL-aware: Tokens stored with expiry timestamp as score for efficient cleanup
 - Cache warming: Load active blacklisted tokens from DB on startup
 - P2-4: Negative caching for verified tokens to reduce Redis calls
+- P3: Bloom filter pre-check for in-memory filtering before Redis
 """
 
 import logging
 from datetime import UTC, datetime
 
 from src.app.core.utils.cache import client as redis_client
+
+from .bloom_filter import blacklist_bloom_filter
 
 logger = logging.getLogger(__name__)
 
@@ -28,12 +31,22 @@ NEGATIVE_CACHE_TTL = 60  # 60 seconds - balance between performance and security
 async def is_token_blacklisted(token: str) -> bool | None:
     """Check if token is in Redis blacklist cache.
 
+    Uses 3-tier check for optimal performance:
+    1. Bloom filter (in-memory, microseconds) - if "not in set" → return False
+    2. Negative cache (Redis EXISTS) - if cached → return False
+    3. Blacklist sorted set (Redis ZSCORE) - definitive check
+
     Args:
         token: The JWT token to check
 
     Returns:
         True if blacklisted, False if not, None if Redis unavailable (fail open)
     """
+    # P3: Bloom filter pre-check (in-memory, ~1 microsecond)
+    # If Bloom says "definitely not in set", skip Redis entirely
+    if not blacklist_bloom_filter.might_contain(token):
+        return False
+
     if redis_client is None:
         return None  # Redis not configured, fall back to DB
 
@@ -73,6 +86,9 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
     Returns:
         True if added successfully, False on failure
     """
+    # P3: Add to Bloom filter first (always succeeds, in-memory)
+    blacklist_bloom_filter.add(token)
+
     if redis_client is None:
         return False
 
@@ -101,7 +117,14 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
     Returns:
         Number of tokens added successfully
     """
-    if redis_client is None or not tokens:
+    if not tokens:
+        return 0
+
+    # P3: Add to Bloom filter first (always succeeds, in-memory)
+    token_strs = [token for token, _ in tokens]
+    blacklist_bloom_filter.add_batch(token_strs)
+
+    if redis_client is None:
         return 0
 
     try:
@@ -172,15 +195,18 @@ async def get_cache_stats() -> dict:
     Returns:
         Dict with cache statistics
     """
+    bloom_stats = blacklist_bloom_filter.stats()
+
     if redis_client is None:
-        return {"enabled": False}
+        return {"enabled": False, "bloom_filter": bloom_stats}
 
     try:
         count = await redis_client.zcard(BLACKLIST_KEY)
         return {
             "enabled": True,
             "token_count": count,
+            "bloom_filter": bloom_stats,
         }
     except Exception as e:
         logger.warning(f"Failed to get cache stats: {e}")
-        return {"enabled": True, "error": str(e)}
+        return {"enabled": True, "error": str(e), "bloom_filter": bloom_stats}
