@@ -27,6 +27,55 @@ This project uses **Beads (`bd`)** for persistent task tracking. Do NOT use temp
 - `bd list` -> See all tasks.
 - `bd show <id>` -> See details of a task.
 
+## 🔗 Advanced Dependencies:
+
+bd dep add bd-123 --blocks bd-456      # Blocking
+bd create "Task" --parent bd-789       # Epic child
+bd create "Bug" --discovered-from bd-5  # Found during work
+
+## 🔍 Discovery Commands:
+
+bd blocked                    # Show blocked tasks
+bd dep tree <id>             # Dependency graph
+bd ready --json              # Machine-readable
+bd list --assignee @me       # My work
+
+## 📦 Epics Pattern:
+
+bd create "Feature X" -t epic
+bd create "Sub-task" --parent bd-<epic-id>
+
+## 👥 Multi-Agent:
+
+bd update bd-123 --status in_progress --assignee @me  # Claim work
+bd list --status in_progress                          # Check others
+
+## ⚡ Session Management:
+
+**Rule:** One issue per session → prevents context window panic
+1. `bd ready` → pick ONE
+2. `bd update <id> --status in_progress` 
+3. Implement only that
+4. `bd close <id>`
+5. Exit (fresh context)
+
+## 🤖 Automation:
+
+bd ready --json | jq -r '.[0].id'  # Get first ready task 
+
+## 📊 Priority & Status:
+
+**Priority:** 0=Critical, 1=High, 2=Medium, 3=Low
+**Status:** open → in_progress → closed (or blocked)
+
+bd create "Task" -p 0  # Critical priority
+bd update bd-123 --status blocked --reason "Waiting for API"
+
+## 🔄 Sync (CRITICAL):
+
+bd sync  # Manual sync before: git pull/push, switching machines, multi-agent
+
+
 # FastAPI SaaS Boilerplate - Agent Guidance
 
 ## Project Snapshot
