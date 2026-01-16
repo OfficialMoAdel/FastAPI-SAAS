@@ -107,6 +107,37 @@ def json_loads(data: bytes | str | memoryview) -> Any:
     return orjson.loads(data)
 
 
+def json_dumps_sorted(obj: Any) -> bytes:
+    """Deterministic JSON serialization for cryptographic signatures.
+
+    This function ensures consistent key ordering across Python versions
+    and serialization libraries. MUST be used for any HMAC/signature
+    generation to ensure reproducible signatures.
+
+    Parameters
+    ----------
+    obj : Any
+        Object to serialize
+
+    Returns
+    -------
+    bytes
+        JSON bytes with sorted keys (deterministic)
+
+    Examples
+    --------
+    >>> payload = {"z": 1, "a": 2}
+    >>> sig1 = hmac.new(secret, json_dumps_sorted(payload), "sha256")
+    >>> sig2 = hmac.new(secret, json_dumps_sorted(payload), "sha256")
+    >>> assert sig1.hexdigest() == sig2.hexdigest()  # Always True
+    """
+    return orjson.dumps(
+        obj,
+        default=orjson_dumps_default,
+        option=orjson.OPT_SERIALIZE_NUMPY | orjson.OPT_UTC_Z | orjson.OPT_SORT_KEYS,
+    )
+
+
 # Re-export orjson constants for advanced usage
 OPT_INDENT_2 = orjson.OPT_INDENT_2
 OPT_SORT_KEYS = orjson.OPT_SORT_KEYS

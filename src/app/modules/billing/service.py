@@ -11,7 +11,9 @@ from typing import Any
 
 import stripe
 from fastapi import HTTPException, status
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_tenant_context
@@ -233,16 +235,48 @@ class ProductService(BaseService[Product]):
         return await crud_products.get(db=self.db, id=product_id)
 
     async def get_product_with_pricing(self, product_id: int) -> dict[str, Any]:
-        """Get a product by ID with its pricing tiers."""
-        product = await crud_products.get(db=self.db, id=product_id)
+        """Get a product by ID with its pricing tiers.
+
+        Uses selectinload to fetch product and pricing in a single query,
+        avoiding N+1 query issues.
+        """
+        stmt = (
+            select(Product)
+            .options(selectinload(Product.pricing_tiers))
+            .where(Product.id == product_id)
+        )
+        result = await self.db.execute(stmt)
+        product = result.scalar_one_or_none()
+
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
-        pricing_tiers = await crud_pricing.get_multi(db=self.db, product_id=product_id)
-        result = dict(product) if hasattr(product, "__iter__") else product
-        if isinstance(result, dict):
-            result["pricing_tiers"] = pricing_tiers
-        return result
+        return {
+            "id": product.id,
+            "tenant_id": product.tenant_id,
+            "name": product.name,
+            "description": product.description,
+            "stripe_product_id": product.stripe_product_id,
+            "is_active": product.is_active,
+            "created_at": product.created_at,
+            "updated_at": product.updated_at,
+            "pricing_tiers": [
+                {
+                    "id": p.id,
+                    "product_id": p.product_id,
+                    "name": p.name,
+                    "amount_cents": p.amount_cents,
+                    "interval": p.interval,
+                    "stripe_price_id": p.stripe_price_id,
+                    "currency": p.currency,
+                    "features": p.features,
+                    "is_active": p.is_active,
+                    "created_at": p.created_at,
+                    "updated_at": p.updated_at,
+                }
+                for p in product.pricing_tiers
+            ],
+        }
 
     async def add_pricing(
         self,

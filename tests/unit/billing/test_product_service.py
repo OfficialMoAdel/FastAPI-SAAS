@@ -307,52 +307,66 @@ class TestProductPricingService:
 
     @pytest.mark.asyncio
     async def test_get_product_with_pricing(self, mock_db_session, product_data, pricing_data):
-        """Test getting a product with its pricing tiers."""
+        """Test getting a product with its pricing tiers.
+
+        Since get_product_with_pricing uses raw SQLAlchemy with selectinload,
+        we need to mock the db.execute() call and return a proper Product model.
+        """
         product_id = 1
 
-        mock_product = {
-            "id": product_id,
-            "tenant_id": 1,
-            "name": product_data["name"],
-            "is_active": True,
-        }
+        # Create mock pricing objects
+        mock_pricing1 = MagicMock()
+        mock_pricing1.id = 1
+        mock_pricing1.product_id = product_id
+        mock_pricing1.name = "Monthly"
+        mock_pricing1.amount_cents = 999
+        mock_pricing1.interval = "monthly"
+        mock_pricing1.stripe_price_id = None
+        mock_pricing1.currency = "usd"
+        mock_pricing1.features = []
+        mock_pricing1.is_active = True
+        mock_pricing1.created_at = datetime.now(UTC)
+        mock_pricing1.updated_at = None
 
-        mock_pricing_list = [
-            {
-                "id": 1,
-                "product_id": product_id,
-                "name": "Monthly",
-                "amount_cents": 999,
-                "interval": "monthly",
-            },
-            {
-                "id": 2,
-                "product_id": product_id,
-                "name": "Yearly",
-                "amount_cents": 9999,
-                "interval": "yearly",
-            },
-        ]
+        mock_pricing2 = MagicMock()
+        mock_pricing2.id = 2
+        mock_pricing2.product_id = product_id
+        mock_pricing2.name = "Yearly"
+        mock_pricing2.amount_cents = 9999
+        mock_pricing2.interval = "yearly"
+        mock_pricing2.stripe_price_id = None
+        mock_pricing2.currency = "usd"
+        mock_pricing2.features = []
+        mock_pricing2.is_active = True
+        mock_pricing2.created_at = datetime.now(UTC)
+        mock_pricing2.updated_at = None
 
-        with patch(
-            "src.app.modules.billing.crud.crud_products.get",
-            new_callable=AsyncMock,
-            return_value=mock_product,
-        ):
-            with patch(
-                "src.app.modules.billing.crud.crud_pricing.get_multi",
-                new_callable=AsyncMock,
-                return_value=mock_pricing_list,
-            ):
-                from src.app.modules.billing.service import ProductService
+        # Create mock product with pricing_tiers relationship
+        mock_product = MagicMock()
+        mock_product.id = product_id
+        mock_product.tenant_id = 1
+        mock_product.name = product_data["name"]
+        mock_product.description = product_data.get("description")
+        mock_product.stripe_product_id = product_data.get("stripe_product_id")
+        mock_product.is_active = True
+        mock_product.created_at = datetime.now(UTC)
+        mock_product.updated_at = None
+        mock_product.pricing_tiers = [mock_pricing1, mock_pricing2]
 
-                service = ProductService(mock_db_session)
-                result = await service.get_product_with_pricing(product_id)
+        # Mock the execute result
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_product
+        mock_db_session.execute = AsyncMock(return_value=mock_result)
 
-                assert result["id"] == product_id
-                assert "pricing_tiers" in result
-                assert len(result["pricing_tiers"]) == 2
-                assert result["pricing_tiers"][0]["interval"] == "monthly"
+        from src.app.modules.billing.service import ProductService
+
+        service = ProductService(mock_db_session)
+        result = await service.get_product_with_pricing(product_id)
+
+        assert result["id"] == product_id
+        assert "pricing_tiers" in result
+        assert len(result["pricing_tiers"]) == 2
+        assert result["pricing_tiers"][0]["interval"] == "monthly"
 
 
 class TestProductServiceValidation:

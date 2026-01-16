@@ -147,6 +147,9 @@ def lifespan_factory(
             yield
 
         finally:
+            # Dispose database engine to release connection pool
+            await engine.dispose()
+
             if isinstance(settings, RedisCacheSettings):
                 await close_redis_cache_pool()
 
