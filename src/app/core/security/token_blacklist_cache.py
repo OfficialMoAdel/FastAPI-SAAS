@@ -79,10 +79,13 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
     try:
         # Use expiry timestamp as score for sorted set
         score = expires_at.timestamp()
-        await redis_client.zadd(BLACKLIST_KEY, {token: score})
         # P2-4: Invalidate negative cache for this token
         negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"
-        await redis_client.delete(negative_key)
+        # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
+        pipe = redis_client.pipeline()
+        pipe.zadd(BLACKLIST_KEY, {token: score})
+        pipe.delete(negative_key)
+        await pipe.execute()
         return True
     except Exception as e:
         logger.warning(f"Failed to add token to Redis blacklist: {e}")

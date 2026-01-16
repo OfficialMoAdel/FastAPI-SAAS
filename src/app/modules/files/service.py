@@ -406,21 +406,23 @@ class FileService:
         Returns:
             Number of files transferred.
         """
-        result = await self.db.execute(
-            select(File).where(
+        # OPT-9: Direct bulk UPDATE without loading objects into memory
+        from sqlalchemy import update
+
+        stmt = (
+            update(File)
+            .where(
                 File.tenant_id == tenant_id,
                 File.user_id == from_user_id,
             )
+            .values(user_id=to_user_id)
         )
-        files = result.scalars().all()
-
-        for file in files:
-            file.user_id = to_user_id
-
+        result = await self.db.execute(stmt)
         await self.db.commit()
 
-        logger.info(f"Transferred {len(files)} files from {from_user_id} to {to_user_id}")
-        return len(files)
+        count = result.rowcount
+        logger.info(f"Transferred {count} files from {from_user_id} to {to_user_id}")
+        return count
 
     async def _get_quota_stats(self, tenant_id: UUID) -> tuple[int, int]:
         """Get file count and total size in single query.

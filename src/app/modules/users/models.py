@@ -75,4 +75,4 @@ class User(Base):
     billing_records: Mapped[list["BillingRecord"]] = relationship(back_populates="user", init=False)
     ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="user", init=False)
     ai_settings: Mapped["AISettings | None"] = relationship(back_populates="user", uselist=False, init=False)
-    tier: Mapped["Tier | None"] = relationship(init=False)
+    tier: Mapped["Tier | None"] = relationship(lazy="joined", init=False)  # OPT-6: Eager load tier

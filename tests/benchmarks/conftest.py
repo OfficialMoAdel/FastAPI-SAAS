@@ -24,7 +24,14 @@ def perf_thresholds():
 @pytest.fixture
 def mock_redis():
     """Create mock Redis client for benchmark tests."""
-    from unittest.mock import AsyncMock
+    from unittest.mock import AsyncMock, MagicMock
+
+    # Create pipeline mock (sync call, async execute)
+    mock_pipe = MagicMock()
+    mock_pipe.zadd = MagicMock()
+    mock_pipe.delete = MagicMock()
+    mock_pipe.setex = MagicMock()
+    mock_pipe.execute = AsyncMock(return_value=[1, 1])
 
     redis = AsyncMock()
     redis.zscore = AsyncMock(return_value=None)  # Not blacklisted
@@ -32,6 +39,7 @@ def mock_redis():
     redis.ttl = AsyncMock(return_value=60)
     redis.evalsha = AsyncMock(return_value=[1, 60])
     redis.script_load = AsyncMock(return_value="test_sha")
+    redis.pipeline = MagicMock(return_value=mock_pipe)  # Pipeline support for OPT-5
     return redis
 
 

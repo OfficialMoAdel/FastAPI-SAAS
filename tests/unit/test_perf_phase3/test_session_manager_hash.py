@@ -1,5 +1,5 @@
 import json
-from unittest.mock import ANY, AsyncMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -7,8 +7,21 @@ from src.app.core.security.session_manager import SessionManager
 
 
 @pytest.fixture
-def mock_redis():
-    return AsyncMock()
+def mock_pipeline():
+    """Create a mock pipeline with sync methods and async execute."""
+    pipe = MagicMock()
+    pipe.hdel = MagicMock()
+    pipe.hset = MagicMock()
+    pipe.expire = MagicMock()
+    pipe.execute = AsyncMock(return_value=[1, 1, 1])
+    return pipe
+
+
+@pytest.fixture
+def mock_redis(mock_pipeline):
+    redis = AsyncMock()
+    redis.pipeline = MagicMock(return_value=mock_pipeline)
+    return redis
 
 
 @pytest.fixture
@@ -17,8 +30,8 @@ def session_manager(mock_redis):
 
 
 @pytest.mark.asyncio
-async def test_register_session_dual_write(session_manager, mock_redis):
-    """Verify that registering a session writes to both legacy List and new Hash."""
+async def test_register_session_dual_write(session_manager, mock_redis, mock_pipeline):
+    """Verify that registering a session writes to both legacy List and new Hash using pipeline."""
     user_id = 123
     session_id = "sess-hash-1"
     device_info = "Hash Device"
@@ -31,17 +44,22 @@ async def test_register_session_dual_write(session_manager, mock_redis):
     # Verify Legacy Write (SETEX)
     mock_redis.setex.assert_called()
 
-    # Verify Hash Write (HSET)
-    # We expect hset to be called with user_sessions_v2:{user_id}
+    # Verify Hash Write uses Pipeline (OPT-7)
+    mock_redis.pipeline.assert_called_once()
+
+    # Verify HSET on pipeline
     hash_key = f"user_sessions_v2:{user_id}"
-    mock_redis.hset.assert_called_with(
+    mock_pipeline.hset.assert_called_with(
         hash_key,
         session_id,
         ANY,  # The JSON string
     )
 
-    # Verify Expiry on Hash
-    mock_redis.expire.assert_called_with(hash_key, session_manager.SESSION_TTL_SECONDS)
+    # Verify Expiry on pipeline
+    mock_pipeline.expire.assert_called_with(hash_key, session_manager.SESSION_TTL_SECONDS)
+
+    # Verify pipeline executed
+    mock_pipeline.execute.assert_called_once()
 
 
 @pytest.mark.asyncio

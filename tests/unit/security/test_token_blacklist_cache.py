@@ -5,7 +5,7 @@ fail-open behavior and cache warming.
 """
 
 from datetime import datetime, timedelta, timezone
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -95,16 +95,24 @@ class TestAddTokenToBlacklist:
 
     @pytest.mark.asyncio
     async def test_adds_token_with_expiry_score(self) -> None:
-        """Should add token to sorted set with expiry as score."""
-        mock_redis = AsyncMock()
-        mock_redis.zadd = AsyncMock(return_value=1)
+        """Should add token to sorted set with expiry as score using pipeline."""
+        mock_pipe = MagicMock()
+        mock_pipe.zadd = MagicMock()
+        mock_pipe.delete = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[1, 1])
+
+        mock_redis = MagicMock()
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await add_token_to_blacklist("token123", expires_at)
             assert result is True
-            mock_redis.zadd.assert_called_once()
+            mock_redis.pipeline.assert_called_once()
+            mock_pipe.zadd.assert_called_once()
+            mock_pipe.delete.assert_called_once()
+            mock_pipe.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_false_when_redis_unavailable(self) -> None:

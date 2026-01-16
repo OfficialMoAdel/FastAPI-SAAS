@@ -185,9 +185,10 @@ class TestSessionManagerIntegration:
 
     @pytest.fixture
     def mock_redis(self):
-        """Create mock Redis client with storage."""
+        """Create mock Redis client with storage (supports Hash v2 and pipeline)."""
         redis = AsyncMock()
         redis.stored = {}
+        redis.hash_stored = {}  # For Hash v2
 
         async def mock_get(key):
             return redis.stored.get(key)
@@ -198,9 +199,51 @@ class TestSessionManagerIntegration:
         async def mock_delete(key):
             redis.stored.pop(key, None)
 
+        async def mock_hexists(key, field):
+            """O(1) lookup for Hash v2."""
+            if key in redis.hash_stored:
+                return field in redis.hash_stored[key]
+            return False
+
+        # Create mock pipeline that stores to hash_stored
+        def mock_pipeline():
+            pipe = MagicMock()
+            pipe._commands = []
+
+            def pipe_hset(key, field, value):
+                pipe._commands.append(("hset", key, field, value))
+
+            def pipe_hdel(key, *fields):
+                pipe._commands.append(("hdel", key, fields))
+
+            def pipe_expire(key, ttl):
+                pipe._commands.append(("expire", key, ttl))
+
+            async def pipe_execute():
+                for cmd in pipe._commands:
+                    if cmd[0] == "hset":
+                        _, key, field, value = cmd
+                        if key not in redis.hash_stored:
+                            redis.hash_stored[key] = {}
+                        redis.hash_stored[key][field] = value
+                    elif cmd[0] == "hdel":
+                        _, key, fields = cmd
+                        if key in redis.hash_stored:
+                            for f in fields:
+                                redis.hash_stored[key].pop(f, None)
+                return [1] * len(pipe._commands)
+
+            pipe.hset = MagicMock(side_effect=pipe_hset)
+            pipe.hdel = MagicMock(side_effect=pipe_hdel)
+            pipe.expire = MagicMock(side_effect=pipe_expire)
+            pipe.execute = AsyncMock(side_effect=pipe_execute)
+            return pipe
+
         redis.get = AsyncMock(side_effect=mock_get)
         redis.setex = AsyncMock(side_effect=mock_setex)
         redis.delete = AsyncMock(side_effect=mock_delete)
+        redis.hexists = AsyncMock(side_effect=mock_hexists)
+        redis.pipeline = MagicMock(side_effect=mock_pipeline)
         return redis
 
     @pytest.mark.asyncio

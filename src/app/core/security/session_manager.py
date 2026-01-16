@@ -116,23 +116,23 @@ class SessionManager:
             json_dumps(list(sessions), as_str=True),
         )
 
-        # Dual-write: Save to Redis Hash (v2)
+        # Dual-write: Save to Redis Hash (v2) - OPT-7: Use pipeline for 1 roundtrip
         try:
             hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            # Check for limit on Hash (since we can't trust the deque state for the hash)
-            # But during dual-write, we can just mirror the "new_session" addition
-            # and rely on the deque logic to tell us what to remove?
-            # Actually, `invalidated_sessions` tells us what was removed.
+            # Pipeline all hash operations together
+            pipe = self._redis_client.pipeline()
 
             # 1. Remove invalidated sessions from Hash
             if invalidated_sessions:
-                await self._redis_client.hdel(hash_key, *[s["session_id"] for s in invalidated_sessions])
+                pipe.hdel(hash_key, *[s["session_id"] for s in invalidated_sessions])
 
             # 2. Add new session to Hash
-            await self._redis_client.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
+            pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
 
             # 3. Set Expiry on Hash
-            await self._redis_client.expire(hash_key, self.SESSION_TTL_SECONDS)
+            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+
+            await pipe.execute()
 
         except Exception as e:
             logger.error(f"Failed to dual-write session to hash: {e}")
@@ -175,6 +175,13 @@ class SessionManager:
             )
             return True
 
+        # OPT-2: O(1) lookup using Hash v2 (preferred path)
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+        exists = await self._redis_client.hexists(hash_key, session_id)
+        if exists:
+            return True
+
+        # Fallback to legacy List lookup during migration period
         session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
         sessions_raw = await self._redis_client.get(session_key)
 

@@ -46,7 +46,7 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
         logger.warning("Redis client not available, skipping tenant cache warming")
         return 0
 
-    import json
+    import orjson  # OPT-8: Use orjson for faster serialization
 
     stmt = select(Tenant).where(Tenant.is_active.is_(True))
     result = await session.execute(stmt)
@@ -57,13 +57,13 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
         async with redis_client.pipeline() as pipe:
             for tenant in tenants:
                 cache_key = f"tenant:slug:{tenant.slug}"
-                cache_data = json.dumps(
+                cache_data = orjson.dumps(
                     {
                         "id": tenant.id,
                         "slug": tenant.slug,
                         "is_active": tenant.is_active,
                     }
-                )
+                ).decode()  # OPT-8: orjson returns bytes, decode to str for Redis
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
             await pipe.execute()
         cached_count = len(tenants)
