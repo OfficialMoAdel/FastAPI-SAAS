@@ -1,6 +1,7 @@
 """Email templates service."""
 
 import logging
+import re
 from typing import Any
 
 from jinja2 import Template, TemplateNotFound
@@ -10,6 +11,10 @@ from src.app.core.config import settings
 from src.app.modules.notifications.models import EmailTemplateOverride
 
 logger = logging.getLogger(__name__)
+
+# OPT-12: Pre-compile regex patterns at module level
+_TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.DOTALL)
+_TITLE_STRIP_PATTERN = re.compile(r"<title>.*?</title>", re.DOTALL)
 
 
 class EmailTemplatesService:
@@ -83,14 +88,12 @@ class EmailTemplatesService:
             template = Template(html_content)
             rendered_html = template.render(**context)
 
-            # Extract subject from title tag
-            import re
-
-            subject_match = re.search(r"<title>(.*?)</title>", rendered_html, re.DOTALL)
+            # Extract subject from title tag (OPT-12: use pre-compiled patterns)
+            subject_match = _TITLE_PATTERN.search(rendered_html)
             subject = subject_match.group(1).strip() if subject_match else ""
 
             # Clean up title tag from rendered HTML
-            rendered_html = re.sub(r"<title>.*?</title>", "", rendered_html, flags=re.DOTALL)
+            rendered_html = _TITLE_STRIP_PATTERN.sub("", rendered_html)
 
             return subject, rendered_html
 
