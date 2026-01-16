@@ -105,8 +105,8 @@ app = create_application(
 # - GZip: Outermost for compression of all responses
 # - Security: Early headers before any processing
 # - BodyLimit: Reject oversized requests before expensive processing
-# - Tenant: Extract tenant context BEFORE rate limiting (P2-5 optimization)
-# - RateLimit: Can now use tenant context for per-tenant limits
+# - Tenant: Extract tenant context for multi-tenant features
+# - RateLimit: User/tier-based rate limiting (IP for anonymous, user+tier for authenticated)
 # - RequestID: Innermost for accurate request tracing
 
 # GZip compression for responses > 500 bytes (runs first on request)
@@ -115,8 +115,8 @@ from fastapi.middleware.gzip import GZipMiddleware
 app.add_middleware(GZipMiddleware, minimum_size=500)
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
-app.add_middleware(TenantMiddleware)  # Tenant context before rate limiting (P2-5)
-app.add_middleware(RateLimitMiddleware)  # Can access tenant context
+app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
+app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(RequestIDMiddleware)  # Request ID must be last (innermost) for tracing
 
 # Mount admin interface if enabled
