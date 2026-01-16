@@ -55,6 +55,12 @@ class PasskeyCredential(Base):
         String(100),
         nullable=False,
     )
+    credential_id_hash: Mapped[str | None] = mapped_column(
+        String(64),  # SHA256 hex digest is 64 characters
+        nullable=True,  # Nullable for migration; will be NOT NULL after backfill
+        index=True,  # B-tree index for O(log n) lookup
+        default=None,
+    )
     counter: Mapped[int] = mapped_column(
         BigInteger,
         nullable=False,

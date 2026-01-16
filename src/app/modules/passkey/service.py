@@ -155,16 +155,22 @@ class PasskeyService:
             raise BadRequestException(detail="Passkey verification failed.")
 
         # 3. Encrypt sensitive data
+        import hashlib
+
         from src.app.core.security.encryption import get_encryption
 
         encryption = get_encryption()
         encrypted_cred_id = encryption.encrypt_credential(verification.credential_id)
         encrypted_public_key = encryption.encrypt_credential(verification.credential_public_key)
 
+        # Compute SHA256 hash of decrypted credential_id for O(log n) lookup
+        credential_id_hash = hashlib.sha256(verification.credential_id).hexdigest()
+
         # 4. Store credential in DB
         cred_in = PasskeyCredentialCreate(
             user_id=user_id,
             credential_id=encrypted_cred_id,
+            credential_id_hash=credential_id_hash,
             public_key=encrypted_public_key,
             counter=verification.sign_count,
             device_type=device_type,
@@ -426,8 +432,17 @@ class PasskeyService:
         await redis.delete(key)
 
     async def _find_credential_by_id(self, db: AsyncSession, raw_id: str) -> Any | None:
-        """Find a passkey credential by its raw ID (base64url encoded)."""
+        """Find a passkey credential by its raw ID (base64url encoded).
+
+        Uses SHA256 hash index for O(log n) lookup instead of O(n) full table scan.
+        Falls back to decryption-based search for credentials without hash (migration).
+        """
+        import hashlib
+
+        from sqlalchemy import select
+
         from src.app.core.security.encryption import get_encryption
+        from src.app.modules.passkey.models import PasskeyCredential
 
         # Decode the raw_id from base64url
         try:
@@ -435,19 +450,37 @@ class PasskeyService:
         except Exception:
             return None
 
-        # Get all credentials and find matching one (need to decrypt each)
-        # This is not ideal but necessary since credential_id is encrypted
+        # Compute SHA256 hash for indexed lookup
+        target_hash = hashlib.sha256(credential_id_bytes).hexdigest()
+
+        # Primary path: O(log n) hash-based lookup
+        stmt = select(PasskeyCredential).where(
+            PasskeyCredential.credential_id_hash == target_hash
+        )
+        result = await db.execute(stmt)
+        cred = result.scalar_one_or_none()
+
+        if cred is not None:
+            # Defense in depth: verify the hash matches decrypted credential
+            encryption = get_encryption()
+            try:
+                decrypted_id = encryption.decrypt_credential(cred.credential_id)
+                if decrypted_id == credential_id_bytes:
+                    return cred
+            except Exception:
+                pass  # Hash collision or decryption failure, fall through to scan
+
+        # Fallback path: O(n) scan for credentials without hash (migration period)
+        # This will be removed after backfill is complete
         encryption = get_encryption()
+        result = await db.execute(
+            select(PasskeyCredential).where(
+                PasskeyCredential.credential_id_hash.is_(None)
+            )
+        )
+        unhashed_creds = result.scalars().all()
 
-        # Get all credentials (we'll need to search)
-        from sqlalchemy import select
-
-        from src.app.modules.passkey.models import PasskeyCredential
-
-        result = await db.execute(select(PasskeyCredential))
-        all_creds = result.scalars().all()
-
-        for cred in all_creds:
+        for cred in unhashed_creds:
             try:
                 decrypted_id = encryption.decrypt_credential(cred.credential_id)
                 if decrypted_id == credential_id_bytes:

@@ -124,6 +124,7 @@ class PasskeyCredentialCreate(BaseCreate):
 
     user_id: int = Field(..., description="User ID")
     credential_id: bytes = Field(..., description="Encrypted WebAuthn credential ID")
+    credential_id_hash: str | None = Field(None, description="SHA256 hash of decrypted credential_id for lookup")
     public_key: bytes = Field(..., description="Encrypted COSE public key")
     counter: int = Field(default=0, description="Signature counter")
     device_type: str = Field(..., max_length=100, description="Device name")
