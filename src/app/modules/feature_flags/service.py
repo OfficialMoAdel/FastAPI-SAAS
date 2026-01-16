@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from ...core.db.database import async_get_db
+from ...core.json_utils import json_dumps, json_loads
 from ...core.logger import get_logger
 from ...core.utils.cache import client as redis_client
 from ...modules.tenants.models import Tenant
@@ -141,11 +142,9 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         # Try cache first
         if redis_client:
             try:
-                import json
-
                 cached_value = await redis_client.get(cache_key)
                 if cached_value:
-                    return json.loads(cached_value)
+                    return json_loads(cached_value)
             except Exception as e:
                 logger.debug(f"Cache get failed: {e}")
 
@@ -159,9 +158,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         # Update cache
         if redis_client:
             try:
-                import json
-
-                await redis_client.setex(cache_key, CACHE_TTL, json.dumps(flags))
+                await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
             except Exception as e:
                 logger.debug(f"Cache operation failed: {e}")
 

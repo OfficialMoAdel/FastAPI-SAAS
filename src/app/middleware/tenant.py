@@ -16,6 +16,7 @@ from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoin
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
+from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
 from src.app.modules.tenants.models import Tenant
@@ -173,12 +174,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
         # Try Redis cache first
         if redis_client:
             try:
-                import json
-
                 cached = await redis_client.get(cache_key)
                 if cached:
                     # Deserialize cached tenant data
-                    data = json.loads(cached)
+                    data = json_loads(cached)
 
                     # Handle negative cache
                     if data is None:
@@ -200,16 +199,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             if redis_client:
                 try:
-                    import json
-
                     if tenant:
                         # Cache Success (1 hour)
-                        cache_data = json.dumps(
+                        cache_data = json_dumps(
                             {
                                 "id": tenant.id,
                                 "slug": tenant.slug,
                                 "is_active": tenant.is_active,
-                            }
+                            },
+                            as_str=True,
                         )
                         await redis_client.setex(cache_key, 3600, cache_data)
                         logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
