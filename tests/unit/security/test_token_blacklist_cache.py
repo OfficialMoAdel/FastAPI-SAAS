@@ -32,17 +32,28 @@ class TestIsTokenBlacklisted:
     async def test_returns_false_when_token_not_in_cache(self) -> None:
         """Should return False when token is not blacklisted."""
         mock_redis = AsyncMock()
+        # Negative cache miss (token not recently verified)
+        mock_redis.exists = AsyncMock(return_value=0)
+        # Token not in blacklist
         mock_redis.zscore = AsyncMock(return_value=None)
+        # Set negative cache for future lookups
+        mock_redis.set = AsyncMock(return_value=True)
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await is_token_blacklisted("clean-token")
             assert result is False
+            # Should check negative cache first, then zscore
+            mock_redis.exists.assert_called_once()
             mock_redis.zscore.assert_called_once()
+            # Should set negative cache after confirming not blacklisted
+            mock_redis.set.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_true_when_token_blacklisted(self) -> None:
         """Should return True when token is in blacklist and not expired."""
         mock_redis = AsyncMock()
+        # Negative cache miss
+        mock_redis.exists = AsyncMock(return_value=0)
         # Score is expiry timestamp in future
         future_expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
         mock_redis.zscore = AsyncMock(return_value=future_expiry)
@@ -55,6 +66,8 @@ class TestIsTokenBlacklisted:
     async def test_returns_false_and_removes_expired_token(self) -> None:
         """Should return False and remove token if it has expired."""
         mock_redis = AsyncMock()
+        # Negative cache miss
+        mock_redis.exists = AsyncMock(return_value=0)
         # Score is expiry timestamp in past
         past_expiry = (datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()
         mock_redis.zscore = AsyncMock(return_value=past_expiry)
@@ -69,7 +82,8 @@ class TestIsTokenBlacklisted:
     async def test_fails_open_on_redis_error(self) -> None:
         """Should return None (fail open) on Redis errors."""
         mock_redis = AsyncMock()
-        mock_redis.zscore = AsyncMock(side_effect=Exception("Connection error"))
+        # Error on exists check
+        mock_redis.exists = AsyncMock(side_effect=Exception("Connection error"))
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await is_token_blacklisted("any-token")
