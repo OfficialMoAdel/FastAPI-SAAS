@@ -162,6 +162,9 @@ class DefaultRateLimitSettings(BaseSettings):
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
     RATE_LIMIT_FAIL_OPEN: bool = False
+    # Rate limiting algorithm: "fixed_window" or "gcra"
+    # GCRA provides smoother limiting without boundary burst issues
+    RATE_LIMIT_ALGORITHM: str = "gcra"
 
 
 class CRUDAdminSettings(BaseSettings):

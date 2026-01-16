@@ -3,6 +3,10 @@
 Provides different rate limits based on user's tier:
 - Unauthenticated: IP-based with default limits
 - Authenticated: User-based with tier-specific limits
+
+Supports two algorithms:
+- fixed_window: Classic fixed window counter (default)
+- gcra: Generic Cell Rate Algorithm (smoother, no boundary bursts)
 """
 
 import ipaddress
@@ -15,6 +19,7 @@ from starlette.types import ASGIApp
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
+from src.app.core.utils.gcra_rate_limit import GCRARateLimiter, get_gcra_rate_limiter
 from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger(__name__)
@@ -50,9 +55,26 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # Determine rate limit key and limits
         limit, period, key = await self._get_rate_limit_config(request)
 
-        # Check rate limit
-        is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
-        remaining = max(0, limit - current_count)
+        # Check rate limit using configured algorithm
+        use_gcra = getattr(settings, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
+
+        if use_gcra:
+            gcra = get_gcra_rate_limiter()
+            if gcra:
+                result = await gcra.check_rate_limit(key, limit, period)
+                is_limited = result.is_limited
+                remaining = result.remaining
+                retry_after = result.retry_after
+            else:
+                # GCRA not initialized, fall back to fixed window
+                is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
+                remaining = max(0, limit - current_count)
+                retry_after = 0.0
+        else:
+            # Fixed window algorithm
+            is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
+            remaining = max(0, limit - current_count)
+            retry_after = 0.0
 
         headers = {
             "X-RateLimit-Limit": str(limit),
@@ -61,6 +83,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
 
         if is_limited:
+            if retry_after > 0:
+                headers["Retry-After"] = str(int(retry_after) + 1)
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
             return Response("Too Many Requests", status_code=429, headers=headers)
 
