@@ -1,0 +1,64 @@
+{
+  "machine_info": {
+    "node": "baseline-capture",
+    "release": "baseline",
+    "machine": "x86_64"
+  },
+  "commit_info": {
+    "id": "r4-baseline",
+    "time": "2026-01-17T00:00:00Z",
+    "branch": "main"
+  },
+  "benchmarks": {
+    "dns_resolution": {
+      "baseline_p95_ms": 100.0,
+      "target_p95_ms": 100.0,
+      "regression_threshold_ms": 150.0,
+      "description": "Async DNS resolution via asyncio.to_thread"
+    },
+    "fastcrud_instantiation": {
+      "baseline_p95_ms": 0.1,
+      "target_p95_ms": 0.1,
+      "regression_threshold_ms": 0.5,
+      "description": "Flyweight-cached FastCRUD instance retrieval"
+    },
+    "ip_parsing_cached": {
+      "baseline_p95_ms": 0.0001,
+      "target_p95_ms": 0.0001,
+      "regression_threshold_ms": 0.001,
+      "description": "LRU-cached IP address parsing"
+    },
+    "webhooks_hmac": {
+      "baseline_p95_ms": 0.3,
+      "target_p95_ms": 0.3,
+      "regression_threshold_ms": 0.6,
+      "description": "HMAC-SHA256 signature generation"
+    },
+    "update_operation": {
+      "baseline_roundtrips": 1,
+      "target_roundtrips": 1,
+      "regression_threshold_roundtrips": 1.5,
+      "description": "Session refresh pattern (1 DB roundtrip)"
+    },
+    "event_enqueue": {
+      "baseline_p95_ms": 5.0,
+      "target_p95_ms": 5.0,
+      "regression_threshold_ms": 7.0,
+      "description": "Parallel event handler enqueue"
+    }
+  },
+  "thresholds": {
+    "dns_resolution": 150.0,
+    "fastcrud_instantiation": 0.5,
+    "ip_parsing_cached": 0.001,
+    "webhooks_hmac": 0.6,
+    "update_operation": 50.0,
+    "event_enqueue": 7.0
+  },
+  "notes": [
+    "Baselines captured after R4 optimization implementation",
+    "All values in milliseconds unless otherwise noted",
+    "P95 latencies used for consistency",
+    "Regression detected if current > threshold"
+  ]
+}
