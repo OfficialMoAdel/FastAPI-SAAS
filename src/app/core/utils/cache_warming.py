@@ -57,13 +57,14 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
         async with redis_client.pipeline() as pipe:
             for tenant in tenants:
                 cache_key = f"tenant:slug:{tenant.slug}"
+                # P2-3: Keep as bytes - Redis setex() accepts bytes directly
                 cache_data = orjson.dumps(
                     {
                         "id": tenant.id,
                         "slug": tenant.slug,
                         "is_active": tenant.is_active,
                     }
-                ).decode()  # OPT-8: orjson returns bytes, decode to str for Redis
+                )
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
             await pipe.execute()
         cached_count = len(tenants)
