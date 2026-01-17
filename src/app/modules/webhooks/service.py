@@ -212,7 +212,7 @@ class WebhookService:
 
         # Validate URL for SSRF protection before making request
         try:
-            validate_webhook_url(endpoint.url)
+            await validate_webhook_url(endpoint.url)
         except SSRFProtectionError as e:
             logger.error(
                 "webhook_ssrf_blocked",

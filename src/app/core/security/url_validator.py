@@ -4,6 +4,7 @@ This module provides utilities to validate URLs before making outbound requests,
 preventing Server-Side Request Forgery (SSRF) attacks.
 """
 
+import asyncio
 import ipaddress
 import socket
 from urllib.parse import urlparse
@@ -69,7 +70,7 @@ def is_ip_blocked(ip: str) -> bool:
         return True
 
 
-def validate_webhook_url(url: str) -> None:
+async def validate_webhook_url(url: str) -> None:
     """Validate a URL is safe for outbound webhook requests.
 
     Performs the following checks:
@@ -105,9 +106,12 @@ def validate_webhook_url(url: str) -> None:
         raise SSRFProtectionError(f"Hostname '{hostname}' is not allowed")
 
     # Resolve hostname and check IP
+    # OPT P0-1: Use asyncio.to_thread to avoid blocking the event loop during DNS resolution
     try:
-        # Get all IP addresses for the hostname
-        addr_info = socket.getaddrinfo(hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
+        # Get all IP addresses for the hostname (non-blocking via thread pool)
+        addr_info = await asyncio.to_thread(
+            socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
+        )
         resolved_ips = {info[4][0] for info in addr_info}
     except socket.gaierror as e:
         raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}")
