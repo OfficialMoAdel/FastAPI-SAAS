@@ -5,13 +5,13 @@ Tests cover:
 - Duplicate slug conflict handling
 - Tenant retrieval by ID and slug
 - Tenant listing with pagination
-- Tenant updates
+- Tenant updates (uses session refresh pattern - P1-1)
 - Deactivation and reactivation
 - Audit logging
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -26,7 +26,7 @@ def mock_db():
 
 @pytest.fixture
 def mock_tenant():
-    """Sample tenant data."""
+    """Sample tenant data (dict format for CRUD operations)."""
     return {
         "id": 1,
         "name": "Acme Corporation",
@@ -35,6 +35,19 @@ def mock_tenant():
         "created_at": datetime.now(UTC),
         "updated_at": None,
     }
+
+
+@pytest.fixture
+def mock_tenant_orm():
+    """Sample tenant ORM object for session operations."""
+    tenant = MagicMock()
+    tenant.id = 1
+    tenant.name = "Acme Corporation"
+    tenant.slug = "acme-corp"
+    tenant.is_active = True
+    tenant.created_at = datetime.now(UTC)
+    tenant.updated_at = None
+    return tenant
 
 
 @pytest.fixture
@@ -141,26 +154,34 @@ class TestTenantServiceGet:
 
 
 class TestTenantServiceUpdate:
-    """Tests for tenant updates."""
+    """Tests for tenant updates.
+
+    Note: update_tenant, deactivate_tenant, reactivate_tenant now use
+    session refresh pattern (P1-1 optimization) instead of crud.update + get_tenant.
+    """
 
     @pytest.mark.asyncio
-    async def test_update_tenant_success(self, mock_db, mock_tenant, tenant_update):
-        """Test successful tenant update."""
+    async def test_update_tenant_success(self, mock_db, mock_tenant_orm, tenant_update):
+        """Test successful tenant update using session refresh pattern."""
         from src.app.modules.tenants.service import TenantService
 
         tenant_service = TenantService(mock_db)
 
-        updated_tenant = {**mock_tenant, "name": "Acme Corp Updated"}
+        # P1-1: Mock db.get to return ORM object (not crud.get)
+        mock_db.get.return_value = mock_tenant_orm
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            # First call returns original, second call (after update) returns updated
-            mock_crud.get.side_effect = [mock_tenant, updated_tenant]
-            mock_crud.update.return_value = None
+        result = await tenant_service.update_tenant(1, tenant_update)
 
-            result = await tenant_service.update_tenant(1, tenant_update)
-
-            assert result["name"] == "Acme Corp Updated"
-            mock_crud.update.assert_called_once()
+        # Verify the update was applied to ORM object
+        assert mock_tenant_orm.name == "Acme Corp Updated"
+        # Verify session methods were called
+        mock_db.get.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(mock_tenant_orm)
+        # Verify result is a dict
+        assert isinstance(result, dict)
 
     @pytest.mark.asyncio
     async def test_update_tenant_not_found_raises_404(self, mock_db, tenant_update):
@@ -170,55 +191,70 @@ class TestTenantServiceUpdate:
 
         tenant_service = TenantService(mock_db)
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            mock_crud.get.return_value = None
+        # P1-1: Mock db.get to return None (not crud.get)
+        mock_db.get.return_value = None
 
-            with pytest.raises(ModelNotFoundError) as exc_info:
-                await tenant_service.update_tenant(999, tenant_update)
+        with pytest.raises(ModelNotFoundError) as exc_info:
+            await tenant_service.update_tenant(999, tenant_update)
 
-            assert exc_info.value.model_name == "Tenant"
-            assert exc_info.value.identifier == 999
+        assert exc_info.value.model_name == "Tenant"
+        assert exc_info.value.identifier == 999
 
 
 class TestTenantServiceDeactivate:
-    """Tests for tenant deactivation/reactivation."""
+    """Tests for tenant deactivation/reactivation.
+
+    Note: These methods now use session refresh pattern (P1-1 optimization).
+    """
 
     @pytest.mark.asyncio
-    async def test_deactivate_tenant_success(self, mock_db, mock_tenant):
-        """Test successful tenant deactivation."""
+    async def test_deactivate_tenant_success(self, mock_db, mock_tenant_orm):
+        """Test successful tenant deactivation using session refresh pattern."""
         from src.app.modules.tenants.service import TenantService
 
         tenant_service = TenantService(mock_db)
 
-        deactivated = {**mock_tenant, "is_active": False}
+        # P1-1: Mock db.get to return ORM object
+        mock_db.get.return_value = mock_tenant_orm
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            # First call for existence check, second call after update
-            mock_crud.get.side_effect = [mock_tenant, deactivated]
-            mock_crud.update.return_value = None
+        result = await tenant_service.deactivate_tenant(1)
 
-            result = await tenant_service.deactivate_tenant(1)
-
-            assert result["is_active"] is False
+        # Verify is_active was set to False on ORM object
+        assert mock_tenant_orm.is_active is False
+        # Verify session methods were called
+        mock_db.get.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(mock_tenant_orm)
+        # Verify result is a dict
+        assert isinstance(result, dict)
 
     @pytest.mark.asyncio
-    async def test_reactivate_tenant_success(self, mock_db, mock_tenant):
-        """Test successful tenant reactivation."""
+    async def test_reactivate_tenant_success(self, mock_db, mock_tenant_orm):
+        """Test successful tenant reactivation using session refresh pattern."""
         from src.app.modules.tenants.service import TenantService
 
         tenant_service = TenantService(mock_db)
 
-        inactive_tenant = {**mock_tenant, "is_active": False}
-        reactivated = {**mock_tenant, "is_active": True}
+        # Start with inactive tenant
+        mock_tenant_orm.is_active = False
 
-        with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
-            # First call for existence check, second call after update
-            mock_crud.get.side_effect = [inactive_tenant, reactivated]
-            mock_crud.update.return_value = None
+        # P1-1: Mock db.get to return ORM object
+        mock_db.get.return_value = mock_tenant_orm
+        mock_db.commit = AsyncMock()
+        mock_db.refresh = AsyncMock()
 
-            result = await tenant_service.reactivate_tenant(1)
+        result = await tenant_service.reactivate_tenant(1)
 
-            assert result["is_active"] is True
+        # Verify is_active was set to True on ORM object
+        assert mock_tenant_orm.is_active is True
+        # Verify session methods were called
+        mock_db.get.assert_called_once()
+        mock_db.commit.assert_called_once()
+        mock_db.refresh.assert_called_once_with(mock_tenant_orm)
+        # Verify result is a dict
+        assert isinstance(result, dict)
 
 
 class TestTenantServiceList:

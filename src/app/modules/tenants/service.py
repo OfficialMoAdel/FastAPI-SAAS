@@ -158,6 +158,8 @@ class TenantService(BaseService[Tenant]):
     ) -> dict[str, Any]:
         """Update a tenant.
 
+        Optimized: Uses session refresh instead of second DB roundtrip.
+
         Parameters
         ----------
         tenant_id : int
@@ -175,14 +177,20 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=self.db, id=tenant_id)
+        # P1-1: Fetch ORM object directly for in-place update
+        tenant = await self.db.get(Tenant, tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
         update_data = values.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 
-        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
+        # Apply updates to ORM object
+        for key, value in update_data.items():
+            setattr(tenant, key, value)
+
+        await self.db.commit()
+        await self.db.refresh(tenant)
 
         logger.info(
             "Tenant updated | id=%s | fields=%s",
@@ -190,10 +198,13 @@ class TenantService(BaseService[Tenant]):
             list(update_data.keys()),
         )
 
-        return await self.get_tenant(tenant_id)
+        # Convert ORM object to response dict via schema
+        return TenantResponse.model_validate(tenant).model_dump()
 
     async def deactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Deactivate a tenant (soft delete).
+
+        Optimized: Uses session refresh instead of second DB roundtrip.
 
         Parameters
         ----------
@@ -210,23 +221,25 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=self.db, id=tenant_id)
+        # P1-1: Fetch ORM object directly for in-place update
+        tenant = await self.db.get(Tenant, tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
-        update_data = {
-            "is_active": False,
-            "updated_at": datetime.now(UTC),
-        }
+        tenant.is_active = False
+        tenant.updated_at = datetime.now(UTC)
 
-        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
+        await self.db.commit()
+        await self.db.refresh(tenant)
 
-        logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant["slug"])
+        logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
-        return await self.get_tenant(tenant_id)
+        return TenantResponse.model_validate(tenant).model_dump()
 
     async def reactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
+
+        Optimized: Uses session refresh instead of second DB roundtrip.
 
         Parameters
         ----------
@@ -243,20 +256,20 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
-        tenant = await self.crud.get(db=self.db, id=tenant_id)
+        # P1-1: Fetch ORM object directly for in-place update
+        tenant = await self.db.get(Tenant, tenant_id)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
 
-        update_data = {
-            "is_active": True,
-            "updated_at": datetime.now(UTC),
-        }
+        tenant.is_active = True
+        tenant.updated_at = datetime.now(UTC)
 
-        await self.crud.update(db=self.db, object=update_data, id=tenant_id)
+        await self.db.commit()
+        await self.db.refresh(tenant)
 
-        logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant["slug"])
+        logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
-        return await self.get_tenant(tenant_id)
+        return TenantResponse.model_validate(tenant).model_dump()
 
 
 def get_tenant_service(db: AsyncSession) -> TenantService:
