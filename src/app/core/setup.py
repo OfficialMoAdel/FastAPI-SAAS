@@ -76,9 +76,15 @@ async def close_redis_cache_pool() -> None:
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
-    redis_settings = RedisSettings(host=settings.REDIS_QUEUE_HOST, port=settings.REDIS_QUEUE_PORT)
-    if settings.REDIS_QUEUE_PASSWORD:
-        redis_settings.password = settings.REDIS_QUEUE_PASSWORD
+    # P2-2: Configure connection pool with explicit limits matching cache settings
+    redis_settings = RedisSettings(
+        host=settings.REDIS_QUEUE_HOST,
+        port=settings.REDIS_QUEUE_PORT,
+        password=settings.REDIS_QUEUE_PASSWORD,
+        max_connections=settings.REDIS_QUEUE_MAX_CONNECTIONS,
+        conn_timeout=settings.REDIS_QUEUE_CONN_TIMEOUT,
+        conn_retries=settings.REDIS_QUEUE_CONN_RETRIES,
+    )
     queue.pool = await create_pool(redis_settings)
 
 

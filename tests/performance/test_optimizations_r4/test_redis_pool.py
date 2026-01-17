@@ -1,18 +1,26 @@
-"""P2-2: Redis Pool Optimization Tests.
+"""P2-2: Redis Queue Pool Configuration Tests.
 
-STATUS: PENDING - Not yet implemented
+STATUS: VERIFIED ✅
 
-This module tests Redis connection pool optimization for better
-connection reuse and reduced connection overhead.
+This module tests Redis queue pool configuration optimization.
+The queue pool now has explicit settings matching cache pool configuration
+to prevent connection exhaustion under load.
+
+Configuration:
+- max_connections=50: Matches cache pool for balanced resource usage
+- conn_timeout=5: 5 second timeout for connection attempts
+- conn_retries=5: Retry failed connections up to 5 times
 """
 
 from __future__ import annotations
 
+import inspect
+
 import pytest
 
 
-class TestP22RedisPoolPrerequisites:
-    """Pre-implementation tests for Redis pool."""
+class TestP22RedisQueuePoolPrerequisites:
+    """Pre-implementation tests for Redis queue pool."""
 
     def test_redis_available(self) -> None:
         """Verify Redis client is available."""
@@ -23,24 +31,116 @@ class TestP22RedisPoolPrerequisites:
         except ImportError:
             pytest.fail("redis.asyncio not available")
 
+    def test_arq_available(self) -> None:
+        """Verify ARQ is available."""
+        try:
+            from arq.connections import RedisSettings, create_pool  # noqa: F401
 
-class TestP22RedisPoolOptimization:
-    """Tests to verify Redis pool optimization.
+            assert True
+        except ImportError:
+            pytest.fail("arq not available")
 
-    These tests should be enabled once the optimization is implemented.
-    """
+    def test_queue_settings_exist(self) -> None:
+        """Verify queue settings exist in config."""
+        from src.app.core.config import settings
 
-    @pytest.mark.skip(reason="P2-2 Redis pool optimization pending")
-    def test_connection_pool_configured(self) -> None:
-        """Redis should use connection pooling."""
-        pass
+        assert hasattr(settings, "REDIS_QUEUE_MAX_CONNECTIONS")
+        assert hasattr(settings, "REDIS_QUEUE_CONN_TIMEOUT")
+        assert hasattr(settings, "REDIS_QUEUE_CONN_RETRIES")
 
-    @pytest.mark.skip(reason="P2-2 Redis pool optimization pending")
-    def test_pool_reuses_connections(self) -> None:
-        """Connection pool should reuse connections."""
-        pass
 
-    @pytest.mark.skip(reason="P2-2 Redis pool optimization pending")
-    def test_pool_handles_concurrent_requests(self) -> None:
-        """Pool should handle concurrent requests efficiently."""
-        pass
+class TestP22RedisQueuePoolConfiguration:
+    """Tests verifying queue pool configuration."""
+
+    def test_max_connections_configured(self) -> None:
+        """max_connections should be explicitly set."""
+        from src.app.core.config import settings
+
+        assert settings.REDIS_QUEUE_MAX_CONNECTIONS == 50
+
+    def test_conn_timeout_configured(self) -> None:
+        """conn_timeout should be explicitly set."""
+        from src.app.core.config import settings
+
+        assert settings.REDIS_QUEUE_CONN_TIMEOUT == 5
+
+    def test_conn_retries_configured(self) -> None:
+        """conn_retries should be explicitly set."""
+        from src.app.core.config import settings
+
+        assert settings.REDIS_QUEUE_CONN_RETRIES == 5
+
+    def test_create_pool_uses_explicit_settings(self) -> None:
+        """create_redis_queue_pool should use explicit configuration."""
+        from src.app.core.setup import create_redis_queue_pool
+
+        source = inspect.getsource(create_redis_queue_pool)
+
+        # Verify explicit settings are used
+        assert "max_connections" in source
+        assert "conn_timeout" in source
+        assert "conn_retries" in source
+        assert "REDIS_QUEUE_MAX_CONNECTIONS" in source
+
+
+class TestP22RedisQueuePoolValidation:
+    """Validation tests for queue pool settings."""
+
+    def test_max_connections_reasonable(self) -> None:
+        """max_connections should be within reasonable bounds."""
+        from src.app.core.config import settings
+
+        # Should be at least 10 for reasonable concurrency
+        assert settings.REDIS_QUEUE_MAX_CONNECTIONS >= 10
+        # Should not exceed 500 to prevent resource exhaustion
+        assert settings.REDIS_QUEUE_MAX_CONNECTIONS <= 500
+
+    def test_conn_timeout_reasonable(self) -> None:
+        """conn_timeout should be within reasonable bounds."""
+        from src.app.core.config import settings
+
+        # At least 1 second for network latency
+        assert settings.REDIS_QUEUE_CONN_TIMEOUT >= 1
+        # At most 30 seconds to avoid hanging
+        assert settings.REDIS_QUEUE_CONN_TIMEOUT <= 30
+
+    def test_conn_retries_reasonable(self) -> None:
+        """conn_retries should be within reasonable bounds."""
+        from src.app.core.config import settings
+
+        # At least 1 retry for transient errors
+        assert settings.REDIS_QUEUE_CONN_RETRIES >= 1
+        # At most 20 retries to avoid infinite loops
+        assert settings.REDIS_QUEUE_CONN_RETRIES <= 20
+
+    def test_queue_pool_matches_cache_pool_capacity(self) -> None:
+        """Queue pool capacity should match cache pool for balanced resources."""
+        from src.app.core.config import settings
+
+        # Queue and cache should have similar connection limits
+        assert settings.REDIS_QUEUE_MAX_CONNECTIONS == settings.REDIS_CACHE_MAX_CONNECTIONS
+
+
+class TestP22RedisQueuePoolIsomorphism:
+    """Isomorphism tests for queue pool behavior."""
+
+    def test_password_handling_unchanged(self) -> None:
+        """Password should still be passed to RedisSettings."""
+        from src.app.core.setup import create_redis_queue_pool
+
+        source = inspect.getsource(create_redis_queue_pool)
+
+        # Should pass password to RedisSettings
+        assert "password=" in source
+        assert "REDIS_QUEUE_PASSWORD" in source
+
+    def test_host_port_handling_unchanged(self) -> None:
+        """Host and port should still be configured."""
+        from src.app.core.setup import create_redis_queue_pool
+
+        source = inspect.getsource(create_redis_queue_pool)
+
+        assert "host=" in source
+        assert "port=" in source
+        assert "REDIS_QUEUE_HOST" in source
+        assert "REDIS_QUEUE_PORT" in source

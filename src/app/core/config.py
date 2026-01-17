@@ -154,6 +154,16 @@ class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_HOST: str = "localhost"  # Override via REDIS_QUEUE_HOST in .env
     REDIS_QUEUE_PORT: int = 6379
     REDIS_QUEUE_PASSWORD: str | None = None
+    # P2-2: Explicit pool configuration matching cache settings
+    REDIS_QUEUE_MAX_CONNECTIONS: int = Field(
+        default=50, ge=10, le=500, description="Max connections in queue pool"
+    )
+    REDIS_QUEUE_CONN_TIMEOUT: int = Field(
+        default=5, ge=1, le=30, description="Connection timeout in seconds"
+    )
+    REDIS_QUEUE_CONN_RETRIES: int = Field(
+        default=5, ge=1, le=20, description="Number of connection retries"
+    )
 
 
 class DefaultRateLimitSettings(BaseSettings):
