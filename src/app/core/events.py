@@ -280,8 +280,12 @@ class EventBus:
             await self._publish_sync(event_name, data, handlers)
             return
 
-        # Enqueue each handler as a separate ARQ task
-        for handler in handlers:
+        # P1-4: Parallel enqueue using asyncio.gather for reduced latency
+        # Changes Sum(RTT) to Max(RTT) for multiple handlers
+        async def enqueue_handler(
+            handler: Callable[..., Coroutine[Any, Any, None]],
+        ) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
+            """Enqueue a single handler, returning (success, handler, error)."""
             # Check circuit breaker before attempting Redis enqueue
             if not arq_circuit.is_closed:
                 logger.warning(
@@ -298,7 +302,7 @@ class EventBus:
                         handler=handler.__name__,
                         error=str(e),
                     )
-                continue
+                return (True, handler, None)  # Handled via fallback
 
             try:
                 await self._arq_queue.enqueue_job(
@@ -316,6 +320,7 @@ class EventBus:
                     handler=handler.__name__,
                     priority=priority,
                 )
+                return (True, handler, None)
             except Exception as e:
                 await arq_circuit.record_failure(e)
                 logger.error(
@@ -325,6 +330,27 @@ class EventBus:
                     error=str(e),
                     exc_info=True,
                 )
+                return (False, handler, e)
+
+        # Enqueue all handlers in parallel
+        results = await asyncio.gather(
+            *[enqueue_handler(h) for h in handlers],
+            return_exceptions=True,
+        )
+
+        # Handle any failures with sync fallback
+        for result in results:
+            if isinstance(result, Exception):
+                # asyncio.gather caught an unexpected exception
+                logger.error(
+                    "Unexpected error during parallel enqueue",
+                    event_name=event_name,
+                    error=str(result),
+                )
+                continue
+
+            success, handler, error = result
+            if not success and error is not None:
                 # Graceful degradation: try sync execution
                 try:
                     await handler(data)
