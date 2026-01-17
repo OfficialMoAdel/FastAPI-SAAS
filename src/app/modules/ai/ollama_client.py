@@ -11,6 +11,7 @@ import httpx
 from pydantic import BaseModel
 
 from src.app.core.config import settings
+from src.app.core.json_utils import json_loads
 
 logger = logging.getLogger(__name__)
 
@@ -171,9 +172,8 @@ class OllamaClient:
                 response.raise_for_status()
                 async for line in response.aiter_lines():
                     if line:
-                        import json
-
-                        chunk = json.loads(line)
+                        # P1-5: Use orjson for 2-3x faster JSON parsing
+                        chunk = json_loads(line)
                         yield {
                             "content": chunk.get("message", {}).get("content", ""),
                             "done": chunk.get("done", False),
