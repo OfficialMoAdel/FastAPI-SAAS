@@ -72,20 +72,24 @@ class TestPasskeyLookupAlgorithm:
 
         logger.info("Hash-based lookup pattern verified in passkey service")
 
-    def test_source_has_fallback_for_migration(self) -> None:
-        """Verify fallback exists for credentials without hash (migration period)."""
+    def test_source_uses_pure_hash_lookup(self) -> None:
+        """Verify O(n) fallback has been removed (post-migration).
+
+        After the credential_id_hash backfill migration, all lookups
+        should use the indexed hash column only. No O(n) scans allowed.
+        """
         import inspect
 
         from src.app.modules.passkey import service
 
         source = inspect.getsource(service)
 
-        # Should have fallback for unhashed credentials
-        assert "fallback" in source.lower() or "for credential in" in source, (
-            "Should have fallback for unhashed credentials"
-        )
+        # Fallback should NOT exist anymore (migration complete)
+        assert "for credential in" not in source, "O(n) fallback loop should be removed after migration"
+        # Hash-based lookup should still be present
+        assert "credential_id_hash" in source, "Hash-based lookup must be used"
 
-        logger.info("Fallback migration pattern verified")
+        logger.info("Pure hash lookup verified - O(n) fallback removed")
 
 
 class TestPasskeyLookupPerformance:

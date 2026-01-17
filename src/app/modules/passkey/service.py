@@ -454,39 +454,23 @@ class PasskeyService:
         target_hash = hashlib.sha256(credential_id_bytes).hexdigest()
 
         # Primary path: O(log n) hash-based lookup
-        stmt = select(PasskeyCredential).where(
-            PasskeyCredential.credential_id_hash == target_hash
-        )
+        stmt = select(PasskeyCredential).where(PasskeyCredential.credential_id_hash == target_hash)
         result = await db.execute(stmt)
         cred = result.scalar_one_or_none()
 
-        if cred is not None:
-            # Defense in depth: verify the hash matches decrypted credential
-            encryption = get_encryption()
-            try:
-                decrypted_id = encryption.decrypt_credential(cred.credential_id)
-                if decrypted_id == credential_id_bytes:
-                    return cred
-            except Exception:
-                pass  # Hash collision or decryption failure, fall through to scan
+        if cred is None:
+            return None
 
-        # Fallback path: O(n) scan for credentials without hash (migration period)
-        # This will be removed after backfill is complete
+        # Defense in depth: verify the hash matches decrypted credential
+        # This catches hash collisions (astronomically rare for SHA256)
         encryption = get_encryption()
-        result = await db.execute(
-            select(PasskeyCredential).where(
-                PasskeyCredential.credential_id_hash.is_(None)
-            )
-        )
-        unhashed_creds = result.scalars().all()
-
-        for cred in unhashed_creds:
-            try:
-                decrypted_id = encryption.decrypt_credential(cred.credential_id)
-                if decrypted_id == credential_id_bytes:
-                    return cred
-            except Exception:
-                continue
+        try:
+            decrypted_id = encryption.decrypt_credential(cred.credential_id)
+            if decrypted_id == credential_id_bytes:
+                return cred
+        except Exception:
+            # Decryption failure - credential may be corrupted
+            pass
 
         return None
 
