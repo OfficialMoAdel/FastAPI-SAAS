@@ -182,15 +182,17 @@ sql_app.db*
 # Auto Claude data directory
 .auto-claude/
 Advanced Code Optimization Workflow.md
-PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_1*
+PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_*
 ERROR.text
 test.db-journal
 tmpclaude*
-UNIQUE_ISSUES_NOT_IN_OPUS*
 *.db
 test_*.db*
 skill
 baseline_*
-UNIFIED_PERFORMANCE_ISSUES.md
+# Allow performance test baselines (tracked for regression detection)
+!tests/performance/baselines/
+!tests/performance/baselines/*
+!tests/performance/baseline_*.py
 n8n
 hi*
