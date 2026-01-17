@@ -28,6 +28,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 T = TypeVar("T")
 
+# OPT P0-2: Flyweight cache for FastCRUD instances
+# FastCRUD is stateless (stores only model metadata), so we can reuse instances
+# This reduces O(N) allocations per request to O(1) for cached models
+_CRUD_CACHE: dict[type, FastCRUD] = {}
+
 
 class BaseService(Generic[T]):
     """
@@ -52,7 +57,10 @@ class BaseService(Generic[T]):
         """
         self.model = model
         self.db = db
-        self.crud = FastCRUD(model)
+        # OPT P0-2: Reuse cached FastCRUD instance (flyweight pattern)
+        if model not in _CRUD_CACHE:
+            _CRUD_CACHE[model] = FastCRUD(model)
+        self.crud = _CRUD_CACHE[model]
 
     async def get(self, id: Any) -> T | None:
         """Get a single record by ID.
@@ -158,4 +166,4 @@ def get_base_service(model: type[T]) -> callable:
     return factory
 
 
-__all__ = ["BaseService", "get_base_service"]
+__all__ = ["BaseService", "get_base_service", "_CRUD_CACHE"]
