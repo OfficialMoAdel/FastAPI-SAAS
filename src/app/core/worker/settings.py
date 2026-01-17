@@ -23,6 +23,14 @@ class WorkerSettings:
     on_shutdown = shutdown
     handle_signals = False
 
+    # Concurrency and timeout settings (P1-3 optimization)
+    # max_jobs=10: DB_POOL_SIZE is 20, leave 10 for web requests
+    # job_timeout=300: 5 minutes is generous for most jobs
+    # keep_result=3600: 1 hour retention prevents memory leak
+    max_jobs = 10
+    job_timeout = 300
+    keep_result = 3600
+
     # Use orjson for job serialization (faster, safer than pickle)
     job_serializer = staticmethod(lambda obj: json_dumps(obj))
     job_deserializer = staticmethod(lambda data: json_loads(data))
