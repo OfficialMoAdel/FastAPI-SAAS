@@ -85,22 +85,26 @@ class TestP11SessionRefreshDocumentation:
 
 
 class TestP11ResponseFormat:
-    """Verify response format uses Pydantic schema validation."""
+    """Verify response format uses direct dict construction (P2-1 optimization).
 
-    def test_update_returns_dict_via_schema(self) -> None:
-        """update_tenant should return dict via TenantResponse schema."""
+    Note: P2-1 superseded P1-1's Pydantic serialization with _tenant_to_dict()
+    for ~3x speedup.
+    """
+
+    def test_update_returns_dict_via_direct_construction(self) -> None:
+        """update_tenant should return dict via _tenant_to_dict (P2-1)."""
         source = inspect.getsource(TenantService.update_tenant)
-        assert "TenantResponse.model_validate(tenant).model_dump()" in source
+        assert "_tenant_to_dict(tenant)" in source
 
-    def test_deactivate_returns_dict_via_schema(self) -> None:
-        """deactivate_tenant should return dict via TenantResponse schema."""
+    def test_deactivate_returns_dict_via_direct_construction(self) -> None:
+        """deactivate_tenant should return dict via _tenant_to_dict (P2-1)."""
         source = inspect.getsource(TenantService.deactivate_tenant)
-        assert "TenantResponse.model_validate(tenant).model_dump()" in source
+        assert "_tenant_to_dict(tenant)" in source
 
-    def test_reactivate_returns_dict_via_schema(self) -> None:
-        """reactivate_tenant should return dict via TenantResponse schema."""
+    def test_reactivate_returns_dict_via_direct_construction(self) -> None:
+        """reactivate_tenant should return dict via _tenant_to_dict (P2-1)."""
         source = inspect.getsource(TenantService.reactivate_tenant)
-        assert "TenantResponse.model_validate(tenant).model_dump()" in source
+        assert "_tenant_to_dict(tenant)" in source
 
 
 class TestP11PostUserServicesUnchanged:
