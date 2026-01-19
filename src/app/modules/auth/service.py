@@ -1,5 +1,6 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
+import asyncio
 from datetime import timedelta
 
 from fastapi import Request, Response
@@ -160,9 +161,11 @@ class AuthService:
         }
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-        access_token = await create_access_token(data=token_data, expires_delta=access_token_expires)
-
-        refresh_token = await create_refresh_token(data=token_data)
+        # Generate both tokens in parallel using asyncio.gather for better performance
+        access_token, refresh_token = await asyncio.gather(
+            create_access_token(data=token_data, expires_delta=access_token_expires),
+            create_refresh_token(data=token_data),
+        )
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
         # Cookie security settings based on environment
