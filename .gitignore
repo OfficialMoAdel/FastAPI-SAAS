@@ -195,4 +195,4 @@ baseline_*
 !tests/performance/baselines/*
 !tests/performance/baseline_*.py
 n8n
-hi*
+CONSOLIDATED_PERFORMANCE_ISSUES.md

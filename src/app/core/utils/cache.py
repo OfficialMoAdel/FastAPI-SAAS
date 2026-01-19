@@ -371,7 +371,8 @@ async def get_with_stampede_protection(
         delta = ttl - remaining_ttl  # Time since cache was set
         if delta > 0:
             # Probability increases as we approach expiration
-            probability = beta * (delta / ttl) ** 2
+            probability = min(beta * (delta / ttl) ** 2, 1.0)
+            
             if random.random() < probability:
                 stampede_logger.debug(
                     "Cache early refresh triggered",
