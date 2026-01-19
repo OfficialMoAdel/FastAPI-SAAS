@@ -8,12 +8,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import AsyncGenerator
-from typing import TYPE_CHECKING, BinaryIO
+from typing import TYPE_CHECKING, Any, BinaryIO
 from uuid import UUID
 
 import structlog
 from fastapi import Depends
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
@@ -23,6 +23,7 @@ from src.app.modules.storage.metrics import storage_metrics
 from src.app.modules.storage_settings import (
     StorageSettingsService,
 )
+from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
     pass
@@ -138,6 +139,10 @@ class FileService:
             )
 
             self.db.add(file_record)
+
+            # Atomically increment quota counters (P0 optimization)
+            await self._increment_quota_counters(tenant_id, size_bytes)
+
             await self.db.commit()
             await self.db.refresh(file_record)
 
@@ -345,8 +350,9 @@ class FileService:
         # Delete from storage
         await provider.delete(file.storage_path)
 
-        # Delete metadata
+        # Delete metadata and decrement counters atomically
         await self.db.delete(file)
+        await self._decrement_quota_counters(tenant_id, file_size)
         await self.db.commit()
 
         logger.info(
@@ -425,7 +431,10 @@ class FileService:
         return count
 
     async def _get_quota_stats(self, tenant_id: UUID) -> tuple[int, int]:
-        """Get file count and total size in single query.
+        """Get file count and total size from denormalized tenant counters (O(1)).
+
+        This is a performance optimization (P0) that eliminates the O(N) COUNT + SUM
+        query by reading denormalized counters from the tenants table.
 
         Args:
             tenant_id: Tenant UUID
@@ -434,13 +443,52 @@ class FileService:
             Tuple of (file_count, total_size_bytes)
         """
         result = await self.db.execute(
-            select(
-                func.count().label("file_count"),
-                func.coalesce(func.sum(File.size_bytes), 0).label("total_size"),
-            ).where(File.tenant_id == tenant_id)
+            select(Tenant.file_count, Tenant.storage_usage_bytes).where(Tenant.id == tenant_id)
         )
-        row = result.one()
-        return row.file_count, row.total_size
+        row = result.one_or_none()
+        if not row:
+            return 0, 0
+        return row.file_count, row.storage_usage_bytes
+
+    async def _increment_quota_counters(self, tenant_id: UUID, size_bytes: int) -> None:
+        """Atomically increment tenant storage counters after file upload.
+
+        Uses UPDATE with arithmetic operations for atomic increment without race conditions.
+
+        Args:
+            tenant_id: Tenant UUID
+            size_bytes: File size to add to storage usage
+        """
+        stmt = (
+            update(Tenant)
+            .where(Tenant.id == tenant_id)
+            .values(
+                file_count=Tenant.file_count + 1,
+                storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+            )
+        )
+        await self.db.execute(stmt)
+        # Note: Commit happens in upload_file after file record is created
+
+    async def _decrement_quota_counters(self, tenant_id: UUID, size_bytes: int) -> None:
+        """Atomically decrement tenant storage counters after file deletion.
+
+        Uses UPDATE with arithmetic operations for atomic decrement without race conditions.
+
+        Args:
+            tenant_id: Tenant UUID
+            size_bytes: File size to subtract from storage usage
+        """
+        stmt = (
+            update(Tenant)
+            .where(Tenant.id == tenant_id)
+            .values(
+                file_count=Tenant.file_count - 1,
+                storage_usage_bytes=Tenant.storage_usage_bytes - size_bytes,
+            )
+        )
+        await self.db.execute(stmt)
+        # Note: Commit happens in delete_file after file record is deleted
 
     async def _get_file_count(self, tenant_id: UUID) -> int:
         """Get total file count for tenant.
