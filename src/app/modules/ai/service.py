@@ -437,7 +437,8 @@ class ChatCompletionService:
         await self.db.commit()
 
         # Phase 2: Stream from Ollama (connection released)
-        full_response = ""
+        # Use list accumulation to avoid O(n²) string concatenation
+        response_chunks = []
         token_count = None
 
         try:
@@ -448,12 +449,15 @@ class ChatCompletionService:
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
             ):
-                full_response += chunk.get("content", "")
+                content = chunk.get("content", "")
+                if content:
+                    response_chunks.append(content)
                 if chunk.get("done"):
                     token_count = chunk.get("token_count")
                 yield chunk
 
             # Phase 3: Get fresh session for writing response
+            full_response = "".join(response_chunks)
             if full_response:
                 async with local_session() as fresh_db:
                     message_service = ChatMessageService(fresh_db)
