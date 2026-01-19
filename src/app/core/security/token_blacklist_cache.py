@@ -9,6 +9,7 @@ Design principles:
 - Cache warming: Load active blacklisted tokens from DB on startup
 - P2-4: Negative caching for verified tokens to reduce Redis calls
 - P3: Bloom filter pre-check for in-memory filtering before Redis
+- P0-3: Lua script for atomic multi-operation (4 roundtrips → 1)
 """
 
 import logging
@@ -27,14 +28,72 @@ BLACKLIST_KEY = "token:blacklist"
 NEGATIVE_CACHE_KEY = "token:verified:"
 NEGATIVE_CACHE_TTL = 60  # 60 seconds - balance between performance and security
 
+# P0-3: Lua script for atomic blacklist check (4 operations → 1 roundtrip)
+BLACKLIST_CHECK_LUA_SCRIPT = """
+-- Token blacklist check: atomic 4-operation sequence
+-- KEYS[1]: negative cache key (token:verified:{token_prefix})
+-- KEYS[2]: blacklist sorted set key (token:blacklist)
+-- ARGV[1]: token (full token string)
+-- ARGV[2]: current timestamp
+-- ARGV[3]: negative cache TTL
+
+-- Check negative cache first
+if redis.call('EXISTS', KEYS[1]) == 1 then
+    return 0  -- Not blacklisted (cached)
+end
+
+-- Check blacklist sorted set
+local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+if not score then
+    -- Not in blacklist, add to negative cache
+    redis.call('SETEX', KEYS[1], ARGV[3], '1')
+    return 0  -- Not blacklisted
+end
+
+-- Check if expired
+if tonumber(score) < tonumber(ARGV[2]) then
+    -- Expired, remove and add to negative cache
+    redis.call('ZREM', KEYS[2], ARGV[1])
+    redis.call('SETEX', KEYS[1], ARGV[3], '1')
+    return 0  -- Not blacklisted (was expired)
+end
+
+return 1  -- IS blacklisted
+"""
+
+# Cache for Lua script SHA
+_script_sha: str | None = None
+
+
+async def _ensure_script_loaded() -> str | None:
+    """Ensure Lua script is loaded into Redis and return its SHA.
+
+    Returns:
+        Script SHA if loaded successfully, None if Redis unavailable
+    """
+    global _script_sha
+
+    if redis_client is None:
+        return None
+
+    if _script_sha is not None:
+        return _script_sha
+
+    try:
+        _script_sha = await redis_client.script_load(BLACKLIST_CHECK_LUA_SCRIPT)
+        logger.info(f"Loaded token blacklist Lua script with SHA: {_script_sha}")
+        return _script_sha
+    except Exception as e:
+        logger.warning(f"Failed to load Lua script: {e}")
+        return None
+
 
 async def is_token_blacklisted(token: str) -> bool | None:
     """Check if token is in Redis blacklist cache.
 
     Uses 3-tier check for optimal performance:
     1. Bloom filter (in-memory, microseconds) - if "not in set" → return False
-    2. Negative cache (Redis EXISTS) - if cached → return False
-    3. Blacklist sorted set (Redis ZSCORE) - definitive check
+    2. Lua script (atomic Redis check) - single roundtrip for all operations
 
     Args:
         token: The JWT token to check
@@ -51,15 +110,69 @@ async def is_token_blacklisted(token: str) -> bool | None:
         return None  # Redis not configured, fall back to DB
 
     try:
-        # P2-4: Check negative cache first (token recently verified as not blacklisted)
+        # P0-3: Use Lua script for atomic check (4 operations → 1 roundtrip)
+        script_sha = await _ensure_script_loaded()
+        if script_sha is None:
+            # Fallback to old implementation if script loading failed
+            return await _is_token_blacklisted_fallback(token)
+
         negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"  # Use first 32 chars as key
+        now = int(datetime.now(UTC).timestamp())
+
+        try:
+            # Execute Lua script with EVALSHA
+            result = await redis_client.evalsha(  # type: ignore[misc]
+                script_sha,
+                2,  # number of keys
+                negative_key,
+                BLACKLIST_KEY,
+                token,
+                str(now),
+                str(NEGATIVE_CACHE_TTL),
+            )
+            return bool(int(result))
+        except Exception as script_error:
+            # If script not found (e.g., Redis restart), reload and retry
+            if "NOSCRIPT" in str(script_error):
+                global _script_sha
+                _script_sha = None
+                script_sha = await _ensure_script_loaded()
+                if script_sha:
+                    retry_result = await redis_client.evalsha(  # type: ignore[misc]
+                        script_sha,
+                        2,
+                        negative_key,
+                        BLACKLIST_KEY,
+                        token,
+                        str(now),
+                        str(NEGATIVE_CACHE_TTL),
+                    )
+                    return bool(int(retry_result))
+            raise  # Re-raise if not a NOSCRIPT error
+
+    except Exception as e:
+        logger.warning(f"Redis blacklist check failed, falling back to DB: {e}")
+        return None  # Fail open - let DB check handle it
+
+
+async def _is_token_blacklisted_fallback(token: str) -> bool | None:
+    """Fallback implementation without Lua script (original 4-roundtrip version).
+
+    Used when Lua script loading fails.
+    """
+    if redis_client is None:
+        return None
+
+    try:
+        # Check negative cache first (token recently verified as not blacklisted)
+        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"
         if await redis_client.exists(negative_key):
-            return False  # Token was recently verified as not blacklisted
+            return False
 
         # ZSCORE returns the score if member exists, None otherwise
         score = await redis_client.zscore(BLACKLIST_KEY, token)
         if score is None:
-            # P2-4: Cache the negative result to avoid repeated lookups
+            # Cache the negative result to avoid repeated lookups
             await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
             return False
 
@@ -72,8 +185,8 @@ async def is_token_blacklisted(token: str) -> bool | None:
 
         return True
     except Exception as e:
-        logger.warning(f"Redis blacklist check failed, falling back to DB: {e}")
-        return None  # Fail open - let DB check handle it
+        logger.warning(f"Redis blacklist fallback check failed: {e}")
+        return None
 
 
 async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
