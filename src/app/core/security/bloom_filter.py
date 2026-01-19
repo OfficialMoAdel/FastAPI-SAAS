@@ -134,12 +134,16 @@ class BloomFilter:
         """
         Add multiple items efficiently.
 
-        More efficient than calling add() in a loop as it
-        acquires the lock once for all items.
+        Pre-computes hash values outside lock for better startup performance.
+        More efficient than calling add() in a loop as it acquires the lock
+        once for all items and computes hashes before acquiring the lock.
         """
+        # Pre-compute all hash positions outside lock (startup optimization)
+        all_positions = [self._hash_values(item) for item in items]
+
+        # Acquire lock only for bit array updates
         with self._lock:
-            for item in items:
-                positions = self._hash_values(item)
+            for positions in all_positions:
                 for pos in positions:
                     self._set_bit(pos)
                 self._item_count += 1
