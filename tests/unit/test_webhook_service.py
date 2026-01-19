@@ -399,6 +399,92 @@ class TestWebhookServiceDelivery:
 class TestWebhookServiceSignatures:
     """Tests for HMAC signature generation and verification."""
 
+    def test_webhook_signature_uses_stdlib_json(self, webhook_service) -> None:
+        """Test that _generate_signature uses stdlib json, NOT orjson.
+
+        CRITICAL: This test enforces the constraint that webhook signatures
+        MUST use stdlib json to maintain compatibility with existing consumers.
+        Changing to orjson would break all webhook integrations.
+
+        See: SECURITY.md for full explanation.
+        """
+        import ast
+        import inspect
+        import textwrap
+
+        # Get the source code of _generate_signature
+        source = inspect.getsource(webhook_service._generate_signature)
+
+        # Dedent the source to remove leading whitespace
+        source = textwrap.dedent(source)
+
+        # Parse the source code into an AST
+        tree = ast.parse(source)
+
+        # Find all import statements
+        imports = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    imports.append(alias.name)
+            elif isinstance(node, ast.ImportFrom):
+                imports.append(node.module)
+
+        # Verify stdlib json is imported
+        assert "json" in imports, "Must import stdlib json"
+
+        # Verify orjson is NOT imported
+        assert "orjson" not in imports, "Must NOT import orjson for webhook signatures"
+
+        # Find all function calls
+        calls = []
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call):
+                if isinstance(node.func, ast.Attribute):
+                    # Handle module.function calls like json.dumps or orjson.dumps
+                    if isinstance(node.func.value, ast.Name):
+                        calls.append(f"{node.func.value.id}.{node.func.attr}")
+
+        # Verify json.dumps is called
+        assert "json.dumps" in calls, "Must use json.dumps for signature generation"
+
+        # Verify orjson.dumps is NOT called
+        assert "orjson.dumps" not in calls, "Must NOT use orjson.dumps"
+
+    def test_signature_has_spaces_after_colons(self, webhook_service) -> None:
+        """Test that signature uses stdlib json formatting (spaces after colons).
+
+        CRITICAL: This test verifies the exact byte format that webhook consumers
+        expect. stdlib json produces {"key": "value"} with spaces, while orjson
+        produces {"key":"value"} without spaces.
+
+        Different formatting = different bytes = different HMAC signature = broken webhooks.
+
+        See: SECURITY.md for full explanation.
+        """
+        import json
+
+        payload = {"user_id": "123", "event": "created"}
+        secret = "test-secret"
+
+        # Generate signature using the service
+        signature = webhook_service._generate_signature(payload, secret)
+
+        # Manually calculate what the signature SHOULD be using stdlib json
+        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+        import hashlib
+        import hmac
+
+        expected_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+        expected_signature = f"sha256={expected_sig}"
+
+        # Verify they match (proving stdlib json is used)
+        assert signature == expected_signature, "Signature must match stdlib json formatting"
+
+        # Verify the JSON string has spaces after colons (stdlib json format)
+        json_str = json.dumps(payload, sort_keys=True)
+        assert ": " in json_str, "stdlib json must have spaces after colons"
+
     def test_generate_signature_format(self, webhook_service) -> None:
         """Test that signature has correct format (sha256=...)."""
         payload = {"user_id": "123", "event": "created"}

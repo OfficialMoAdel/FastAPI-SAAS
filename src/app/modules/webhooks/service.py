@@ -153,7 +153,21 @@ class WebhookService:
         return delivery
 
     def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
-        """Generate HMAC-SHA256 signature for webhook payload."""
+        """Generate HMAC-SHA256 signature for webhook payload.
+
+        CRITICAL: This method MUST use stdlib json, NOT orjson or other JSON libraries.
+
+        Why: The HMAC signature is calculated from the exact byte representation of the
+        JSON payload. Different JSON libraries produce different formatting:
+        - stdlib json.dumps: {"key": "value"}  (space after colon)
+        - orjson.dumps:      {"key":"value"}   (no space)
+
+        Changing the JSON library would produce different bytes → different HMAC signature
+        → ALL existing webhook consumers would fail signature validation.
+
+        This is intentional and correct behavior. Do not "optimize" this to orjson.
+        See: SECURITY.md for full explanation.
+        """
         import json
 
         payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
