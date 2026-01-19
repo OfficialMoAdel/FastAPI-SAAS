@@ -4,7 +4,6 @@ Prevents account sharing by limiting the number of concurrent sessions per user.
 Tracks active sessions in Redis with automatic expiration.
 """
 
-from collections import deque
 from datetime import UTC, datetime
 from typing import Any
 
@@ -76,15 +75,11 @@ class SessionManager:
             logger.warning("Redis not configured for session management")
             return {"registered": False, "reason": "redis_unavailable"}
 
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
-        # Get current sessions - use deque for O(1) popleft
-        sessions_raw = await self._redis_client.get(session_key)
-        sessions: deque[dict] = deque(json_loads(sessions_raw)) if sessions_raw else deque()
-
-        # Check if session already exists
-        existing_ids = [s["session_id"] for s in sessions]
-        if session_id in existing_ids:
+        # Check if session already exists - O(1) with HEXISTS
+        exists = await self._redis_client.hexists(hash_key, session_id)
+        if exists:
             return {"registered": True, "already_exists": True}
 
         # Create new session entry
@@ -96,58 +91,64 @@ class SessionManager:
 
         invalidated_sessions = []
 
-        # Remove oldest sessions if at limit - O(1) with deque.popleft()
-        while len(sessions) >= self._max_sessions:
-            oldest = sessions.popleft()  # O(1) removal from front
-            invalidated_sessions.append(oldest)
-            logger.info(
-                "Session invalidated due to limit",
-                user_id=user_id,
-                invalidated_session=oldest["session_id"],
-            )
+        # Get current session count - O(1) with HLEN
+        current_count = await self._redis_client.hlen(hash_key)
 
-        # Add new session
-        sessions.append(new_session)
+        # If at limit, get all sessions and remove oldest
+        if current_count >= self._max_sessions:
+            # Get all sessions to find oldest
+            all_sessions_raw = await self._redis_client.hgetall(hash_key)
+            sessions_with_time = []
+            for sid, sdata in all_sessions_raw.items():
+                session_dict = json_loads(sdata)
+                sessions_with_time.append((sid, session_dict, session_dict.get("created_at", "")))
 
-        # Save to Redis with TTL
-        await self._redis_client.setex(
-            session_key,
-            self.SESSION_TTL_SECONDS,
-            json_dumps(list(sessions), as_str=True),
-        )
+            # Sort by created_at to find oldest
+            sessions_with_time.sort(key=lambda x: x[2])
 
-        # Dual-write: Save to Redis Hash (v2) - OPT-7: Use pipeline for 1 roundtrip
-        try:
-            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            # Pipeline all hash operations together
+            # Remove oldest sessions until we're under the limit
             pipe = self._redis_client.pipeline()
+            sessions_to_remove = current_count - self._max_sessions + 1
 
-            # 1. Remove invalidated sessions from Hash
-            if invalidated_sessions:
-                pipe.hdel(hash_key, *[s["session_id"] for s in invalidated_sessions])
+            for i in range(sessions_to_remove):
+                if i < len(sessions_with_time):
+                    sid, session_dict, _ = sessions_with_time[i]
+                    pipe.hdel(hash_key, sid)
+                    invalidated_sessions.append(session_dict)
+                    logger.info(
+                        "Session invalidated due to limit",
+                        user_id=user_id,
+                        invalidated_session=sid,
+                    )
 
-            # 2. Add new session to Hash
+            # Add new session
             pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
 
-            # 3. Set Expiry on Hash
+            # Set expiry
             pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
 
             await pipe.execute()
+        else:
+            # Under limit, just add new session
+            pipe = self._redis_client.pipeline()
+            pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
+            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+            await pipe.execute()
 
-        except Exception as e:
-            logger.error(f"Failed to dual-write session to hash: {e}")
+        # Get final count
+        final_count = await self._redis_client.hlen(hash_key)
 
         logger.info(
             "Session registered",
             user_id=user_id,
             session_id=session_id,
-            active_sessions=len(sessions),
+            active_sessions=final_count,
             max_sessions=self._max_sessions,
         )
 
         return {
             "registered": True,
-            "active_sessions": len(sessions),
+            "active_sessions": final_count,
             "invalidated_sessions": invalidated_sessions,
         }
 
@@ -175,21 +176,10 @@ class SessionManager:
             )
             return True
 
-        # OPT-2: O(1) lookup using Hash v2 (preferred path)
+        # O(1) lookup using Hash - HEXISTS
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-        exists = await self._redis_client.hexists(hash_key, session_id)
-        if exists:
-            return True
-
-        # Fallback to legacy List lookup during migration period
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
-        sessions_raw = await self._redis_client.get(session_key)
-
-        if not sessions_raw:
-            return False
-
-        sessions = json_loads(sessions_raw)
-        return any(s["session_id"] == session_id for s in sessions)
+        exists: bool = await self._redis_client.hexists(hash_key, session_id)
+        return exists
 
     async def invalidate_session(self, user_id: int | str, session_id: str) -> bool:
         """Invalidate a specific session (e.g., on logout).
@@ -205,36 +195,15 @@ class SessionManager:
         if not self._redis_client:
             return False
 
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
-        sessions_raw = await self._redis_client.get(session_key)
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
-        if not sessions_raw:
+        # Check if session exists before deleting
+        exists = await self._redis_client.hexists(hash_key, session_id)
+        if not exists:
             return False
 
-        sessions = json_loads(sessions_raw)
-        original_count = len(sessions)
-        sessions = [s for s in sessions if s["session_id"] != session_id]
-
-        if len(sessions) == original_count:
-            return False  # Session not found
-
-        if sessions:
-            await self._redis_client.setex(
-                session_key,
-                self.SESSION_TTL_SECONDS,
-                json_dumps(sessions, as_str=True),
-            )
-        else:
-            await self._redis_client.delete(session_key)
-
-        # Dual-write: Remove from Hash (v2)
-        try:
-            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            await self._redis_client.hdel(hash_key, session_id)
-            # If empty, maybe delete key? Redis hashes automatically delete when empty,
-            # but we might want to ensure it? hdel handles it.
-        except Exception as e:
-            logger.error(f"Failed to dual-write invalidation to hash: {e}")
+        # Delete session from hash - O(1) with HDEL
+        await self._redis_client.hdel(hash_key, session_id)
 
         logger.info("Session invalidated", user_id=user_id, session_id=session_id)
         return True
@@ -252,22 +221,16 @@ class SessionManager:
         if not self._redis_client:
             return 0
 
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
-        sessions_raw = await self._redis_client.get(session_key)
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
-        if not sessions_raw:
+        # Get count before deletion - O(1) with HLEN
+        count: int = await self._redis_client.hlen(hash_key)
+
+        if count == 0:
             return 0
 
-        sessions = json_loads(sessions_raw)
-        count = len(sessions)
-        await self._redis_client.delete(session_key)
-
-        # Dual-write: Delete Hash (v2)
-        try:
-            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-            await self._redis_client.delete(hash_key)
-        except Exception as e:
-            logger.error(f"Failed to dual-write delete-all to hash: {e}")
+        # Delete entire hash - O(1) with DEL
+        await self._redis_client.delete(hash_key)
 
         logger.info(
             "All sessions invalidated",
@@ -289,16 +252,20 @@ class SessionManager:
         if not self._redis_client:
             return []
 
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
-        sessions_raw = await self._redis_client.get(session_key)
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+
+        # Get all sessions from hash - O(N) but only when explicitly requested
+        sessions_raw = await self._redis_client.hgetall(hash_key)
 
         if not sessions_raw:
             return []
 
-        # Cast for mypy strictness
-        from typing import cast
+        # Parse all session data
+        sessions = []
+        for session_data in sessions_raw.values():
+            sessions.append(json_loads(session_data))
 
-        return cast(list[dict[str, Any]], json_loads(sessions_raw))
+        return sessions
 
     async def count_active_sessions(self, user_id: int | str) -> int:
         """Count active sessions for a user (optimized).
@@ -313,15 +280,11 @@ class SessionManager:
         if not self._redis_client:
             return 0
 
-        # Try Hash first (v2) if we are in read-from-hash mode (not yet)
-        # For now, stick to v1 unless we want to test v2 reading
+        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
 
-        # v1 implementation
-        session_key = f"{self.SESSION_KEY_PREFIX}{user_id}"
-        sessions_raw = await self._redis_client.get(session_key)
-        if not sessions_raw:
-            return 0
-        return len(json_loads(sessions_raw))
+        # O(1) count using HLEN - no deserialization needed!
+        count: int = await self._redis_client.hlen(hash_key)
+        return count
 
     async def migrate_to_hash(self, batch_size: int = 100) -> int:
         """Migrate all legacy sessions to Redis Hash format.
