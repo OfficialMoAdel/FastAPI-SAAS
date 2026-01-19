@@ -68,6 +68,7 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
     """Warm the policy cache with all tier policies.
 
     Called on app startup to pre-populate cache.
+    Uses Redis pipeline for batch operations to reduce startup latency.
 
     Args:
         tier_policies: Dict mapping tier_id to list of policies
@@ -78,13 +79,20 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
     if redis_client is None or not tier_policies:
         return 0
 
-    count = 0
-    for tier_id, policies in tier_policies.items():
-        if await cache_tier_policy(tier_id, policies):
-            count += 1
+    try:
+        # Use pipeline for batch cache warming - reduces N roundtrips to 1
+        async with redis_client.pipeline() as pipe:
+            for tier_id, policies in tier_policies.items():
+                key = f"{POLICY_KEY_PREFIX}{tier_id}"
+                pipe.setex(key, 3600, json_dumps(policies, as_str=True))  # 1 hour TTL
+            await pipe.execute()
 
-    logger.info(f"Warmed rate limit policy cache with {count} tiers")
-    return count
+        count = len(tier_policies)
+        logger.info(f"Warmed rate limit policy cache with {count} tiers using pipeline")
+        return count
+    except Exception as e:
+        logger.warning(f"Failed to warm policy cache: {e}")
+        return 0
 
 
 async def invalidate_tier_policy(tier_id: int) -> bool:
