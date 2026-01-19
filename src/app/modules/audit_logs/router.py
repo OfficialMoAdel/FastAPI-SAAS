@@ -194,10 +194,11 @@ async def export_audit_logs(
     """
     import csv
     import io
-    import json as json_lib
     from collections.abc import AsyncGenerator
 
     from fastapi.responses import StreamingResponse
+
+    from src.app.core.json_utils import json_dumps
 
     # Build query with filters
     query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
@@ -267,7 +268,7 @@ async def export_audit_logs(
                     str(log.user_id) if log.user_id else "",
                     log.entity_type or "",
                     str(log.entity_id) if log.entity_id else "",
-                    json_lib.dumps(log.details) if log.details else "",
+                    json_dumps(log.details, as_str=True) if log.details else "",
                     log.ip_address or "",
                     log.user_agent or "",
                     log.created_at.isoformat() if log.created_at else "",
@@ -281,7 +282,7 @@ async def export_audit_logs(
         """Generate JSONL content (one JSON object per line)."""
         for log in logs:
             yield (
-                json_lib.dumps(
+                json_dumps(
                     {
                         "id": str(log.id),
                         "action": log.action,
@@ -292,7 +293,8 @@ async def export_audit_logs(
                         "ip_address": log.ip_address,
                         "user_agent": log.user_agent,
                         "created_at": log.created_at.isoformat() if log.created_at else None,
-                    }
+                    },
+                    as_str=True,
                 )
                 + "\n"
             )
@@ -303,7 +305,7 @@ async def export_audit_logs(
         for i, log in enumerate(logs):
             if i > 0:
                 yield ",\n"
-            yield json_lib.dumps(
+            yield json_dumps(
                 {
                     "id": str(log.id),
                     "action": log.action,
@@ -314,7 +316,8 @@ async def export_audit_logs(
                     "ip_address": log.ip_address,
                     "user_agent": log.user_agent,
                     "created_at": log.created_at.isoformat() if log.created_at else None,
-                }
+                },
+                as_str=True,
             )
         yield "\n]"
 
