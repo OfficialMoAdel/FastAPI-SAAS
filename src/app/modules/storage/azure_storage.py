@@ -45,6 +45,10 @@ class AzureBlobStorage(StorageProvider):
         self._container_name = container_name
         self._service_client: BlobServiceClient | None = None
 
+        # Cache parsed connection string values to avoid repeated parsing
+        self._account_name = self._parse_account_name(connection_string)
+        self._account_key = self._parse_account_key(connection_string)
+
     async def _get_container_client(self) -> ContainerClient:
         """Get or create container client.
 
@@ -164,32 +168,51 @@ class AzureBlobStorage(StorageProvider):
         container = await self._get_container_client()
         blob_client = container.get_blob_client(path)
 
-        # Extract account name and key from connection string
-        account_name = self._extract_account_name()
-        account_key = self._extract_account_key()
-
+        # Use cached account name and key (parsed once in __init__)
         # Generate SAS token
         sas_token = generate_blob_sas(
-            account_name=account_name,
+            account_name=self._account_name,
             container_name=self._container_name,
             blob_name=path,
-            account_key=account_key,
+            account_key=self._account_key,
             permission=BlobSasPermissions(read=True),
             expiry=datetime.now(UTC) + timedelta(seconds=expires_in),
         )
 
         return f"{blob_client.url}?{sas_token}"
 
-    def _extract_account_name(self) -> str:
-        """Extract account name from connection string."""
-        for part in self._connection_string.split(";"):
+    @staticmethod
+    def _parse_account_name(connection_string: str) -> str:
+        """Parse account name from connection string.
+
+        Args:
+            connection_string: Azure Storage connection string.
+
+        Returns:
+            Account name extracted from connection string.
+
+        Raises:
+            ValueError: If AccountName not found in connection string.
+        """
+        for part in connection_string.split(";"):
             if part.startswith("AccountName="):
                 return part.split("=", 1)[1]
         raise ValueError("AccountName not found in connection string")
 
-    async def _extract_account_key(self) -> str:
-        """Extract account key from connection string."""
-        for part in self._connection_string.split(";"):
+    @staticmethod
+    def _parse_account_key(connection_string: str) -> str:
+        """Parse account key from connection string.
+
+        Args:
+            connection_string: Azure Storage connection string.
+
+        Returns:
+            Account key extracted from connection string.
+
+        Raises:
+            ValueError: If AccountKey not found in connection string.
+        """
+        for part in connection_string.split(";"):
             if part.startswith("AccountKey="):
                 return part.split("=", 1)[1]
         raise ValueError("AccountKey not found in connection string")
