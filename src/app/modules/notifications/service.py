@@ -1,5 +1,6 @@
 """Notification service for sending emails with template support."""
 
+import asyncio
 from datetime import UTC, datetime
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -86,7 +87,10 @@ class NotificationService:
         else:
             # Use default file template
             try:
-                template = jinja_env.get_template(f"{template_name}.html.jinja2")
+                # Non-blocking template loading with thread pool
+                template = await asyncio.to_thread(
+                    jinja_env.get_template, f"{template_name}.html.jinja2"
+                )
                 # Default subject from template metadata or template name
                 subject = template_name.replace("_", " ").title()
                 data = (subject, template.render())
