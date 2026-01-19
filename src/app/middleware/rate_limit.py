@@ -20,7 +20,8 @@ from starlette.types import ASGIApp
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
-from src.app.core.utils.gcra_rate_limit import GCRARateLimiter, get_gcra_rate_limiter
+from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
 from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger(__name__)
@@ -131,6 +132,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
     async def _get_rate_limit_config(self, request: Request) -> tuple[int, int, str]:
         """Determine rate limit configuration based on request context.
 
+        Security: Checks token blacklist to prevent revoked tokens from keeping premium limits.
+
         Returns
         -------
             Tuple of (limit, period, key)
@@ -146,7 +149,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # 2. If no user in state, use jwt_utils to extract/cache JWT claims
         # This eliminates double JWT decode when auth dependency runs later
+        token = None
         if not user_id:
+            # Extract token from Authorization header for blacklist check
+            auth_header = request.headers.get("Authorization", "")
+            if auth_header.startswith("Bearer "):
+                token = auth_header[7:]  # Remove "Bearer " prefix
+
             # Use centralized JWT utilities for extraction and caching
             cached_payload = get_cached_jwt_payload(request)
             if cached_payload is None:
@@ -156,6 +165,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if cached_payload:
                 user_id = cached_payload.get("sub")
                 tier_name = cached_payload.get("tier_name")
+
+        # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
+        # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
+        if user_id and token:
+            is_blacklisted = await is_token_blacklisted(token)
+            if is_blacklisted:
+                # Token is blacklisted - downgrade to anonymous limits
+                logger.info(
+                    "Blacklisted token detected in rate limiter | user_id=%s | treating as anonymous",
+                    user_id,
+                )
+                user_id = None
+                tier_name = None
 
         if user_id:
             # Authenticated user - use tier-based limits
