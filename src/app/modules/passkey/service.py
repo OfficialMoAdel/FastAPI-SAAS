@@ -9,7 +9,9 @@ Handles:
 - Limit enforcement
 """
 
+import asyncio
 import logging
+import time
 from datetime import UTC, datetime
 from typing import Any
 
@@ -312,21 +314,49 @@ class PasskeyService:
     # ============================================================================
 
     async def _get_existing_credentials(self, db: AsyncSession, user_id: int) -> list[Any]:
-        """Get existing credential IDs for exclusion."""
+        """Get existing credential IDs for exclusion with parallel decryption."""
         creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
         from src.app.core.security.encryption import get_encryption
 
         encryption = get_encryption()
 
-        # Return decrypted credential IDs for webauthn exclusion
-        existing = []
-        for cred in creds:
+        # Log credential count for monitoring
+        cred_count = len(creds)
+        logger.debug("Decrypting %d credentials for user %d", cred_count, user_id)
+
+        if not creds:
+            return []
+
+        # Parallel decryption using thread pool (P1-1 optimization)
+        start_time = time.perf_counter()
+
+        async def decrypt_one(cred):
+            """Decrypt a single credential in thread pool."""
             try:
-                decrypted_id = encryption.decrypt_credential(cred.credential_id)
-                existing.append(PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=decrypted_id))
-            except Exception:
+                decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
+                logger.debug("Successfully decrypted credential for user %d", user_id)
+                return PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=decrypted_id)
+            except Exception as e:
                 # Skip invalid/corrupt credentials
-                continue
+                logger.debug("Failed to decrypt credential for user %d: %s", user_id, str(e))
+                return None
+
+        # Decrypt all credentials in parallel
+        results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+
+        # Filter out None values (failed decryptions)
+        existing = [r for r in results if r is not None]
+
+        # Log decryption performance
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            "Decrypted %d/%d credentials in %.2fms (parallel) for user %d",
+            len(existing),
+            cred_count,
+            elapsed_ms,
+            user_id,
+        )
+
         return existing
 
     async def _store_challenge(self, redis: Redis, user_id: int, challenge: bytes, device_type: str) -> None:
@@ -384,7 +414,7 @@ class PasskeyService:
     # ============================================================================
 
     async def _get_credentials_for_email(self, db: AsyncSession, email: str) -> list[PublicKeyCredentialDescriptor]:
-        """Get passkey credentials for a user by email."""
+        """Get passkey credentials for a user by email with parallel decryption."""
         from src.app.core.security.encryption import get_encryption
         from src.app.modules.users.crud import crud_users
 
@@ -397,20 +427,47 @@ class PasskeyService:
         creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user.id)
         encryption = get_encryption()
 
-        result = []
-        for cred in creds:
+        # Log credential count for monitoring
+        cred_count = len(creds)
+        logger.debug("Decrypting %d credentials for email %s", cred_count, email)
+
+        if not creds:
+            return []
+
+        # Parallel decryption using thread pool (P1-1 optimization)
+        start_time = time.perf_counter()
+
+        async def decrypt_one(cred):
+            """Decrypt a single credential in thread pool."""
             try:
-                decrypted_id = encryption.decrypt_credential(cred.credential_id)
+                decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
                 transports = cred.transports if cred.transports else None
-                result.append(
-                    PublicKeyCredentialDescriptor(
-                        type=PublicKeyCredentialType.PUBLIC_KEY,
-                        id=decrypted_id,
-                        transports=transports,
-                    )
+                logger.debug("Successfully decrypted credential for email %s", email)
+                return PublicKeyCredentialDescriptor(
+                    type=PublicKeyCredentialType.PUBLIC_KEY,
+                    id=decrypted_id,
+                    transports=transports,
                 )
-            except Exception:
-                continue
+            except Exception as e:
+                logger.debug("Failed to decrypt credential for email %s: %s", email, str(e))
+                return None
+
+        # Decrypt all credentials in parallel
+        results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+
+        # Filter out None values (failed decryptions)
+        result = [r for r in results if r is not None]
+
+        # Log decryption performance
+        elapsed_ms = (time.perf_counter() - start_time) * 1000
+        logger.info(
+            "Decrypted %d/%d credentials in %.2fms (parallel) for email %s",
+            len(result),
+            cred_count,
+            elapsed_ms,
+            email,
+        )
+
         return result
 
     async def _store_auth_challenge(self, redis: Redis, challenge: bytes) -> None:
