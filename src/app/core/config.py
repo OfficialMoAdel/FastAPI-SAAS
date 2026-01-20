@@ -149,6 +149,18 @@ class ClientSideCacheSettings(BaseSettings):
     CLIENT_CACHE_MAX_AGE: int = 60
 
 
+class SecuritySettings(BaseSettings):
+    """Security and performance optimization settings."""
+
+    # Bloom Filter Hash Function Selection
+    # xxhash is 10-20x faster than SHA256 for bloom filter operations
+    # Can be disabled for rollback by setting BLOOM_FILTER_USE_XXHASH=false
+    BLOOM_FILTER_USE_XXHASH: bool = Field(
+        default=True,
+        description="Use xxhash for bloom filter (10-20x faster) vs SHA256 (legacy)",
+    )
+
+
 class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_ENABLED: bool = True
     REDIS_QUEUE_HOST: str = "localhost"  # Override via REDIS_QUEUE_HOST in .env
@@ -312,6 +324,7 @@ class Settings(
     TestSettings,
     RedisCacheSettings,
     ClientSideCacheSettings,
+    SecuritySettings,
     RedisQueueSettings,
     DefaultRateLimitSettings,
     CRUDAdminSettings,

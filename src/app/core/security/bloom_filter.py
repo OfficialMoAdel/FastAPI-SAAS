@@ -28,9 +28,16 @@ Usage:
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 import threading
 from typing import Final
+
+import xxhash
+
+from src.app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 # Default configuration for token blacklist
 # Expected items: 100K tokens, 1% false positive rate
@@ -48,7 +55,7 @@ class BloomFilter:
     - Thread-safe concurrent access
     """
 
-    __slots__ = ("_bit_array", "_size", "_hash_count", "_lock", "_item_count")
+    __slots__ = ("_bit_array", "_size", "_hash_count", "_lock", "_item_count", "_use_xxhash")
 
     def __init__(
         self,
@@ -77,6 +84,17 @@ class BloomFilter:
         self._lock = threading.Lock()
         self._item_count = 0
 
+        # Cache hash function choice at initialization to avoid settings lookup overhead
+        self._use_xxhash = settings.BLOOM_FILTER_USE_XXHASH
+
+        # Log which hash function is being used
+        hash_func = "xxhash (xxh3_128)" if self._use_xxhash else "SHA256 (legacy)"
+        logger.info(
+            f"Bloom filter initialized: hash_function={hash_func}, "
+            f"size={self._size} bits, hash_count={self._hash_count}, "
+            f"expected_items={expected_items}, target_fpr={false_positive_rate}"
+        )
+
     @staticmethod
     def _optimal_size(n: int, p: float) -> int:
         """Calculate optimal bit array size."""
@@ -95,13 +113,27 @@ class BloomFilter:
 
         Uses double hashing technique: h(i) = h1 + i*h2
         This is more efficient than computing k independent hashes.
-        """
-        # Use SHA-256 for good distribution
-        h = hashlib.sha256(item.encode()).digest()
 
-        # Extract two 64-bit hashes from the digest
-        h1 = int.from_bytes(h[:8], "big")
-        h2 = int.from_bytes(h[8:16], "big")
+        Hash function selection controlled by BLOOM_FILTER_USE_XXHASH:
+        - xxhash (default): 10-20x faster, non-cryptographic, uniform distribution
+        - SHA256 (legacy): Cryptographically secure but slower, for rollback
+        """
+        item_bytes = item.encode()
+
+        if self._use_xxhash:
+            # New: xxhash xxh3_128 (10-20x faster)
+            # Use direct digest function for better performance
+            h = xxhash.xxh3_128_digest(item_bytes)
+            # Use little-endian (xxhash native format)
+            h1 = int.from_bytes(h[:8], "little")
+            h2 = int.from_bytes(h[8:16], "little")
+        else:
+            # Legacy: SHA256 (for rollback capability)
+            # SHA256 produces 256-bit hash (32 bytes)
+            h = hashlib.sha256(item_bytes).digest()
+            # Use big-endian (original implementation)
+            h1 = int.from_bytes(h[:8], "big")
+            h2 = int.from_bytes(h[8:16], "big")
 
         # Generate k hash values using double hashing
         return [(h1 + i * h2) % self._size for i in range(self._hash_count)]
