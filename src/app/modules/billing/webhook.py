@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any
@@ -118,7 +119,9 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
     # Retrieve subscription details from Stripe
     if stripe_subscription_id:
         try:
-            stripe_sub = stripe.Subscription.retrieve(stripe_subscription_id)
+            stripe_sub = await asyncio.to_thread(
+                stripe.Subscription.retrieve, stripe_subscription_id
+            )
             current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, UTC)
             current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, UTC)
 
@@ -378,7 +381,9 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
     db_subscription = None
     if stripe_invoice_id:
         try:
-            invoice = stripe.Invoice.retrieve(stripe_invoice_id)
+            invoice = await asyncio.to_thread(
+                stripe.Invoice.retrieve, stripe_invoice_id
+            )
             stripe_subscription_id = invoice.get("subscription")
             if stripe_subscription_id:
                 result = await db.execute(

@@ -781,12 +781,18 @@ def cache(
                 return result  # Return original result, not re-parsed
 
             else:
-                await client.delete(cache_key)
+                # OPT-6: Pipeline cache invalidation (N deletes → 1 roundtrip)
+                keys_to_delete = [cache_key]
                 if to_invalidate_extra is not None:
                     formatted_extra = _format_extra_data(to_invalidate_extra, kwargs)
                     for prefix, id in formatted_extra.items():
-                        extra_cache_key = f"{prefix}:{id}"
-                        await client.delete(extra_cache_key)
+                        keys_to_delete.append(f"{prefix}:{id}")
+
+                if keys_to_delete:
+                    pipe = client.pipeline()
+                    for key in keys_to_delete:
+                        pipe.delete(key)
+                    await pipe.execute()
 
                 if pattern_to_invalidate_extra is not None:
                     for pattern in pattern_to_invalidate_extra:

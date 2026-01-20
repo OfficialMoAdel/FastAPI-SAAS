@@ -71,12 +71,16 @@ async def upload_file(
         413: If file exceeds size limit.
         507: If quota exceeded.
     """
-    # Read file content
-    content = await file.read()
-    size_bytes = len(content)
-
-    # Reset file position for service
-    await file.seek(0)
+    # Get file size without reading entire content into memory
+    # Use UploadFile.size if available (FastAPI provides this from Content-Length header)
+    # Otherwise, use seek to determine size efficiently
+    if file.size is not None:
+        size_bytes = file.size
+    else:
+        # Fallback: seek to end to get size, then reset position
+        await file.seek(0, 2)  # Seek to end (whence=2)
+        size_bytes = await file.tell()
+        await file.seek(0)  # Reset to beginning
 
     try:
         result = await service.upload_file(

@@ -16,6 +16,7 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from ...core.logger import get_logger
 from ...core.security.encryption import decrypt_data, encrypt_data
@@ -192,13 +193,19 @@ class WebhookService:
         """
         from ...core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
 
-        # Get delivery record
-        delivery = await self.db.get(WebhookDelivery, delivery_id)
+        # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
+        stmt = (
+            select(WebhookDelivery)
+            .options(selectinload(WebhookDelivery.webhook_endpoint))
+            .where(WebhookDelivery.id == delivery_id)
+        )
+        result = await self.db.execute(stmt)
+        delivery = result.unique().scalar_one_or_none()
         if not delivery:
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
-        # Get endpoint
-        endpoint = await self.db.get(WebhookEndpoint, delivery.webhook_endpoint_id)
+        # Access eagerly loaded endpoint
+        endpoint = delivery.webhook_endpoint
         if not endpoint:
             raise ModelNotFoundError("WebhookEndpoint", delivery.webhook_endpoint_id)
 
@@ -240,11 +247,34 @@ class WebhookService:
             await self.db.refresh(delivery)
             return delivery
 
-        # Attempt delivery with circuit breaker tracking
+        # Extract data needed for HTTP call before releasing DB connection
+        endpoint_url = endpoint.url
+        payload = delivery.payload
+
+        # Release DB connection before making HTTP call to avoid holding
+        # connection during network I/O (can take 100ms-30s)
+        await self.db.commit()
+
+        # Attempt delivery with circuit breaker tracking (DB connection released)
+        response = None
+        http_error: Exception | None = None
+        circuit_error: Exception | None = None
+
         try:
             client = get_webhook_http_client()
-            response = await client.post(endpoint.url, json=delivery.payload, headers=headers)
+            response = await client.post(endpoint_url, json=payload, headers=headers)
+        except CircuitBreakerOpen as e:
+            circuit_error = e
+        except Exception as e:
+            http_error = e
 
+        # Re-fetch delivery to re-attach to session after HTTP call
+        delivery = await self.db.get(WebhookDelivery, delivery_id)
+        if not delivery:
+            raise ModelNotFoundError("WebhookDelivery", delivery_id)
+
+        # Process HTTP result
+        if response is not None:
             delivery.attempt_count += 1
             delivery.response_status = response.status_code
             delivery.response_body = response.text[:1000]  # Limit to 1KB
@@ -260,19 +290,19 @@ class WebhookService:
                 await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
                 await self._handle_delivery_failure(delivery, attempt)
 
-        except CircuitBreakerOpen as e:
+        elif circuit_error is not None:
             # Circuit opened during delivery attempt
-            logger.warning("Webhook circuit breaker opened: %s", e)
+            logger.warning("Webhook circuit breaker opened: %s", circuit_error)
             delivery.attempt_count += 1
-            delivery.response_body = str(e)[:1000]
+            delivery.response_body = str(circuit_error)[:1000]
             await self._handle_delivery_failure(delivery, attempt)
 
-        except Exception as e:
+        elif http_error is not None:
             # Network/timeout error - record failure and retry
-            logger.error(f"Webhook delivery failed: {delivery_id} - {e!s}")
-            await webhook_circuit.record_failure(e)
+            logger.error(f"Webhook delivery failed: {delivery_id} - {http_error!s}")
+            await webhook_circuit.record_failure(http_error)
             delivery.attempt_count += 1
-            delivery.response_body = str(e)[:1000]
+            delivery.response_body = str(http_error)[:1000]
             await self._handle_delivery_failure(delivery, attempt)
 
         await self.db.commit()

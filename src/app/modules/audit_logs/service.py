@@ -2,19 +2,26 @@
 
 import asyncio
 from collections.abc import Callable
-from datetime import datetime
+from datetime import UTC, datetime
 from functools import wraps
 from typing import Any
 from uuid import UUID
 
+import orjson
+from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from ...core.events import EventPriority, event_bus
+from ...core.utils.cache import client as redis_client
 from .models import AuditLog
 
 logger = get_logger(__name__)
+
+# Audit log batching configuration
+AUDIT_LOG_BUFFER_KEY = "audit_log_buffer"
+AUDIT_LOG_BATCH_SIZE = 100
 
 
 class AuditLogService:
@@ -130,34 +137,142 @@ class AuditLogService:
         return list(result.scalars().all())
 
 
-# Event handler for audit logs
-@event_bus.subscribe("audit.log")
-async def handle_audit_log_event(data: dict[str, Any]) -> None:
-    """Handle audit log events from the event bus.
+async def buffer_audit_log(log_data: dict[str, Any]) -> None:
+    """Buffer an audit log entry for async batch insert.
+
+    Uses Redis LPUSH for O(1) buffering instead of immediate DB write.
+    Falls back to direct insert if Redis is unavailable.
 
     Args:
-        data: Event payload containing audit log details
+        log_data: Audit log data to buffer
     """
+    if redis_client is None:
+        logger.warning("audit_log_redis_unavailable", action="direct_insert")
+        await _direct_insert_log(log_data)
+        return
+
+    try:
+        await redis_client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
+    except RedisError as e:
+        logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
+        await _direct_insert_log(log_data)
+
+
+async def _direct_insert_log(log_data: dict[str, Any]) -> None:
+    """Fallback: directly insert audit log when Redis unavailable."""
     from ...core.db.database import async_get_db
 
     async for db in async_get_db():
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=int(data["tenant_id"]),
-                action=data["action"],
-                entity_type=data.get("entity_type"),
-                entity_id=str(data["entity_id"]) if data.get("entity_id") else None,
-                user_id=int(data["user_id"]) if data.get("user_id") else None,
-                details=data.get("details", {}),
-                ip_address=data.get("ip_address"),
-                user_agent=data.get("user_agent"),
+                tenant_id=int(log_data["tenant_id"]),
+                action=log_data["action"],
+                entity_type=log_data.get("entity_type"),
+                entity_id=log_data.get("entity_id"),
+                user_id=int(log_data["user_id"]) if log_data.get("user_id") else None,
+                details=log_data.get("details", {}),
+                ip_address=log_data.get("ip_address"),
+                user_agent=log_data.get("user_agent"),
             )
         except Exception as e:
-            logger.error("audit_log_event_failed", error=str(e), exc_info=True)
+            logger.error("audit_log_direct_insert_failed", error=str(e))
         finally:
             await db.close()
             break
+
+
+async def flush_audit_log_buffer() -> int:
+    """Flush buffered audit logs to database in batch.
+
+    Atomically retrieves and removes logs from Redis, then bulk inserts to DB.
+    Should be called periodically by a background worker.
+
+    Returns:
+        Number of logs flushed
+    """
+    if redis_client is None:
+        return 0
+
+    from ...core.db.database import async_get_db
+
+    # Atomically get and remove up to BATCH_SIZE logs
+    pipe = redis_client.pipeline()
+    pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, AUDIT_LOG_BATCH_SIZE - 1)
+    pipe.ltrim(AUDIT_LOG_BUFFER_KEY, AUDIT_LOG_BATCH_SIZE, -1)
+    results = await pipe.execute()
+
+    logs_data = results[0]
+    if not logs_data:
+        return 0
+
+    # Parse and create log entries
+    log_entries = []
+    for raw_data in logs_data:
+        try:
+            data = orjson.loads(raw_data)
+            log_entries.append(
+                AuditLog(
+                    tenant_id=int(data["tenant_id"]),
+                    action=data["action"],
+                    entity_type=data.get("entity_type"),
+                    entity_id=data.get("entity_id"),
+                    user_id=int(data["user_id"]) if data.get("user_id") else None,
+                    details=data.get("details", {}),
+                    ip_address=data.get("ip_address"),
+                    user_agent=data.get("user_agent"),
+                    created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
+                )
+            )
+        except Exception as e:
+            logger.error("audit_log_parse_failed", error=str(e), raw_data=raw_data[:100])
+
+    if not log_entries:
+        return 0
+
+    # Bulk insert with single transaction
+    async for db in async_get_db():
+        try:
+            db.add_all(log_entries)
+            await db.commit()
+            logger.info("audit_logs_flushed", count=len(log_entries))
+        except Exception as e:
+            logger.error("audit_log_flush_failed", error=str(e), count=len(log_entries))
+            await db.rollback()
+        finally:
+            await db.close()
+            break
+
+    return len(log_entries)
+
+
+# Event handler for audit logs
+@event_bus.subscribe("audit.log")
+async def handle_audit_log_event(data: dict[str, Any]) -> None:
+    """Handle audit log events from the event bus.
+
+    Buffers logs in Redis for batch insert instead of immediate DB write.
+    This reduces DB IOPS by ~99% at scale (1000 events = 10 batches vs 1000 writes).
+
+    Args:
+        data: Event payload containing audit log details
+    """
+    log_data = {
+        "tenant_id": data["tenant_id"],
+        "action": data["action"],
+        "entity_type": data.get("entity_type"),
+        "entity_id": str(data["entity_id"]) if data.get("entity_id") else None,
+        "user_id": data.get("user_id"),
+        "details": data.get("details", {}),
+        "ip_address": data.get("ip_address"),
+        "user_agent": data.get("user_agent"),
+        "created_at": datetime.now(UTC).isoformat(),
+    }
+
+    try:
+        await buffer_audit_log(log_data)
+    except Exception as e:
+        logger.error("audit_log_event_failed", error=str(e), exc_info=True)
 
 
 def audit_action(action: str, entity_type: str) -> Callable:

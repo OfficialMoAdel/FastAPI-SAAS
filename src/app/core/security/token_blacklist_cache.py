@@ -15,6 +15,8 @@ Design principles:
 import logging
 from datetime import UTC, datetime
 
+import xxhash
+
 from src.app.core.utils.cache import client as redis_client
 
 from .bloom_filter import blacklist_bloom_filter
@@ -27,6 +29,15 @@ BLACKLIST_KEY = "token:blacklist"
 # Short TTL since we want to re-check periodically but reduce hot-path Redis calls
 NEGATIVE_CACHE_KEY = "token:verified:"
 NEGATIVE_CACHE_TTL = 60  # 60 seconds - balance between performance and security
+
+
+def _token_cache_key(token: str) -> str:
+    """Generate collision-resistant cache key for a token.
+
+    Uses xxhash for fast hashing instead of token prefix, which is
+    collision-prone for JWTs (first 20+ chars are often identical headers).
+    """
+    return xxhash.xxh64(token.encode()).hexdigest()
 
 # P0-3: Lua script for atomic blacklist check (4 operations → 1 roundtrip)
 BLACKLIST_CHECK_LUA_SCRIPT = """
@@ -116,7 +127,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
             # Fallback to old implementation if script loading failed
             return await _is_token_blacklisted_fallback(token)
 
-        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"  # Use first 32 chars as key
+        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"  # Hash for collision resistance
         now = int(datetime.now(UTC).timestamp())
 
         try:
@@ -165,7 +176,7 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
 
     try:
         # Check negative cache first (token recently verified as not blacklisted)
-        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"
+        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         if await redis_client.exists(negative_key):
             return False
 
@@ -209,7 +220,7 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         # Use expiry timestamp as score for sorted set
         score = expires_at.timestamp()
         # P2-4: Invalidate negative cache for this token
-        negative_key = f"{NEGATIVE_CACHE_KEY}{token[:32]}"
+        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
         pipe = redis_client.pipeline()
         pipe.zadd(BLACKLIST_KEY, {token: score})

@@ -15,6 +15,7 @@ Note:
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -89,8 +90,9 @@ class S3Storage(StorageProvider):
             # Read file content
             content = file.read()
 
-            # Upload to S3
-            self.client.put_object(
+            # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
+            await asyncio.to_thread(
+                self.client.put_object,
                 Bucket=self.bucket,
                 Key=path,
                 Body=content,
@@ -119,7 +121,9 @@ class S3Storage(StorageProvider):
         Yields:
             Chunks of file content (8KB each).
         """
-        response = self.client.get_object(
+        # Wrap blocking get_object in asyncio.to_thread to avoid blocking event loop
+        response = await asyncio.to_thread(
+            self.client.get_object,
             Bucket=self.bucket,
             Key=path,
         )
@@ -139,7 +143,9 @@ class S3Storage(StorageProvider):
             StorageResult with success status.
         """
         try:
-            self.client.delete_object(
+            # Wrap blocking delete_object in asyncio.to_thread to avoid blocking event loop
+            await asyncio.to_thread(
+                self.client.delete_object,
                 Bucket=self.bucket,
                 Key=path,
             )
@@ -161,7 +167,12 @@ class S3Storage(StorageProvider):
             True if file exists, False otherwise.
         """
         try:
-            self.client.head_object(Bucket=self.bucket, Key=path)
+            # Wrap blocking head_object in asyncio.to_thread to avoid blocking event loop
+            await asyncio.to_thread(
+                self.client.head_object,
+                Bucket=self.bucket,
+                Key=path,
+            )
             return True
         except Exception:
             return False
@@ -177,7 +188,9 @@ class S3Storage(StorageProvider):
             Signed URL for temporary access, or empty string on failure.
         """
         try:
-            url = self.client.generate_presigned_url(
+            # Wrap blocking generate_presigned_url in asyncio.to_thread to avoid blocking event loop
+            url = await asyncio.to_thread(
+                self.client.generate_presigned_url,
                 "get_object",
                 Params={
                     "Bucket": self.bucket,

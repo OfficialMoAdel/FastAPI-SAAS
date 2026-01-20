@@ -201,13 +201,13 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 try:
                     if tenant:
                         # Cache Success (1 hour)
+                        # OPT-7: Use bytes directly (skip as_str=True decode)
                         cache_data = json_dumps(
                             {
                                 "id": tenant.id,
                                 "slug": tenant.slug,
                                 "is_active": tenant.is_active,
                             },
-                            as_str=True,
                         )
                         await redis_client.setex(cache_key, 3600, cache_data)
                         logger.debug("Tenant cached | slug=%s | tenant_id=%s", slug, tenant.id)
