@@ -1,8 +1,8 @@
 """SSO router - HTTP handlers for OAuth2 authentication endpoints."""
 
-import json
 from typing import Annotated
 
+import orjson
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -100,7 +100,7 @@ async def handle_post_callback(
         if user:
             try:
                 user_data = json_loads(user)
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 pass
 
         tokens = await sso_service.process_callback(

@@ -190,9 +190,5 @@ tmpclaude*
 test_*.db*
 skill
 baseline_*
-# Allow performance test baselines (tracked for regression detection)
-!tests/performance/baselines/
-!tests/performance/baselines/*
-!tests/performance/baseline_*.py
 n8n
-CONSOLIDATED_PERFORMANCE_ISSUES.md
+CONSOLIDATED_ISSUES_AND_RECOMMENDATIONS.md
