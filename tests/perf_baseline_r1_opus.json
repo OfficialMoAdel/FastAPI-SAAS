@@ -1,0 +1,25 @@
+{
+  "timestamp": "2026-01-20T00:46:06.853804+00:00",
+  "environment": {
+    "python": "3.13.7",
+    "note": "Redis and PostgreSQL versions require runtime connection"
+  },
+  "bloom_sha256_hash_ns": 14529.53,
+  "bloom_might_contain_ns": 21871.38,
+  "hash_function": "SHA256",
+  "hash_count": 6,
+  "session_evict_at_limit_ms": 0.52,
+  "session_count": 50,
+  "algorithm": "O(P) iterate all permissions",
+  "jwt_pem_overhead_us": null,
+  "note": "Actual EXPLAIN ANALYZE requires database connection",
+  "bitmask_decode_full_us": 11.5,
+  "permission_count": 18,
+  "file_query_explain": "Seq Scan or single-column index + filesort",
+  "query_pattern": "SELECT * FROM files WHERE tenant_id = X AND user_id = Y ORDER BY created_at DESC LIMIT 20",
+  "current_indexes": [
+    "tenant_id",
+    "user_id",
+    "storage_path (unique)"
+  ]
+}
