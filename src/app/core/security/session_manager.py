@@ -2,6 +2,12 @@
 
 Prevents account sharing by limiting the number of concurrent sessions per user.
 Tracks active sessions in Redis with automatic expiration.
+
+Performance Optimization (z28g.3):
+- Uses hybrid ZSET + Hash structure for O(log n) eviction
+- ZSET (sorted set) for ordering by timestamp
+- Hash for session metadata storage
+- ZPOPMIN for oldest eviction instead of HGETALL+sort
 """
 
 from datetime import UTC, datetime
@@ -21,12 +27,15 @@ class SessionManager:
     - Limits concurrent sessions per user (default: 5)
     - Tracks sessions in Redis with TTL
     - Automatically invalidates oldest sessions when limit exceeded
+    - O(log n) eviction using ZSET ordering
     """
 
-    # Redis key prefix for user sessions
+    # Redis key prefix for legacy sessions (deprecated)
     SESSION_KEY_PREFIX = "user_sessions:"
-    # Redis key prefix for user sessions (Hash implementation)
+    # Redis key prefix for user sessions (Hash - stores session metadata)
     SESSION_HASH_PREFIX = "user_sessions_v2:"
+    # Redis key prefix for session ordering (ZSET - stores session_id -> timestamp)
+    SESSION_ORDER_PREFIX = "user_sessions_order:"
     # Default max concurrent sessions per user
     DEFAULT_MAX_SESSIONS = 5
     # Session TTL in seconds (24 hours)
@@ -60,7 +69,7 @@ class SessionManager:
         """Register a new session for a user.
 
         If the user has reached the maximum sessions, the oldest session
-        is automatically invalidated.
+        is automatically invalidated using O(log n) ZPOPMIN.
 
         Args:
             user_id: User identifier
@@ -76,67 +85,82 @@ class SessionManager:
             return {"registered": False, "reason": "redis_unavailable"}
 
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+        zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # Check if session already exists - O(1) with HEXISTS
         exists = await self._redis_client.hexists(hash_key, session_id)
         if exists:
             return {"registered": True, "already_exists": True}
 
+        # Create timestamp for ordering (Unix timestamp as float for precision)
+        now = datetime.now(UTC)
+        timestamp = now.timestamp()
+
         # Create new session entry
         new_session = {
             "session_id": session_id,
             "device_info": device_info,
-            "created_at": datetime.now(UTC).isoformat(),
+            "created_at": now.isoformat(),
         }
 
         invalidated_sessions = []
 
-        # Get current session count - O(1) with HLEN
-        current_count = await self._redis_client.hlen(hash_key)
+        # Get current session count - O(1) with ZCARD (use ZSET as source of truth for count)
+        current_count = await self._redis_client.zcard(zset_key)
 
-        # If at limit, get all sessions and remove oldest
+        # Fallback to HLEN if ZSET doesn't exist yet (migration case)
+        if current_count == 0:
+            current_count = await self._redis_client.hlen(hash_key)
+
+        # If at limit, evict oldest using ZPOPMIN - O(log n)
         if current_count >= self._max_sessions:
-            # Get all sessions to find oldest
-            all_sessions_raw = await self._redis_client.hgetall(hash_key)
-            sessions_with_time = []
-            for sid, sdata in all_sessions_raw.items():
-                session_dict = json_loads(sdata)
-                sessions_with_time.append((sid, session_dict, session_dict.get("created_at", "")))
-
-            # Sort by created_at to find oldest
-            sessions_with_time.sort(key=lambda x: x[2])
-
-            # Remove oldest sessions until we're under the limit
-            pipe = self._redis_client.pipeline()
             sessions_to_remove = current_count - self._max_sessions + 1
 
-            for i in range(sessions_to_remove):
-                if i < len(sessions_with_time):
-                    sid, session_dict, _ = sessions_with_time[i]
-                    pipe.hdel(hash_key, sid)
-                    invalidated_sessions.append(session_dict)
+            pipe = self._redis_client.pipeline()
+
+            for _ in range(sessions_to_remove):
+                # ZPOPMIN returns [(member, score)] - O(log n)
+                oldest = await self._redis_client.zpopmin(zset_key, count=1)
+
+                if oldest:
+                    oldest_session_id = oldest[0][0]
+                    if isinstance(oldest_session_id, bytes):
+                        oldest_session_id = oldest_session_id.decode("utf-8")
+
+                    # Get session data before deletion for return value
+                    session_data = await self._redis_client.hget(hash_key, oldest_session_id)
+                    if session_data:
+                        invalidated_sessions.append(json_loads(session_data))
+
+                    # Delete from hash - O(1)
+                    pipe.hdel(hash_key, oldest_session_id)
+
                     logger.info(
                         "Session invalidated due to limit",
                         user_id=user_id,
-                        invalidated_session=sid,
+                        invalidated_session=oldest_session_id,
                     )
 
-            # Add new session
+            # Add new session to both ZSET and Hash atomically
+            pipe.zadd(zset_key, {session_id: timestamp})
             pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
 
-            # Set expiry
+            # Set expiry on both keys
+            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
             pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
 
             await pipe.execute()
         else:
-            # Under limit, just add new session
+            # Under limit, just add new session to both structures
             pipe = self._redis_client.pipeline()
+            pipe.zadd(zset_key, {session_id: timestamp})
             pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
+            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
             pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
             await pipe.execute()
 
-        # Get final count
-        final_count = await self._redis_client.hlen(hash_key)
+        # Get final count from ZSET
+        final_count = await self._redis_client.zcard(zset_key)
 
         logger.info(
             "Session registered",
@@ -176,7 +200,7 @@ class SessionManager:
             )
             return True
 
-        # O(1) lookup using Hash - HEXISTS
+        # O(1) lookup using Hash - HEXISTS (Hash is source of truth for existence)
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         exists: bool = await self._redis_client.hexists(hash_key, session_id)
         return exists
@@ -196,14 +220,18 @@ class SessionManager:
             return False
 
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+        zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # Check if session exists before deleting
         exists = await self._redis_client.hexists(hash_key, session_id)
         if not exists:
             return False
 
-        # Delete session from hash - O(1) with HDEL
-        await self._redis_client.hdel(hash_key, session_id)
+        # Delete from both Hash and ZSET atomically - O(1) + O(log n)
+        pipe = self._redis_client.pipeline()
+        pipe.hdel(hash_key, session_id)
+        pipe.zrem(zset_key, session_id)
+        await pipe.execute()
 
         logger.info("Session invalidated", user_id=user_id, session_id=session_id)
         return True
@@ -222,6 +250,7 @@ class SessionManager:
             return 0
 
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+        zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
         # Get count before deletion - O(1) with HLEN
         count: int = await self._redis_client.hlen(hash_key)
@@ -229,8 +258,11 @@ class SessionManager:
         if count == 0:
             return 0
 
-        # Delete entire hash - O(1) with DEL
-        await self._redis_client.delete(hash_key)
+        # Delete both Hash and ZSET - O(1) with DEL
+        pipe = self._redis_client.pipeline()
+        pipe.delete(hash_key)
+        pipe.delete(zset_key)
+        await pipe.execute()
 
         logger.info(
             "All sessions invalidated",
@@ -280,11 +312,102 @@ class SessionManager:
         if not self._redis_client:
             return 0
 
-        hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+        zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
-        # O(1) count using HLEN - no deserialization needed!
-        count: int = await self._redis_client.hlen(hash_key)
+        # O(1) count using ZCARD - prefer ZSET as it's the ordering source of truth
+        count: int = await self._redis_client.zcard(zset_key)
+
+        # Fallback to HLEN if ZSET doesn't exist (migration case)
+        if count == 0:
+            hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
+            count = await self._redis_client.hlen(hash_key)
+
         return count
+
+    async def migrate_sessions_to_zset(self, batch_size: int = 100) -> dict[str, Any]:
+        """Migrate existing Hash sessions to include ZSET ordering.
+
+        This populates the ZSET index from existing Hash data.
+        Safe to run multiple times (idempotent - ZADD updates scores).
+
+        Args:
+            batch_size: Number of keys to process per batch
+
+        Returns
+        -------
+            Dict with migration statistics
+        """
+        if not self._redis_client:
+            logger.warning("Redis not configured, skipping ZSET migration")
+            return {"migrated": 0, "errors": []}
+
+        logger.info("Starting session ZSET migration")
+        migrated = 0
+        errors: list[tuple[str, str]] = []
+
+        # Scan for user_sessions_v2:* keys (Hash)
+        match_pattern = f"{self.SESSION_HASH_PREFIX}*"
+
+        cursor = 0
+        while True:
+            cursor, keys = await self._redis_client.scan(cursor, match=match_pattern, count=batch_size)
+
+            for key in keys:
+                if isinstance(key, bytes):
+                    key = key.decode("utf-8")
+
+                try:
+                    # Extract user_id from key
+                    user_id = key.replace(self.SESSION_HASH_PREFIX, "")
+                    zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
+
+                    # Get all sessions from Hash
+                    sessions_raw = await self._redis_client.hgetall(key)
+                    if not sessions_raw:
+                        continue
+
+                    # Build ZSET entries: session_id -> timestamp
+                    zset_entries = {}
+                    for session_id, session_data in sessions_raw.items():
+                        if isinstance(session_id, bytes):
+                            session_id = session_id.decode("utf-8")
+
+                        session = json_loads(session_data)
+                        created_at = session.get("created_at", "")
+
+                        # Parse ISO timestamp to Unix timestamp
+                        if created_at:
+                            try:
+                                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                                timestamp = dt.timestamp()
+                            except ValueError:
+                                timestamp = datetime.now(UTC).timestamp()
+                        else:
+                            timestamp = datetime.now(UTC).timestamp()
+
+                        zset_entries[session_id] = timestamp
+
+                    if zset_entries:
+                        # Atomically add to ZSET with TTL
+                        pipe = self._redis_client.pipeline()
+                        pipe.zadd(zset_key, zset_entries)
+                        pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+                        await pipe.execute()
+
+                        migrated += 1
+
+                        if migrated % 100 == 0:
+                            logger.info(f"Migrated {migrated} users to ZSET")
+
+                except Exception as e:
+                    errors.append((key, str(e)))
+                    logger.error(f"Failed to migrate {key} to ZSET: {e}")
+
+            if cursor == 0:
+                break
+
+        logger.info(f"ZSET migration completed. Migrated {migrated} users, {len(errors)} errors.")
+        return {"migrated": migrated, "errors": errors}
 
     async def migrate_to_hash(self, batch_size: int = 100) -> int:
         """Migrate all legacy sessions to Redis Hash format.

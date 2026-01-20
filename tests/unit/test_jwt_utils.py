@@ -128,7 +128,7 @@ class TestDecodeJwtToken:
 
     def test_valid_token_decodes(self, valid_token: str, test_secret: str) -> None:
         """Should decode a valid token successfully."""
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = decode_jwt_token(valid_token)
 
@@ -138,7 +138,7 @@ class TestDecodeJwtToken:
 
     def test_expired_token_returns_none(self, expired_token: str, test_secret: str) -> None:
         """Should return None for expired token."""
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = decode_jwt_token(expired_token)
 
@@ -146,7 +146,7 @@ class TestDecodeJwtToken:
 
     def test_invalid_signature_returns_none(self, valid_token: str) -> None:
         """Should return None for wrong secret."""
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value="wrong-secret"):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value="wrong-secret"):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = decode_jwt_token(valid_token)
 
@@ -154,7 +154,7 @@ class TestDecodeJwtToken:
 
     def test_malformed_token_returns_none(self, test_secret: str) -> None:
         """Should return None for malformed token."""
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = decode_jwt_token("not.a.valid.token")
 
@@ -162,7 +162,7 @@ class TestDecodeJwtToken:
 
     def test_empty_token_returns_none(self, test_secret: str) -> None:
         """Should return None for empty token."""
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = decode_jwt_token("")
 
@@ -184,7 +184,7 @@ class TestExtractJwtClaimsToState:
         """Should cache decoded payload in request.state."""
         mock_request.headers = {"Authorization": f"Bearer {valid_token}"}
 
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = await extract_jwt_claims_to_state(mock_request)
 
@@ -220,7 +220,7 @@ class TestExtractJwtClaimsToState:
         """Should return None for invalid token."""
         mock_request.headers = {"Authorization": "Bearer invalid.token.here"}
 
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 payload = await extract_jwt_claims_to_state(mock_request)
 
@@ -298,7 +298,7 @@ class TestJwtUtilsPerformance:
             decode_count += 1
             return original_decode(*args, **kwargs)
 
-        with patch("src.app.core.security.jwt_utils._get_verification_key", return_value=test_secret):
+        with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
                 with patch("src.app.core.security.jwt_utils.jwt.decode", side_effect=counting_decode):
                     # First call - should decode

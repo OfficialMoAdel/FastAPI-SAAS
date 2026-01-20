@@ -102,6 +102,16 @@ class PermissionBitmask:
         """
         Decode a bitmask back into a set of permission slugs.
 
+        Uses Brian Kernighan's algorithm for O(k) complexity where k is
+        the number of set bits (popcount), instead of O(P) where P is
+        total permissions defined.
+
+        Algorithm:
+        1. (mask & -mask) isolates the lowest set bit
+        2. .bit_length() - 1 gives the position (0-indexed)
+        3. (mask & (mask - 1)) clears the lowest set bit
+        4. Loop terminates when all bits are cleared
+
         Args:
             mask: Integer bitmask
 
@@ -109,9 +119,14 @@ class PermissionBitmask:
             Set of permission slugs
         """
         permissions: set[str] = set()
-        for position, slug in _BIT_PERMISSION_MAP.items():
-            if mask & (1 << position):
-                permissions.add(slug)
+        while mask:
+            # Extract position of lowest set bit
+            # (mask & -mask) isolates lowest set bit, bit_length() - 1 gives position
+            pos = (mask & -mask).bit_length() - 1
+            if pos in _BIT_PERMISSION_MAP:
+                permissions.add(_BIT_PERMISSION_MAP[pos])
+            # Clear lowest set bit (Kernighan's trick)
+            mask &= mask - 1
         return permissions
 
     @staticmethod
@@ -194,8 +209,8 @@ class PermissionBitmask:
 
     @staticmethod
     def count_permissions(mask: int) -> int:
-        """Count the number of permissions in a bitmask."""
-        return bin(mask).count("1")
+        """Count the number of permissions in a bitmask using popcount."""
+        return mask.bit_count()  # Python 3.10+ O(1) popcount
 
 
 # Convenience exports

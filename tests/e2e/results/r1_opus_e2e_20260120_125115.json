@@ -1,0 +1,86 @@
+{
+  "timestamp": "2026-01-20T12:51:15.551458+00:00",
+  "tests": {
+    "bloom_filter_add_check": {
+      "status": "PASS",
+      "details": {
+        "tokens": 1000,
+        "add_time_ms": 4.0,
+        "check_time_ms": 2.63,
+        "hits": 1000
+      }
+    },
+    "bloom_filter_fp_rate": {
+      "status": "PASS",
+      "details": {
+        "false_positives": 117,
+        "total_checks": 10000,
+        "fp_rate": 0.0117,
+        "expected_rate": 0.01
+      }
+    },
+    "session_limit_enforcement": {
+      "status": "PASS",
+      "details": {
+        "sessions_registered": 6,
+        "max_sessions": 5,
+        "oldest_evicted": true,
+        "new_valid": true
+      }
+    },
+    "session_eviction_latency": {
+      "status": "PASS",
+      "details": {
+        "avg_ms": 0.42,
+        "p95_ms": 0.69,
+        "iterations": 10
+      }
+    },
+    "bitmask_roundtrip": {
+      "status": "PASS",
+      "details": {
+        "test_cases": 4,
+        "passed": 4
+      }
+    },
+    "bitmask_decode_performance": {
+      "status": "PASS",
+      "details": {
+        "sparse_perms": 2,
+        "sparse_us": 1.37,
+        "dense_perms": 18,
+        "dense_us": 8.54,
+        "ratio": 6.26
+      }
+    },
+    "jwt_cache_functionality": {
+      "status": "PASS",
+      "details": {
+        "first_call_ns": 64800.0,
+        "cached_call_ns": 141.9,
+        "cache_effective": true
+      }
+    },
+    "bitarray_bloom_operations": {
+      "status": "PASS",
+      "details": {
+        "tokens_added": 10000,
+        "tokens_found": 10000,
+        "fill_ratio": 0.0607,
+        "size_bytes": 119814,
+        "uses_bitarray": true
+      }
+    },
+    "complete_auth_simulation": {
+      "status": "PASS",
+      "details": {
+        "login_ms": 0.44,
+        "bloom_check_ns": 8900.0,
+        "session_check_ms": 0.02,
+        "decode_ns": 2800.0,
+        "logout_ms": 0.22,
+        "token_blacklisted": true
+      }
+    }
+  }
+}

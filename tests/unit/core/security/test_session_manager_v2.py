@@ -1,7 +1,7 @@
-"""Unit tests for SessionManager v2 (Redis Hash implementation).
+"""Unit tests for SessionManager v2 (Redis ZSET + Hash implementation).
 
-Tests the refactored session manager that uses Redis Hashes instead of Lists.
-Verifies O(1) operations and elimination of race conditions.
+Tests the refactored session manager that uses Redis ZSET + Hash hybrid.
+Verifies O(log n) eviction using ZPOPMIN and atomic operations.
 """
 
 import asyncio
@@ -14,24 +14,36 @@ from src.app.core.security.session_manager import SessionManager
 
 @pytest.fixture
 def mock_redis():
-    """Mock Redis client with Hash operations."""
+    """Mock Redis client with ZSET + Hash operations."""
     redis = AsyncMock()
+    # Hash operations
     redis.hexists = AsyncMock(return_value=False)
     redis.hlen = AsyncMock(return_value=0)
     redis.hgetall = AsyncMock(return_value={})
     redis.hset = AsyncMock()
     redis.hdel = AsyncMock()
+    redis.hget = AsyncMock(return_value=None)
     redis.delete = AsyncMock()
     redis.expire = AsyncMock()
-    redis.pipeline = MagicMock()
+    # ZSET operations
+    redis.zcard = AsyncMock(return_value=0)  # Fallback to HLEN
+    redis.zadd = AsyncMock()
+    redis.zrem = AsyncMock()
+    redis.zpopmin = AsyncMock(return_value=[])
+    # Scan operation (for migration)
+    redis.scan = AsyncMock(return_value=(0, []))
 
-    # Setup pipeline mock
-    pipe_mock = AsyncMock()
+    # Setup pipeline mock - IMPORTANT: pipeline() returns sync object,
+    # only execute() is async (redis-py pattern)
+    pipe_mock = MagicMock()
     pipe_mock.hset = MagicMock(return_value=pipe_mock)
     pipe_mock.hdel = MagicMock(return_value=pipe_mock)
+    pipe_mock.zadd = MagicMock(return_value=pipe_mock)
+    pipe_mock.zrem = MagicMock(return_value=pipe_mock)
+    pipe_mock.delete = MagicMock(return_value=pipe_mock)
     pipe_mock.expire = MagicMock(return_value=pipe_mock)
-    pipe_mock.execute = AsyncMock()
-    redis.pipeline.return_value = pipe_mock
+    pipe_mock.execute = AsyncMock(return_value=[1, 1, 1, 1])
+    redis.pipeline = MagicMock(return_value=pipe_mock)
 
     return redis
 
@@ -44,11 +56,11 @@ def session_manager(mock_redis):
 
 
 class TestSessionManagerHashOperations:
-    """Test that all operations use Redis Hash commands."""
+    """Test that all operations use Redis ZSET + Hash commands."""
 
     @pytest.mark.asyncio
-    async def test_create_session_uses_hset(self, session_manager, mock_redis):
-        """Verify register_session uses HSET, not SET."""
+    async def test_create_session_uses_hset_and_zadd(self, session_manager, mock_redis):
+        """Verify register_session uses both HSET and ZADD."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
@@ -58,10 +70,11 @@ class TestSessionManagerHashOperations:
 
         # Assert
         assert result["registered"] is True
-        # Verify pipeline was used with HSET
+        # Verify pipeline was used with HSET and ZADD
         mock_redis.pipeline.assert_called()
         pipe = mock_redis.pipeline.return_value
         pipe.hset.assert_called()
+        pipe.zadd.assert_called()
         pipe.expire.assert_called()
         pipe.execute.assert_called()
 
@@ -86,8 +99,8 @@ class TestSessionManagerHashOperations:
         assert "user_sessions_v2:" in call_args
 
     @pytest.mark.asyncio
-    async def test_invalidate_session_uses_hdel(self, session_manager, mock_redis):
-        """Verify invalidate_session uses HDEL."""
+    async def test_invalidate_session_uses_hdel_and_zrem(self, session_manager, mock_redis):
+        """Verify invalidate_session uses HDEL and ZREM via pipeline."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
@@ -99,13 +112,19 @@ class TestSessionManagerHashOperations:
         # Assert
         assert result is True
         mock_redis.hexists.assert_called_once()
-        mock_redis.hdel.assert_called_once()
+        # Verify pipeline was used for atomic HDEL + ZREM
+        pipe = mock_redis.pipeline.return_value
+        pipe.hdel.assert_called()
+        pipe.zrem.assert_called()
+        pipe.execute.assert_called()
 
     @pytest.mark.asyncio
-    async def test_count_sessions_uses_hlen(self, session_manager, mock_redis):
-        """Verify count_active_sessions uses HLEN (O(1))."""
+    async def test_count_sessions_uses_zcard_with_hlen_fallback(self, session_manager, mock_redis):
+        """Verify count_active_sessions uses ZCARD (O(1)) with HLEN fallback."""
         # Arrange
         user_id = "user123"
+        # ZCARD returns 0 (no ZSET yet), HLEN returns 3 (fallback)
+        mock_redis.zcard.return_value = 0
         mock_redis.hlen.return_value = 3
 
         # Act
@@ -113,9 +132,23 @@ class TestSessionManagerHashOperations:
 
         # Assert
         assert count == 3
-        mock_redis.hlen.assert_called_once()
-        # Verify no GET or deserialization happened
-        mock_redis.get.assert_not_called()
+        mock_redis.zcard.assert_called_once()
+        mock_redis.hlen.assert_called_once()  # Fallback triggered
+
+    @pytest.mark.asyncio
+    async def test_count_sessions_uses_zcard_directly(self, session_manager, mock_redis):
+        """Verify count_active_sessions uses ZCARD directly when available."""
+        # Arrange
+        user_id = "user123"
+        mock_redis.zcard.return_value = 5  # ZSET has data
+
+        # Act
+        count = await session_manager.count_active_sessions(user_id)
+
+        # Assert
+        assert count == 5
+        mock_redis.zcard.assert_called_once()
+        mock_redis.hlen.assert_not_called()  # No fallback needed
 
     @pytest.mark.asyncio
     async def test_is_session_valid_uses_hexists(self, session_manager, mock_redis):
@@ -131,27 +164,31 @@ class TestSessionManagerHashOperations:
         # Assert
         assert is_valid is True
         mock_redis.hexists.assert_called_once()
-        # Verify no GET or deserialization happened
-        mock_redis.get.assert_not_called()
 
 
 class TestSessionManagerRaceConditionFix:
     """Test that concurrent operations don't cause race conditions."""
 
     @pytest.mark.asyncio
-    async def test_concurrent_session_create_no_race(self, mock_redis):
-        """Create 10 sessions concurrently, verify all exist."""
-        # Arrange
+    async def test_concurrent_session_create_no_race(self):
+        """Create 10 sessions concurrently, verify all registered."""
+        # Arrange - create fresh mock with proper setup
+        mock_redis = AsyncMock()
+        mock_redis.hexists = AsyncMock(return_value=False)
+        # ZCARD returns 0 each time (under limit simulation)
+        mock_redis.zcard = AsyncMock(return_value=0)
+        mock_redis.hlen = AsyncMock(return_value=0)
+
+        # Setup pipeline mock
+        pipe_mock = MagicMock()
+        pipe_mock.zadd = MagicMock(return_value=pipe_mock)
+        pipe_mock.hset = MagicMock(return_value=pipe_mock)
+        pipe_mock.expire = MagicMock(return_value=pipe_mock)
+        pipe_mock.execute = AsyncMock(return_value=[1, 1, 1, 1])
+        mock_redis.pipeline = MagicMock(return_value=pipe_mock)
+
         manager = SessionManager(redis_client=mock_redis, max_sessions=10)
         user_id = "user123"
-
-        # Mock HLEN to return increasing counts
-        # Each session calls hlen twice: once to check count, once to get final count
-        hlen_values = []
-        for i in range(10):
-            hlen_values.append(i)  # Initial count check
-            hlen_values.append(i + 1)  # Final count after insert
-        mock_redis.hlen.side_effect = hlen_values
 
         # Act - create 10 sessions concurrently
         tasks = []
@@ -176,18 +213,17 @@ class TestSessionManagerRaceConditionFix:
         # Act
         await session_manager.register_session(user_id, session_id)
 
-        # Assert - no GET operation (only HLEN for count check)
+        # Assert - no GET operation (only ZCARD for count check)
         mock_redis.get.assert_not_called()
-        # Only HLEN, HSET, EXPIRE should be called
-        mock_redis.hlen.assert_called()
+        mock_redis.zcard.assert_called()
 
 
 class TestSessionManagerTTL:
     """Test that session TTL is properly maintained."""
 
     @pytest.mark.asyncio
-    async def test_session_ttl_preserved(self, session_manager, mock_redis):
-        """Verify EXPIRE is called after HSET."""
+    async def test_session_ttl_preserved_on_both_keys(self, session_manager, mock_redis):
+        """Verify EXPIRE is called on both ZSET and Hash keys."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
@@ -197,10 +233,11 @@ class TestSessionManagerTTL:
 
         # Assert
         pipe = mock_redis.pipeline.return_value
-        pipe.expire.assert_called()
-        # Verify TTL value
-        expire_call = pipe.expire.call_args[0]
-        assert expire_call[1] == SessionManager.SESSION_TTL_SECONDS
+        # Expire should be called twice (once for ZSET, once for Hash)
+        assert pipe.expire.call_count == 2
+        # Verify TTL value on all calls
+        for call in pipe.expire.call_args_list:
+            assert call[0][1] == SessionManager.SESSION_TTL_SECONDS
 
 
 class TestSessionManagerDataIntegrity:
@@ -217,9 +254,7 @@ class TestSessionManagerDataIntegrity:
         # Mock HGETALL to return the session we just created
         def mock_hgetall(key):
             session_json = (
-                f'{{"session_id": "{session_id}", '
-                f'"device_info": "{device_info}", '
-                f'"created_at": "2024-01-01T00:00:00"}}'
+                f'{{"session_id": "{session_id}", "device_info": "{device_info}", "created_at": "2024-01-01T00:00:00"}}'
             )
             return {session_id: session_json}
 
@@ -236,24 +271,23 @@ class TestSessionManagerDataIntegrity:
 
 
 class TestSessionManagerSessionLimit:
-    """Test that session limit enforcement works correctly."""
+    """Test that session limit enforcement works correctly with ZPOPMIN."""
 
     @pytest.mark.asyncio
-    async def test_session_limit_enforced(self, mock_redis):
-        """Verify oldest sessions are removed when limit is reached."""
+    async def test_session_limit_enforced_via_zpopmin(self, mock_redis):
+        """Verify oldest sessions are removed via ZPOPMIN when limit is reached."""
         # Arrange
         manager = SessionManager(redis_client=mock_redis, max_sessions=3)
         user_id = "user123"
 
-        # Mock HLEN to return 3 (at limit)
-        mock_redis.hlen.return_value = 3
+        # Mock ZCARD to return 3 (at limit)
+        mock_redis.zcard.return_value = 3
 
-        # Mock HGETALL to return 3 existing sessions
-        mock_redis.hgetall.return_value = {
-            "session1": '{"session_id": "session1", "created_at": "2024-01-01T00:00:00"}',
-            "session2": '{"session_id": "session2", "created_at": "2024-01-01T01:00:00"}',
-            "session3": '{"session_id": "session3", "created_at": "2024-01-01T02:00:00"}',
-        }
+        # Mock ZPOPMIN to return oldest session
+        mock_redis.zpopmin.return_value = [("session1", 1704067200.0)]  # oldest
+
+        # Mock HGET to return session data for the evicted session
+        mock_redis.hget.return_value = '{"session_id": "session1", "created_at": "2024-01-01T00:00:00"}'
 
         # Act - register a 4th session
         result = await manager.register_session(user_id, "session4")
@@ -264,7 +298,10 @@ class TestSessionManagerSessionLimit:
         # Verify oldest session was invalidated
         assert result["invalidated_sessions"][0]["session_id"] == "session1"
 
-        # Verify HDEL was called to remove old session
+        # Verify ZPOPMIN was called for O(log n) eviction
+        mock_redis.zpopmin.assert_called()
+
+        # Verify HDEL was called via pipeline
         pipe = mock_redis.pipeline.return_value
         pipe.hdel.assert_called()
 
@@ -285,11 +322,13 @@ class TestSessionManagerInvalidation:
 
         # Assert
         assert result is False
-        mock_redis.hdel.assert_not_called()
+        # Verify pipeline was not used (early return)
+        pipe = mock_redis.pipeline.return_value
+        pipe.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_invalidate_all_sessions_uses_delete(self, session_manager, mock_redis):
-        """Verify invalidate_all_sessions uses DELETE on hash."""
+    async def test_invalidate_all_sessions_deletes_both_keys(self, session_manager, mock_redis):
+        """Verify invalidate_all_sessions deletes both Hash and ZSET."""
         # Arrange
         user_id = "user123"
         mock_redis.hlen.return_value = 5
@@ -299,10 +338,11 @@ class TestSessionManagerInvalidation:
 
         # Assert
         assert count == 5
-        mock_redis.delete.assert_called_once()
-        # Verify it deleted the v2 hash key
-        call_args = mock_redis.delete.call_args[0][0]
-        assert "user_sessions_v2:" in call_args
+        # Verify pipeline was used
+        pipe = mock_redis.pipeline.return_value
+        # Delete should be called twice (Hash and ZSET)
+        assert pipe.delete.call_count == 2
+        pipe.execute.assert_called_once()
 
 
 class TestSessionManagerRedisUnavailable:
@@ -365,6 +405,42 @@ class TestSessionManagerExistingSessionCheck:
         # Assert
         assert result["registered"] is True
         assert result.get("already_exists") is True
-        # Verify no HSET was called (session already exists)
+        # Verify no pipeline was used (early return)
         pipe = mock_redis.pipeline.return_value
         pipe.hset.assert_not_called()
+
+
+class TestSessionManagerZSETMigration:
+    """Test ZSET migration functionality."""
+
+    @pytest.mark.asyncio
+    async def test_migrate_sessions_to_zset(self):
+        """Verify migration populates ZSET from existing Hash data."""
+        # Arrange - create fresh mock with proper scan setup
+        mock_redis = AsyncMock()
+        mock_redis.scan = AsyncMock(return_value=(0, ["user_sessions_v2:123"]))
+        mock_redis.hgetall = AsyncMock(
+            return_value={
+                "sess1": '{"session_id": "sess1", "created_at": "2024-01-01T00:00:00+00:00"}',
+                "sess2": '{"session_id": "sess2", "created_at": "2024-01-01T01:00:00+00:00"}',
+            }
+        )
+
+        # Setup pipeline mock
+        pipe_mock = MagicMock()
+        pipe_mock.zadd = MagicMock(return_value=pipe_mock)
+        pipe_mock.expire = MagicMock(return_value=pipe_mock)
+        pipe_mock.execute = AsyncMock(return_value=[1, 1])
+        mock_redis.pipeline = MagicMock(return_value=pipe_mock)
+
+        manager = SessionManager(redis_client=mock_redis)
+
+        # Act
+        result = await manager.migrate_sessions_to_zset()
+
+        # Assert
+        assert result["migrated"] == 1
+        assert len(result["errors"]) == 0
+        # Verify ZADD was called via pipeline
+        pipe_mock.zadd.assert_called()
+        pipe_mock.expire.assert_called()
