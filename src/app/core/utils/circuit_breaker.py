@@ -78,6 +78,9 @@ class CircuitBreaker:
 
     async def record_success(self) -> None:
         """Record successful call, potentially closing circuit."""
+        from src.app.core.config import settings
+        from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
+
         async with self._lock:
             if self._state == CircuitState.HALF_OPEN:
                 self._success_count += 1
@@ -88,9 +91,15 @@ class CircuitBreaker:
                         self.name,
                         self.success_threshold,
                     )
+                    # Record state transition for monitoring
+                    if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                        record_circuit_breaker_transition("closed")
 
     async def record_failure(self, error: Exception | None = None) -> None:
         """Record failed call, potentially opening circuit."""
+        from src.app.core.config import settings
+        from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
+
         async with self._lock:
             self._failure_count += 1
             self._last_failure_time = time.time()
@@ -102,6 +111,9 @@ class CircuitBreaker:
                     self.name,
                     str(error),
                 )
+                # Record state transition for monitoring
+                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                    record_circuit_breaker_transition("open")
             elif self._failure_count >= self.failure_threshold:
                 self._open()
                 logger.warning(
@@ -110,6 +122,9 @@ class CircuitBreaker:
                     self.failure_threshold,
                     str(error),
                 )
+                # Record state transition for monitoring
+                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                    record_circuit_breaker_transition("open")
 
     def _open(self) -> None:
         """Open the circuit (start rejecting requests)."""
@@ -161,12 +176,38 @@ def circuit_breaker(
     ) -> Callable[..., Coroutine[Any, Any, T]]:
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> T:
-            state = breaker.state
+            from src.app.core.config import settings
 
-            # Fast-fail if circuit is open
-            if state == CircuitState.OPEN:
-                recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
-                raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
+            state = breaker.state  # Fast path: no lock
+
+            # P4-1 Optimization: Double-check pattern for TOCTOU race prevention
+            if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                # Optimized path with double-check pattern
+                if state == CircuitState.OPEN:
+                    async with breaker._lock:
+                        # Double-check under lock to prevent TOCTOU race
+                        if breaker.state == CircuitState.OPEN:
+                            recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
+                            raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
+                        # State changed while acquiring lock, update local state
+                        state = breaker.state
+
+                # HALF_OPEN requires lock to prevent multiple probe requests
+                if state == CircuitState.HALF_OPEN:
+                    async with breaker._lock:
+                        if breaker.state == CircuitState.HALF_OPEN:
+                            # Mark probe in progress to prevent concurrent probes
+                            pass  # Probe will execute below
+                        elif breaker.state == CircuitState.OPEN:
+                            # State changed to OPEN while acquiring lock
+                            recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
+                            raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
+                        # If CLOSED, continue without special handling
+            else:
+                # Original path (fallback)
+                if state == CircuitState.OPEN:
+                    recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
+                    raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
 
             try:
                 result = await func(*args, **kwargs)
