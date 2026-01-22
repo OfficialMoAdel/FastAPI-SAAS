@@ -65,6 +65,7 @@ def mock_redis_client() -> AsyncMock:
     mock.delete = AsyncMock(return_value=1)
     mock.exists = AsyncMock(return_value=0)
     mock.ttl = AsyncMock(return_value=-1)
+    mock.incr = AsyncMock(return_value=1)  # For event sequence numbers
     mock.pipeline = MagicMock()
     mock.evalsha = AsyncMock(return_value=None)
     mock.script_load = AsyncMock(return_value=b"mock_sha")
@@ -126,4 +127,6 @@ def mock_settings():
     settings.r1_unified.DLQ_MAX_SIZE = 10000
     settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
     settings.r1_unified.IDEMPOTENCY_TTL_SECONDS = 300
+    settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+    settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
     return settings
