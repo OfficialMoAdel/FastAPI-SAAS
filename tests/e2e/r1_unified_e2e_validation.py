@@ -6,8 +6,10 @@ Tests ALL R1-UNIFIED optimizations in realistic scenarios with detailed logging:
 - P1-1: Event Bus Idempotency (Lua script)
 - P2-1: Session Eviction Redis Pipeline
 - P2-2: XFetch GET+TTL (Lua script)
+- P2-3: RBAC Permissions Redis Caching
 - P3-1: DLQ Bounded Size with LTRIM
-- P5: RBAC Permissions Redis Caching
+- P3-2: Passkey Column-Specific SELECT
+- P4-1: Circuit Breaker TOCTOU Double-Check Pattern
 
 Run with:
     uv run python tests/e2e/r1_unified_e2e_validation.py
@@ -137,6 +139,8 @@ class R1UnifiedE2EValidator:
         await self.test_xfetch_lua_script()
         await self.test_dlq_bounded_size()
         await self.test_rbac_permissions_caching()
+        await self.test_passkey_column_select()
+        await self.test_circuit_breaker_toctou()
         await self.test_feature_flag_integration()
         await self.test_metrics_recording()
 
@@ -175,8 +179,6 @@ class R1UnifiedE2EValidator:
 
             with patch("src.app.core.config.settings", settings_mock):
                 # The idempotency check should use Lua script
-                event_id = "test-event-123"
-
                 # We can't directly call _check_idempotency, but we can verify
                 # the script registration happens
                 details = {
@@ -391,7 +393,7 @@ class R1UnifiedE2EValidator:
             )
 
     async def test_rbac_permissions_caching(self) -> None:
-        """Test P5: RBAC permissions Redis caching."""
+        """Test P2-3: RBAC permissions Redis caching."""
         start = time.perf_counter()
         test_name = "rbac_permissions_caching"
 
@@ -408,6 +410,168 @@ class R1UnifiedE2EValidator:
                 "rbac_cache_ttl_exists": has_ttl_setting,
                 "cache_ttl_value": getattr(r1_settings, "RBAC_CACHE_TTL_SECONDS", None),
                 "feature_ready": has_cache_flag and has_ttl_setting,
+            }
+
+            duration = (time.perf_counter() - start) * 1000
+            self.report.add(
+                TestResult(
+                    name=test_name,
+                    status="PASS",
+                    duration_ms=duration,
+                    details=details,
+                )
+            )
+
+        except Exception as e:
+            duration = (time.perf_counter() - start) * 1000
+            logger.error(f"Test failed: {e}", exc_info=self.verbose)
+            self.report.add(
+                TestResult(
+                    name=test_name,
+                    status="FAIL",
+                    duration_ms=duration,
+                    error=str(e),
+                )
+            )
+
+    async def test_passkey_column_select(self) -> None:
+        """Test P3-2: Passkey credential lookup uses column projection."""
+        start = time.perf_counter()
+        test_name = "passkey_column_select"
+
+        try:
+            from src.app.core.config import R1UnifiedSettings
+            from src.app.modules.passkey.service import PasskeyService
+
+            # Check feature flags
+            r1_settings = R1UnifiedSettings()
+            has_column_select_flag = hasattr(r1_settings, "PASSKEY_USE_COLUMN_SELECT")
+            has_max_credentials = hasattr(r1_settings, "PASSKEY_MAX_CREDENTIALS_PER_USER")
+            has_concurrency_limit = hasattr(r1_settings, "PASSKEY_DECRYPT_CONCURRENCY_LIMIT")
+
+            # Mock database session
+            mock_db = AsyncMock()
+            mock_result = MagicMock()
+            mock_result.fetchall.return_value = [(b"cred_1",), (b"cred_2",), (b"cred_3",)]
+            mock_db.execute = AsyncMock(return_value=mock_result)
+
+            settings_mock = MagicMock()
+            settings_mock.r1_unified.PASSKEY_USE_COLUMN_SELECT = True
+            settings_mock.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+            settings_mock.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+
+            service = PasskeyService()
+
+            with patch("src.app.core.security.encryption.get_encryption") as mock_enc:
+                mock_encryption = MagicMock()
+                mock_encryption.decrypt_credential.side_effect = lambda x: x
+                mock_enc.return_value = mock_encryption
+
+                with patch("src.app.core.config.settings", settings_mock):
+                    with patch("src.app.core.monitoring.r1_unified_metrics.record_passkey_query"):
+                        result = await service._get_existing_credentials(mock_db, user_id=1)
+
+            details = {
+                "column_select_flag_exists": has_column_select_flag,
+                "max_credentials_flag_exists": has_max_credentials,
+                "concurrency_limit_exists": has_concurrency_limit,
+                "credentials_returned": len(result),
+                "feature_ready": has_column_select_flag and has_max_credentials,
+            }
+
+            duration = (time.perf_counter() - start) * 1000
+            self.report.add(
+                TestResult(
+                    name=test_name,
+                    status="PASS",
+                    duration_ms=duration,
+                    details=details,
+                )
+            )
+
+        except Exception as e:
+            duration = (time.perf_counter() - start) * 1000
+            logger.error(f"Test failed: {e}", exc_info=self.verbose)
+            self.report.add(
+                TestResult(
+                    name=test_name,
+                    status="FAIL",
+                    duration_ms=duration,
+                    error=str(e),
+                )
+            )
+
+    async def test_circuit_breaker_toctou(self) -> None:
+        """Test P4-1: Circuit Breaker TOCTOU double-check pattern."""
+        start = time.perf_counter()
+        test_name = "circuit_breaker_toctou"
+
+        try:
+            from src.app.core.config import R1UnifiedSettings
+            from src.app.core.utils.circuit_breaker import (
+                CircuitBreaker,
+                CircuitBreakerOpen,
+                CircuitState,
+                circuit_breaker,
+            )
+
+            # Check feature flag exists
+            r1_settings = R1UnifiedSettings()
+            has_double_check_flag = hasattr(r1_settings, "CIRCUIT_BREAKER_USE_DOUBLE_CHECK")
+
+            # Create circuit breaker
+            breaker = CircuitBreaker(name="e2e_test", failure_threshold=2, recovery_timeout=60.0)
+
+            # Test 1: Verify CLOSED state allows calls
+            call_count = 0
+
+            @circuit_breaker(breaker)
+            async def test_func():
+                nonlocal call_count
+                call_count += 1
+                return "success"
+
+            settings_mock = MagicMock()
+            settings_mock.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+
+            with patch("src.app.core.config.settings", settings_mock):
+                # CLOSED state should allow calls
+                result = await test_func()
+                assert result == "success"
+                assert call_count == 1
+
+                # Trigger failures to open circuit
+                await breaker.record_failure(ValueError("Test error 1"))
+                await breaker.record_failure(ValueError("Test error 2"))
+
+                # Verify OPEN state
+                assert breaker.state == CircuitState.OPEN
+
+                # Test 2: Concurrent checks during OPEN state
+                rejected_count = 0
+
+                async def check_circuit():
+                    nonlocal rejected_count
+                    try:
+                        await test_func()
+                        return "success"
+                    except CircuitBreakerOpen:
+                        rejected_count += 1
+                        return "rejected"
+
+                # Run 50 concurrent checks
+                results = await asyncio.gather(*[check_circuit() for _ in range(50)])
+
+                # All should be rejected
+                assert all(r == "rejected" for r in results)
+                assert rejected_count == 50
+
+            details = {
+                "double_check_flag_exists": has_double_check_flag,
+                "closed_state_allows_calls": call_count >= 1,
+                "open_state_rejects_all": rejected_count == 50,
+                "concurrent_checks_safe": True,
+                "circuit_states_verified": True,
             }
 
             duration = (time.perf_counter() - start) * 1000

@@ -1,0 +1,45 @@
+# E2E Testing Docker Compose Configuration
+# For R1-UNIFIED Performance Optimization Validation
+#
+# Usage:
+#   docker-compose -f docker-compose.e2e.yml up -d
+#   uv run python tests/e2e/r1_unified_e2e_validation.py
+#   docker-compose -f docker-compose.e2e.yml down
+
+version: '3.8'
+
+services:
+  redis-e2e:
+    image: redis:7-alpine
+    container_name: fastapi_saas_redis_e2e
+    ports:
+      - "6380:6379"
+    command: redis-server --maxmemory 256mb --maxmemory-policy allkeys-lru
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  postgres-e2e:
+    image: postgres:15-alpine
+    container_name: fastapi_saas_postgres_e2e
+    environment:
+      POSTGRES_DB: fastapi_saas_e2e
+      POSTGRES_USER: test_user
+      POSTGRES_PASSWORD: test_password
+    ports:
+      - "5433:5432"
+    tmpfs:
+      - /var/lib/postgresql/data  # In-memory for speed
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U test_user -d fastapi_saas_e2e"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  default:
+    name: fastapi_saas_e2e_network
