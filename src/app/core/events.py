@@ -443,6 +443,15 @@ class EventBus:
     ) -> None:
         """Add failed event to dead-letter queue (Redis-backed).
 
+        R1-UNIFIED P3-1: Added bounded size with LTRIM to prevent unbounded
+        memory growth under sustained failure scenarios.
+
+        When DLQ_USE_BOUNDED_SIZE is enabled:
+        - Uses pipeline: LPUSH + LTRIM + LLEN (single roundtrip)
+        - Caps size at DLQ_MAX_SIZE (default 10000)
+        - Oldest entries automatically discarded when full
+        - Alerts at DLQ_ALERT_THRESHOLD_PCT capacity
+
         Args:
             event_name: Name of event
             handler_name: Handler that failed
@@ -451,6 +460,9 @@ class EventBus:
             attempt_count: Number of attempts made
         """
         from datetime import UTC, datetime
+
+        from src.app.core.config import settings
+        from src.app.core.monitoring import update_dlq_size
 
         dlq_entry = {
             "event_name": event_name,
@@ -462,8 +474,41 @@ class EventBus:
         }
 
         if self._redis_client:
-            # Persist to Redis for production reliability
-            await self._redis_client.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
+            try:
+                if settings.r1_unified.DLQ_USE_BOUNDED_SIZE:
+                    # P3-1 Optimized: Pipeline with LTRIM for bounded size
+                    max_size = settings.r1_unified.DLQ_MAX_SIZE
+                    alert_threshold = settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT
+
+                    pipe = self._redis_client.pipeline()
+                    pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
+                    pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
+                    pipe.llen(self.DLQ_REDIS_KEY)
+                    results = await pipe.execute()
+
+                    dlq_size = results[2]  # LLEN result
+                    update_dlq_size(dlq_size, max_size)
+
+                    # Warn when approaching capacity
+                    threshold = max_size * alert_threshold / 100
+                    if dlq_size > threshold:
+                        logger.warning(
+                            "DLQ approaching capacity",
+                            dlq_size=dlq_size,
+                            max_size=max_size,
+                            usage_pct=round(dlq_size * 100 / max_size, 1),
+                        )
+                else:
+                    # Original path (fallback)
+                    await self._redis_client.lpush(
+                        self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True)
+                    )
+                    dlq_size = await self._redis_client.llen(self.DLQ_REDIS_KEY)
+                    update_dlq_size(dlq_size)
+            except Exception as e:
+                logger.error("Failed to add to DLQ", error=str(e), event_name=event_name)
+                # Re-raise to avoid silent failures
+                raise
         else:
             logger.warning(
                 "Redis not configured for DLQ, event will be lost on restart",
