@@ -315,49 +315,117 @@ class PasskeyService:
 
     async def _get_existing_credentials(self, db: AsyncSession, user_id: int) -> list[Any]:
         """Get existing credential IDs for exclusion with parallel decryption."""
-        creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
+        from sqlalchemy import select
+
+        from src.app.core.config import settings
+        from src.app.core.monitoring.r1_unified_metrics import record_passkey_query
         from src.app.core.security.encryption import get_encryption
+        from src.app.modules.passkey.models import PasskeyCredential
 
         encryption = get_encryption()
-
-        # Log credential count for monitoring
-        cred_count = len(creds)
-        logger.debug("Decrypting %d credentials for user %d", cred_count, user_id)
-
-        if not creds:
-            return []
-
-        # Parallel decryption using thread pool (P1-1 optimization)
         start_time = time.perf_counter()
 
-        async def decrypt_one(cred):
-            """Decrypt a single credential in thread pool."""
-            try:
-                decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
-                logger.debug("Successfully decrypted credential for user %d", user_id)
-                return PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=decrypted_id)
-            except Exception as e:
-                # Skip invalid/corrupt credentials
-                logger.debug("Failed to decrypt credential for user %d: %s", user_id, str(e))
-                return None
+        # P3-2 Optimization: Column-specific SELECT for credential_id only
+        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
+            # Optimized path: SELECT only credential_id column
+            stmt = (
+                select(PasskeyCredential.credential_id)
+                .where(PasskeyCredential.user_id == user_id, PasskeyCredential.is_active)
+                .order_by(PasskeyCredential.created_at.desc())
+                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
+            )
+            result = await db.execute(stmt)
+            credential_ids = [row[0] for row in result.fetchall()]
 
-        # Decrypt all credentials in parallel
-        results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+            # Log credential count for monitoring
+            cred_count = len(credential_ids)
+            logger.debug("Fetched %d credential IDs (optimized) for user %d", cred_count, user_id)
 
-        # Filter out None values (failed decryptions)
-        existing = [r for r in results if r is not None]
+            if not credential_ids:
+                record_passkey_query(time.perf_counter() - start_time)
+                return []
 
-        # Log decryption performance
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(
-            "Decrypted %d/%d credentials in %.2fms (parallel) for user %d",
-            len(existing),
-            cred_count,
-            elapsed_ms,
-            user_id,
-        )
+            # Parallel decryption with concurrency limit
+            semaphore = asyncio.Semaphore(settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
 
-        return existing
+            async def decrypt_one_optimized(cred_id: str):
+                """Decrypt a single credential with concurrency control."""
+                async with semaphore:
+                    try:
+                        decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred_id)
+                        logger.debug("Successfully decrypted credential for user %d", user_id)
+                        return PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=decrypted_id)
+                    except Exception as e:
+                        # Skip invalid/corrupt credentials
+                        logger.debug("Failed to decrypt credential for user %d: %s", user_id, str(e))
+                        return None
+
+            # Decrypt all credentials in parallel with concurrency control
+            results = await asyncio.gather(*[decrypt_one_optimized(cred_id) for cred_id in credential_ids])
+
+            # Filter out None values (failed decryptions)
+            existing = [r for r in results if r is not None]
+
+            # Log decryption performance
+            elapsed_seconds = time.perf_counter() - start_time
+            elapsed_ms = elapsed_seconds * 1000
+            logger.info(
+                "Decrypted %d/%d credentials in %.2fms (optimized, parallel) for user %d",
+                len(existing),
+                cred_count,
+                elapsed_ms,
+                user_id,
+            )
+            record_passkey_query(elapsed_seconds)
+
+            return existing
+        else:
+            # Original path: Fetch full entities (fallback)
+            creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
+
+            # Apply limit manually for consistency
+            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
+
+            # Log credential count for monitoring
+            cred_count = len(creds)
+            logger.debug("Decrypting %d credentials for user %d", cred_count, user_id)
+
+            if not creds:
+                record_passkey_query(time.perf_counter() - start_time)
+                return []
+
+            # Parallel decryption using thread pool (P1-1 optimization)
+            async def decrypt_one(cred):
+                """Decrypt a single credential in thread pool."""
+                try:
+                    decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
+                    logger.debug("Successfully decrypted credential for user %d", user_id)
+                    return PublicKeyCredentialDescriptor(type=PublicKeyCredentialType.PUBLIC_KEY, id=decrypted_id)
+                except Exception as e:
+                    # Skip invalid/corrupt credentials
+                    logger.debug("Failed to decrypt credential for user %d: %s", user_id, str(e))
+                    return None
+
+            # Decrypt all credentials in parallel
+            results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+
+            # Filter out None values (failed decryptions)
+            existing = [r for r in results if r is not None]
+
+            # Log decryption performance
+            elapsed_seconds = time.perf_counter() - start_time
+            elapsed_ms = elapsed_seconds * 1000
+            logger.info(
+                "Decrypted %d/%d credentials in %.2fms (parallel) for user %d",
+                len(existing),
+                cred_count,
+                elapsed_ms,
+                user_id,
+            )
+            record_passkey_query(elapsed_seconds)
+
+            return existing
 
     async def _store_challenge(self, redis: Redis, user_id: int, challenge: bytes, device_type: str) -> None:
         """Store registration challenge in Redis."""
@@ -415,7 +483,12 @@ class PasskeyService:
 
     async def _get_credentials_for_email(self, db: AsyncSession, email: str) -> list[PublicKeyCredentialDescriptor]:
         """Get passkey credentials for a user by email with parallel decryption."""
+        from sqlalchemy import select
+
+        from src.app.core.config import settings
+        from src.app.core.monitoring.r1_unified_metrics import record_passkey_query
         from src.app.core.security.encryption import get_encryption
+        from src.app.modules.passkey.models import PasskeyCredential
         from src.app.modules.users.crud import crud_users
 
         # Find user by email
@@ -423,52 +496,117 @@ class PasskeyService:
         if not user:
             return []
 
-        # Get credentials for the user
-        creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user.id)
         encryption = get_encryption()
-
-        # Log credential count for monitoring
-        cred_count = len(creds)
-        logger.debug("Decrypting %d credentials for email %s", cred_count, email)
-
-        if not creds:
-            return []
-
-        # Parallel decryption using thread pool (P1-1 optimization)
         start_time = time.perf_counter()
 
-        async def decrypt_one(cred):
-            """Decrypt a single credential in thread pool."""
-            try:
-                decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
-                transports = cred.transports if cred.transports else None
-                logger.debug("Successfully decrypted credential for email %s", email)
-                return PublicKeyCredentialDescriptor(
-                    type=PublicKeyCredentialType.PUBLIC_KEY,
-                    id=decrypted_id,
-                    transports=transports,
-                )
-            except Exception as e:
-                logger.debug("Failed to decrypt credential for email %s: %s", email, str(e))
-                return None
+        # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
+        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
+            # Optimized path: SELECT only credential_id and transports columns
+            stmt = (
+                select(PasskeyCredential.credential_id, PasskeyCredential.transports)
+                .where(PasskeyCredential.user_id == user.id, PasskeyCredential.is_active)
+                .order_by(PasskeyCredential.created_at.desc())
+                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
+            )
+            result = await db.execute(stmt)
+            credential_data = result.fetchall()
 
-        # Decrypt all credentials in parallel
-        results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+            # Log credential count for monitoring
+            cred_count = len(credential_data)
+            logger.debug("Fetched %d credential IDs (optimized) for email %s", cred_count, email)
 
-        # Filter out None values (failed decryptions)
-        result = [r for r in results if r is not None]
+            if not credential_data:
+                record_passkey_query(time.perf_counter() - start_time)
+                return []
 
-        # Log decryption performance
-        elapsed_ms = (time.perf_counter() - start_time) * 1000
-        logger.info(
-            "Decrypted %d/%d credentials in %.2fms (parallel) for email %s",
-            len(result),
-            cred_count,
-            elapsed_ms,
-            email,
-        )
+            # Parallel decryption with concurrency limit
+            semaphore = asyncio.Semaphore(settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
 
-        return result
+            async def decrypt_one_optimized(cred_id: str, transports: str | None):
+                """Decrypt a single credential with concurrency control."""
+                async with semaphore:
+                    try:
+                        decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred_id)
+                        logger.debug("Successfully decrypted credential for email %s", email)
+                        return PublicKeyCredentialDescriptor(
+                            type=PublicKeyCredentialType.PUBLIC_KEY,
+                            id=decrypted_id,
+                            transports=transports,
+                        )
+                    except Exception as e:
+                        logger.debug("Failed to decrypt credential for email %s: %s", email, str(e))
+                        return None
+
+            # Decrypt all credentials in parallel with concurrency control
+            results = await asyncio.gather(*[decrypt_one_optimized(row[0], row[1]) for row in credential_data])
+
+            # Filter out None values (failed decryptions)
+            valid_results = [r for r in results if r is not None]
+
+            # Log performance metrics
+            elapsed_seconds = time.perf_counter() - start_time
+            elapsed_ms = elapsed_seconds * 1000
+            logger.info(
+                "Decrypted %d/%d credentials in %.2fms (optimized, parallel) for email %s",
+                len(valid_results),
+                cred_count,
+                elapsed_ms,
+                email,
+            )
+            record_passkey_query(elapsed_seconds)
+
+            return valid_results
+        else:
+            # Original path: Fetch full entities (fallback)
+            creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user.id)
+
+            # Apply limit manually for consistency
+            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
+
+            # Log credential count for monitoring
+            cred_count = len(creds)
+            logger.debug("Decrypting %d credentials for email %s", cred_count, email)
+
+            if not creds:
+                record_passkey_query(time.perf_counter() - start_time)
+                return []
+
+            # Parallel decryption using thread pool (P1-1 optimization)
+            async def decrypt_one(cred):
+                """Decrypt a single credential in thread pool."""
+                try:
+                    decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred.credential_id)
+                    transports = cred.transports if cred.transports else None
+                    logger.debug("Successfully decrypted credential for email %s", email)
+                    return PublicKeyCredentialDescriptor(
+                        type=PublicKeyCredentialType.PUBLIC_KEY,
+                        id=decrypted_id,
+                        transports=transports,
+                    )
+                except Exception as e:
+                    logger.debug("Failed to decrypt credential for email %s: %s", email, str(e))
+                    return None
+
+            # Decrypt all credentials in parallel
+            results = await asyncio.gather(*[decrypt_one(c) for c in creds])
+
+            # Filter out None values (failed decryptions)
+            result = [r for r in results if r is not None]
+
+            # Log decryption performance
+            elapsed_seconds = time.perf_counter() - start_time
+            elapsed_ms = elapsed_seconds * 1000
+            logger.info(
+                "Decrypted %d/%d credentials in %.2fms (parallel) for email %s",
+                len(result),
+                cred_count,
+                elapsed_ms,
+                email,
+            )
+            record_passkey_query(elapsed_seconds)
+
+            return result
 
     async def _store_auth_challenge(self, redis: Redis, challenge: bytes) -> None:
         """Store authentication challenge in Redis."""
