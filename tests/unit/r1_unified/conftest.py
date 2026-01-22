@@ -125,6 +125,7 @@ def mock_settings():
     settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 3600
     settings.r1_unified.DLQ_USE_BOUNDED_SIZE = True
     settings.r1_unified.DLQ_MAX_SIZE = 10000
+    settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
     settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
     settings.r1_unified.IDEMPOTENCY_TTL_SECONDS = 300
     settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
