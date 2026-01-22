@@ -1,7 +1,7 @@
 import os
 from enum import Enum
 
-from pydantic import Field, SecretStr, computed_field, model_validator
+from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -167,15 +167,9 @@ class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_PORT: int = 6379
     REDIS_QUEUE_PASSWORD: str | None = None
     # P2-2: Explicit pool configuration matching cache settings
-    REDIS_QUEUE_MAX_CONNECTIONS: int = Field(
-        default=50, ge=10, le=500, description="Max connections in queue pool"
-    )
-    REDIS_QUEUE_CONN_TIMEOUT: int = Field(
-        default=5, ge=1, le=30, description="Connection timeout in seconds"
-    )
-    REDIS_QUEUE_CONN_RETRIES: int = Field(
-        default=5, ge=1, le=20, description="Number of connection retries"
-    )
+    REDIS_QUEUE_MAX_CONNECTIONS: int = Field(default=50, ge=10, le=500, description="Max connections in queue pool")
+    REDIS_QUEUE_CONN_TIMEOUT: int = Field(default=5, ge=1, le=30, description="Connection timeout in seconds")
+    REDIS_QUEUE_CONN_RETRIES: int = Field(default=5, ge=1, le=20, description="Number of connection retries")
 
 
 class DefaultRateLimitSettings(BaseSettings):
@@ -314,6 +308,95 @@ class EventSettings(BaseSettings):
     EVENT_HANDLER_TIMEOUT_CRITICAL: float = 60.0  # For known slow handlers
 
 
+class R1UnifiedSettings(BaseSettings):
+    """R1-UNIFIED performance optimization feature flags and configuration.
+
+    These flags enable gradual rollout and easy rollback of optimizations.
+    All flags default to False (original behavior) for safety.
+    """
+
+    model_config = SettingsConfigDict(env_prefix="R1_")
+
+    # Feature flags - enable/disable specific optimizations
+    EVENT_BUS_USE_LUA_IDEMPOTENCY: bool = False
+    """Use Lua script for atomic idempotency check (P1-1)."""
+
+    SESSION_USE_PIPELINE_EVICTION: bool = False
+    """Use Redis pipeline for session eviction (P2-1)."""
+
+    XFETCH_USE_LUA_SCRIPT: bool = False
+    """Use Lua script for atomic GET+TTL in XFetch (P2-2)."""
+
+    RBAC_USE_REDIS_CACHE: bool = False
+    """Use Redis caching for RBAC permission checks (P5)."""
+
+    DLQ_USE_BOUNDED_SIZE: bool = False
+    """Use bounded DLQ with automatic trimming (P3-1)."""
+
+    PASSKEY_USE_COLUMN_SELECT: bool = False
+    """Use column-specific SELECT for passkey queries (P3-2)."""
+
+    CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = False
+    """Use double-check pattern for circuit breaker (P4-1)."""
+
+    # Configuration parameters with validation
+    SESSION_MAX_EVICTION_BATCH_SIZE: int = 50
+    """Maximum sessions to evict in a single batch operation."""
+
+    RBAC_CACHE_TTL_SECONDS: int = 3600
+    """TTL for RBAC permission cache entries (1 hour default)."""
+
+    DLQ_MAX_SIZE: int = 10000
+    """Maximum entries in the Dead-Letter Queue."""
+
+    DLQ_ALERT_THRESHOLD_PCT: int = 80
+    """Alert when DLQ reaches this percentage of max size."""
+
+    PASSKEY_MAX_CREDENTIALS_PER_USER: int = 100
+    """Maximum passkey credentials per user."""
+
+    PASSKEY_DECRYPT_CONCURRENCY_LIMIT: int = 10
+    """Maximum concurrent passkey decrypt operations."""
+
+    IDEMPOTENCY_TTL_SECONDS: int = 300
+    """TTL for event idempotency keys (5 minutes default)."""
+
+    @field_validator("SESSION_MAX_EVICTION_BATCH_SIZE")
+    @classmethod
+    def validate_eviction_batch(cls, v: int) -> int:
+        if not 1 <= v <= 100:
+            raise ValueError("SESSION_MAX_EVICTION_BATCH_SIZE must be 1-100")
+        return v
+
+    @field_validator("RBAC_CACHE_TTL_SECONDS")
+    @classmethod
+    def validate_rbac_ttl(cls, v: int) -> int:
+        if not 60 <= v <= 86400:
+            raise ValueError("RBAC_CACHE_TTL_SECONDS must be 60-86400 (1min-24hr)")
+        return v
+
+    @field_validator("DLQ_MAX_SIZE")
+    @classmethod
+    def validate_dlq_size(cls, v: int) -> int:
+        if not 1000 <= v <= 100000:
+            raise ValueError("DLQ_MAX_SIZE must be 1000-100000")
+        return v
+
+    @field_validator("DLQ_ALERT_THRESHOLD_PCT")
+    @classmethod
+    def validate_alert_threshold(cls, v: int) -> int:
+        if not 50 <= v <= 99:
+            raise ValueError("DLQ_ALERT_THRESHOLD_PCT must be 50-99")
+        return v
+
+    @field_validator("PASSKEY_DECRYPT_CONCURRENCY_LIMIT")
+    @classmethod
+    def validate_decrypt_limit(cls, v: int) -> int:
+        if not 1 <= v <= 50:
+            raise ValueError("PASSKEY_DECRYPT_CONCURRENCY_LIMIT must be 1-50")
+        return v
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -337,6 +420,9 @@ class Settings(
     EventSettings,
     CORSSettings,
 ):
+    # R1-UNIFIED optimization settings (nested for organization)
+    r1_unified: R1UnifiedSettings = R1UnifiedSettings()
+
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", ".env"),
         env_file_encoding="utf-8",

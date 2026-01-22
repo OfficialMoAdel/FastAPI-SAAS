@@ -1,0 +1,382 @@
+"""
+R1-UNIFIED Performance Metrics.
+
+Prometheus metrics for tracking R1-UNIFIED optimization performance.
+Provides counters, histograms, and gauges for all 7 optimization areas.
+
+Usage:
+    from src.app.core.monitoring import record_event_idempotency, record_xfetch_latency
+
+    # Record metrics
+    record_event_idempotency(is_duplicate=False)
+    record_xfetch_latency(0.005)  # 5ms
+"""
+
+from __future__ import annotations
+
+import logging
+import time
+from contextlib import contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Callable, Generator
+
+logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MetricValue:
+    """Container for a single metric value with labels."""
+
+    name: str
+    value: float = 0.0
+    labels: dict[str, str] = field(default_factory=dict)
+    timestamp: float = field(default_factory=time.time)
+
+
+@dataclass
+class HistogramBuckets:
+    """Histogram bucket configuration."""
+
+    boundaries: tuple[float, ...] = (
+        0.001,  # 1ms
+        0.005,  # 5ms
+        0.01,  # 10ms
+        0.025,  # 25ms
+        0.05,  # 50ms
+        0.1,  # 100ms
+        0.25,  # 250ms
+        0.5,  # 500ms
+        1.0,  # 1s
+    )
+
+
+class R1UnifiedMetrics:
+    """Prometheus-compatible metrics for R1-UNIFIED optimizations.
+
+    This class provides in-memory metric storage that can be exported
+    to Prometheus or other monitoring systems. It tracks:
+
+    1. Event Bus Idempotency - duplicate detection rate
+    2. Session Eviction - roundtrip counts and latency
+    3. XFetch Cache - cache hit/miss and latency
+    4. RBAC Permissions - cache effectiveness
+    5. DLQ Size - queue depth monitoring
+    6. Passkey Query - query performance
+    7. Circuit Breaker - state transitions
+    """
+
+    def __init__(self) -> None:
+        """Initialize metrics storage."""
+        # Counters
+        self._counters: dict[str, float] = {
+            "r1_event_idempotency_checks_total": 0,
+            "r1_event_idempotency_duplicates_total": 0,
+            "r1_session_evictions_total": 0,
+            "r1_xfetch_cache_hits_total": 0,
+            "r1_xfetch_cache_misses_total": 0,
+            "r1_rbac_cache_hits_total": 0,
+            "r1_rbac_cache_misses_total": 0,
+            "r1_dlq_pushes_total": 0,
+            "r1_dlq_trims_total": 0,
+            "r1_passkey_queries_total": 0,
+            "r1_circuit_breaker_opens_total": 0,
+            "r1_circuit_breaker_closes_total": 0,
+            "r1_lua_script_executions_total": 0,
+            "r1_lua_script_fallbacks_total": 0,
+        }
+
+        # Gauges
+        self._gauges: dict[str, float] = {
+            "r1_dlq_size": 0,
+            "r1_dlq_size_pct": 0,
+            "r1_circuit_breaker_state": 0,  # 0=closed, 1=open, 2=half-open
+            "r1_session_active_count": 0,
+        }
+
+        # Histogram data (sum, count, buckets)
+        self._histograms: dict[str, dict[str, Any]] = {
+            "r1_session_eviction_roundtrips": {
+                "sum": 0.0,
+                "count": 0,
+                "buckets": {1: 0, 2: 0, 3: 0, 5: 0, 10: 0},
+            },
+            "r1_xfetch_latency_seconds": {
+                "sum": 0.0,
+                "count": 0,
+                "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+            },
+            "r1_rbac_query_latency_seconds": {
+                "sum": 0.0,
+                "count": 0,
+                "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+            },
+            "r1_passkey_query_latency_seconds": {
+                "sum": 0.0,
+                "count": 0,
+                "buckets": dict.fromkeys(HistogramBuckets().boundaries, 0),
+            },
+        }
+
+    # Counter operations
+    def inc_counter(self, name: str, value: float = 1.0) -> None:
+        """Increment a counter."""
+        if name in self._counters:
+            self._counters[name] += value
+        else:
+            logger.warning(f"Unknown counter: {name}")
+
+    def get_counter(self, name: str) -> float:
+        """Get counter value."""
+        return self._counters.get(name, 0.0)
+
+    # Gauge operations
+    def set_gauge(self, name: str, value: float) -> None:
+        """Set a gauge value."""
+        if name in self._gauges:
+            self._gauges[name] = value
+        else:
+            logger.warning(f"Unknown gauge: {name}")
+
+    def get_gauge(self, name: str) -> float:
+        """Get gauge value."""
+        return self._gauges.get(name, 0.0)
+
+    # Histogram operations
+    def observe_histogram(self, name: str, value: float) -> None:
+        """Record an observation in a histogram."""
+        if name not in self._histograms:
+            logger.warning(f"Unknown histogram: {name}")
+            return
+
+        hist = self._histograms[name]
+        hist["sum"] += value
+        hist["count"] += 1
+
+        # Update buckets
+        for boundary in sorted(hist["buckets"].keys()):
+            if value <= boundary:
+                hist["buckets"][boundary] += 1
+
+    def get_histogram(self, name: str) -> dict[str, Any]:
+        """Get histogram data."""
+        return self._histograms.get(name, {})
+
+    # Export for Prometheus
+    def export_prometheus(self) -> str:
+        """Export all metrics in Prometheus text format."""
+        lines = []
+
+        # Counters
+        for name, value in self._counters.items():
+            lines.append(f"# TYPE {name} counter")
+            lines.append(f"{name} {value}")
+
+        # Gauges
+        for name, value in self._gauges.items():
+            lines.append(f"# TYPE {name} gauge")
+            lines.append(f"{name} {value}")
+
+        # Histograms
+        for name, data in self._histograms.items():
+            lines.append(f"# TYPE {name} histogram")
+            for boundary, count in sorted(data["buckets"].items()):
+                lines.append(f'{name}_bucket{{le="{boundary}"}} {count}')
+            lines.append(f'{name}_bucket{{le="+Inf"}} {data["count"]}')
+            lines.append(f"{name}_sum {data['sum']}")
+            lines.append(f"{name}_count {data['count']}")
+
+        return "\n".join(lines)
+
+    def get_all_metrics(self) -> dict[str, Any]:
+        """Get all metrics as a dictionary."""
+        return {
+            "counters": dict(self._counters),
+            "gauges": dict(self._gauges),
+            "histograms": {
+                name: {
+                    "sum": data["sum"],
+                    "count": data["count"],
+                    "mean": data["sum"] / data["count"] if data["count"] > 0 else 0,
+                }
+                for name, data in self._histograms.items()
+            },
+        }
+
+    def reset(self) -> None:
+        """Reset all metrics (for testing)."""
+        for name in self._counters:
+            self._counters[name] = 0
+        for name in self._gauges:
+            self._gauges[name] = 0
+        for name in self._histograms:
+            self._histograms[name]["sum"] = 0
+            self._histograms[name]["count"] = 0
+            for boundary in self._histograms[name]["buckets"]:
+                self._histograms[name]["buckets"][boundary] = 0
+
+
+# Singleton instance
+_metrics: R1UnifiedMetrics | None = None
+
+
+def get_r1_metrics() -> R1UnifiedMetrics:
+    """Get the singleton metrics instance."""
+    global _metrics
+    if _metrics is None:
+        _metrics = R1UnifiedMetrics()
+    return _metrics
+
+
+def reset_r1_metrics() -> None:
+    """Reset the singleton metrics (for testing)."""
+    global _metrics
+    if _metrics is not None:
+        _metrics.reset()
+
+
+# =============================================================================
+# Convenience functions for recording metrics
+# =============================================================================
+
+
+def record_event_idempotency(is_duplicate: bool) -> None:
+    """Record an event idempotency check.
+
+    Args:
+        is_duplicate: Whether the event was a duplicate
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_event_idempotency_checks_total")
+    if is_duplicate:
+        metrics.inc_counter("r1_event_idempotency_duplicates_total")
+
+
+def record_session_eviction(roundtrips: int) -> None:
+    """Record a session eviction operation.
+
+    Args:
+        roundtrips: Number of Redis roundtrips used
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_session_evictions_total")
+    metrics.observe_histogram("r1_session_eviction_roundtrips", float(roundtrips))
+
+
+def record_xfetch_latency(latency_seconds: float, is_hit: bool = True) -> None:
+    """Record an XFetch cache operation.
+
+    Args:
+        latency_seconds: Operation latency in seconds
+        is_hit: Whether it was a cache hit
+    """
+    metrics = get_r1_metrics()
+    if is_hit:
+        metrics.inc_counter("r1_xfetch_cache_hits_total")
+    else:
+        metrics.inc_counter("r1_xfetch_cache_misses_total")
+    metrics.observe_histogram("r1_xfetch_latency_seconds", latency_seconds)
+
+
+def record_rbac_cache_hit() -> None:
+    """Record an RBAC cache hit."""
+    get_r1_metrics().inc_counter("r1_rbac_cache_hits_total")
+
+
+def record_rbac_cache_miss() -> None:
+    """Record an RBAC cache miss."""
+    get_r1_metrics().inc_counter("r1_rbac_cache_misses_total")
+
+
+def record_rbac_query_latency(latency_seconds: float) -> None:
+    """Record RBAC query latency."""
+    get_r1_metrics().observe_histogram("r1_rbac_query_latency_seconds", latency_seconds)
+
+
+def update_dlq_size(size: int, max_size: int = 10000) -> None:
+    """Update DLQ size gauge.
+
+    Args:
+        size: Current DLQ size
+        max_size: Maximum DLQ size for percentage calculation
+    """
+    metrics = get_r1_metrics()
+    metrics.set_gauge("r1_dlq_size", float(size))
+    metrics.set_gauge("r1_dlq_size_pct", (size / max_size) * 100 if max_size > 0 else 0)
+
+
+def record_dlq_push(was_trimmed: bool = False) -> None:
+    """Record a DLQ push operation.
+
+    Args:
+        was_trimmed: Whether the push triggered a trim
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_dlq_pushes_total")
+    if was_trimmed:
+        metrics.inc_counter("r1_dlq_trims_total")
+
+
+def record_passkey_query(latency_seconds: float) -> None:
+    """Record a passkey credential query.
+
+    Args:
+        latency_seconds: Query latency in seconds
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_passkey_queries_total")
+    metrics.observe_histogram("r1_passkey_query_latency_seconds", latency_seconds)
+
+
+def update_circuit_breaker_state(state: str) -> None:
+    """Update circuit breaker state gauge.
+
+    Args:
+        state: One of "closed", "open", "half_open"
+    """
+    state_map = {"closed": 0, "open": 1, "half_open": 2}
+    value = state_map.get(state.lower(), 0)
+    get_r1_metrics().set_gauge("r1_circuit_breaker_state", float(value))
+
+
+def record_circuit_breaker_transition(to_state: str) -> None:
+    """Record a circuit breaker state transition.
+
+    Args:
+        to_state: Target state ("open" or "closed")
+    """
+    metrics = get_r1_metrics()
+    if to_state == "open":
+        metrics.inc_counter("r1_circuit_breaker_opens_total")
+    elif to_state == "closed":
+        metrics.inc_counter("r1_circuit_breaker_closes_total")
+    update_circuit_breaker_state(to_state)
+
+
+def record_lua_script_execution(used_fallback: bool = False) -> None:
+    """Record a Lua script execution.
+
+    Args:
+        used_fallback: Whether fallback (EVAL vs EVALSHA) was used
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_lua_script_executions_total")
+    if used_fallback:
+        metrics.inc_counter("r1_lua_script_fallbacks_total")
+
+
+@contextmanager
+def measure_latency(
+    record_fn: Callable[[float], None],
+) -> Generator[None, None, None]:
+    """Context manager for measuring operation latency.
+
+    Usage:
+        with measure_latency(lambda t: record_xfetch_latency(t, is_hit=True)):
+            result = await cache.get(key)
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        latency = time.perf_counter() - start
+        record_fn(latency)
