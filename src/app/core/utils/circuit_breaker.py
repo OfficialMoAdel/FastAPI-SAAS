@@ -196,6 +196,9 @@ def circuit_breaker(
                 if state == CircuitState.HALF_OPEN:
                     async with breaker._lock:
                         if breaker.state == CircuitState.HALF_OPEN:
+                            # Transition internal state to HALF_OPEN for proper tracking
+                            if breaker._state == CircuitState.OPEN:
+                                breaker._state = CircuitState.HALF_OPEN
                             # Mark probe in progress to prevent concurrent probes
                             pass  # Probe will execute below
                         elif breaker.state == CircuitState.OPEN:

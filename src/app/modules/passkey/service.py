@@ -330,7 +330,7 @@ class PasskeyService:
             # Optimized path: SELECT only credential_id column
             stmt = (
                 select(PasskeyCredential.credential_id)
-                .where(PasskeyCredential.user_id == user_id, PasskeyCredential.is_active)
+                .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
                 .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
@@ -504,7 +504,7 @@ class PasskeyService:
             # Optimized path: SELECT only credential_id and transports columns
             stmt = (
                 select(PasskeyCredential.credential_id, PasskeyCredential.transports)
-                .where(PasskeyCredential.user_id == user.id, PasskeyCredential.is_active)
+                .where(PasskeyCredential.user_id == user.id)
                 .order_by(PasskeyCredential.created_at.desc())
                 .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
