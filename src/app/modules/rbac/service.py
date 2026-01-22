@@ -1,27 +1,45 @@
 """RBAC Role Service - Business logic for role management."""
 
 from collections.abc import Sequence
-from typing import Annotated
+from datetime import datetime
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_tenant
+from ...core.config import settings
 from ...core.db.database import async_get_db
+from ...core.json_utils import json_dumps, json_loads
+from ...core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from ...core.rbac.dependencies import invalidate_user_permissions_cache
 from ...modules.tenants.models import Tenant
 from .._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from .models import Permission, Role, RolePermission, UserRole
 from .schemas import RoleCreate, RoleUpdate
 
+if TYPE_CHECKING:
+    from redis.asyncio import Redis
+
+import structlog
+
+logger = structlog.get_logger(__name__)
+
 
 class RoleService:
     """Service for managing roles within a tenant."""
 
-    def __init__(self, db: AsyncSession, tenant_id: int) -> None:
+    def __init__(
+        self,
+        db: AsyncSession,
+        tenant_id: int,
+        redis_client: "Redis | None" = None,
+    ) -> None:
         self.db = db
         self.tenant_id = tenant_id
+        self._redis_client = redis_client
+        self._cache_prefix = "rbac:perms"
 
     async def get_roles(self, skip: int = 0, limit: int = 100) -> Sequence[Role]:
         """Get all roles for the current tenant."""
@@ -94,7 +112,56 @@ class RoleService:
         await self.db.commit()
 
     async def get_role_permissions(self, role_id: int) -> Sequence[Permission]:
-        """Get all permissions for a role."""
+        """Get all permissions for a role with Redis caching.
+
+        Uses Redis cache when R1_RBAC_USE_REDIS_CACHE=true to avoid
+        database queries on every permission check.
+
+        Args:
+            role_id: Role ID to get permissions for
+
+        Returns:
+            Sequence of Permission objects
+
+        Performance:
+            - Cache hit: ~0.05-0.1ms
+            - Cache miss: ~0.5-2ms (DB query + cache write)
+        """
+        # Check cache first (if enabled)
+        if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client:
+            cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
+            try:
+                cached = await self._redis_client.get(cache_key)
+                if cached:
+                    # Deserialize full Permission objects
+                    perm_dicts = json_loads(cached)
+                    permissions = [
+                        Permission(
+                            id=p["id"],
+                            slug=p["slug"],
+                            description=p.get("description"),
+                            created_at=datetime.fromisoformat(p["created_at"]),
+                            updated_at=datetime.fromisoformat(p["updated_at"]),
+                        )
+                        for p in perm_dicts
+                    ]
+                    record_rbac_cache_hit()
+                    logger.debug(
+                        "RBAC cache HIT",
+                        role_id=role_id,
+                        tenant_id=self.tenant_id,
+                        permission_count=len(permissions),
+                    )
+                    return permissions
+            except Exception as e:
+                logger.warning(
+                    "RBAC cache read error, falling back to DB",
+                    error=str(e),
+                    role_id=role_id,
+                )
+
+        # Cache miss - query database
+        record_rbac_cache_miss()
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
 
         stmt = (
@@ -103,7 +170,101 @@ class RoleService:
             .where(RolePermission.role_id == role_id)
         )
         result = await self.db.execute(stmt)
-        return result.scalars().all()
+        permissions = list(result.scalars().all())
+
+        # Cache the results (if enabled)
+        if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client and permissions:
+            cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
+            try:
+                perm_dicts = [
+                    {
+                        "id": p.id,
+                        "slug": p.slug,
+                        "description": p.description,
+                        "created_at": p.created_at.isoformat() if p.created_at else None,
+                        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+                    }
+                    for p in permissions
+                ]
+                await self._redis_client.setex(
+                    cache_key,
+                    settings.r1_unified.RBAC_CACHE_TTL_SECONDS,
+                    json_dumps(perm_dicts, as_str=True),
+                )
+                logger.debug(
+                    "RBAC cache SET",
+                    role_id=role_id,
+                    tenant_id=self.tenant_id,
+                    permission_count=len(permissions),
+                    ttl=settings.r1_unified.RBAC_CACHE_TTL_SECONDS,
+                )
+            except Exception as e:
+                logger.warning(
+                    "RBAC cache write error",
+                    error=str(e),
+                    role_id=role_id,
+                )
+
+        return permissions
+
+    async def _invalidate_role_cache(self, role_id: int) -> None:
+        """Invalidate cache for a specific role.
+
+        Called when role permissions are modified.
+        """
+        if not self._redis_client:
+            return
+
+        cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
+        try:
+            await self._redis_client.delete(cache_key)
+            logger.info(
+                "RBAC cache INVALIDATED",
+                role_id=role_id,
+                tenant_id=self.tenant_id,
+            )
+        except Exception as e:
+            logger.warning(
+                "RBAC cache invalidation error",
+                error=str(e),
+                role_id=role_id,
+            )
+
+    async def _invalidate_all_role_caches(self) -> None:
+        """Invalidate all role caches for this tenant.
+
+        Called when a permission is modified (affects all roles).
+        Uses SCAN instead of KEYS for non-blocking operation.
+        """
+        if not self._redis_client:
+            return
+
+        try:
+            pattern = f"{self._cache_prefix}:{self.tenant_id}:*"
+            cursor = 0
+            deleted = 0
+
+            while True:
+                cursor, keys = await self._redis_client.scan(
+                    cursor, match=pattern, count=100
+                )
+                if keys:
+                    await self._redis_client.delete(*keys)
+                    deleted += len(keys)
+                if cursor == 0:
+                    break
+
+            logger.info(
+                "RBAC cache INVALIDATED ALL",
+                tenant_id=self.tenant_id,
+                deleted_keys=deleted,
+            )
+        except Exception as e:
+            logger.warning(
+                "RBAC cache invalidation error",
+                error=str(e),
+                tenant_id=self.tenant_id,
+            )
 
     async def add_permission_to_role(self, role_id: int, permission_slug: str) -> None:
         """Add a permission to a role."""
@@ -137,6 +298,9 @@ class RoleService:
         self.db.add(role_permission)
         await self.db.commit()
 
+        # Invalidate cache for this role
+        await self._invalidate_role_cache(role_id)
+
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
         role = await self.get_role(role_id)
@@ -163,6 +327,9 @@ class RoleService:
         if role_permission:
             await self.db.delete(role_permission)
             await self.db.commit()
+
+            # Invalidate cache for this role
+            await self._invalidate_role_cache(role_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
         """Assign a role to a user within the current tenant."""
