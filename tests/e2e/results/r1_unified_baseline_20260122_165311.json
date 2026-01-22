@@ -1,0 +1,155 @@
+{
+  "timestamp": "2026-01-22T14:52:47.558472+00:00",
+  "environment": {
+    "python_version": "3.13.7",
+    "platform": "win32",
+    "timestamp": "2026-01-22T14:52:47.558503+00:00"
+  },
+  "optimizations": {
+    "event_idempotency": {
+      "duplicates": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Redis not available for idempotency test"
+      }
+    },
+    "session_eviction": {
+      "roundtrips": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Redis not available for session test"
+      }
+    },
+    "xfetch_cache": {
+      "latency_ms": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Redis not available for cache test"
+      }
+    },
+    "rbac_permissions": {
+      "query_latency_ms": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Database not available for RBAC test"
+      }
+    },
+    "dlq_metrics": {
+      "size": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Redis not available for DLQ test"
+      }
+    },
+    "passkey_query": {
+      "query_latency_ms": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Database not available for passkey test"
+      }
+    },
+    "circuit_breaker": {
+      "state_check_ns": {
+        "value": 354.10013515502214,
+        "unit": "ns",
+        "metadata": {
+          "property": "is_closed"
+        },
+        "stats": {
+          "p50": 300.002284348011,
+          "p95": 900.006853044033,
+          "p99": 1000.00761449337,
+          "mean": 354.10013515502214,
+          "stddev": 260.979786092327,
+          "min": 199.88510757684708,
+          "max": 4499.917849898338,
+          "samples": 1000
+        },
+        "sample_count": 1000
+      },
+      "record_success_ns": {
+        "value": 1842.4008740112185,
+        "unit": "ns",
+        "metadata": {},
+        "stats": {
+          "p50": 1800.013706088066,
+          "p95": 2999.9064281582832,
+          "p99": 4400.033503770828,
+          "mean": 1842.4008740112185,
+          "stddev": 2775.434773984201,
+          "min": 699.8889148235321,
+          "max": 68099.93647038937,
+          "samples": 1000
+        },
+        "sample_count": 1000
+      }
+    }
+  },
+  "system_resources": {
+    "cpu_percent": {
+      "value": 0.0,
+      "unit": "%",
+      "metadata": {}
+    },
+    "memory_rss_mb": {
+      "value": 87.4921875,
+      "unit": "MB",
+      "metadata": {}
+    },
+    "system_cpu_percent": {
+      "value": 38.9,
+      "unit": "%",
+      "metadata": {}
+    },
+    "system_memory_percent": {
+      "value": 57.0,
+      "unit": "%",
+      "metadata": {}
+    }
+  },
+  "redis_metrics": {
+    "available": {
+      "value": 0,
+      "unit": "",
+      "metadata": {
+        "connected": false
+      }
+    }
+  },
+  "database_metrics": {
+    "available": {
+      "value": 0,
+      "unit": "",
+      "metadata": {
+        "connected": false
+      }
+    }
+  },
+  "concurrency_tests": {
+    "error": {
+      "message": {
+        "value": null,
+        "unit": "",
+        "metadata": {},
+        "error": "Redis not available"
+      }
+    }
+  },
+  "validation": {
+    "has_event_idempotency": true,
+    "has_session_eviction": true,
+    "has_xfetch_cache": true,
+    "has_rbac_permissions": true,
+    "has_dlq_metrics": true,
+    "has_passkey_query": true,
+    "has_circuit_breaker": true,
+    "variance_circuit_breaker_state_check_ns": true,
+    "variance_circuit_breaker_record_success_ns": true
+  }
+}
