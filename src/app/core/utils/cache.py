@@ -1,13 +1,18 @@
 import functools
+import random
 import re
+import time
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
 from fastapi import Request, Response
 from redis.asyncio import ConnectionPool, Redis
 
+from ..config import settings
 from ..exceptions.cache_exceptions import CacheIdentificationInferenceError, InvalidRequestError, MissingClientError
 from ..json_utils import json_dumps, json_loads
+from ..monitoring.r1_unified_metrics import record_xfetch_latency
+from .lua_manager import get_lua_manager
 
 pool: ConnectionPool | None = None
 client: Redis | None = None
@@ -341,6 +346,9 @@ async def get_with_stampede_protection(
     Prevents cache stampede by probabilistically refreshing cache before
     expiration, spreading out refresh requests across time.
 
+    Uses atomic Lua script for GET+TTL when R1_XFETCH_USE_LUA_SCRIPT=true,
+    reducing Redis roundtrips from 2 to 1 (~50% latency improvement).
+
     Args:
         key: Cache key
         fetch_func: Async function to fetch fresh data if cache miss
@@ -361,9 +369,49 @@ async def get_with_stampede_protection(
     if client is None:
         return await fetch_func()
 
-    # Try to get cached value with TTL info
-    cached = await client.get(key)
-    remaining_ttl = await client.ttl(key)
+    # Get cached value with TTL info
+    start_time = time.perf_counter()
+
+    if settings.r1_unified.XFETCH_USE_LUA_SCRIPT:
+        # Optimized path: Single Lua script for GET + TTL (1 roundtrip)
+        try:
+            lua_manager = get_lua_manager()
+            result = await lua_manager.execute(
+                client,
+                "xfetch_get_with_ttl",
+                keys=[key],
+                args=[],
+            )
+
+            latency = time.perf_counter() - start_time
+            record_xfetch_latency(latency, is_hit=result[0] is not None)
+
+            # Unpack result: [value, ttl]
+            cached = result[0]
+            remaining_ttl = int(result[1]) if result[1] is not None else -2
+
+            # Handle bytes → string conversion
+            if cached is not None and isinstance(cached, bytes):
+                cached = cached.decode("utf-8")
+
+        except Exception as e:
+            # Fallback to original implementation on Lua failure
+            stampede_logger.warning(
+                "XFetch Lua script failed, using fallback",
+                error=str(e),
+                key=key,
+            )
+            # Fall through to original implementation
+            cached = await client.get(key)
+            remaining_ttl = await client.ttl(key)
+            latency = time.perf_counter() - start_time
+            record_xfetch_latency(latency, is_hit=cached is not None)
+    else:
+        # Original path: 2 separate Redis calls
+        cached = await client.get(key)
+        remaining_ttl = await client.ttl(key)
+        latency = time.perf_counter() - start_time
+        record_xfetch_latency(latency, is_hit=cached is not None)
 
     if cached is not None and remaining_ttl > 0:
         # XFetch probabilistic early expiration
@@ -372,7 +420,7 @@ async def get_with_stampede_protection(
         if delta > 0:
             # Probability increases as we approach expiration
             probability = min(beta * (delta / ttl) ** 2, 1.0)
-            
+
             if random.random() < probability:
                 stampede_logger.debug(
                     "Cache early refresh triggered",
