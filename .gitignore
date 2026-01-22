@@ -191,4 +191,5 @@ test_*.db*
 skill
 baseline_*
 n8n
-CONSOLIDATED_ISSUES_AND_RECOMMENDATIONS.md
+BEADS_*
+tests/e2e/results/r1_opus_e2e_*
