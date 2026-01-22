@@ -1,0 +1,93 @@
+{
+  "timestamp": "2026-01-22T17:14:05.606292+00:00",
+  "summary": {
+    "total": 7,
+    "passed": 7,
+    "failed": 0,
+    "skipped": 0,
+    "total_duration_ms": 5944.69
+  },
+  "tests": [
+    {
+      "name": "event_bus_idempotency_lua",
+      "status": "PASS",
+      "duration_ms": 1171.74,
+      "details": {
+        "lua_script_registered": true,
+        "redis_client_available": true,
+        "feature_flag_enabled": true
+      },
+      "error": null
+    },
+    {
+      "name": "session_eviction_pipeline",
+      "status": "PASS",
+      "duration_ms": 4751.13,
+      "details": {
+        "pipeline_used": true,
+        "zrange_called": true,
+        "sessions_at_limit": true,
+        "new_session_registered": true
+      },
+      "error": null
+    },
+    {
+      "name": "xfetch_lua_script",
+      "status": "PASS",
+      "duration_ms": 0.96,
+      "details": {
+        "xfetch_function_available": true,
+        "lua_script_integration": true,
+        "feature_flag_enabled": true
+      },
+      "error": null
+    },
+    {
+      "name": "dlq_bounded_size",
+      "status": "PASS",
+      "duration_ms": 11.85,
+      "details": {
+        "pipeline_used": true,
+        "ltrim_called": true,
+        "bounded_size": true,
+        "max_size": 10000
+      },
+      "error": null
+    },
+    {
+      "name": "rbac_permissions_caching",
+      "status": "PASS",
+      "duration_ms": 3.61,
+      "details": {
+        "rbac_cache_flag_exists": true,
+        "rbac_cache_ttl_exists": true,
+        "cache_ttl_value": 3600,
+        "feature_ready": true
+      },
+      "error": null
+    },
+    {
+      "name": "feature_flags_integration",
+      "status": "PASS",
+      "duration_ms": 1.78,
+      "details": {
+        "total_flags": 9,
+        "found_flags": 9,
+        "missing_flags": [],
+        "all_flags_present": true
+      },
+      "error": null
+    },
+    {
+      "name": "metrics_recording",
+      "status": "PASS",
+      "duration_ms": 0.13,
+      "details": {
+        "record_session_eviction_available": true,
+        "update_dlq_size_available": true,
+        "all_metrics_functional": true
+      },
+      "error": null
+    }
+  ]
+}
