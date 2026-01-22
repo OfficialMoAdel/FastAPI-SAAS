@@ -192,7 +192,6 @@ test_*.db*
 skill
 baseline_*
 n8n
-BEADS_*
 tests/e2e/results/*
 reports/*.md
 reports/*.json
