@@ -193,4 +193,4 @@ skill
 baseline_*
 n8n
 BEADS_*
-tests/e2e/results/r1_opus_e2e_*
+tests/e2e/results/*
