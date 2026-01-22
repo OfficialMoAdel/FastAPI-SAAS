@@ -16,6 +16,8 @@ from typing import Any
 from structlog import get_logger
 
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.monitoring.r1_unified_metrics import record_event_idempotency
+from src.app.core.utils.lua_manager import get_lua_manager
 
 from .config import settings
 from .utils.circuit_breaker import arq_circuit
@@ -127,6 +129,65 @@ class EventBus:
     # Redis key prefix for processed event IDs
     IDEMPOTENCY_KEY_PREFIX = "event_bus:processed:"
 
+    async def _check_idempotency(self, event_id: str) -> bool:
+        """Check if event was already processed using atomic Lua script.
+
+        Uses SETNX pattern for race-condition-free idempotency check.
+        The Lua script atomically checks and sets the key in a single operation.
+
+        Args:
+            event_id: Unique event identifier
+
+        Returns:
+            True if event is a duplicate (already processed), False if new
+
+        Note:
+            Caller must ensure self._redis_client is not None before calling.
+        """
+        if self._redis_client is None:
+            return False  # Can't check idempotency without Redis
+
+        idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
+
+        if settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+            # Optimized path: Atomic Lua script (no race condition)
+            try:
+                lua_manager = get_lua_manager()
+                result = await lua_manager.execute(
+                    self._redis_client,
+                    "idempotency_check",
+                    keys=[idempotency_key],
+                    args=[str(self.IDEMPOTENCY_TTL_SECONDS), "1"],
+                )
+                # Script returns 1 if key was set (first time), 0 if exists
+                is_duplicate = bool(result == 0)
+                record_event_idempotency(is_duplicate)
+                return is_duplicate
+
+            except Exception as e:
+                # Fallback to original behavior on Lua script failure
+                logger.warning(
+                    "Lua idempotency check failed, using fallback",
+                    error=str(e),
+                    event_id=event_id,
+                )
+                # Fall through to original implementation
+
+        # Original path (has race condition but works as fallback)
+        already_processed = await self._redis_client.get(idempotency_key)
+        if already_processed:
+            record_event_idempotency(is_duplicate=True)
+            return True
+
+        # Mark event as processed with TTL
+        await self._redis_client.setex(
+            idempotency_key,
+            self.IDEMPOTENCY_TTL_SECONDS,
+            "1",
+        )
+        record_event_idempotency(is_duplicate=False)
+        return False
+
     async def publish(
         self,
         event_name: str,
@@ -153,21 +214,14 @@ class EventBus:
         """
         # Check for duplicate event if event_id provided
         if event_id and self._redis_client:
-            idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
-            already_processed = await self._redis_client.get(idempotency_key)
-            if already_processed:
+            is_duplicate = await self._check_idempotency(event_id)
+            if is_duplicate:
                 logger.info(
                     "Duplicate event skipped",
                     event_name=event_name,
                     event_id=event_id,
                 )
                 return
-            # Mark event as processed with TTL
-            await self._redis_client.setex(
-                idempotency_key,
-                self.IDEMPOTENCY_TTL_SECONDS,
-                "1",
-            )
 
         handlers = self._handlers.get(event_name, [])
 
