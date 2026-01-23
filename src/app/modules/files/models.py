@@ -45,6 +45,9 @@ class File(Base):
     __tablename__ = "files"
     __table_args__ = (
         Index("idx_files_tenant_user_created", "tenant_id", "user_id", "created_at"),
+        # R2-HYBRID MED-5: Composite index for MIME type filtering
+        # Enables O(1) lookup for queries like: WHERE tenant_id=? AND mime_type=?
+        Index("ix_files_tenant_mime", "tenant_id", "mime_type"),
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
