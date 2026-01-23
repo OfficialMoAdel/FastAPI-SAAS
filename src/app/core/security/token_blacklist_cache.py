@@ -8,8 +8,13 @@ Design principles:
 - TTL-aware: Tokens stored with expiry timestamp as score for efficient cleanup
 - Cache warming: Load active blacklisted tokens from DB on startup
 - P2-4: Negative caching for verified tokens to reduce Redis calls
-- P3: Bloom filter pre-check for in-memory filtering before Redis
 - P0-3: Lua script for atomic multi-operation (4 roundtrips → 1)
+
+NOTE: Bloom filter pre-check was REMOVED (R2-HYBRID CRIT-1) due to security
+vulnerability in multi-worker deployments. In distributed environments, each
+worker has its own independent Bloom filter that is never synchronized, causing
+blacklisted tokens to bypass Redis check on workers that didn't receive the
+blacklist update. Relying on Redis + negative cache instead.
 """
 
 import logging
@@ -19,16 +24,33 @@ import xxhash
 
 from src.app.core.utils.cache import client as redis_client
 
-from .bloom_filter import blacklist_bloom_filter
-
 logger = logging.getLogger(__name__)
 
 # Redis key for the blacklist sorted set
 BLACKLIST_KEY = "token:blacklist"
 # P2-4: Negative cache key prefix - stores tokens verified as NOT blacklisted
-# Short TTL since we want to re-check periodically but reduce hot-path Redis calls
+# R2-HYBRID LOW-2: TTL tuned via settings for configurable trade-off
+# Higher TTL = fewer Redis calls but slightly delayed revocation detection
 NEGATIVE_CACHE_KEY = "token:verified:"
-NEGATIVE_CACHE_TTL = 60  # 60 seconds - balance between performance and security
+
+# Import settings for configurable TTL
+from src.app.core.config import settings
+
+
+def _get_negative_cache_ttl() -> int:
+    """Get negative cache TTL from settings.
+
+    Trade-off:
+    - Higher TTL (300s): 80-90% fewer Redis calls for hot tokens
+    - Lower TTL (60s): Faster revocation detection
+    - Risk: Revoked token accepted for up to TTL duration
+
+    Default: 300 seconds (5 minutes) - acceptable for most SaaS applications
+    where immediate revocation is not critical.
+
+    Override via environment: R1_UNIFIED__TOKEN_NEGATIVE_CACHE_TTL=60
+    """
+    return settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL
 
 
 def _token_cache_key(token: str) -> str:
@@ -38,6 +60,7 @@ def _token_cache_key(token: str) -> str:
     collision-prone for JWTs (first 20+ chars are often identical headers).
     """
     return xxhash.xxh64(token.encode()).hexdigest()
+
 
 # P0-3: Lua script for atomic blacklist check (4 operations → 1 roundtrip)
 BLACKLIST_CHECK_LUA_SCRIPT = """
@@ -102,8 +125,8 @@ async def _ensure_script_loaded() -> str | None:
 async def is_token_blacklisted(token: str) -> bool | None:
     """Check if token is in Redis blacklist cache.
 
-    Uses 3-tier check for optimal performance:
-    1. Bloom filter (in-memory, microseconds) - if "not in set" → return False
+    Uses 2-tier check for optimal performance:
+    1. Negative cache (recently verified tokens skip Redis)
     2. Lua script (atomic Redis check) - single roundtrip for all operations
 
     Args:
@@ -112,11 +135,6 @@ async def is_token_blacklisted(token: str) -> bool | None:
     Returns:
         True if blacklisted, False if not, None if Redis unavailable (fail open)
     """
-    # P3: Bloom filter pre-check (in-memory, ~1 microsecond)
-    # If Bloom says "definitely not in set", skip Redis entirely
-    if not blacklist_bloom_filter.might_contain(token):
-        return False
-
     if redis_client is None:
         return None  # Redis not configured, fall back to DB
 
@@ -139,7 +157,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                 BLACKLIST_KEY,
                 token,
                 str(now),
-                str(NEGATIVE_CACHE_TTL),
+                str(_get_negative_cache_ttl()),
             )
             return bool(int(result))
         except Exception as script_error:
@@ -156,7 +174,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                         BLACKLIST_KEY,
                         token,
                         str(now),
-                        str(NEGATIVE_CACHE_TTL),
+                        str(_get_negative_cache_ttl()),
                     )
                     return bool(int(retry_result))
             raise  # Re-raise if not a NOSCRIPT error
@@ -184,7 +202,7 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         score = await redis_client.zscore(BLACKLIST_KEY, token)
         if score is None:
             # Cache the negative result to avoid repeated lookups
-            await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
+            await redis_client.set(negative_key, "1", ex=_get_negative_cache_ttl())
             return False
 
         # Check if token has expired (score is expiry timestamp)
@@ -210,9 +228,6 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
     Returns:
         True if added successfully, False on failure
     """
-    # P3: Add to Bloom filter first (always succeeds, in-memory)
-    blacklist_bloom_filter.add(token)
-
     if redis_client is None:
         return False
 
@@ -243,10 +258,6 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
     """
     if not tokens:
         return 0
-
-    # P3: Add to Bloom filter first (always succeeds, in-memory)
-    token_strs = [token for token, _ in tokens]
-    blacklist_bloom_filter.add_batch(token_strs)
 
     if redis_client is None:
         return 0
@@ -319,18 +330,15 @@ async def get_cache_stats() -> dict:
     Returns:
         Dict with cache statistics
     """
-    bloom_stats = blacklist_bloom_filter.stats()
-
     if redis_client is None:
-        return {"enabled": False, "bloom_filter": bloom_stats}
+        return {"enabled": False}
 
     try:
         count = await redis_client.zcard(BLACKLIST_KEY)
         return {
             "enabled": True,
             "token_count": count,
-            "bloom_filter": bloom_stats,
         }
     except Exception as e:
         logger.warning(f"Failed to get cache stats: {e}")
-        return {"enabled": True, "error": str(e), "bloom_filter": bloom_stats}
+        return {"enabled": True, "error": str(e)}
