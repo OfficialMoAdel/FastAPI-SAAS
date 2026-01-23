@@ -72,10 +72,10 @@ class TestTokenCacheKeyCollision:
 
         with (
             patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
-            patch("src.app.core.security.token_blacklist_cache.blacklist_bloom_filter") as mock_bloom,
-            patch("src.app.core.security.token_blacklist_cache._ensure_script_loaded", new_callable=AsyncMock) as mock_script,
+            patch(
+                "src.app.core.security.token_blacklist_cache._ensure_script_loaded", new_callable=AsyncMock
+            ) as mock_script,
         ):
-            mock_bloom.might_contain.return_value = True
             mock_script.return_value = "test_sha"
 
             await is_token_blacklisted(token)

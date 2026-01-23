@@ -45,8 +45,10 @@ class TestParallelDecryption:
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
     @patch("src.app.modules.passkey.service.asyncio.to_thread")
+    @patch("src.app.core.config.settings")
     async def test_decryption_uses_thread_pool(
         self,
+        mock_settings,
         mock_to_thread,
         mock_get_encryption,
         mock_get_by_user,
@@ -55,7 +57,10 @@ class TestParallelDecryption:
         mock_credentials,
     ):
         """Verify asyncio.to_thread is called for each credential decryption."""
-        # Arrange
+        # Arrange - disable optimized path to test the crud_passkey_credentials code path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
@@ -82,8 +87,10 @@ class TestParallelDecryption:
     @pytest.mark.asyncio
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
+    @patch("src.app.core.config.settings")
     async def test_parallel_decryption_faster(
         self,
+        mock_settings,
         mock_get_encryption,
         mock_get_by_user,
         passkey_service,
@@ -91,7 +98,10 @@ class TestParallelDecryption:
         mock_credentials,
     ):
         """Verify parallel decryption is faster than sequential for 5 credentials."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
@@ -123,8 +133,10 @@ class TestParallelDecryption:
     @pytest.mark.asyncio
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
+    @patch("src.app.core.config.settings")
     async def test_decryption_results_unchanged(
         self,
+        mock_settings,
         mock_get_encryption,
         mock_get_by_user,
         passkey_service,
@@ -132,7 +144,10 @@ class TestParallelDecryption:
         mock_credentials,
     ):
         """Verify parallel decryption produces same results as sequential."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
@@ -156,8 +171,10 @@ class TestParallelDecryption:
     @pytest.mark.asyncio
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
+    @patch("src.app.core.config.settings")
     async def test_error_handling_one_fails(
         self,
+        mock_settings,
         mock_get_encryption,
         mock_get_by_user,
         passkey_service,
@@ -165,7 +182,10 @@ class TestParallelDecryption:
         mock_credentials,
     ):
         """Verify one failed decryption doesn't break others."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
@@ -189,14 +209,19 @@ class TestParallelDecryption:
 
     @pytest.mark.asyncio
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
+    @patch("src.app.core.config.settings")
     async def test_empty_credentials_handled(
         self,
+        mock_settings,
         mock_get_by_user,
         passkey_service,
         mock_db,
     ):
         """Verify empty credential list is handled gracefully."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = []
 
         # Act
@@ -208,8 +233,10 @@ class TestParallelDecryption:
     @pytest.mark.asyncio
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
+    @patch("src.app.core.config.settings")
     async def test_event_loop_not_blocked(
         self,
+        mock_settings,
         mock_get_encryption,
         mock_get_by_user,
         passkey_service,
@@ -217,7 +244,10 @@ class TestParallelDecryption:
         mock_credentials,
     ):
         """Verify event loop can process other tasks during decryption."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
         mock_get_encryption.return_value = mock_encryption
@@ -256,8 +286,10 @@ class TestParallelDecryptionForEmail:
     @patch("src.app.modules.passkey.service.crud_passkey_credentials.get_by_user")
     @patch("src.app.core.security.encryption.get_encryption")
     @patch("src.app.modules.passkey.service.asyncio.to_thread")
+    @patch("src.app.core.config.settings")
     async def test_email_decryption_uses_thread_pool(
         self,
+        mock_settings,
         mock_to_thread,
         mock_get_encryption,
         mock_get_by_user,
@@ -267,7 +299,10 @@ class TestParallelDecryptionForEmail:
         mock_credentials,
     ):
         """Verify _get_credentials_for_email uses thread pool."""
-        # Arrange
+        # Arrange - disable optimized path
+        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+
         mock_user = MagicMock()
         mock_user.id = 123
         mock_get_user.return_value = mock_user

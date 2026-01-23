@@ -1,4 +1,5 @@
 """Unit tests for P2-3: RBAC Redis Cache Optimization."""
+
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,6 +7,16 @@ import pytest
 
 from src.app.modules.rbac.models import Permission
 from src.app.modules.rbac.service import RoleService
+
+
+@pytest.fixture(autouse=True)
+def clear_l1_cache():
+    """Clear L1 cache before each test."""
+    from src.app.modules.rbac.service import _L1_RBAC_CACHE
+
+    _L1_RBAC_CACHE.clear()
+    yield
+    _L1_RBAC_CACHE.clear()
 
 
 @pytest.mark.asyncio
@@ -30,7 +41,9 @@ async def test_cache_hit_avoids_database_query(mock_redis_client, mock_db_sessio
             "updated_at": "2024-01-01T00:00:00+00:00",
         },
     ]
-    mock_redis_client.get = AsyncMock(return_value='[{"id":1,"slug":"users.read","description":"Read users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"},{"id":2,"slug":"users.write","description":"Write users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"}]')
+    mock_redis_client.get = AsyncMock(
+        return_value='[{"id":1,"slug":"users.read","description":"Read users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"},{"id":2,"slug":"users.write","description":"Write users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"}]'
+    )
 
     # Mock database for fallback (in case cache deserialization fails)
     mock_role = MagicMock()
@@ -65,7 +78,7 @@ async def test_cache_hit_avoids_database_query(mock_redis_client, mock_db_sessio
                     value = datetime.fromisoformat(value)
                 setattr(perm, key, value)
             return perm
-        
+
         with patch("src.app.modules.rbac.service.Permission", side_effect=mock_permission_init):
             with patch("src.app.modules.rbac.service.record_rbac_cache_hit") as mock_hit:
                 permissions = await service.get_role_permissions(role_id=1)
@@ -335,7 +348,11 @@ async def test_cache_invalidation_on_permission_add(mock_redis_client, mock_db_s
     mock_permission.slug = "test.perm"
 
     mock_result = MagicMock()
-    mock_result.scalar_one_or_none.side_effect = [mock_role, mock_permission, None]  # Role, permission, no existing assignment
+    mock_result.scalar_one_or_none.side_effect = [
+        mock_role,
+        mock_permission,
+        None,
+    ]  # Role, permission, no existing assignment
     mock_db_session.execute = AsyncMock(return_value=mock_result)
     mock_db_session.add = MagicMock()
     mock_db_session.commit = AsyncMock()

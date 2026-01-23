@@ -74,6 +74,7 @@ class TestConnectionReleasePattern:
 class TestAsyncioGatherParallelFetch:
     """Test P5: asyncio.gather() for parallel fetches."""
 
+    @pytest.mark.skip(reason="Optimization P5 reverted due to SQLAlchemy AsyncSession concurrency issues")
     def test_complete_uses_asyncio_gather(self) -> None:
         """Verify complete() uses asyncio.gather for parallel fetch."""
         import inspect
@@ -89,6 +90,7 @@ class TestAsyncioGatherParallelFetch:
 
         logger.info("asyncio.gather pattern: verified in complete()")
 
+    @pytest.mark.skip(reason="Optimization P5 reverted due to SQLAlchemy AsyncSession concurrency issues")
     def test_stream_uses_asyncio_gather(self) -> None:
         """Verify complete_stream() uses asyncio.gather for parallel fetch."""
         import inspect

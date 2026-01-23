@@ -32,6 +32,15 @@ class TestRBACPermissionsCaching:
         redis.scan = AsyncMock(return_value=(0, []))  # Empty scan
         return redis
 
+    @pytest.fixture(autouse=True)
+    def clear_l1_cache(self):
+        """Clear L1 cache before each test."""
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE
+
+        _L1_RBAC_CACHE.clear()
+        yield
+        _L1_RBAC_CACHE.clear()
+
     @pytest.mark.asyncio
     async def test_cache_hit_skips_database(self, mock_db: AsyncMock, mock_redis: AsyncMock) -> None:
         """Test that cache hit returns cached permissions without DB query."""

@@ -30,23 +30,22 @@ class TestIsTokenBlacklisted:
 
     @pytest.mark.asyncio
     async def test_returns_false_when_token_not_in_cache(self) -> None:
-        """Should return False when token is not blacklisted."""
+        """Should return False when token is not blacklisted (Lua script returns 0)."""
         mock_redis = AsyncMock()
-        # Negative cache miss (token not recently verified)
-        mock_redis.exists = AsyncMock(return_value=0)
-        # Token not in blacklist
-        mock_redis.zscore = AsyncMock(return_value=None)
-        # Set negative cache for future lookups
-        mock_redis.set = AsyncMock(return_value=True)
+        # Mock evalsha to return 0 (not blacklisted)
+        mock_redis.evalsha = AsyncMock(return_value=0)
+        # Mock script loading
+        mock_redis.script = MagicMock()
+        mock_redis.script.return_value.load = AsyncMock(return_value="script_sha")
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with (
+            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
+        ):
             result = await is_token_blacklisted("clean-token")
             assert result is False
-            # Should check negative cache first, then zscore
-            mock_redis.exists.assert_called_once()
-            mock_redis.zscore.assert_called_once()
-            # Should set negative cache after confirming not blacklisted
-            mock_redis.set.assert_called_once()
+            # Should call evalsha with the Lua script
+            mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_returns_true_when_token_blacklisted(self) -> None:
@@ -64,28 +63,30 @@ class TestIsTokenBlacklisted:
 
     @pytest.mark.asyncio
     async def test_returns_false_and_removes_expired_token(self) -> None:
-        """Should return False and remove token if it has expired."""
+        """Should return False when Lua script returns 0 (handles expiry internally)."""
         mock_redis = AsyncMock()
-        # Negative cache miss
-        mock_redis.exists = AsyncMock(return_value=0)
-        # Score is expiry timestamp in past
-        past_expiry = (datetime.now(timezone.utc) - timedelta(hours=1)).timestamp()
-        mock_redis.zscore = AsyncMock(return_value=past_expiry)
-        mock_redis.zrem = AsyncMock(return_value=1)
+        # Lua script handles expiry logic internally, returns 0 for expired/not-blacklisted
+        mock_redis.evalsha = AsyncMock(return_value=0)
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with (
+            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
+        ):
             result = await is_token_blacklisted("expired-token")
             assert result is False
-            mock_redis.zrem.assert_called_once()
+            mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_fails_open_on_redis_error(self) -> None:
         """Should return None (fail open) on Redis errors."""
         mock_redis = AsyncMock()
-        # Error on exists check
-        mock_redis.exists = AsyncMock(side_effect=Exception("Connection error"))
+        # Error on evalsha (Lua script execution)
+        mock_redis.evalsha = AsyncMock(side_effect=Exception("Connection error"))
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with (
+            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
+        ):
             result = await is_token_blacklisted("any-token")
             assert result is None
 

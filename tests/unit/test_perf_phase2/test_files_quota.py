@@ -73,10 +73,10 @@ async def test_get_quota_stats_implementation(file_service, mock_db):
     # Row with file_count=10, total_size=5000
     mock_row = MagicMock()
     mock_row.file_count = 10
-    mock_row.total_size = 5000
+    mock_row.storage_usage_bytes = 5000  # Match the attribute accessed in implementation
 
     mock_result = MagicMock()
-    mock_result.one.return_value = mock_row
+    mock_result.one_or_none.return_value = mock_row  # Fix: mock one_or_none, not one
     mock_db.execute.return_value = mock_result
 
     # Call the new method (we will implement it)

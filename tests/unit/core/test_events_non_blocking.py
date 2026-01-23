@@ -234,20 +234,29 @@ class TestCriticalEventWithRedis:
 
         event_bus._handlers["test.duplicate_event"] = [handler]
 
-        start = time.perf_counter()
-        await event_bus.publish(
-            "test.duplicate_event",
-            {"test": "data"},
-            priority=EventPriority.CRITICAL,
-            event_id="already-processed-123",
-        )
-        elapsed = time.perf_counter() - start
+        # Disable Lua optimization to ensure we hit the mocked get() path
+        from src.app.core.config import settings
 
-        # Should return immediately
-        assert elapsed < 0.01
+        original_val = settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY
+        settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
 
-        # Give time for any potential handler execution
-        await asyncio.sleep(0.05)
+        try:
+            start = time.perf_counter()
+            await event_bus.publish(
+                "test.duplicate_event",
+                {"test": "data"},
+                priority=EventPriority.CRITICAL,
+                event_id="already-processed-123",
+            )
+            elapsed = time.perf_counter() - start
 
-        # Handler should NOT have been called
-        assert not handler_called, "Handler was called for duplicate event!"
+            # Should return immediately
+            assert elapsed < 0.01
+
+            # Give time for any potential handler execution
+            await asyncio.sleep(0.05)
+
+            # Handler should NOT have been called
+            assert not handler_called, "Handler was called for duplicate event!"
+        finally:
+            settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = original_val

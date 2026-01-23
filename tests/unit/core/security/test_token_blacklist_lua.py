@@ -16,7 +16,7 @@ from src.app.core.security.token_blacklist_cache import (
     BLACKLIST_CHECK_LUA_SCRIPT,
     BLACKLIST_KEY,
     NEGATIVE_CACHE_KEY,
-    NEGATIVE_CACHE_TTL,
+    _get_negative_cache_ttl,
     _ensure_script_loaded,
     _is_token_blacklisted_fallback,
     is_token_blacklisted,
@@ -148,7 +148,7 @@ class TestLuaScriptBehavior:
                 # ARGV[2]: timestamp (should be numeric string)
                 assert call_args[0][5].isdigit()
                 # ARGV[3]: TTL
-                assert call_args[0][6] == str(NEGATIVE_CACHE_TTL)
+                assert call_args[0][6] == str(_get_negative_cache_ttl())
 
 
 class TestSingleRoundtrip:
@@ -284,4 +284,4 @@ class TestNegativeCachePopulation:
 
                 # Assert - verify TTL is passed to script
                 call_args = mock_redis.evalsha.call_args[0]
-                assert call_args[6] == str(NEGATIVE_CACHE_TTL)
+                assert call_args[6] == str(_get_negative_cache_ttl())

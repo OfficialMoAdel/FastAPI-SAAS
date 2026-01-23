@@ -34,20 +34,24 @@ class TestMiddlewareOrder:
         assert rate_limit_pos > 0, "RateLimitMiddleware not found"
         assert request_id_pos > 0, "RequestIDMiddleware not found"
 
-        # P2-5: Tenant must be added BEFORE RateLimit (runs after in LIFO)
-        # In add_middleware() order, tenant should come before rate_limit
-        assert tenant_pos < rate_limit_pos, (
-            "P2-5: TenantMiddleware must be added before RateLimitMiddleware "
-            "so tenant context is available for rate limiting"
+        # P2-5: Tenant must be added AFTER RateLimit (LIFO)
+        # Because we want Tenant to run BEFORE RateLimit on the request path.
+        # Request -> Tenant -> RateLimit.
+        # To run first, it must be added last.
+        # So Tenant added AFTER RateLimit.
+        assert tenant_pos > rate_limit_pos, (
+            "P2-5: TenantMiddleware must be added after RateLimitMiddleware "
+            "so it runs before RateLimitMiddleware (LIFO) and provides tenant context"
         )
 
         # Verify logical ordering (LIFO means later additions run first on request)
-        # Order should be: GZip, Security, BodyLimit, Tenant, RateLimit, RequestID
-        assert gzip_pos < security_pos, "GZip should be first (outermost)"
-        assert security_pos < body_limit_pos, "Security before BodyLimit"
-        assert body_limit_pos < tenant_pos, "BodyLimit before Tenant"
-        assert tenant_pos < rate_limit_pos, "Tenant before RateLimit (P2-5)"
-        assert rate_limit_pos < request_id_pos, "RateLimit before RequestID"
+        # Execution Order: GZip -> Security -> BodyLimit -> Tenant -> RateLimit -> RequestID
+        # Addition Order: RequestID -> RateLimit -> Tenant -> BodyLimit -> Security -> GZip
+        assert request_id_pos < rate_limit_pos, "RequestID added before RateLimit"
+        assert rate_limit_pos < tenant_pos, "RateLimit added before Tenant"
+        assert tenant_pos < body_limit_pos, "Tenant added before BodyLimit"
+        assert body_limit_pos < security_pos, "BodyLimit added before Security"
+        assert security_pos < gzip_pos, "Security added before GZip"
 
     def test_p2_5_comment_documents_ordering(self):
         """Verify P2-5 optimization is documented in code."""

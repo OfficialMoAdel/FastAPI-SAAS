@@ -169,6 +169,21 @@ class TestSessionManagerIntegration:
                 del zsets[key][member]
             return result
 
+        async def zrange(key, start, end, withscores=False):
+            if key not in zsets or not zsets[key]:
+                return []
+            sorted_items = sorted(zsets[key].items(), key=lambda x: x[1])
+
+            # Redis range is inclusive, Python is exclusive
+            if end == -1:
+                sliced = sorted_items[start:]
+            else:
+                sliced = sorted_items[start : end + 1]
+
+            if withscores:
+                return sliced
+            return [item[0] for item in sliced]
+
         async def hget(key, field):
             return hashes.get(key, {}).get(field)
 
@@ -176,6 +191,7 @@ class TestSessionManagerIntegration:
         redis.zcard = zcard
         redis.hlen = hlen
         redis.zpopmin = zpopmin
+        redis.zrange = zrange
         redis.hget = hget
 
         # Pipeline mock

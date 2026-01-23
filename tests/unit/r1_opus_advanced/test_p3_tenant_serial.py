@@ -62,16 +62,17 @@ class TestTenantSerialization:
         # After fix, there should be no as_str=True in tenant caching
         # (there might be as_str=True in other contexts, but not for tenant cache)
         # Check the specific cache_data assignment
-        assert "cache_data = json_dumps(" in source
+        # The code was refactored to: serialized = json_dumps(cache_data)
+        assert "serialized = json_dumps(cache_data)" in source or "serialized = json_dumps(" in source
 
         # The fix removes as_str=True from cache_data assignment
-        # Find the cache_data line and verify no as_str
+        # Find the serialized line and verify no as_str
         lines = source.split("\n")
         for i, line in enumerate(lines):
-            if "cache_data = json_dumps(" in line:
+            if "serialized = json_dumps(" in line:
                 # Check if as_str=True is NOT in the next few lines of this call
-                cache_block = "\n".join(lines[i:i + 10])
-                if "id\": tenant.id" in cache_block:
+                cache_block = "\n".join(lines[i : i + 10])
+                if 'id": tenant.id' in cache_block:
                     # This is the tenant cache block
                     assert "as_str=True" not in cache_block
 

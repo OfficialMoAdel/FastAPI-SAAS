@@ -57,7 +57,19 @@ def mock_permission():
     """Mock Permission object."""
     perm = Permission(slug="users:read", description="Can read users")
     perm.id = 1
+    perm.created_at = None
+    perm.updated_at = None
     return perm
+
+
+@pytest.fixture(autouse=True)
+def clear_l1_cache():
+    """Clear L1 cache before each test."""
+    from src.app.modules.rbac.service import _L1_RBAC_CACHE
+
+    _L1_RBAC_CACHE.clear()
+    yield
+    _L1_RBAC_CACHE.clear()
 
 
 class TestRoleServiceGet:
