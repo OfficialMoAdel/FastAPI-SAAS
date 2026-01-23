@@ -1,9 +1,16 @@
-"""RBAC Role Service - Business logic for role management."""
+"""RBAC Role Service - Business logic for role management.
+
+Performance Optimization (R2-HYBRID MED-2):
+- L1 in-memory cache (TTLCache) reduces Redis calls for repeated permission checks
+- L2 Redis cache (TTL configurable) reduces DB queries
+- Critical for endpoints with multiple permission checks per request
+"""
 
 from collections.abc import Sequence
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
+from cachetools import TTLCache
 from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,6 +32,13 @@ if TYPE_CHECKING:
 import structlog
 
 logger = structlog.get_logger(__name__)
+
+# L1 In-Memory Cache for RBAC permissions (R2-HYBRID MED-2)
+# - maxsize: 500 role-permission sets (covers most deployments)
+# - ttl: 5 seconds (balance between freshness and performance)
+# - Thread-safe: cachetools TTLCache is safe for async context
+# - Key format: "{tenant_id}:{role_id}" -> list of permission dicts
+_L1_RBAC_CACHE: TTLCache[str, list[dict[str, Any]]] = TTLCache(maxsize=500, ttl=5.0)
 
 
 class RoleService:
@@ -112,10 +126,11 @@ class RoleService:
         await self.db.commit()
 
     async def get_role_permissions(self, role_id: int) -> Sequence[Permission]:
-        """Get all permissions for a role with Redis caching.
+        """Get all permissions for a role with L1+L2 caching.
 
-        Uses Redis cache when R1_RBAC_USE_REDIS_CACHE=true to avoid
-        database queries on every permission check.
+        Cache hierarchy (R2-HYBRID MED-2):
+        - L1: In-memory TTLCache (5s TTL) - eliminates Redis RTT
+        - L2: Redis cache (configurable TTL) - eliminates DB queries
 
         Args:
             role_id: Role ID to get permissions for
@@ -124,30 +139,48 @@ class RoleService:
             Sequence of Permission objects
 
         Performance:
-            - Cache hit: ~0.05-0.1ms
-            - Cache miss: ~0.5-2ms (DB query + cache write)
+            - L1 cache hit: ~0.01-0.05ms (in-process)
+            - L2 cache hit: ~0.5-1ms (Redis RTT)
+            - Cache miss: ~2-5ms (DB query + cache writes)
         """
-        # Check cache first (if enabled)
+        l1_cache_key = f"{self.tenant_id}:{role_id}"
+
+        # L1: Check in-memory cache first (fastest path)
+        try:
+            cached_perms = _L1_RBAC_CACHE.get(l1_cache_key)
+            if cached_perms is not None:
+                # L1 hit - reconstruct Permission objects
+                permissions = self._deserialize_permissions(cached_perms)
+                record_rbac_cache_hit()
+                logger.debug(
+                    "RBAC L1 cache HIT",
+                    role_id=role_id,
+                    tenant_id=self.tenant_id,
+                    permission_count=len(permissions),
+                )
+                return permissions
+        except Exception as e:
+            logger.warning("RBAC L1 cache read error: %s", e)
+
+        # L2: Check Redis cache (if enabled)
         if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client:
             cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
             try:
                 cached = await self._redis_client.get(cache_key)
                 if cached:
-                    # Deserialize full Permission objects
+                    # Deserialize and populate L1 cache
                     perm_dicts = json_loads(cached)
-                    permissions = [
-                        Permission(
-                            id=p["id"],
-                            slug=p["slug"],
-                            description=p.get("description"),
-                            created_at=datetime.fromisoformat(p["created_at"]),
-                            updated_at=datetime.fromisoformat(p["updated_at"]),
-                        )
-                        for p in perm_dicts
-                    ]
+                    permissions = self._deserialize_permissions(perm_dicts)
+
+                    # Populate L1 cache
+                    try:
+                        _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
+                    except Exception as e:
+                        logger.warning("RBAC L1 cache write error: %s", e)
+
                     record_rbac_cache_hit()
                     logger.debug(
-                        "RBAC cache HIT",
+                        "RBAC L2 cache HIT (populated L1)",
                         role_id=role_id,
                         tenant_id=self.tenant_id,
                         permission_count=len(permissions),
@@ -155,12 +188,12 @@ class RoleService:
                     return permissions
             except Exception as e:
                 logger.warning(
-                    "RBAC cache read error, falling back to DB",
+                    "RBAC L2 cache read error, falling back to DB",
                     error=str(e),
                     role_id=role_id,
                 )
 
-        # Cache miss - query database
+        # L3: Cache miss - query database
         record_rbac_cache_miss()
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
 
@@ -172,27 +205,35 @@ class RoleService:
         result = await self.db.execute(stmt)
         permissions = list(result.scalars().all())
 
-        # Cache the results (if enabled)
+        # Serialize for caching
+        perm_dicts = [
+            {
+                "id": p.id,
+                "slug": p.slug,
+                "description": p.description,
+                "created_at": p.created_at.isoformat() if p.created_at else None,
+                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
+            }
+            for p in permissions
+        ]
+
+        # Populate L1 cache (always, even without Redis)
+        try:
+            _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
+        except Exception as e:
+            logger.warning("RBAC L1 cache write error: %s", e)
+
+        # Populate L2 Redis cache (if enabled)
         if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client and permissions:
             cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
             try:
-                perm_dicts = [
-                    {
-                        "id": p.id,
-                        "slug": p.slug,
-                        "description": p.description,
-                        "created_at": p.created_at.isoformat() if p.created_at else None,
-                        "updated_at": p.updated_at.isoformat() if p.updated_at else None,
-                    }
-                    for p in permissions
-                ]
                 await self._redis_client.setex(
                     cache_key,
                     settings.r1_unified.RBAC_CACHE_TTL_SECONDS,
                     json_dumps(perm_dicts, as_str=True),
                 )
                 logger.debug(
-                    "RBAC cache SET",
+                    "RBAC L2 cache SET",
                     role_id=role_id,
                     tenant_id=self.tenant_id,
                     permission_count=len(permissions),
@@ -200,18 +241,55 @@ class RoleService:
                 )
             except Exception as e:
                 logger.warning(
-                    "RBAC cache write error",
+                    "RBAC L2 cache write error",
                     error=str(e),
                     role_id=role_id,
                 )
 
         return permissions
 
+    def _deserialize_permissions(self, perm_dicts: list[dict[str, Any]]) -> list[Permission]:
+        """Deserialize permission dicts to Permission objects.
+
+        Creates minimal Permission objects from cached data without
+        touching the database. These are transient objects suitable
+        for permission checking.
+        """
+        permissions = []
+        for p in perm_dicts:
+            perm = Permission(
+                slug=p["slug"],
+                description=p.get("description"),
+            )
+            # Set id after creation (init=False on id field)
+            object.__setattr__(perm, "id", p["id"])
+            if p.get("created_at"):
+                object.__setattr__(perm, "created_at", datetime.fromisoformat(p["created_at"]))
+            if p.get("updated_at"):
+                object.__setattr__(perm, "updated_at", datetime.fromisoformat(p["updated_at"]))
+            permissions.append(perm)
+        return permissions
+
     async def _invalidate_role_cache(self, role_id: int) -> None:
         """Invalidate cache for a specific role.
 
         Called when role permissions are modified.
+        Clears both L1 (memory) and L2 (Redis) caches.
         """
+        l1_cache_key = f"{self.tenant_id}:{role_id}"
+
+        # Clear L1 cache first (always)
+        try:
+            _L1_RBAC_CACHE.pop(l1_cache_key, None)
+            logger.debug(
+                "RBAC L1 cache INVALIDATED",
+                role_id=role_id,
+                tenant_id=self.tenant_id,
+            )
+        except Exception as e:
+            logger.warning("RBAC L1 cache invalidation error: %s", e)
+
+        # Clear L2 Redis cache
         if not self._redis_client:
             return
 
@@ -219,13 +297,13 @@ class RoleService:
         try:
             await self._redis_client.delete(cache_key)
             logger.info(
-                "RBAC cache INVALIDATED",
+                "RBAC L2 cache INVALIDATED",
                 role_id=role_id,
                 tenant_id=self.tenant_id,
             )
         except Exception as e:
             logger.warning(
-                "RBAC cache invalidation error",
+                "RBAC L2 cache invalidation error",
                 error=str(e),
                 role_id=role_id,
             )
@@ -234,8 +312,24 @@ class RoleService:
         """Invalidate all role caches for this tenant.
 
         Called when a permission is modified (affects all roles).
+        Clears both L1 (memory) and L2 (Redis) caches.
         Uses SCAN instead of KEYS for non-blocking operation.
         """
+        # Clear all L1 cache entries for this tenant
+        try:
+            tenant_prefix = f"{self.tenant_id}:"
+            keys_to_remove = [k for k in _L1_RBAC_CACHE.keys() if k.startswith(tenant_prefix)]
+            for key in keys_to_remove:
+                _L1_RBAC_CACHE.pop(key, None)
+            logger.debug(
+                "RBAC L1 cache INVALIDATED ALL",
+                tenant_id=self.tenant_id,
+                deleted_keys=len(keys_to_remove),
+            )
+        except Exception as e:
+            logger.warning("RBAC L1 cache invalidation error: %s", e)
+
+        # Clear L2 Redis cache
         if not self._redis_client:
             return
 
@@ -245,9 +339,7 @@ class RoleService:
             deleted = 0
 
             while True:
-                cursor, keys = await self._redis_client.scan(
-                    cursor, match=pattern, count=100
-                )
+                cursor, keys = await self._redis_client.scan(cursor, match=pattern, count=100)
                 if keys:
                     await self._redis_client.delete(*keys)
                     deleted += len(keys)
@@ -255,9 +347,15 @@ class RoleService:
                     break
 
             logger.info(
-                "RBAC cache INVALIDATED ALL",
+                "RBAC L2 cache INVALIDATED ALL",
                 tenant_id=self.tenant_id,
                 deleted_keys=deleted,
+            )
+        except Exception as e:
+            logger.warning(
+                "RBAC L2 cache invalidation error",
+                error=str(e),
+                tenant_id=self.tenant_id,
             )
         except Exception as e:
             logger.warning(
