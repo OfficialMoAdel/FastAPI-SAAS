@@ -141,25 +141,35 @@ async def test_count_sessions_hlen_fallback(session_manager, mock_redis):
 
 @pytest.mark.asyncio
 async def test_eviction_uses_zpopmin(mock_redis, mock_pipeline):
-    """Verify O(log n) eviction using ZPOPMIN instead of HGETALL+sort."""
-    manager = SessionManager(redis_client=mock_redis, max_sessions=2)
-    user_id = 456
+    """Verify O(log n) eviction using ZPOPMIN instead of HGETALL+sort (legacy path).
 
-    # At limit
-    mock_redis.zcard.return_value = 2
+    Note: This tests the legacy ZPOPMIN path. When SESSION_USE_PIPELINE_EVICTION
+    is True (default in R2-HYBRID), the pipelined ZRANGE path is used instead.
+    """
+    from unittest.mock import patch
 
-    # ZPOPMIN returns oldest session
-    mock_redis.zpopmin.return_value = [("old-session", 1704067200.0)]
-    mock_redis.hget.return_value = '{"session_id": "old-session", "created_at": "2024-01-01T00:00:00"}'
+    with patch("src.app.core.security.session_manager.settings") as mock_settings:
+        mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
+        mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
-    result = await manager.register_session(user_id, "new-session")
+        manager = SessionManager(redis_client=mock_redis, max_sessions=2)
+        user_id = 456
 
-    # Verify ZPOPMIN was called (O(log n) eviction)
-    mock_redis.zpopmin.assert_called()
+        # At limit
+        mock_redis.zcard.return_value = 2
 
-    # Verify old session was evicted
-    assert len(result["invalidated_sessions"]) == 1
-    assert result["invalidated_sessions"][0]["session_id"] == "old-session"
+        # ZPOPMIN returns oldest session
+        mock_redis.zpopmin.return_value = [("old-session", 1704067200.0)]
+        mock_redis.hget.return_value = '{"session_id": "old-session", "created_at": "2024-01-01T00:00:00"}'
 
-    # Verify HDEL was called for old session
-    mock_pipeline.hdel.assert_called()
+        result = await manager.register_session(user_id, "new-session")
+
+        # Verify ZPOPMIN was called (O(log n) eviction)
+        mock_redis.zpopmin.assert_called()
+
+        # Verify old session was evicted
+        assert len(result["invalidated_sessions"]) == 1
+        assert result["invalidated_sessions"][0]["session_id"] == "old-session"
+
+        # Verify HDEL was called for old session
+        mock_pipeline.hdel.assert_called()

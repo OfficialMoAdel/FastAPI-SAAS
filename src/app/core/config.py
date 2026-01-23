@@ -312,31 +312,34 @@ class R1UnifiedSettings(BaseSettings):
     """R1-UNIFIED performance optimization feature flags and configuration.
 
     These flags enable gradual rollout and easy rollback of optimizations.
-    All flags default to False (original behavior) for safety.
+    All flags default to True (optimized behavior) as of R2-HYBRID.
+    Set individual flags to False via environment variables to disable.
     """
 
     model_config = SettingsConfigDict(env_prefix="R1_")
 
     # Feature flags - enable/disable specific optimizations
-    EVENT_BUS_USE_LUA_IDEMPOTENCY: bool = False
+    # All flags default to True (optimizations enabled) as of R2-HYBRID
+    # Set to False via environment variables to disable if issues arise
+    EVENT_BUS_USE_LUA_IDEMPOTENCY: bool = True
     """Use Lua script for atomic idempotency check (P1-1)."""
 
-    SESSION_USE_PIPELINE_EVICTION: bool = False
+    SESSION_USE_PIPELINE_EVICTION: bool = True
     """Use Redis pipeline for session eviction (P2-1)."""
 
-    XFETCH_USE_LUA_SCRIPT: bool = False
+    XFETCH_USE_LUA_SCRIPT: bool = True
     """Use Lua script for atomic GET+TTL in XFetch (P2-2)."""
 
-    RBAC_USE_REDIS_CACHE: bool = False
+    RBAC_USE_REDIS_CACHE: bool = True
     """Use Redis caching for RBAC permission checks (P5)."""
 
-    DLQ_USE_BOUNDED_SIZE: bool = False
+    DLQ_USE_BOUNDED_SIZE: bool = True
     """Use bounded DLQ with automatic trimming (P3-1)."""
 
-    PASSKEY_USE_COLUMN_SELECT: bool = False
+    PASSKEY_USE_COLUMN_SELECT: bool = True
     """Use column-specific SELECT for passkey queries (P3-2)."""
 
-    CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = False
+    CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = True
     """Use double-check pattern for circuit breaker (P4-1)."""
 
     # Configuration parameters with validation

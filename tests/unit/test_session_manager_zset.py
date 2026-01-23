@@ -1,11 +1,12 @@
 """Unit tests for Session Manager ZSET optimization (z28g.3).
 
 Tests the O(log n) eviction using Redis ZSET + Hash hybrid structure.
+Tests verify the legacy ZPOPMIN path when SESSION_USE_PIPELINE_EVICTION=False.
 """
 
 import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -15,12 +16,16 @@ logger = logging.getLogger(__name__)
 
 
 class TestZSETEvictionOrder:
-    """Test that oldest sessions are evicted first using ZPOPMIN."""
+    """Test that oldest sessions are evicted first using ZPOPMIN (legacy path)."""
 
     @pytest.mark.asyncio
-    async def test_zset_eviction_oldest_first(self):
-        """Verify oldest session is evicted when at limit."""
-        # Arrange
+    @patch("src.app.core.security.session_manager.settings")
+    async def test_zset_eviction_oldest_first(self, mock_settings):
+        """Verify oldest session is evicted when at limit (legacy path)."""
+        # Arrange - force legacy path
+        mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
+        mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+
         mock_redis = AsyncMock()
         mock_redis.hexists = AsyncMock(return_value=False)
         mock_redis.zcard = AsyncMock(return_value=3)  # At limit

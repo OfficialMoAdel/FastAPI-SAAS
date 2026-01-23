@@ -1,4 +1,5 @@
 """Basic test to verify circuit breaker double-check pattern works."""
+
 import asyncio
 
 import pytest
@@ -57,20 +58,27 @@ async def test_circuit_breaker_basic_functionality():
 
 @pytest.mark.asyncio
 async def test_circuit_breaker_with_feature_flag_disabled():
-    """Test that circuit breaker works with feature flag disabled (default)."""
+    """Test that circuit breaker works with feature flag disabled.
+
+    Note: As of R2-HYBRID, the default is True (optimizations enabled).
+    This test verifies the legacy path behavior when explicitly disabled.
+    """
+    from unittest.mock import patch
     from src.app.core.config import settings
 
-    # Feature flag should be False by default
-    assert settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK is False
+    # Patch the feature flag to test legacy path
+    with patch.object(settings.r1_unified, "CIRCUIT_BREAKER_USE_DOUBLE_CHECK", False):
+        # Feature flag should be False when patched
+        assert settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK is False
 
-    breaker = CircuitBreaker(name="test_flag", failure_threshold=1)
+        breaker = CircuitBreaker(name="test_flag", failure_threshold=1)
 
-    @circuit_breaker(breaker)
-    async def test_func():
-        raise ValueError("Test error")
+        @circuit_breaker(breaker)
+        async def test_func():
+            raise ValueError("Test error")
 
-    # Should still work with feature flag disabled
-    with pytest.raises(ValueError):
-        await test_func()
+        # Should still work with feature flag disabled
+        with pytest.raises(ValueError):
+            await test_func()
 
-    assert breaker.state == CircuitState.OPEN
+        assert breaker.state == CircuitState.OPEN

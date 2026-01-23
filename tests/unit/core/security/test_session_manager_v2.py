@@ -271,12 +271,20 @@ class TestSessionManagerDataIntegrity:
 
 
 class TestSessionManagerSessionLimit:
-    """Test that session limit enforcement works correctly with ZPOPMIN."""
+    """Test that session limit enforcement works correctly with ZPOPMIN (legacy path).
+
+    Note: These tests verify the legacy ZPOPMIN path behavior.
+    When SESSION_USE_PIPELINE_EVICTION is enabled, the pipelined path is used instead.
+    """
 
     @pytest.mark.asyncio
-    async def test_session_limit_enforced_via_zpopmin(self, mock_redis):
+    @patch("src.app.core.security.session_manager.settings")
+    async def test_session_limit_enforced_via_zpopmin(self, mock_settings, mock_redis):
         """Verify oldest sessions are removed via ZPOPMIN when limit is reached."""
-        # Arrange
+        # Arrange - force legacy path for this test
+        mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
+        mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+
         manager = SessionManager(redis_client=mock_redis, max_sessions=3)
         user_id = "user123"
 
