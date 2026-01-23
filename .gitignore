@@ -190,7 +190,7 @@ tmpclaude*
 *.db
 test_*.db*
 skill
-baseline_*
+baseline_*.json
 n8n
 tests/e2e/results/*
 reports/*.md

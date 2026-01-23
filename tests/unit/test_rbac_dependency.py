@@ -17,7 +17,6 @@ from fastapi import HTTPException
 from src.app.core.rbac.dependencies import (
     get_cached_permissions,
     get_user_permissions,
-    get_user_permissions_cache_key,
     has_permission_cached,
     invalidate_user_permissions_cache,
     requires_permission,
@@ -219,14 +218,19 @@ class TestInvalidateUserPermissionsCache:
 
     @pytest.mark.asyncio
     async def test_deletes_cache_key(self):
-        """Should delete the correct cache key."""
-        mock_redis = AsyncMock()
+        """Should delete both set and bitmask cache keys via pipeline."""
+        mock_redis = MagicMock()
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock_redis.pipeline.return_value = mock_pipeline
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             await invalidate_user_permissions_cache(user_id=1, tenant_id=1)
 
-            expected_key = get_user_permissions_cache_key(1, 1)
-            mock_redis.delete.assert_called_once_with(expected_key)
+            # Should use pipeline to delete both cache types atomically
+            mock_redis.pipeline.assert_called_once()
+            assert mock_pipeline.delete.call_count == 2
+            mock_pipeline.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handles_missing_redis_gracefully(self):
@@ -242,7 +246,6 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_superuser_bypasses_check(self):
         """Superusers should bypass all permission checks."""
-        from src.app.core.rbac.dependencies import requires_permission
 
         checker = requires_permission(Permission.ROLES_MANAGE)
 
@@ -264,7 +267,6 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_allows_user_with_permission(self):
         """User with required permission should pass."""
-        from src.app.core.rbac.dependencies import requires_permission
 
         checker = requires_permission(Permission.ROLES_READ)
 
@@ -273,12 +275,13 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.rbac.dependencies._get_current_tenant_id", return_value=1),
+            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
             patch(
-                "src.app.core.rbac.dependencies.get_cached_permissions",
-                return_value={"roles:read", "users:read"},
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                return_value=True,
             ),
         ):
+            mock_tenant.return_value = MagicMock(id=1)
             mock_db = AsyncMock()
 
             # Should not raise
@@ -287,7 +290,6 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_denies_user_without_permission(self):
         """User without required permission should get 403."""
-        from src.app.core.rbac.dependencies import requires_permission
 
         checker = requires_permission(Permission.ROLES_MANAGE)
 
@@ -296,12 +298,13 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.rbac.dependencies._get_current_tenant_id", return_value=1),
+            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
             patch(
-                "src.app.core.rbac.dependencies.get_cached_permissions",
-                return_value={"roles:read"},  # Has read but not manage
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                return_value=False,
             ),
         ):
+            mock_tenant.return_value = MagicMock(id=1)
             mock_db = AsyncMock()
 
             with pytest.raises(HTTPException) as exc_info:
@@ -313,21 +316,21 @@ class TestRequiresPermission:
     @pytest.mark.asyncio
     async def test_accepts_string_permission(self):
         """Should accept string permission as well as enum."""
-        from src.app.core.rbac.dependencies import requires_permission
 
-        checker = requires_permission("custom:permission")
+        checker = requires_permission("roles:read")  # Use valid permission slug
 
         with (
             patch(
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.rbac.dependencies._get_current_tenant_id", return_value=1),
+            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
             patch(
-                "src.app.core.rbac.dependencies.get_cached_permissions",
-                return_value={"custom:permission"},
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                return_value=True,
             ),
         ):
+            mock_tenant.return_value = MagicMock(id=1)
             mock_db = AsyncMock()
 
             # Should not raise
@@ -343,23 +346,27 @@ class TestCacheTTL:
 
 
 class TestHasPermissionCached:
-    """Tests for O(1) SISMEMBER permission check."""
+    """Tests for O(1) bitmask permission check."""
 
     @pytest.fixture
     def mock_db(self):
         """Create a mock database session."""
         db = AsyncMock()
         mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read", "users:write"]
+        mock_result.scalars.return_value.all.return_value = ["users:read", "users:manage"]
         db.execute.return_value = mock_result
         return db
 
     @pytest.mark.asyncio
-    async def test_uses_sismember_for_cached_permissions(self, mock_db):
-        """Should use O(1) SISMEMBER when cache exists."""
+    async def test_uses_bitmask_for_cached_permissions(self, mock_db):
+        """Should use O(1) bitmask GET when cache exists."""
+        from src.app.core.rbac.bitmask import PermissionBitmask
+
+        # Pre-compute expected bitmask for users:read + users:manage
+        expected_mask = PermissionBitmask.encode({"users:read", "users:manage"})
+
         mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=True)
-        mock_redis.sismember = AsyncMock(return_value=1)  # 1 = member exists
+        mock_redis.get = AsyncMock(return_value=str(expected_mask).encode())
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await has_permission_cached(
@@ -370,36 +377,37 @@ class TestHasPermissionCached:
             )
 
             assert result is True
-            mock_redis.sismember.assert_called_once()
-            # Should NOT call smembers or database
+            mock_redis.get.assert_called_once()
+            # Should NOT call database when cache hit
             mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_returns_false_for_missing_permission(self, mock_db):
-        """Should return False when permission not in set."""
+        """Should return False when permission not in bitmask."""
+        from src.app.core.rbac.bitmask import PermissionBitmask
+
+        # Bitmask with only users:read
+        mask = PermissionBitmask.encode({"users:read"})
+
         mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=True)
-        mock_redis.sismember = AsyncMock(return_value=0)  # 0 = not a member
+        mock_redis.get = AsyncMock(return_value=str(mask).encode())
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await has_permission_cached(
                 user_id=1,
                 tenant_id=1,
-                permission_slug="admin:delete",
+                permission_slug="users:manage",  # Not in bitmask
                 db=mock_db,
             )
 
             assert result is False
-            mock_redis.sismember.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_falls_back_to_db_when_cache_empty(self, mock_db):
-        """Should query DB and check when cache doesn't exist."""
+        """Should query DB and encode bitmask when cache doesn't exist."""
         mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=False)  # Cache miss
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock_redis.pipeline.return_value = mock_pipeline
+        mock_redis.get = AsyncMock(return_value=None)  # Cache miss
+        mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await has_permission_cached(
@@ -411,17 +419,15 @@ class TestHasPermissionCached:
 
             assert result is True  # users:read is in mock DB permissions
             mock_db.execute.assert_called_once()
-            # Should NOT use sismember when cache doesn't exist
-            mock_redis.sismember.assert_not_called()
+            # Should cache the bitmask
+            mock_redis.setex.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_falls_back_on_redis_error(self, mock_db):
         """Should fall back to DB query on Redis error."""
         mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(side_effect=Exception("Redis connection lost"))
-        mock_pipeline = MagicMock()
-        mock_pipeline.execute = AsyncMock()
-        mock_redis.pipeline.return_value = mock_pipeline
+        mock_redis.get = AsyncMock(side_effect=Exception("Redis connection lost"))
+        mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await has_permission_cached(
@@ -441,7 +447,7 @@ class TestHasPermissionCached:
             result = await has_permission_cached(
                 user_id=1,
                 tenant_id=1,
-                permission_slug="users:write",
+                permission_slug="users:manage",  # Valid permission
                 db=mock_db,
             )
 
@@ -451,8 +457,10 @@ class TestHasPermissionCached:
     @pytest.mark.asyncio
     async def test_returns_false_for_nonexistent_permission(self, mock_db):
         """Should return False when checking non-existent permission."""
+        # Bitmask.has_permission returns False for unknown slugs (KeyError caught)
         mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=False)
+        mock_redis.get = AsyncMock(return_value=None)
+        mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await has_permission_cached(
@@ -462,4 +470,5 @@ class TestHasPermissionCached:
                 db=mock_db,
             )
 
+            # Should return False because permission slug doesn't exist in Permission enum
             assert result is False

@@ -98,26 +98,26 @@ app = create_application(
     default_response_class=ORJSONResponse,
 )
 
-# Middleware stack (LIFO - last added runs first on request, first on response)
-# Execution order: GZip -> Security -> BodyLimit -> Tenant -> RateLimit -> RequestID -> Handler
+# Middleware stack (LIFO - last added runs first on request)
+# Request flow:  GZip → Security → BodyLimit → Tenant → RateLimit → RequestID → Handler
+# Response flow: Handler → RequestID → RateLimit → Tenant → BodyLimit → Security → GZip
 #
 # Key ordering decisions:
-# - GZip: Outermost for compression of all responses
-# - Security: Early headers before any processing
-# - BodyLimit: Reject oversized requests before expensive processing
+# - RequestID: Added first = innermost (closest to handler for accurate tracing)
+# - RateLimit: Rate limiting before expensive processing
 # - Tenant: Extract tenant context for multi-tenant features
-# - RateLimit: User/tier-based rate limiting (IP for anonymous, user+tier for authenticated)
-# - RequestID: Innermost for accurate request tracing
+# - BodyLimit: Reject oversized requests early
+# - Security: Add security headers to all responses
+# - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
-# GZip compression for responses > 500 bytes (runs first on request)
 from fastapi.middleware.gzip import GZipMiddleware
 
-app.add_middleware(GZipMiddleware, minimum_size=500)
-app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
-app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
-app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
+app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
-app.add_middleware(RequestIDMiddleware)  # Request ID must be last (innermost) for tracing
+app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
+app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
+app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
 
 # Mount admin interface if enabled
 if admin:

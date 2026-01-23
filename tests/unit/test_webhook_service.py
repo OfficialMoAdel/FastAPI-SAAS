@@ -168,10 +168,27 @@ class TestWebhookServiceTrigger:
 class TestWebhookServiceDelivery:
     """Tests for webhook delivery logic."""
 
+    def _setup_execute_mock(self, mock_db, delivery, endpoint=None):
+        """Helper to set up db.execute mock for selectinload pattern.
+
+        The deliver_webhook method uses:
+            result = await self.db.execute(stmt)
+            delivery = result.unique().scalar_one_or_none()
+        """
+        mock_result = MagicMock()
+        mock_unique = MagicMock()
+        mock_unique.scalar_one_or_none.return_value = delivery
+        mock_result.unique.return_value = mock_unique
+        mock_db.execute.return_value = mock_result
+
+        # Attach endpoint to delivery if provided (simulates selectinload)
+        if delivery and endpoint:
+            delivery.webhook_endpoint = endpoint
+
     @pytest.mark.asyncio
     async def test_deliver_webhook_not_found(self, webhook_service, mock_db):
         """Test error when delivery record not found."""
-        mock_db.get.return_value = None
+        self._setup_execute_mock(mock_db, None)
 
         with pytest.raises(ModelNotFoundError) as exc:
             await webhook_service.deliver_webhook(uuid4())
@@ -181,7 +198,9 @@ class TestWebhookServiceDelivery:
     @pytest.mark.asyncio
     async def test_deliver_webhook_endpoint_not_found(self, webhook_service, mock_db, mock_webhook_delivery):
         """Test error when endpoint not found."""
-        mock_db.get.side_effect = [mock_webhook_delivery, None]
+        # Delivery exists but has no endpoint (selectinload returns None)
+        mock_webhook_delivery.webhook_endpoint = None
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, endpoint=None)
 
         with pytest.raises(ModelNotFoundError) as exc:
             await webhook_service.deliver_webhook(mock_webhook_delivery.id)
@@ -193,7 +212,9 @@ class TestWebhookServiceDelivery:
         self, webhook_service, mock_db, mock_webhook_delivery, mock_webhook_endpoint
     ):
         """Test delivery skipped when circuit breaker is open."""
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Also mock db.get for the re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
 
         # Mock circuit breaker to be open
@@ -216,7 +237,7 @@ class TestWebhookServiceDelivery:
         from src.app.core.security.url_validator import SSRFProtectionError
         from src.app.modules.webhooks.models import WebhookDeliveryStatus
 
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
 
         with patch("src.app.modules.webhooks.service.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")):
             result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
@@ -231,12 +252,17 @@ class TestWebhookServiceDelivery:
         """Test circuit breaker opening during delivery."""
         from src.app.core.utils.circuit_breaker import CircuitBreakerOpen
 
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Mock db.get for re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
 
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
-            # Fix: Provide recovery_in argument (e.g. 60 seconds)
-            with patch("httpx.AsyncClient", side_effect=CircuitBreakerOpen("Circuit open", 60)):
+            with patch("src.app.modules.webhooks.service.get_webhook_http_client") as mock_client_fn:
+                mock_client = AsyncMock()
+                mock_client.post.side_effect = CircuitBreakerOpen("Circuit open", 60)
+                mock_client_fn.return_value = mock_client
+
                 await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
                 webhook_service._handle_delivery_failure.assert_called_once()
@@ -248,11 +274,17 @@ class TestWebhookServiceDelivery:
         self, webhook_service, mock_db, mock_webhook_delivery, mock_webhook_endpoint
     ):
         """Test generic exception during delivery."""
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Mock db.get for re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
 
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
-            with patch("httpx.AsyncClient", side_effect=Exception("Network error")):
+            with patch("src.app.modules.webhooks.service.get_webhook_http_client") as mock_client_fn:
+                mock_client = AsyncMock()
+                mock_client.post.side_effect = Exception("Network error")
+                mock_client_fn.return_value = mock_client
+
                 # Mock circuit breaker record_failure
                 with patch(
                     "src.app.core.utils.circuit_breaker.webhook_circuit.record_failure", new_callable=AsyncMock
@@ -269,8 +301,10 @@ class TestWebhookServiceDelivery:
         """Test successful webhook delivery."""
         from src.app.modules.webhooks.models import WebhookDeliveryStatus
 
-        # Mock DB lookups
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        # Mock DB lookups with selectinload pattern
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Mock db.get for re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
 
         # Mock validation
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
@@ -301,22 +335,29 @@ class TestWebhookServiceDelivery:
         """Test delivery failure with retry scheduling."""
         from src.app.modules.webhooks.models import WebhookDeliveryStatus
 
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Mock db.get for re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
         webhook_service._enqueue_delivery = AsyncMock()
 
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
             mock_response = MagicMock()
             mock_response.status_code = 500
+            mock_response.text = "Internal Server Error"
 
             mock_client = AsyncMock()
-            mock_client.__aenter__.return_value.post.return_value = mock_response
+            mock_client.post.return_value = mock_response
 
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=0)
+            with patch("src.app.modules.webhooks.service.get_webhook_http_client", return_value=mock_client):
+                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
+                    mock_circuit.is_closed = True
+                    mock_circuit.record_failure = AsyncMock()
 
-                assert result.status == WebhookDeliveryStatus.PENDING
-                assert result.next_retry_at is not None
-                webhook_service._enqueue_delivery.assert_called()
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=0)
+
+                    assert result.status == WebhookDeliveryStatus.PENDING
+                    assert result.next_retry_at is not None
+                    webhook_service._enqueue_delivery.assert_called()
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_max_retries_exceeded(
@@ -325,20 +366,27 @@ class TestWebhookServiceDelivery:
         """Test delivery failure after max retries."""
         from src.app.modules.webhooks.models import WebhookDeliveryStatus
 
-        mock_db.get.side_effect = [mock_webhook_delivery, mock_webhook_endpoint]
+        self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
+        # Mock db.get for re-fetch after HTTP call
+        mock_db.get.return_value = mock_webhook_delivery
 
         with patch("src.app.modules.webhooks.service.validate_webhook_url"):
             mock_response = MagicMock()
             mock_response.status_code = 500
+            mock_response.text = "Internal Server Error"
 
             mock_client = AsyncMock()
-            mock_client.__aenter__.return_value.post.return_value = mock_response
+            mock_client.post.return_value = mock_response
 
             # Attempt 5 (max is 5, index 4)
-            with patch("httpx.AsyncClient", return_value=mock_client):
-                result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=5)
+            with patch("src.app.modules.webhooks.service.get_webhook_http_client", return_value=mock_client):
+                with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
+                    mock_circuit.is_closed = True
+                    mock_circuit.record_failure = AsyncMock()
 
-                assert result.status == WebhookDeliveryStatus.FAILED
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=5)
+
+                    assert result.status == WebhookDeliveryStatus.FAILED
 
     @pytest.mark.asyncio
     async def test_retry_delivery_not_found(self, webhook_service, mock_db):

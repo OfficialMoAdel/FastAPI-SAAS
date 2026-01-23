@@ -2,10 +2,13 @@
 
 Tests the Lua script implementation that reduces 4 Redis roundtrips to 1.
 Verifies atomic operations and proper fallback behavior.
+
+NOTE: Bloom filter tests were removed (R2-HYBRID CRIT-1) because the bloom filter
+optimization was removed due to security vulnerability in multi-worker deployments.
 """
 
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -31,14 +34,6 @@ def mock_redis():
     redis.set = AsyncMock()
     redis.zrem = AsyncMock()
     return redis
-
-
-@pytest.fixture
-def mock_bloom_filter():
-    """Mock Bloom filter."""
-    with patch("src.app.core.security.token_blacklist_cache.blacklist_bloom_filter") as mock:
-        mock.might_contain = MagicMock(return_value=True)  # Default: might be blacklisted
-        yield mock
 
 
 class TestLuaScriptLoading:
@@ -71,7 +66,7 @@ class TestLuaScriptLoading:
                 mock_redis.script_load.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_script_reload_on_noscript_error(self, mock_redis, mock_bloom_filter):
+    async def test_script_reload_on_noscript_error(self, mock_redis):
         """Verify script reloads when Redis returns NOSCRIPT error."""
         # Arrange
         token = "test_token_123"
@@ -97,7 +92,7 @@ class TestLuaScriptBehavior:
     """Test Lua script execution and results."""
 
     @pytest.mark.asyncio
-    async def test_not_blacklisted_token_returns_false(self, mock_redis, mock_bloom_filter):
+    async def test_not_blacklisted_token_returns_false(self, mock_redis):
         """Verify non-blacklisted token returns False."""
         # Arrange
         token = "valid_token_123"
@@ -113,7 +108,7 @@ class TestLuaScriptBehavior:
                 mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_blacklisted_token_returns_true(self, mock_redis, mock_bloom_filter):
+    async def test_blacklisted_token_returns_true(self, mock_redis):
         """Verify blacklisted token returns True."""
         # Arrange
         token = "blacklisted_token_123"
@@ -129,7 +124,7 @@ class TestLuaScriptBehavior:
                 mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_lua_script_receives_correct_arguments(self, mock_redis, mock_bloom_filter):
+    async def test_lua_script_receives_correct_arguments(self, mock_redis):
         """Verify Lua script is called with correct keys and arguments."""
         # Arrange
         token = "test_token_abc"
@@ -160,7 +155,7 @@ class TestSingleRoundtrip:
     """Test that Lua script reduces operations to single roundtrip."""
 
     @pytest.mark.asyncio
-    async def test_single_roundtrip_for_all_cases(self, mock_redis, mock_bloom_filter):
+    async def test_single_roundtrip_for_all_cases(self, mock_redis):
         """Verify exactly 1 EVALSHA call for blacklist check."""
         # Arrange
         token = "test_token_123"
@@ -180,52 +175,11 @@ class TestSingleRoundtrip:
                 mock_redis.zrem.assert_not_called()
 
 
-class TestBloomFilterIntegration:
-    """Test that Bloom filter is still checked first."""
-
-    @pytest.mark.asyncio
-    async def test_bloom_filter_still_checked_first(self, mock_redis):
-        """Verify Bloom filter check happens before Lua script."""
-        # Arrange
-        token = "test_token_123"
-        with patch("src.app.core.security.token_blacklist_cache.blacklist_bloom_filter") as mock_bloom:
-            mock_bloom.might_contain.return_value = False  # Definitely not in set
-
-            with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
-                # Act
-                result = await is_token_blacklisted(token)
-
-                # Assert
-                assert result is False
-                mock_bloom.might_contain.assert_called_once_with(token)
-                # Redis should NOT be called if Bloom filter says no
-                mock_redis.evalsha.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_bloom_filter_false_positive_uses_lua(self, mock_redis):
-        """Verify Bloom filter false positives still check Redis with Lua."""
-        # Arrange
-        token = "test_token_123"
-        with patch("src.app.core.security.token_blacklist_cache.blacklist_bloom_filter") as mock_bloom:
-            mock_bloom.might_contain.return_value = True  # Might be in set (false positive)
-            mock_redis.evalsha.return_value = 0  # Actually not blacklisted
-
-            with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
-                with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
-                    # Act
-                    result = await is_token_blacklisted(token)
-
-                    # Assert
-                    assert result is False
-                    mock_bloom.might_contain.assert_called_once()
-                    mock_redis.evalsha.assert_called_once()
-
-
 class TestFallbackBehavior:
     """Test fallback to old implementation when Lua script fails."""
 
     @pytest.mark.asyncio
-    async def test_fallback_when_script_load_fails(self, mock_redis, mock_bloom_filter):
+    async def test_fallback_when_script_load_fails(self, mock_redis):
         """Verify fallback to old implementation if script loading fails."""
         # Arrange
         token = "test_token_123"
@@ -285,7 +239,7 @@ class TestRedisUnavailable:
     """Test behavior when Redis is unavailable."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_redis_unavailable(self, mock_bloom_filter):
+    async def test_returns_none_when_redis_unavailable(self):
         """Verify fail-open behavior when Redis is unavailable."""
         # Arrange
         token = "test_token_123"
@@ -313,7 +267,7 @@ class TestNegativeCachePopulation:
     """Test that negative cache is populated by Lua script."""
 
     @pytest.mark.asyncio
-    async def test_lua_script_populates_negative_cache(self, mock_redis, mock_bloom_filter):
+    async def test_lua_script_populates_negative_cache(self, mock_redis):
         """Verify Lua script populates negative cache for non-blacklisted tokens.
 
         Note: We can't directly verify the Lua script's internal SETEX call,

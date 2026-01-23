@@ -242,10 +242,17 @@ class FileService:
         if mime_type:
             query = query.where(File.mime_type == mime_type)
 
-        # Get total count
-        count_query = select(func.count()).select_from(query.subquery())
-        total_result = await self.db.execute(count_query)
-        total_count = total_result.scalar() or 0
+        # GI-1: Use O(1) denormalized counter when no filters are active
+        # Otherwise fall back to O(N) count query for filtered results
+        if not user_id and not mime_type:
+            # O(1) lookup from Tenant.file_count
+            file_count, _ = await self._get_quota_stats(tenant_id)
+            total_count = file_count
+        else:
+            # O(N) filtered count requires query
+            count_query = select(func.count()).select_from(query.subquery())
+            total_result = await self.db.execute(count_query)
+            total_count = total_result.scalar() or 0
 
         # Apply sorting and pagination
         query = query.order_by(File.created_at.desc())

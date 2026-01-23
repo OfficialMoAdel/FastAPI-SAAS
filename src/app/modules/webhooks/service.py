@@ -190,7 +190,12 @@ class WebhookService:
         """Deliver a webhook (called by background task).
 
         Implements retry logic with exponential backoff and circuit breaker protection.
+
+        CRITICAL: Uses content= instead of json= to prevent httpx double serialization.
+        The payload is serialized ONCE with sort_keys=True to match the HMAC signature.
         """
+        import json
+
         from ...core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
 
         # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
@@ -222,7 +227,12 @@ class WebhookService:
             await self.db.refresh(delivery)
             return delivery
 
-        # Prepare request
+        # CRIT-2 FIX: Serialize payload ONCE with sort_keys=True to match HMAC signature.
+        # Using content= instead of json= prevents httpx from re-serializing with
+        # different formatting, which would break HMAC verification on the receiver side.
+        payload_bytes = json.dumps(delivery.payload, sort_keys=True).encode("utf-8")
+
+        # Prepare request headers
         headers = {
             "Content-Type": "application/json",
             "X-Webhook-Signature": delivery.signature,
@@ -249,7 +259,6 @@ class WebhookService:
 
         # Extract data needed for HTTP call before releasing DB connection
         endpoint_url = endpoint.url
-        payload = delivery.payload
 
         # Release DB connection before making HTTP call to avoid holding
         # connection during network I/O (can take 100ms-30s)
@@ -262,7 +271,9 @@ class WebhookService:
 
         try:
             client = get_webhook_http_client()
-            response = await client.post(endpoint_url, json=payload, headers=headers)
+            # CRIT-2 FIX: Use content= with pre-serialized bytes instead of json=
+            # This ensures the transmitted bytes match what was signed in _generate_signature
+            response = await client.post(endpoint_url, content=payload_bytes, headers=headers)
         except CircuitBreakerOpen as e:
             circuit_error = e
         except Exception as e:

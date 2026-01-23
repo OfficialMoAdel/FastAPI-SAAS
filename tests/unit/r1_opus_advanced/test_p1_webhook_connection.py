@@ -20,7 +20,9 @@ class TestWebhookConnectionRelease:
         # Find the deliver_webhook function and check pattern
         assert "await self.db.commit()" in source
         assert "endpoint_url = endpoint.url" in source
-        assert "payload = delivery.payload" in source
+        # CRIT-2 FIX: payload is now serialized directly to bytes, not stored in variable
+        # The pattern now uses delivery.payload directly in json.dumps for single serialization
+        assert "json.dumps(delivery.payload, sort_keys=True)" in source
 
     def test_delivery_refetched_after_http_in_source(self) -> None:
         """Verify delivery is re-fetched after HTTP call."""

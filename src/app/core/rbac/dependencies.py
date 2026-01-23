@@ -309,9 +309,12 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
     """
     Validate token and return current user dict.
     Mirrors logic from api/dependencies.py to avoid circular import.
+
+    GI-2: Uses UserService.get_user_auth_info() which has Redis caching,
+    instead of direct crud_users.get() which bypasses cache on every request.
     """
     from ...core.security import TokenType, verify_token
-    from ...modules.users.crud import crud_users
+    from ...modules.users.service import UserService
 
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
@@ -321,11 +324,14 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
             headers={"WWW-Authenticate": "Bearer"},
         )
 
-    # Fetch user by email or username
+    # GI-2: Use UserService with Redis caching instead of direct DB query
+    user_service = UserService(db=db)
+
+    # Fetch user by email or username (cached)
     if "@" in token_data.username_or_email:
-        user = await crud_users.get(db=db, email=token_data.username_or_email, is_deleted=False)
+        user = await user_service.get_user_auth_info(email=token_data.username_or_email)
     else:
-        user = await crud_users.get(db=db, username=token_data.username_or_email, is_deleted=False)
+        user = await user_service.get_user_auth_info(username=token_data.username_or_email)
 
     if user is None:
         raise HTTPException(
