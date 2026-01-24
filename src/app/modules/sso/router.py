@@ -17,7 +17,7 @@ from .crud import crud_user_sso_connections
 from .schemas import SSOProvider, SSOProvidersResponse
 from .service import SSOService, get_sso_service
 
-router = APIRouter(prefix="/auth/sso", tags=["sso"])
+router = APIRouter(prefix="/account/sso", tags=["sso"])
 
 
 @router.get("/providers", response_model=SSOProvidersResponse)
@@ -49,6 +49,19 @@ async def initiate_sso(
         db=db,
     )
     return RedirectResponse(url=auth_url)
+
+
+# Alias for backward compatibility with old frontend
+@router.get("/{provider}")
+async def initiate_sso_alias(
+    request: Request,
+    provider: SSOProvider,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    sso_service: Annotated[SSOService, Depends(get_sso_service)],
+    redirect_uri: Annotated[str | None, Query] = None,
+) -> RedirectResponse:
+    """Initiate SSO OAuth flow (alias for /{provider}/authorize for backward compatibility)."""
+    return await initiate_sso(request, provider, db, sso_service, redirect_uri)
 
 
 @router.get("/{provider}/callback")
