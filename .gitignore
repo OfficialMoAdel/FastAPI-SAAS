@@ -182,7 +182,6 @@ sql_app.db*
 # Auto Claude data directory
 .auto-claude/
 Advanced Code Optimization Workflow.md
-PLAN_FOR_ADVANCED_OPTIMIZATIONS_ROUND_*
 OPTIMIZATION_REQUIREMENTS.md
 ERROR.text
 test.db-journal
@@ -196,3 +195,5 @@ tests/e2e/results/*
 reports/*.md
 reports/*.json
 !reports/.gitkeep
+API_COMPATIBILITY_*.md
+PLAN_FOR_ADVANCED_*

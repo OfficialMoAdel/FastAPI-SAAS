@@ -1,6 +1,6 @@
 """Auth API router - HTTP handlers delegating to service layer."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
@@ -11,6 +11,8 @@ from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
 from ...core.utils.cache import async_get_redis
+from ..users.schemas import UserCreate, UserRead
+from ..users.service import UserService
 from .schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -27,7 +29,12 @@ def _get_auth_service() -> AuthService:
     return AuthService()
 
 
-router = APIRouter(prefix="/auth", tags=["auth"])
+async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
+    """Get UserService instance."""
+    return UserService(db)
+
+
+router = APIRouter(prefix="/account", tags=["account"])
 
 
 @router.post("/login", response_model=Token)
@@ -41,6 +48,16 @@ async def login_for_access_token(
 ) -> dict[str, str]:
     """Authenticate user and return access token."""
     return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
+
+
+@router.post("/register", response_model=UserRead, status_code=201)
+async def register(
+    request: Request,
+    user: UserCreate,
+    user_service: Annotated[UserService, Depends(_get_user_service)],
+) -> dict[str, Any]:
+    """Register a new user account."""
+    return await user_service.create(user)
 
 
 @router.post("/refresh")

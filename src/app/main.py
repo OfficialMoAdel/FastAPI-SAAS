@@ -143,7 +143,7 @@ def custom_openapi():
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
-            "description": "JWT access token from /api/v1/auth/login",
+            "description": "JWT access token from /api/v1/account/login",
         },
         "APIKeyHeader": {
             "type": "apiKey",
