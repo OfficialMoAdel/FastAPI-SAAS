@@ -18,7 +18,7 @@ from .schemas import (
 )
 from .service import FeatureFlagService, get_feature_flag_service
 
-router = APIRouter(prefix="/feature-flags", tags=["Feature Flags"])
+router = APIRouter(prefix="/features", tags=["features"])
 
 
 def _get_tenant_id(current_tenant: Tenant | int) -> Any:
