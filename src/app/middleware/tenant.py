@@ -46,6 +46,7 @@ TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
         "/openapi.json",
         "/api/v1/health",
         "/api/v1/ready",
+        "/api/v1/app_configuration",  # Public frontend configuration
     ]
 )
 

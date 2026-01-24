@@ -2,6 +2,7 @@ from fastapi import APIRouter
 
 from ...modules.ai.router import router as ai_router
 from ...modules.api_keys.router import router as api_keys_router
+from ...modules.app_configuration.router import router as app_configuration_router
 from ...modules.audit_logs.router import router as audit_logs_router
 from ...modules.auth.router import router as auth_router
 from ...modules.billing.router import router as billing_router
@@ -15,6 +16,7 @@ from ...modules.magic_link.router import router as magic_link_router
 from ...modules.notifications.router import router as notifications_router
 from ...modules.passkey.router import router as passkey_router
 from ...modules.posts.router import router as posts_router
+from ...modules.security.router import router as security_router
 from ...modules.prices.router import router as prices_router
 from ...modules.products.router import router as products_router
 from ...modules.rate_limits.router import router as rate_limits_router
@@ -31,9 +33,11 @@ from ...modules.webhooks.router import router as webhooks_router
 
 router = APIRouter(prefix="/v1")
 router.include_router(health_router)
+router.include_router(app_configuration_router)  # Public configuration endpoint
 router.include_router(auth_router)
 router.include_router(magic_link_router)
 router.include_router(passkey_router)
+router.include_router(security_router)  # Passkey convenience wrapper
 router.include_router(users_router)
 router.include_router(user_preferences_router)
 router.include_router(posts_router)
