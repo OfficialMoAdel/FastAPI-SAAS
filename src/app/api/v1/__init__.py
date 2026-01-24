@@ -9,6 +9,7 @@ from ...modules.checkouts.router import router as checkouts_router
 from ...modules.feature_flags.router import router as feature_flags_router
 from ...modules.files.router import router as files_router
 from ...modules.health.router import router as health_router
+from ...modules.invoices.router import router as invoices_router
 from ...modules.magic_link.router import router as magic_link_router
 from ...modules.notifications.router import router as notifications_router
 from ...modules.passkey.router import router as passkey_router
@@ -56,4 +57,5 @@ router.include_router(billing_router)
 router.include_router(products_router)  # API compatibility layer
 router.include_router(prices_router)  # API compatibility layer
 router.include_router(checkouts_router)  # API compatibility layer
+router.include_router(invoices_router)  # API compatibility layer
 router.include_router(ai_router)
