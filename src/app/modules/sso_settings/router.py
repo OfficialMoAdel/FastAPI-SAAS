@@ -16,7 +16,7 @@ from .schemas import (
     SSOSettingsUpdate,
 )
 
-router = APIRouter(prefix="/admin/sso-settings", tags=["admin", "sso-settings"])
+router = APIRouter(prefix="/ssos", tags=["ssos"])
 
 
 @router.post("/", response_model=SSOSettingsRead, status_code=201)
@@ -65,6 +65,25 @@ async def list_sso_settings(
         "has_next": page * per_page < total,
         "has_previous": page > 1,
     }
+
+
+@router.get("/available-providers", response_model=list[str])
+async def list_available_providers() -> list[str]:
+    """Get list of available SSO providers.
+
+    Returns a static list of SSO providers that can be configured.
+    This endpoint is accessible to superusers for setting up new SSO providers.
+    """
+    return [
+        "google",
+        "github",
+        "apple",
+        "microsoft",
+        "facebook",
+        "gitlab",
+        "bitbucket",
+        "slack",
+    ]
 
 
 @router.get("/{provider}", response_model=SSOSettingsReadWithSecrets, dependencies=[Depends(get_current_superuser)])
