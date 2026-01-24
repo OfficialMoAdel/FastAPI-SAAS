@@ -12,7 +12,7 @@ from .crud import crud_users
 from .schemas import UserCreate, UserList, UserRead, UserTierUpdate, UserUpdate
 from .service import UserService, get_user_service
 
-router = APIRouter(tags=["users"])
+router = APIRouter(prefix="/users", tags=["users"])
 
 
 async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
@@ -20,7 +20,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     return get_user_service(db)
 
 
-@router.post("/user", response_model=UserRead, status_code=201)
+@router.post("", response_model=UserRead, status_code=201)
 async def write_user(
     request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
@@ -28,7 +28,7 @@ async def write_user(
     return await service.create(user)
 
 
-@router.get("/users", response_model=UserList, dependencies=[Depends(get_current_superuser)])
+@router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
 async def read_users(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, per_page: int = 10
 ) -> dict:
@@ -54,74 +54,151 @@ async def read_users(
     }
 
 
-@router.get("/user/me/", response_model=UserRead)
+@router.get("/me", response_model=UserRead)
 async def read_users_me(request: Request, current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
     """Get current authenticated user."""
     return current_user
 
 
-@router.get("/user/{username}", response_model=UserRead, dependencies=[Depends(get_current_user)])
+@router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])
 async def read_user(
-    request: Request, username: str, service: UserService = Depends(_get_user_service)
+    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
-    """Get user by username (authenticated users only)."""
-    return await service.get_by_username(username)
+    """Get user by ID or username (authenticated users only).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        return await service.get_by_id(int(user_id))
+    except (ValueError, KeyError):
+        # If not a valid integer or not found, try username
+        return await service.get_by_username(user_id)
 
 
-@router.patch("/user/{username}")
+@router.patch("/{user_id}")
 async def patch_user(
     request: Request,
     values: UserUpdate,
-    username: str,
+    user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
 ) -> dict[str, str]:
-    """Update a user."""
+    """Update a user (partial update).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.update(username, values, current_user)
 
 
-@router.delete("/user/{username}")
+@router.put("/{user_id}")
+async def put_user(
+    request: Request,
+    values: UserUpdate,
+    user_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: UserService = Depends(_get_user_service),
+) -> dict[str, str]:
+    """Update a user (full update, alias for PATCH).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    return await patch_user(request, values, user_id, current_user, service)
+
+
+@router.delete("/{user_id}")
 async def erase_user(
     request: Request,
-    username: str,
+    user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> dict[str, str]:
-    """Soft delete a user."""
+    """Soft delete a user.
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.delete(username, current_user, token)
 
 
-@router.delete("/db_user/{username}", dependencies=[Depends(get_current_superuser)])
+@router.delete("/db/{user_id}", dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
     request: Request,
-    username: str,
+    user_id: str,
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
 ) -> dict[str, str]:
-    """Permanently delete a user from database (superuser only)."""
+    """Permanently delete a user from database (superuser only).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.hard_delete(username, token)
 
 
-@router.get("/user/{username}/rate_limits", dependencies=[Depends(get_current_superuser)])
+@router.get("/{user_id}/rate-limits", dependencies=[Depends(get_current_superuser)])
 async def read_user_rate_limits(
-    request: Request, username: str, service: UserService = Depends(_get_user_service)
+    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
-    """Get user's rate limits based on their tier."""
+    """Get user's rate limits based on their tier.
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.get_with_rate_limits(username)
 
 
-@router.get("/user/{username}/tier", dependencies=[Depends(get_current_user)])
+@router.get("/{user_id}/tier", dependencies=[Depends(get_current_user)])
 async def read_user_tier(
-    request: Request, username: str, service: UserService = Depends(_get_user_service)
+    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
 ) -> dict | None:
-    """Get user's tier information (authenticated users only)."""
+    """Get user's tier information (authenticated users only).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.get_with_tier(username)
 
 
-@router.patch("/user/{username}/tier", dependencies=[Depends(get_current_superuser)])
+@router.patch("/{user_id}/tier", dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
-    request: Request, username: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
+    request: Request, user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
 ) -> dict[str, str]:
-    """Update user's tier (superuser only)."""
+    """Update user's tier (superuser only).
+
+    Supports both integer user IDs and username strings for backward compatibility.
+    """
+    # Try to get by ID first, then fall back to username
+    try:
+        username = (await service.get_by_id(int(user_id)))["username"]
+    except (ValueError, KeyError):
+        username = user_id
+
     return await service.update_tier(username, values)
