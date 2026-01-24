@@ -59,7 +59,7 @@ class TestSSOConnectFlowIntegration:
         ):
             with override_sso_service(mock_service):
                 response = client.post(
-                    "/api/v1/auth/sso/google/connect",
+                    "/api/v1/account/sso/google/connect",
                     headers=TEST_TENANT_HEADER,
                     follow_redirects=False,
                 )
@@ -81,7 +81,7 @@ class TestSSOConnectFlowIntegration:
         ):
             with override_sso_service(mock_service):
                 response = client.post(
-                    "/api/v1/auth/sso/google/connect",
+                    "/api/v1/account/sso/google/connect",
                     headers=TEST_TENANT_HEADER,
                     follow_redirects=False,
                 )
@@ -102,7 +102,7 @@ class TestSSOConnectFlowIntegration:
             return_value=True,
         ):
             response = client.post(
-                "/api/v1/auth/sso/google/connect",
+                "/api/v1/account/sso/google/connect",
                 headers=TEST_TENANT_HEADER,
             )
 
@@ -127,7 +127,7 @@ class TestSSOConnectFlowIntegration:
                 return_value=False,
             ):
                 response = client.post(
-                    "/api/v1/auth/sso/google/connect",
+                    "/api/v1/account/sso/google/connect",
                     headers=TEST_TENANT_HEADER,
                 )
 
@@ -143,7 +143,7 @@ class TestSSODisconnectFlowIntegration:
         mock_service = _create_mock_sso_service(disconnect_provider={"message": "google disconnected successfully"})
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/google",
+                "/api/v1/account/sso/google",
                 headers=TEST_TENANT_HEADER,
             )
 
@@ -160,7 +160,7 @@ class TestSSODisconnectFlowIntegration:
         )
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/google",
+                "/api/v1/account/sso/google",
                 headers=TEST_TENANT_HEADER,
             )
 
@@ -173,7 +173,7 @@ class TestSSODisconnectFlowIntegration:
         mock_service = _create_mock_sso_service(disconnect_provider={"message": "google disconnected successfully"})
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/google",
+                "/api/v1/account/sso/google",
                 headers=TEST_TENANT_HEADER,
             )
 
@@ -189,7 +189,7 @@ class TestSSODisconnectFlowIntegration:
         )
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/github",
+                "/api/v1/account/sso/github",
                 headers=TEST_TENANT_HEADER,
             )
 
@@ -200,7 +200,7 @@ class TestSSODisconnectFlowIntegration:
         mock_service = _create_mock_sso_service(disconnect_provider={"message": "microsoft disconnected successfully"})
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/microsoft",
+                "/api/v1/account/sso/microsoft",
                 headers=TEST_TENANT_HEADER,
             )
 

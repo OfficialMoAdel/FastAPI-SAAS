@@ -15,13 +15,13 @@ class TestStorageSettingsPermissions:
 
     async def test_get_storage_settings_superuser(self, client, superuser_token_headers):
         """Superuser should have access."""
-        response = client.get("/api/v1/storage-settings", headers=superuser_token_headers)
+        response = client.get("/api/v1/storage", headers=superuser_token_headers)
         # 404 = no settings, 200 = settings exist
         assert response.status_code in [status.HTTP_200_OK, status.HTTP_404_NOT_FOUND]
 
     async def test_get_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
         """Regular user without permission should get 403."""
-        response = client.get("/api/v1/storage-settings", headers=regular_user_token_headers)
+        response = client.get("/api/v1/storage", headers=regular_user_token_headers)
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     async def test_create_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
@@ -30,13 +30,13 @@ class TestStorageSettingsPermissions:
             "provider": "local",
             "credentials": {"base_path": "/tmp/test"},
         }
-        response = client.post("/api/v1/storage-settings", json=payload, headers=regular_user_token_headers)
+        response = client.post("/api/v1/storage", json=payload, headers=regular_user_token_headers)
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     async def test_update_storage_settings_regular_user_forbidden(self, client, regular_user_token_headers):
         """Regular user cannot update settings."""
         payload = {"max_file_size_mb": 200}
-        response = client.patch("/api/v1/storage-settings", json=payload, headers=regular_user_token_headers)
+        response = client.patch("/api/v1/storage", json=payload, headers=regular_user_token_headers)
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
 
@@ -50,7 +50,7 @@ class TestStorageSettingsAdminOnly:
         headers = superuser_token_headers.copy()
         headers.pop("X-Tenant-ID", None)
 
-        response = client.get("/api/v1/storage-settings", headers=headers)
+        response = client.get("/api/v1/storage", headers=headers)
         # Should fail due to missing tenant context
         assert response.status_code in [
             status.HTTP_400_BAD_REQUEST,

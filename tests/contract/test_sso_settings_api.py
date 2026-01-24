@@ -6,7 +6,6 @@ Focus on request/response schemas, status codes, and authentication.
 Task: T100 [US11] Write contract tests for /sso-settings/* endpoints
 """
 
-
 import pytest
 from fastapi import status
 from httpx import AsyncClient
@@ -19,7 +18,7 @@ class TestSSOSettingsListContract:
 
     async def test_list_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
         """Verify 401/403 when not authenticated."""
-        response = await unauthenticated_async_client.get("/api/v1/admin/sso-settings/")
+        response = await unauthenticated_async_client.get("/api/v1/ssos/")
 
         # Should require authentication
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
@@ -29,18 +28,16 @@ class TestSSOSettingsListContract:
     ):
         """Verify 403 for non-superuser users."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=regular_user_token_headers,
         )
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
-    async def test_list_returns_200_for_superuser(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_list_returns_200_for_superuser(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify 200 and correct schema for superuser."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
         )
 
@@ -57,7 +54,7 @@ class TestSSOSettingsCreateContract:
     async def test_create_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
         """Verify 401/403 when not authenticated."""
         response = await unauthenticated_async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             json={
                 "provider": "google",
                 "client_id": "test_id",
@@ -67,12 +64,10 @@ class TestSSOSettingsCreateContract:
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
-    async def test_create_validates_required_fields(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_create_validates_required_fields(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify 422 for missing required fields."""
         response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={"provider": "google"},  # Missing client_id and client_secret
         )
@@ -91,7 +86,7 @@ class TestSSOSettingsCreateContract:
             await crud_sso_settings.delete(db=db_session, provider="test_provider")
 
         response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "test_provider",
@@ -117,7 +112,7 @@ class TestSSOSettingsCreateContract:
         """Verify 400/409 for duplicate provider."""
         # Create first
         await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "duplicate_test",
@@ -128,7 +123,7 @@ class TestSSOSettingsCreateContract:
 
         # Try to create again
         response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "duplicate_test",
@@ -146,28 +141,24 @@ class TestSSOSettingsGetContract:
 
     async def test_get_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
         """Verify 401/403 when not authenticated."""
-        response = await unauthenticated_async_client.get("/api/v1/admin/sso-settings/google")
+        response = await unauthenticated_async_client.get("/api/v1/ssos/google")
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
-    async def test_get_returns_404_for_missing_provider(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_get_returns_404_for_missing_provider(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify 404 for non-existent provider."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/nonexistent_provider",
+            "/api/v1/ssos/nonexistent_provider",
             headers=superuser_token_headers,
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_get_returns_200_with_correct_schema(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_get_returns_200_with_correct_schema(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify 200 and correct response schema for existing provider."""
         # First create a setting
         create_response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "get_test_provider",
@@ -178,7 +169,7 @@ class TestSSOSettingsGetContract:
 
         if create_response.status_code in [status.HTTP_201_CREATED, status.HTTP_400_BAD_REQUEST]:
             response = await async_client.get(
-                "/api/v1/admin/sso-settings/get_test_provider",
+                "/api/v1/ssos/get_test_provider",
                 headers=superuser_token_headers,
             )
 
@@ -194,7 +185,7 @@ class TestSSOSettingsUpdateContract:
     async def test_update_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
         """Verify 401/403 when not authenticated."""
         response = await unauthenticated_async_client.patch(
-            "/api/v1/admin/sso-settings/google",
+            "/api/v1/ssos/google",
             json={"is_enabled": False},
         )
 
@@ -205,20 +196,18 @@ class TestSSOSettingsUpdateContract:
     ):
         """Verify 404 for non-existent provider."""
         response = await async_client.patch(
-            "/api/v1/admin/sso-settings/nonexistent_provider",
+            "/api/v1/ssos/nonexistent_provider",
             headers=superuser_token_headers,
             json={"is_enabled": False},
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_update_accepts_partial_updates(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_update_accepts_partial_updates(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify partial updates are accepted."""
         # Create a setting first
         await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "update_test_provider",
@@ -229,7 +218,7 @@ class TestSSOSettingsUpdateContract:
 
         # Update only is_enabled
         response = await async_client.patch(
-            "/api/v1/admin/sso-settings/update_test_provider",
+            "/api/v1/ssos/update_test_provider",
             headers=superuser_token_headers,
             json={"is_enabled": False},
         )
@@ -243,7 +232,7 @@ class TestSSOSettingsDeleteContract:
 
     async def test_delete_returns_403_without_auth(self, unauthenticated_async_client: AsyncClient):
         """Verify 401/403 when not authenticated."""
-        response = await unauthenticated_async_client.delete("/api/v1/admin/sso-settings/google")
+        response = await unauthenticated_async_client.delete("/api/v1/ssos/google")
 
         assert response.status_code in [status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN]
 
@@ -252,19 +241,17 @@ class TestSSOSettingsDeleteContract:
     ):
         """Verify 404 for non-existent provider."""
         response = await async_client.delete(
-            "/api/v1/admin/sso-settings/nonexistent_provider_delete",
+            "/api/v1/ssos/nonexistent_provider_delete",
             headers=superuser_token_headers,
         )
 
         assert response.status_code == status.HTTP_404_NOT_FOUND
 
-    async def test_delete_returns_success_status(
-        self, async_client: AsyncClient, superuser_token_headers: dict
-    ):
+    async def test_delete_returns_success_status(self, async_client: AsyncClient, superuser_token_headers: dict):
         """Verify delete returns appropriate success status."""
         # Create a setting to delete
         await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": "delete_test_provider",
@@ -274,7 +261,7 @@ class TestSSOSettingsDeleteContract:
         )
 
         response = await async_client.delete(
-            "/api/v1/admin/sso-settings/delete_test_provider",
+            "/api/v1/ssos/delete_test_provider",
             headers=superuser_token_headers,
         )
 
@@ -294,7 +281,7 @@ class TestSSOSettingsSecurityContract:
     ):
         """Verify client_secret is not exposed in list response."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
         )
 
@@ -308,11 +295,11 @@ class TestSSOSettingsSecurityContract:
     async def test_all_endpoints_require_authentication(self, unauthenticated_async_client: AsyncClient):
         """Verify all endpoints reject unauthenticated requests."""
         endpoints = [
-            ("GET", "/api/v1/admin/sso-settings/"),
-            ("POST", "/api/v1/admin/sso-settings/"),
-            ("GET", "/api/v1/admin/sso-settings/google"),
-            ("PATCH", "/api/v1/admin/sso-settings/google"),
-            ("DELETE", "/api/v1/admin/sso-settings/google"),
+            ("GET", "/api/v1/ssos/"),
+            ("POST", "/api/v1/ssos/"),
+            ("GET", "/api/v1/ssos/google"),
+            ("PATCH", "/api/v1/ssos/google"),
+            ("DELETE", "/api/v1/ssos/google"),
         ]
 
         for method, path in endpoints:

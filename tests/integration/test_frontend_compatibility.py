@@ -6,6 +6,7 @@ in the new backend with matching paths and methods.
 """
 
 import pytest
+from src.app.core.config import settings
 from fastapi.testclient import TestClient
 from src.app.main import app
 
@@ -322,6 +323,8 @@ class TestCORSConfiguration:
             },
         )
         # Should not be 404, CORS middleware should handle
+        if response.status_code not in [200, 204, 405]:
+            print(f"CORS Error: {response.status_code} - {response.text}")
         assert response.status_code in [200, 204, 405], "CORS preflight should be handled"
 
 

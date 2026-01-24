@@ -59,7 +59,7 @@ class TestAppleSSOFlowIntegration:
 
         state = await sso_manager.create_state(
             provider=provider,
-            redirect_uri=f"http://testserver/api/v1/auth/sso/{provider}/callback",
+            redirect_uri=f"http://testserver/api/v1/account/sso/{provider}/callback",
         )
         return state
 
@@ -102,7 +102,7 @@ class TestAppleSSOFlowIntegration:
         with override_sso_service(mock_service):
             # Apple uses POST for callback
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
             )
@@ -127,7 +127,7 @@ class TestAppleSSOFlowIntegration:
 
         with override_sso_service(mock_service):
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={
                     "code": "test-code",
                     "state": state,
@@ -162,7 +162,7 @@ class TestAppleSSOFlowIntegration:
 
         with override_sso_service(mock_service):
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
             )
 
@@ -188,7 +188,7 @@ class TestAppleSSOFlowIntegration:
 
         with override_sso_service(mock_service):
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
             )
 
@@ -215,7 +215,7 @@ class TestAppleSSOFlowIntegration:
 
         with override_sso_service(mock_service):
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={
                     "code": "test-code",
                     "state": state,
@@ -246,7 +246,7 @@ class TestAppleSSOFlowIntegration:
 
         with override_sso_service(mock_service):
             response = await async_client.post(
-                "/api/v1/auth/sso/apple/callback",
+                "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
             )
 

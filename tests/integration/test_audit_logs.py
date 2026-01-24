@@ -254,9 +254,7 @@ async def test_sso_settings_audit_logs(async_client, db_session: AsyncSession, a
     # Mock encrypt if needed, or rely on real logic
     mock_event_bus.reset_mock()
 
-    response = await async_client.post(
-        "/api/v1/admin/sso-settings/", json=payload, headers={"Authorization": f"Bearer {token}"}
-    )
+    response = await async_client.post("/api/v1/ssos/", json=payload, headers={"Authorization": f"Bearer {token}"})
 
     assert response.status_code == 201
 

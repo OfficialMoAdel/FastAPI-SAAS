@@ -98,7 +98,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
         """
         path = request.url.path
 
-        if is_path_exempt(path):
+        if is_path_exempt(path) or request.method == "OPTIONS":
             return await call_next(request)
 
         try:

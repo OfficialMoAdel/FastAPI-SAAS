@@ -85,7 +85,7 @@ class TestGoogleSSOE2EFlow:
 
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=auth_code_google&state=test_state",
+                "/api/v1/account/sso/google/callback?code=auth_code_google&state=test_state",
                 headers=auth_headers,
             )
 
@@ -108,7 +108,7 @@ class TestGoogleSSOE2EFlow:
 
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=auth_code_google&state=test_state",
+                "/api/v1/account/sso/google/callback?code=auth_code_google&state=test_state",
                 headers=auth_headers,
             )
 
@@ -125,7 +125,7 @@ class TestGoogleSSOE2EFlow:
 
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=invalid_code&state=test_state",
+                "/api/v1/account/sso/google/callback?code=invalid_code&state=test_state",
                 headers=auth_headers,
             )
 
@@ -140,7 +140,7 @@ class TestGoogleSSOE2EFlow:
         # fails. So we patch get_sso_state_manager which is used inside process_callback.
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=test_code&state=invalid_state",
+                "/api/v1/account/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
             )
 
@@ -153,7 +153,7 @@ class TestGoogleSSOE2EFlow:
 
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?state=test_state",
+                "/api/v1/account/sso/google/callback?state=test_state",
                 headers=auth_headers,
             )
 
@@ -168,7 +168,7 @@ class TestGoogleSSOE2EFlow:
 
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
-                "/api/v1/auth/sso/unknown_provider/callback?code=test_code&state=test_state",
+                "/api/v1/account/sso/unknown_provider/callback?code=test_code&state=test_state",
                 headers=auth_headers,
             )
 
@@ -184,7 +184,7 @@ class TestGoogleSSOE2EFlow:
 
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/providers",
+                "/api/v1/account/sso/providers",
                 headers=auth_headers,
             )
 
@@ -208,7 +208,7 @@ class TestGoogleSSOE2EFlow:
 
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=auth_code&state=test_state",
+                "/api/v1/account/sso/google/callback?code=auth_code&state=test_state",
                 headers=auth_headers,
             )
 

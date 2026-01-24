@@ -50,7 +50,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 1: Create SSO settings
         create_response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": provider,
@@ -69,7 +69,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 2: Read SSO settings
         get_response = await async_client.get(
-            f"/api/v1/admin/sso-settings/{provider}",
+            f"/api/v1/ssos/{provider}",
             headers=superuser_token_headers,
         )
 
@@ -79,7 +79,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 3: Update SSO settings
         update_response = await async_client.patch(
-            f"/api/v1/admin/sso-settings/{provider}",
+            f"/api/v1/ssos/{provider}",
             headers=superuser_token_headers,
             json={
                 "is_enabled": False,
@@ -93,7 +93,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 4: Verify update persisted
         verify_response = await async_client.get(
-            f"/api/v1/admin/sso-settings/{provider}",
+            f"/api/v1/ssos/{provider}",
             headers=superuser_token_headers,
         )
 
@@ -101,7 +101,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 5: Delete SSO settings
         delete_response = await async_client.delete(
-            f"/api/v1/admin/sso-settings/{provider}",
+            f"/api/v1/ssos/{provider}",
             headers=superuser_token_headers,
         )
 
@@ -109,7 +109,7 @@ class TestSSOSettingsAdminWorkflow:
 
         # Step 6: Verify deletion
         final_get_response = await async_client.get(
-            f"/api/v1/admin/sso-settings/{provider}",
+            f"/api/v1/ssos/{provider}",
             headers=superuser_token_headers,
         )
 
@@ -133,7 +133,7 @@ class TestSSOSettingsEncryptionIntegration:
 
         # Create settings
         create_response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": provider,
@@ -220,7 +220,7 @@ class TestSSOSettingsSuperuserAuthorization:
     ):
         """Verify regular users cannot create SSO settings."""
         response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=regular_user_token_headers,
             json={
                 "provider": "unauthorized_test",
@@ -238,7 +238,7 @@ class TestSSOSettingsSuperuserAuthorization:
     ):
         """Verify regular users cannot list SSO settings."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=regular_user_token_headers,
         )
 
@@ -251,7 +251,7 @@ class TestSSOSettingsSuperuserAuthorization:
     ):
         """Verify regular users cannot update SSO settings."""
         response = await async_client.patch(
-            "/api/v1/admin/sso-settings/google",
+            "/api/v1/ssos/google",
             headers=regular_user_token_headers,
             json={"is_enabled": False},
         )
@@ -265,7 +265,7 @@ class TestSSOSettingsSuperuserAuthorization:
     ):
         """Verify regular users cannot delete SSO settings."""
         response = await async_client.delete(
-            "/api/v1/admin/sso-settings/google",
+            "/api/v1/ssos/google",
             headers=regular_user_token_headers,
         )
 
@@ -286,7 +286,7 @@ class TestSSOSettingsErrorHandling:
 
         # Create first
         first_response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": provider,
@@ -297,7 +297,7 @@ class TestSSOSettingsErrorHandling:
 
         # Try to create duplicate
         second_response = await async_client.post(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             json={
                 "provider": provider,
@@ -320,7 +320,7 @@ class TestSSOSettingsErrorHandling:
     ):
         """Verify updating non-existent provider returns 404."""
         response = await async_client.patch(
-            "/api/v1/admin/sso-settings/completely_fake_provider_xyz",
+            "/api/v1/ssos/completely_fake_provider_xyz",
             headers=superuser_token_headers,
             json={"is_enabled": False},
         )
@@ -334,7 +334,7 @@ class TestSSOSettingsErrorHandling:
     ):
         """Verify deleting non-existent provider returns 404."""
         response = await async_client.delete(
-            "/api/v1/admin/sso-settings/completely_fake_provider_abc",
+            "/api/v1/ssos/completely_fake_provider_abc",
             headers=superuser_token_headers,
         )
 
@@ -351,7 +351,7 @@ class TestSSOSettingsListFunctionality:
     ):
         """Verify list endpoint returns paginated results."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
         )
 
@@ -368,7 +368,7 @@ class TestSSOSettingsListFunctionality:
     ):
         """Verify list endpoint supports pagination parameters."""
         response = await async_client.get(
-            "/api/v1/admin/sso-settings/",
+            "/api/v1/ssos/",
             headers=superuser_token_headers,
             params={"page": 1, "items_per_page": 5},
         )

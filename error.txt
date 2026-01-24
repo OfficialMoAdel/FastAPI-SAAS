@@ -1,0 +1,121 @@
+=========================== short test summary info ===========================
+FAILED tests/benchmarks/test_auth_perf.py::TestTokenBlacklistPerformance::test_token_blacklist_check_performance
+FAILED tests/contract/test_sso_api.py::TestSSOProvidersEndpoint::test_providers_endpoint_exists
+FAILED tests/contract/test_sso_api.py::TestSSOProvidersEndpoint::test_providers_endpoint_returns_list
+FAILED tests/contract/test_sso_api.py::TestSSOAuthorizeEndpoint::test_authorize_endpoint_exists
+FAILED tests/contract/test_sso_api.py::TestSSOAuthorizeEndpoint::test_authorize_unknown_provider_returns_400
+FAILED tests/contract/test_sso_api.py::TestSSOAuthorizeEndpoint::test_authorize_redirect_includes_state
+FAILED tests/contract/test_sso_api.py::TestSSOCallbackEndpoint::test_callback_endpoint_exists
+FAILED tests/contract/test_sso_api.py::TestSSOCallbackEndpoint::test_callback_requires_code
+FAILED tests/contract/test_sso_api.py::TestSSOCallbackEndpoint::test_callback_requires_state
+FAILED tests/contract/test_sso_api.py::TestSSOCallbackEndpoint::test_callback_invalid_state_returns_400
+FAILED tests/contract/test_sso_api.py::TestSSOCallbackEndpoint::test_callback_valid_code_returns_tokens
+FAILED tests/contract/test_sso_api.py::TestSSOConnectEndpoint::test_connect_endpoint_exists
+FAILED tests/contract/test_sso_api.py::TestSSOConnectEndpoint::test_connect_unknown_provider_returns_400
+FAILED tests/contract/test_sso_api.py::TestSSOConnectEndpoint::test_connect_returns_authorization_url
+FAILED tests/contract/test_sso_api.py::TestSSODisconnectEndpoint::test_disconnect_endpoint_exists
+FAILED tests/contract/test_sso_api.py::TestSSODisconnectEndpoint::test_disconnect_unknown_provider_returns_400
+FAILED tests/contract/test_sso_api.py::TestSSODisconnectEndpoint::test_disconnect_returns_success_message
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsListContract::test_list_returns_403_without_auth
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsListContract::test_list_returns_403_for_non_superuser
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsListContract::test_list_returns_200_for_superuser
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsCreateContract::test_create_returns_403_without_auth
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsCreateContract::test_create_validates_required_fields
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsCreateContract::test_create_returns_201_on_success
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsCreateContract::test_create_returns_400_for_duplicate_provider
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsGetContract::test_get_returns_403_without_auth
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsUpdateContract::test_update_returns_403_without_auth
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsDeleteContract::test_delete_returns_403_without_auth
+FAILED tests/contract/test_sso_settings_api.py::TestSSOSettingsSecurityContract::test_all_endpoints_require_authentication
+FAILED tests/e2e/r4_verified/test_token_blacklist_e2e.py::test_bloom_filter_false_positive_handling
+FAILED tests/e2e/test_api_compat_e2e.py::TestAPICompatibilityE2E::test_account_authentication_workflow
+FAILED tests/e2e/test_api_compat_e2e.py::TestAPICompatibilityE2E::test_products_and_prices_workflow
+FAILED tests/e2e/test_api_compat_e2e.py::TestAPICompatibilityE2E::test_sso_configuration_workflow
+FAILED tests/e2e/test_api_compat_e2e.py::TestAPICompatibilityE2E::test_storage_configuration_workflow
+FAILED tests/e2e/test_api_compat_e2e.py::TestAPICompatibilityE2E::test_features_workflow
+FAILED tests/e2e/test_auth_flow_latency.py::TestAuthFlowLatency::test_login_latency_baseline
+FAILED tests/e2e/test_auth_flow_latency.py::TestAuthFlowLatency::test_token_refresh_latency
+FAILED tests/integration/test_auth_lockout.py::test_account_lockout - assert ...
+FAILED tests/integration/test_feature_flag_api.py::TestFeatureFlagListAPI::test_list_flags_with_auth
+FAILED tests/integration/test_feature_flag_api.py::TestFeatureFlagListAPI::test_list_flags_includes_overrides
+FAILED tests/integration/test_feature_flag_api.py::TestFeatureFlagOverrideAPI::test_set_flag_override
+FAILED tests/integration/test_feature_flag_api.py::TestFeatureFlagTenantIsolation::test_flags_isolated_between_tenants
+FAILED tests/integration/test_frontend_compatibility.py::TestCORSConfiguration::test_options_preflight
+FAILED tests/integration/test_rbac_storage_permissions.py::TestStorageSettingsPermissions::test_get_storage_settings_regular_user_forbidden
+FAILED tests/integration/test_rbac_storage_permissions.py::TestStorageSettingsPermissions::test_create_storage_settings_regular_user_forbidden
+FAILED tests/integration/test_rbac_storage_permissions.py::TestStorageSettingsPermissions::test_update_storage_settings_regular_user_forbidden
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_callback_uses_post_method
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_callback_creates_new_user
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_callback_links_existing_user_by_email
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_callback_handles_private_email_relay
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_callback_extracts_name_on_first_login
+FAILED tests/integration/test_sso_apple_flow.py::TestAppleSSOFlowIntegration::test_apple_subsequent_login_returns_tokens
+FAILED tests/integration/test_sso_connect_flow.py::TestSSOConnectFlowIntegration::test_connect_redirects_to_provider
+FAILED tests/integration/test_sso_connect_flow.py::TestSSOConnectFlowIntegration::test_connect_stores_user_id_in_state
+FAILED tests/integration/test_sso_connect_flow.py::TestSSOConnectFlowIntegration::test_connect_rejects_already_connected_provider
+FAILED tests/integration/test_sso_connect_flow.py::TestSSOConnectFlowIntegration::test_connect_rejects_disabled_provider
+FAILED tests/integration/test_sso_connect_flow.py::TestSSODisconnectFlowIntegration::test_disconnect_removes_provider_connection
+FAILED tests/integration/test_sso_connect_flow.py::TestSSODisconnectFlowIntegration::test_disconnect_fails_for_last_auth_method
+FAILED tests/integration/test_sso_connect_flow.py::TestSSODisconnectFlowIntegration::test_disconnect_succeeds_with_multiple_sso_providers
+FAILED tests/integration/test_sso_connect_flow.py::TestSSODisconnectFlowIntegration::test_disconnect_response_format
+FAILED tests/integration/test_sso_github_flow.py::TestGitHubSSOEndpoints::test_github_callback_invalid_state_returns_400
+FAILED tests/integration/test_sso_github_flow.py::TestGitHubSSOEndpoints::test_github_callback_missing_code_returns_400
+FAILED tests/integration/test_sso_github_flow.py::TestGitHubSSOEndpoints::test_github_callback_missing_state_returns_400
+FAILED tests/integration/test_sso_github_flow.py::TestGitHubSSOProviderSelection::test_github_provider_available
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_new_user_google_oauth_flow
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_existing_user_google_oauth_flow
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_invalid_code
+D:\project\FastAPI_saas\.venv\Lib\site-packages\_pytest\unraisableexception.py:31: RuntimeWarning: coroutine 'Connection._cancel' was never awaited
+  gc.collect()
+RuntimeWarning: Enable tracemalloc to get the object allocation traceback
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_csrf_protection
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_missing_code
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_unknown_provider
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_provider_availability
+FAILED tests/integration/test_sso_google_flow.py::TestGoogleSSOE2EFlow::test_google_oauth_selects_primary_verified_email
+FAILED tests/integration/test_sso_microsoft_flow.py::TestMicrosoftSSOEndpoints::test_microsoft_callback_invalid_state_returns_400
+FAILED tests/integration/test_sso_microsoft_flow.py::TestMicrosoftSSOEndpoints::test_microsoft_callback_missing_code_returns_400
+FAILED tests/integration/test_sso_microsoft_flow.py::TestMicrosoftSSOEndpoints::test_microsoft_callback_missing_state_returns_400
+FAILED tests/integration/test_sso_microsoft_flow.py::TestMicrosoftSSOProviderSelection::test_microsoft_provider_available
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsAdminWorkflow::test_full_crud_workflow
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsSuperuserAuthorization::test_regular_user_cannot_create_settings
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsSuperuserAuthorization::test_regular_user_cannot_list_settings
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsSuperuserAuthorization::test_regular_user_cannot_update_settings
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsSuperuserAuthorization::test_regular_user_cannot_delete_settings
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsListFunctionality::test_list_returns_all_configured_providers
+FAILED tests/integration/test_sso_settings_flow.py::TestSSOSettingsListFunctionality::test_list_supports_pagination
+FAILED tests/integration/test_storage_settings_api.py::TestStorageSettingsAPI::test_create_storage_settings_requires_credentials
+FAILED tests/integration/test_storage_settings_api.py::TestStorageSettingsAPI::test_create_storage_settings_with_credentials
+FAILED tests/integration/test_storage_settings_api.py::TestStorageSettingsValidation::test_create_invalid_file_size
+FAILED tests/integration/test_storage_settings_api.py::TestStorageSettingsValidation::test_create_negative_quota
+FAILED tests/integration/test_storage_settings_api.py::TestStorageSettingsValidation::test_create_invalid_file_types
+FAILED tests/integration/test_user_preferences_flow.py::TestUserPreferencesFlow::test_new_user_gets_default_preferences
+FAILED tests/test_user.py::TestWriteUser::test_create_user_success - assert 4...
+FAILED tests/test_user.py::TestWriteUser::test_create_user_duplicate_email - ...
+FAILED tests/test_user.py::TestWriteUser::test_create_user_duplicate_username
+FAILED tests/test_user.py::TestReadUser::test_read_user_success - assert 404 ...
+FAILED tests/test_user.py::TestPatchUser::test_patch_user_success - assert 40...
+FAILED tests/test_user.py::TestPatchUser::test_patch_user_forbidden - assert ...
+FAILED tests/test_user.py::TestEraseUser::test_erase_user_success - assert 40...
+FAILED tests/test_user.py::TestEraseUser::test_erase_user_forbidden - assert ...
+FAILED tests/unit/core/security/test_rate_limit_cache_pipeline.py::TestStartupLatencyReduced::test_pipeline_faster_than_sequential
+FAILED tests/unit/test_account_register.py::test_register_endpoint_exists - s...
+FAILED tests/unit/test_auth_service.py::TestA2CachedAuthInfoFields::test_a2_cached_auth_info_contains_required_fields
+FAILED tests/unit/test_auth_service.py::TestA2CachedAuthInfoFields::test_a2_deleted_user_flag_propagates_correctly
+ERROR tests/e2e/r4_verified/test_auth_rate_limiting_e2e.py::test_auth_rate_limiting_premium_user
+ERROR tests/e2e/r4_verified/test_auth_rate_limiting_e2e.py::test_auth_rate_limiting_free_user
+ERROR tests/e2e/r4_verified/test_auth_rate_limiting_e2e.py::test_rate_limit_exhaustion_and_recovery
+ERROR tests/e2e/r4_verified/test_auth_rate_limiting_e2e.py::test_anonymous_vs_authenticated_limits
+ERROR tests/e2e/r4_verified/test_file_upload_quota_e2e.py::test_file_upload_quota_full_flow
+ERROR tests/e2e/r4_verified/test_file_upload_quota_e2e.py::test_quota_check_performance
+ERROR tests/e2e/r4_verified/test_file_upload_quota_e2e.py::test_concurrent_uploads_quota_accuracy
+ERROR tests/e2e/r4_verified/test_file_upload_quota_e2e.py::test_quota_counter_recovery
+ERROR tests/e2e/r4_verified/test_session_management_e2e.py::test_session_full_lifecycle
+ERROR tests/e2e/r4_verified/test_session_management_e2e.py::test_session_count_accuracy
+ERROR tests/e2e/r4_verified/test_session_management_e2e.py::test_session_list_performance
+ERROR tests/e2e/r4_verified/test_session_management_e2e.py::test_concurrent_session_operations
+ERROR tests/e2e/r4_verified/test_token_blacklist_e2e.py::test_token_blacklist_full_flow
+ERROR tests/e2e/r4_verified/test_token_blacklist_e2e.py::test_blacklist_expiration
+ERROR tests/e2e/r4_verified/test_token_blacklist_e2e.py::test_multiple_token_blacklist
+ERROR tests/e2e/r4_verified/test_token_blacklist_e2e.py::test_blacklist_performance
+= 100 failed, 2672 passed, 30 skipped, 141 warnings, 16 errors in 187.69s (0:03:07) =

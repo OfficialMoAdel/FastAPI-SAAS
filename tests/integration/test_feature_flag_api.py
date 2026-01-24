@@ -13,12 +13,12 @@ class TestFeatureFlagListAPI:
 
     def test_list_flags_requires_auth(self, client) -> None:
         """API should require tenant authentication."""
-        response = client.get("/api/v1/feature-flags")
+        response = client.get("/api/v1/features")
         assert response.status_code in [400, 401, 403, 422]
 
     def test_list_flags_with_auth(self, client, auth_headers) -> None:
         """API should return feature flags with proper auth."""
-        response = client.get("/api/v1/feature-flags", headers=auth_headers)
+        response = client.get("/api/v1/features", headers=auth_headers)
         assert response.status_code == 200
         data = response.json()
         assert "feature_flags" in data
@@ -26,7 +26,7 @@ class TestFeatureFlagListAPI:
 
     def test_list_flags_includes_overrides(self, client, auth_headers) -> None:
         """API should include tenant-specific override values."""
-        response = client.get("/api/v1/feature-flags", headers=auth_headers)
+        response = client.get("/api/v1/features", headers=auth_headers)
         assert response.status_code == 200
 
 
@@ -36,7 +36,7 @@ class TestFeatureFlagDetailAPI:
     def test_get_flag_by_key(self, client, auth_headers) -> None:
         """API should return flag by key."""
         response = client.get(
-            "/api/v1/feature-flags/dark_mode",
+            "/api/v1/features/dark_mode",
             headers=auth_headers,
         )
         # Should return 200 with default null/false or explicit value
@@ -45,7 +45,7 @@ class TestFeatureFlagDetailAPI:
     def test_get_flag_includes_value(self, client, auth_headers) -> None:
         """API should include flag value for tenant."""
         response = client.get(
-            "/api/v1/feature-flags/dark_mode",
+            "/api/v1/features/dark_mode",
             headers=auth_headers,
         )
         if response.status_code == 200:
@@ -60,7 +60,7 @@ class TestFeatureFlagOverrideAPI:
         """API should allow setting flag override or require valid auth."""
         override_data = {"value": True, "enabled": True}
         response = client.patch(
-            "/api/v1/feature-flags/dark_mode",
+            "/api/v1/features/dark_mode",
             headers=regular_user_token_headers,
             json=override_data,
         )
@@ -70,7 +70,7 @@ class TestFeatureFlagOverrideAPI:
     def test_delete_flag_override(self, client, regular_user_token_headers) -> None:
         """API should allow deleting flag override or require valid auth."""
         response = client.delete(
-            "/api/v1/feature-flags/dark_mode",
+            "/api/v1/features/dark_mode",
             headers=regular_user_token_headers,
         )
         # 401/403 are valid - shows endpoint correctly requires authentication/authorization
@@ -89,7 +89,7 @@ class TestFeatureFlagBulkAPI:
             }
         }
         response = client.put(
-            "/api/v1/feature-flags/bulk",
+            "/api/v1/features/bulk",
             headers=regular_user_token_headers,
             json=bulk_data,
         )
@@ -117,8 +117,8 @@ class TestFeatureFlagTenantIsolation:
         headers_a = {"X-Tenant-ID": t1.slug}
         headers_b = {"X-Tenant-ID": t2.slug}
 
-        response_a = client.get("/api/v1/feature-flags", headers=headers_a)
-        response_b = client.get("/api/v1/feature-flags", headers=headers_b)
+        response_a = client.get("/api/v1/features", headers=headers_a)
+        response_b = client.get("/api/v1/features", headers=headers_b)
 
         assert response_a.status_code == 200
         assert response_b.status_code == 200
@@ -150,13 +150,13 @@ class TestFeatureFlagTenantIsolation:
         # Set flag for tenant A
         override_data = {"value": True, "enabled": True}
         client.patch(
-            "/api/v1/feature-flags/dark_mode",
+            "/api/v1/features/dark_mode",
             headers=headers_a,
             json=override_data,
         )
 
         # Tenant B should not see the override (or get default)
-        response_b = client.get("/api/v1/feature-flags/dark_mode", headers=headers_b)
+        response_b = client.get("/api/v1/features/dark_mode", headers=headers_b)
         # Assuming getting a non-existent flag returns False/False or 404/200-empty
         # Based on is_feature_enabled util it returns default (False)
         if response_b.status_code == 200:

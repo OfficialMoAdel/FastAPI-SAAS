@@ -43,7 +43,7 @@ class TestSSOProvidersEndpoint:
     def test_providers_endpoint_exists(self, client, auth_headers):
         """Verify endpoint exists and accepts GET requests."""
         response = client.get(
-            "/api/v1/auth/sso/providers",
+            "/api/v1/account/sso/providers",
             headers=auth_headers,
         )
         assert response.status_code not in [404, 405]
@@ -57,7 +57,7 @@ class TestSSOProvidersEndpoint:
         mock_service = _create_mock_sso_service(get_enabled_providers=mock_providers)
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/providers",
+                "/api/v1/account/sso/providers",
                 headers=auth_headers,
             )
             assert response.status_code == status.HTTP_200_OK
@@ -74,7 +74,7 @@ class TestSSOAuthorizeEndpoint:
         mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/authorize",
+                "/api/v1/account/sso/google/authorize",
                 headers=auth_headers,
                 follow_redirects=False,
             )
@@ -83,7 +83,7 @@ class TestSSOAuthorizeEndpoint:
     def test_authorize_unknown_provider_returns_400(self, client, auth_headers):
         """Verify unknown provider returns 422 (Validation Error)."""
         response = client.get(
-            "/api/v1/auth/sso/unknown_provider/authorize",
+            "/api/v1/account/sso/unknown_provider/authorize",
             headers=auth_headers,
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -95,7 +95,7 @@ class TestSSOAuthorizeEndpoint:
         )
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/authorize",
+                "/api/v1/account/sso/google/authorize",
                 headers=auth_headers,
                 follow_redirects=False,
             )
@@ -109,7 +109,7 @@ class TestSSOCallbackEndpoint:
     def test_callback_endpoint_exists(self, client, auth_headers):
         """Verify callback endpoint exists."""
         response = client.get(
-            "/api/v1/auth/sso/google/callback",
+            "/api/v1/account/sso/google/callback",
             headers=auth_headers,
         )
         assert response.status_code not in [404]
@@ -117,7 +117,7 @@ class TestSSOCallbackEndpoint:
     def test_callback_requires_code(self, client, auth_headers):
         """Verify callback requires code parameter."""
         response = client.get(
-            "/api/v1/auth/sso/google/callback",
+            "/api/v1/account/sso/google/callback",
             headers=auth_headers,
         )
         # FastAPI returns 422 for missing required query parameters
@@ -126,7 +126,7 @@ class TestSSOCallbackEndpoint:
     def test_callback_requires_state(self, client, auth_headers):
         """Verify callback requires state parameter."""
         response = client.get(
-            "/api/v1/auth/sso/google/callback?code=test_code",
+            "/api/v1/account/sso/google/callback?code=test_code",
             headers=auth_headers,
         )
         # FastAPI returns 422 for missing required query parameters
@@ -139,7 +139,7 @@ class TestSSOCallbackEndpoint:
         mock_service = _create_mock_sso_service(process_callback=HTTPException(status_code=400, detail="Invalid state"))
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=test_code&state=invalid_state",
+                "/api/v1/account/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
             )
             assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -155,7 +155,7 @@ class TestSSOCallbackEndpoint:
         mock_service = _create_mock_sso_service(process_callback=mock_tokens)
         with override_sso_service(mock_service):
             response = client.get(
-                "/api/v1/auth/sso/google/callback?code=test_code&state=test_state",
+                "/api/v1/account/sso/google/callback?code=test_code&state=test_state",
                 headers=auth_headers,
             )
             assert response.status_code == status.HTTP_200_OK
@@ -173,7 +173,7 @@ class TestSSOConnectEndpoint:
         mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
         with override_sso_service(mock_service):
             response = client.post(
-                "/api/v1/auth/sso/google/connect",
+                "/api/v1/account/sso/google/connect",
                 headers=auth_headers,
                 follow_redirects=False,
             )
@@ -182,7 +182,7 @@ class TestSSOConnectEndpoint:
     def test_connect_unknown_provider_returns_400(self, client, auth_headers):
         """Verify unknown provider returns 422 (Validation Error)."""
         response = client.post(
-            "/api/v1/auth/sso/unknown_provider/connect",
+            "/api/v1/account/sso/unknown_provider/connect",
             headers=auth_headers,
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -194,7 +194,7 @@ class TestSSOConnectEndpoint:
         )
         with override_sso_service(mock_service):
             response = client.post(
-                "/api/v1/auth/sso/google/connect",
+                "/api/v1/account/sso/google/connect",
                 headers=auth_headers,
                 follow_redirects=False,
             )
@@ -210,7 +210,7 @@ class TestSSODisconnectEndpoint:
         mock_service = _create_mock_sso_service(disconnect_provider={"message": "ok"})
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/google",
+                "/api/v1/account/sso/google",
                 headers=auth_headers,
             )
             assert response.status_code not in [404, 405]
@@ -218,7 +218,7 @@ class TestSSODisconnectEndpoint:
     def test_disconnect_unknown_provider_returns_400(self, client, auth_headers):
         """Verify unknown provider returns 422 (Validation Error)."""
         response = client.delete(
-            "/api/v1/auth/sso/unknown_provider",
+            "/api/v1/account/sso/unknown_provider",
             headers=auth_headers,
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -228,7 +228,7 @@ class TestSSODisconnectEndpoint:
         mock_service = _create_mock_sso_service(disconnect_provider={"message": "Provider disconnected successfully"})
         with override_sso_service(mock_service):
             response = client.delete(
-                "/api/v1/auth/sso/google",
+                "/api/v1/account/sso/google",
                 headers=auth_headers,
             )
             assert response.status_code == status.HTTP_200_OK

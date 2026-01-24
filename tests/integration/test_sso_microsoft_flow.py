@@ -35,7 +35,7 @@ class TestMicrosoftSSOEndpoints:
 
         try:
             response = client.get(
-                "/api/v1/auth/sso/microsoft/callback",
+                "/api/v1/account/sso/microsoft/callback",
                 params={
                     "code": "valid_code_but_bad_state",
                     "state": "invalid_state",
@@ -65,7 +65,7 @@ class TestMicrosoftSSOEndpoints:
 
         try:
             response = client.get(
-                "/api/v1/auth/sso/microsoft/callback",
+                "/api/v1/account/sso/microsoft/callback",
                 params={"state": "test_state"},  # Missing code
                 headers=auth_headers,
             )
@@ -91,7 +91,7 @@ class TestMicrosoftSSOEndpoints:
 
         try:
             response = client.get(
-                "/api/v1/auth/sso/microsoft/callback",
+                "/api/v1/account/sso/microsoft/callback",
                 params={"code": "test_code"},  # Missing state
                 headers=auth_headers,
             )
@@ -107,7 +107,7 @@ class TestMicrosoftSSOProviderSelection:
     @pytest.mark.asyncio
     async def test_microsoft_provider_available(self, client, auth_headers):
         """Test that Microsoft is listed as available SSO provider."""
-        response = client.get("/api/v1/auth/sso/providers", headers=auth_headers)
+        response = client.get("/api/v1/account/sso/providers", headers=auth_headers)
 
         assert response.status_code == 200
         data = response.json()
