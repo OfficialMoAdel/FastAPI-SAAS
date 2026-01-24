@@ -12,6 +12,7 @@ from ...modules.magic_link.router import router as magic_link_router
 from ...modules.notifications.router import router as notifications_router
 from ...modules.passkey.router import router as passkey_router
 from ...modules.posts.router import router as posts_router
+from ...modules.products.router import router as products_router
 from ...modules.rate_limits.router import router as rate_limits_router
 from ...modules.rbac.router import router as rbac_router
 from ...modules.sso.router import router as sso_router
@@ -50,4 +51,5 @@ router.include_router(storage_settings_router)
 router.include_router(files_router)
 # Billing & AI (Phase 3/5)
 router.include_router(billing_router)
+router.include_router(products_router)  # API compatibility layer
 router.include_router(ai_router)
