@@ -42,7 +42,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def client() -> AsyncGenerator[AsyncClient, None]:
     """Provide async HTTP client for E2E tests."""
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-Tenant-ID": "test-tenant-e2e"},
+    ) as ac:
         logger.info("Created HTTP client for E2E test")
         yield ac
         logger.info("Closed HTTP client")
