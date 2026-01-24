@@ -6,6 +6,7 @@ from ...modules.audit_logs.router import router as audit_logs_router
 from ...modules.auth.router import router as auth_router
 from ...modules.billing.router import router as billing_router
 from ...modules.checkouts.router import router as checkouts_router
+from ...modules.configurations import router as configurations_router
 from ...modules.feature_flags.router import router as feature_flags_router
 from ...modules.files.router import router as files_router
 from ...modules.health.router import router as health_router
@@ -58,4 +59,5 @@ router.include_router(products_router)  # API compatibility layer
 router.include_router(prices_router)  # API compatibility layer
 router.include_router(checkouts_router)  # API compatibility layer
 router.include_router(invoices_router)  # API compatibility layer
+router.include_router(configurations_router)  # API compatibility layer (Stripe)
 router.include_router(ai_router)
