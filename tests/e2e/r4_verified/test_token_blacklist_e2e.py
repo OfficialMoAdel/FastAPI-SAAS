@@ -49,7 +49,7 @@ async def test_token_blacklist_full_flow(authenticated_user: dict, client: Async
     # Step 3: Logout (blacklist token)
     log_step("Logging out to blacklist token")
     start_time = time.perf_counter()
-    response = await client.post("/api/v1/auth/logout", headers=headers)
+    response = await client.post("/api/v1/account/logout", headers=headers)
     logout_time = time.perf_counter() - start_time
 
     assert response.status_code == 200, f"Logout failed: {response.text}"
@@ -101,11 +101,11 @@ async def test_bloom_filter_false_positive_handling(client: AsyncClient, log_ste
     }
 
     log_step("Creating test user")
-    response = await client.post("/api/v1/auth/register", json=login_data)
+    response = await client.post("/api/v1/account/register", json=login_data)
     assert response.status_code == 201
 
     response = await client.post(
-        "/api/v1/auth/login",
+        "/api/v1/account/login",
         json={"email": login_data["email"], "password": login_data["password"]},
     )
     assert response.status_code == 200
@@ -148,7 +148,7 @@ async def test_blacklist_expiration(authenticated_user: dict, client: AsyncClien
 
     # Step 1: Blacklist token
     log_step("Blacklisting token")
-    response = await client.post("/api/v1/auth/logout", headers=headers)
+    response = await client.post("/api/v1/account/logout", headers=headers)
     assert response.status_code == 200
 
     # Step 2: Verify token in blacklist
@@ -183,10 +183,10 @@ async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncC
     tokens = [authenticated_user["access_token"]]
 
     for i in range(3):
-        response = await client.post("/api/v1/auth/login", json=login_data)
+        response = await client.post("/api/v1/account/login", json=login_data)
         assert response.status_code == 200
         tokens.append(response.json()["access_token"])
-        log_step(f"Created session {i+2}", token_preview=tokens[-1][:20])
+        log_step(f"Created session {i + 2}", token_preview=tokens[-1][:20])
 
     # Step 2: Verify all tokens work
     log_step("Verifying all tokens work")
@@ -194,15 +194,15 @@ async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncC
         headers = {"Authorization": f"Bearer {token}"}
         response = await client.get("/api/v1/users/me", headers=headers)
         assert response.status_code == 200
-        log_step(f"Token {i+1} valid")
+        log_step(f"Token {i + 1} valid")
 
     # Step 3: Blacklist all tokens
     log_step("Blacklisting all tokens")
     for i, token in enumerate(tokens):
         headers = {"Authorization": f"Bearer {token}"}
-        response = await client.post("/api/v1/auth/logout", headers=headers)
+        response = await client.post("/api/v1/account/logout", headers=headers)
         assert response.status_code == 200
-        log_step(f"Token {i+1} blacklisted")
+        log_step(f"Token {i + 1} blacklisted")
 
     # Step 4: Verify all tokens rejected
     log_step("Verifying all tokens rejected")
@@ -210,14 +210,14 @@ async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncC
         headers = {"Authorization": f"Bearer {token}"}
         response = await client.get("/api/v1/users/me", headers=headers)
         assert response.status_code == 401
-        log_step(f"Token {i+1} correctly rejected")
+        log_step(f"Token {i + 1} correctly rejected")
 
     # Step 5: Verify all in Bloom filter
     log_step("Verifying all tokens in Bloom filter")
     for i, token in enumerate(tokens):
         bloom_check = blacklist_bloom_filter.might_contain(token)
-        assert bloom_check, f"Token {i+1} should be in Bloom filter"
-        log_step(f"Token {i+1} in Bloom filter")
+        assert bloom_check, f"Token {i + 1} should be in Bloom filter"
+        log_step(f"Token {i + 1} in Bloom filter")
 
     log_step("Multiple token blacklist E2E test completed successfully")
 
@@ -237,14 +237,14 @@ async def test_blacklist_performance(authenticated_user: dict, client: AsyncClie
     log_step("Measuring blacklist operation time")
     start_time = time.perf_counter()
 
-    response = await client.post("/api/v1/auth/logout", headers=headers)
+    response = await client.post("/api/v1/account/logout", headers=headers)
     assert response.status_code == 200
 
     elapsed = time.perf_counter() - start_time
     log_step("Blacklist operation completed", elapsed_ms=elapsed * 1000)
 
     # Blacklist should be fast (< 50ms including network)
-    assert elapsed < 0.05, f"Blacklist took {elapsed*1000:.2f}ms, expected < 50ms"
+    assert elapsed < 0.05, f"Blacklist took {elapsed * 1000:.2f}ms, expected < 50ms"
     log_step("Performance acceptable", threshold_ms=50, actual_ms=elapsed * 1000)
 
     log_step("Blacklist performance E2E test completed successfully")

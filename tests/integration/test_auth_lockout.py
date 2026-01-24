@@ -1,4 +1,3 @@
-
 import bcrypt
 import pytest
 
@@ -9,6 +8,7 @@ from src.app.modules.users.models import User
 
 def get_password_hash_sync(password: str) -> str:
     return bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
+
 
 class FakeRedis:
     def __init__(self):
@@ -38,10 +38,13 @@ class FakeRedis:
     async def aclose(self):
         pass
 
+
 fake_redis_instance = FakeRedis()
+
 
 async def get_fake_redis():
     yield fake_redis_instance
+
 
 @pytest.fixture
 def locked_out_user(db):
@@ -49,11 +52,11 @@ def locked_out_user(db):
         name="Lockout Test",
         username="lockoutuser",
         email="lockout@example.com",
-        element_id="lockout", # Assuming this field if needed, or dummy
+        element_id="lockout",  # Assuming this field if needed, or dummy
         hashed_password=get_password_hash_sync("password123"),
         profile_image_url="http://example.com",
-        tenant_id=1, # Assuming tenant 1 exists from seeded data or other tests
-        uuid="cb5c0b12-9c98-4c12-9c98-4c129c984c12"
+        tenant_id=1,  # Assuming tenant 1 exists from seeded data or other tests
+        uuid="cb5c0b12-9c98-4c12-9c98-4c129c984c12",
     )
     # Check if exists
     existing = db.query(User).filter_by(username="lockoutuser").first()
@@ -65,7 +68,8 @@ def locked_out_user(db):
     db.refresh(user)
     return user
 
-def test_account_lockout(client_auth, db, tenant): # tenant fixture ensures a tenant
+
+def test_account_lockout(client_auth, db, tenant):  # tenant fixture ensures a tenant
     # Ensure user exists for authentication attempt
     hashed_pw = get_password_hash_sync("password123")
     user = db.query(User).filter_by(username="lockoutuser").first()
@@ -78,7 +82,7 @@ def test_account_lockout(client_auth, db, tenant): # tenant fixture ensures a te
             profile_image_url="http://example.com",
             tenant_id=tenant.id,
             is_superuser=False,
-            is_deleted=False
+            is_deleted=False,
         )
         db.add(user)
         db.commit()
@@ -91,39 +95,39 @@ def test_account_lockout(client_auth, db, tenant): # tenant fixture ensures a te
         # 1. 5 failed attempts
         for i in range(5):
             response = client_auth.post(
-                "/api/v1/auth/login",
+                "/api/v1/account/login",
                 data={"username": "lockoutuser", "password": "wrongpassword"},
-                headers={"X-Tenant-ID": tenant.slug}
+                headers={"X-Tenant-ID": tenant.slug},
             )
             assert response.status_code == 401
-            assert "Wrong username" in response.json()['detail']
+            assert "Wrong username" in response.json()["detail"]
 
         # 2. 6th attempt -> Locked
         response = client_auth.post(
-            "/api/v1/auth/login",
+            "/api/v1/account/login",
             data={"username": "lockoutuser", "password": "wrongpassword"},
-            headers={"X-Tenant-ID": tenant.slug}
+            headers={"X-Tenant-ID": tenant.slug},
         )
         assert response.status_code == 401
-        assert "Account locked" in response.json()['detail']
+        assert "Account locked" in response.json()["detail"]
 
         # 3. Even with CORRECT password -> Locked
         response = client_auth.post(
-            "/api/v1/auth/login",
+            "/api/v1/account/login",
             data={"username": "lockoutuser", "password": "password123"},
-            headers={"X-Tenant-ID": tenant.slug}
+            headers={"X-Tenant-ID": tenant.slug},
         )
         assert response.status_code == 401
-        assert "Account locked" in response.json()['detail']
+        assert "Account locked" in response.json()["detail"]
 
         # 4. Clear lockout (simulate expire)
         fake_redis_instance.store.clear()
 
         # 5. Correct password -> Success
         response = client_auth.post(
-            "/api/v1/auth/login",
+            "/api/v1/account/login",
             data={"username": "lockoutuser", "password": "password123"},
-            headers={"X-Tenant-ID": tenant.slug}
+            headers={"X-Tenant-ID": tenant.slug},
         )
         assert response.status_code == 200
         assert "access_token" in response.json()

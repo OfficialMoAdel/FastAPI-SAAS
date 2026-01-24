@@ -29,7 +29,7 @@ class TestConcurrentLoad:
             perf_metrics.start_timer()
             try:
                 response = await async_client.post(
-                    "/api/v1/auth/login",
+                    "/api/v1/account/login",
                     data={
                         "username": "load@example.com",
                         "password": "LoadTest123!",

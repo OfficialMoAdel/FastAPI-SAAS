@@ -37,7 +37,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     # Step 1: Verify initial session created
     log_step("Verifying initial session created")
     headers1 = {"Authorization": f"Bearer {token1}"}
-    response = await client.get("/api/v1/auth/sessions", headers=headers1)
+    response = await client.get("/api/v1/account/sessions", headers=headers1)
     assert response.status_code == 200, f"Failed to get sessions: {response.text}"
 
     sessions = response.json()
@@ -50,7 +50,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     # Step 2: Login from second device
     log_step("Logging in from second device")
     login_data = {"email": authenticated_user["email"], "password": "TestPassword123!"}
-    response = await client.post("/api/v1/auth/login", json=login_data)
+    response = await client.post("/api/v1/account/login", json=login_data)
     assert response.status_code == 200, f"Second login failed: {response.text}"
 
     token2 = response.json()["access_token"]
@@ -58,7 +58,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
     # Step 3: List sessions from first device
     log_step("Listing sessions from first device")
-    response = await client.get("/api/v1/auth/sessions", headers=headers1)
+    response = await client.get("/api/v1/account/sessions", headers=headers1)
     assert response.status_code == 200
 
     sessions = response.json()
@@ -89,14 +89,14 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
     # Step 5: Logout from first device
     log_step("Logging out from first device", session_id=session1_id)
-    response = await client.post("/api/v1/auth/logout", headers=headers1)
+    response = await client.post("/api/v1/account/logout", headers=headers1)
     assert response.status_code == 200, f"Logout failed: {response.text}"
     log_step("First device logged out successfully")
 
     # Step 6: Verify first session removed
     log_step("Verifying first session removed")
     headers2 = {"Authorization": f"Bearer {token2}"}
-    response = await client.get("/api/v1/auth/sessions", headers=headers2)
+    response = await client.get("/api/v1/account/sessions", headers=headers2)
     assert response.status_code == 200
 
     sessions = response.json()
@@ -113,7 +113,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
     # Step 8: Logout from second device
     log_step("Logging out from second device", session_id=session2_id)
-    response = await client.post("/api/v1/auth/logout", headers=headers2)
+    response = await client.post("/api/v1/account/logout", headers=headers2)
     assert response.status_code == 200
     log_step("Second device logged out successfully")
 
@@ -140,7 +140,7 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
 
     # Step 1: Get initial count
     log_step("Getting initial session count")
-    response = await client.get("/api/v1/auth/sessions/count", headers=headers)
+    response = await client.get("/api/v1/account/sessions/count", headers=headers)
     assert response.status_code == 200
 
     initial_count = response.json()["count"]
@@ -152,14 +152,14 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
     login_data = {"email": authenticated_user["email"], "password": "TestPassword123!"}
 
     for i in range(3):
-        response = await client.post("/api/v1/auth/login", json=login_data)
+        response = await client.post("/api/v1/account/login", json=login_data)
         assert response.status_code == 200
         tokens.append(response.json()["access_token"])
-        log_step(f"Created session {i+2}")
+        log_step(f"Created session {i + 2}")
 
     # Step 3: Verify count increased
     log_step("Verifying session count increased")
-    response = await client.get("/api/v1/auth/sessions/count", headers=headers)
+    response = await client.get("/api/v1/account/sessions/count", headers=headers)
     assert response.status_code == 200
 
     new_count = response.json()["count"]
@@ -177,12 +177,12 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
     # Step 5: Delete one session
     log_step("Deleting one session")
     logout_headers = {"Authorization": f"Bearer {tokens[1]}"}
-    response = await client.post("/api/v1/auth/logout", headers=logout_headers)
+    response = await client.post("/api/v1/account/logout", headers=logout_headers)
     assert response.status_code == 200
 
     # Step 6: Verify count decremented
     log_step("Verifying session count decremented")
-    response = await client.get("/api/v1/auth/sessions/count", headers=headers)
+    response = await client.get("/api/v1/account/sessions/count", headers=headers)
     assert response.status_code == 200
 
     final_count = response.json()["count"]
@@ -207,15 +207,15 @@ async def test_session_list_performance(authenticated_user: dict, client: AsyncC
     login_data = {"email": authenticated_user["email"], "password": "TestPassword123!"}
 
     for i in range(9):  # Already have 1 from fixture
-        response = await client.post("/api/v1/auth/login", json=login_data)
+        response = await client.post("/api/v1/account/login", json=login_data)
         assert response.status_code == 200
-        log_step(f"Created session {i+2}/10")
+        log_step(f"Created session {i + 2}/10")
 
     # Step 2: Measure list performance
     log_step("Measuring session list performance")
     start_time = time.perf_counter()
 
-    response = await client.get("/api/v1/auth/sessions", headers=headers)
+    response = await client.get("/api/v1/account/sessions", headers=headers)
     assert response.status_code == 200
 
     elapsed = time.perf_counter() - start_time
@@ -232,7 +232,7 @@ async def test_session_list_performance(authenticated_user: dict, client: AsyncC
 
     # Step 4: Verify performance is reasonable
     # With Redis Hash HGETALL, should be very fast (< 100ms even with network)
-    assert elapsed < 0.1, f"List took {elapsed*1000:.2f}ms, expected < 100ms"
+    assert elapsed < 0.1, f"List took {elapsed * 1000:.2f}ms, expected < 100ms"
     log_step("Performance acceptable", threshold_ms=100, actual_ms=elapsed * 1000)
 
     log_step("Session list performance E2E test completed successfully")
@@ -254,7 +254,7 @@ async def test_concurrent_session_operations(authenticated_user: dict, client: A
     log_step("Creating 5 sessions concurrently")
 
     async def create_session():
-        response = await client.post("/api/v1/auth/login", json=login_data)
+        response = await client.post("/api/v1/account/login", json=login_data)
         return response.status_code == 200
 
     results = await asyncio.gather(*[create_session() for _ in range(5)])
@@ -263,7 +263,7 @@ async def test_concurrent_session_operations(authenticated_user: dict, client: A
 
     # Step 2: Verify all sessions created
     headers = {"Authorization": f"Bearer {authenticated_user['access_token']}"}
-    response = await client.get("/api/v1/auth/sessions/count", headers=headers)
+    response = await client.get("/api/v1/account/sessions/count", headers=headers)
     assert response.status_code == 200
 
     count = response.json()["count"]
@@ -271,7 +271,7 @@ async def test_concurrent_session_operations(authenticated_user: dict, client: A
     assert count >= 5, f"Expected at least 5 sessions, got {count}"
 
     # Step 3: List sessions to verify integrity
-    response = await client.get("/api/v1/auth/sessions", headers=headers)
+    response = await client.get("/api/v1/account/sessions", headers=headers)
     assert response.status_code == 200
 
     sessions = response.json()

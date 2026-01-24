@@ -65,13 +65,13 @@ async def authenticated_user(client: AsyncClient, db_session: AsyncSession) -> d
     logger.info(f"Creating test user: {user_data['email']}")
 
     # Register user
-    response = await client.post("/api/v1/auth/register", json=user_data)
+    response = await client.post("/api/v1/account/register", json=user_data)
     assert response.status_code == 201, f"Registration failed: {response.text}"
     logger.info(f"User registered successfully: {response.json()}")
 
     # Login to get token
     login_data = {"email": user_data["email"], "password": user_data["password"]}
-    response = await client.post("/api/v1/auth/login", json=login_data)
+    response = await client.post("/api/v1/account/login", json=login_data)
     assert response.status_code == 200, f"Login failed: {response.text}"
 
     result = response.json()
@@ -103,12 +103,12 @@ async def premium_user(client: AsyncClient, db_session: AsyncSession) -> dict[st
     logger.info(f"Creating premium test user: {user_data['email']}")
 
     # Register user
-    response = await client.post("/api/v1/auth/register", json=user_data)
+    response = await client.post("/api/v1/account/register", json=user_data)
     assert response.status_code == 201, f"Registration failed: {response.text}"
 
     # Login to get token
     login_data = {"email": user_data["email"], "password": user_data["password"]}
-    response = await client.post("/api/v1/auth/login", json=login_data)
+    response = await client.post("/api/v1/account/login", json=login_data)
     assert response.status_code == 200, f"Login failed: {response.text}"
 
     result = response.json()

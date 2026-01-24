@@ -526,6 +526,64 @@ async def auth_headers(tenant, superuser_token_headers):
     }
 
 
+class FakeRedisPipeline:
+    """Fake Redis Pipeline for batched operations."""
+
+    def __init__(self, redis):
+        self.redis = redis
+        self._commands = []
+        self._results = []
+
+    def zscore(self, key, member):
+        """Queue a zscore command."""
+        self._commands.append(("zscore", key, member))
+        return self
+
+    def zadd(self, key, mapping, nx=False, xx=False, gt=False, lt=False):
+        """Queue a zadd command."""
+        self._commands.append(("zadd", key, mapping))
+        return self
+
+    def expire(self, key, seconds):
+        """Queue an expire command."""
+        self._commands.append(("expire", key, seconds))
+        return self
+
+    def get(self, key):
+        """Queue a get command."""
+        self._commands.append(("get", key))
+        return self
+
+    def set(self, key, value, ex=None, px=None, **kwargs):
+        """Queue a set command."""
+        self._commands.append(("set", key, value, ex))
+        return self
+
+    async def execute(self):
+        """Execute all queued commands and return results."""
+        results = []
+        for cmd in self._commands:
+            if cmd[0] == "zscore":
+                result = await self.redis.zscore(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "zadd":
+                result = await self.redis.zadd(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "expire":
+                result = await self.redis.expire(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "get":
+                result = await self.redis.get(cmd[1])
+                results.append(result)
+            elif cmd[0] == "set":
+                result = await self.redis.set(cmd[1], cmd[2], ex=cmd[3] if len(cmd) > 3 else None)
+                results.append(result)
+            else:
+                results.append(None)
+        self._commands = []
+        return results
+
+
 class FakeRedis:
     def __init__(self):
         self.store = {}
@@ -590,15 +648,47 @@ class FakeRedis:
         return "mock_script_sha"
 
     async def evalsha(self, sha, numkeys, *keys_and_args):
-        """Simulate rate limit Lua script - properly increments counter.
+        """Simulate Lua scripts based on context.
 
-        Mimics the Lua script:
-        local current = redis.call('INCR', KEYS[1])
-        if current == 1 then
-            redis.call('EXPIRE', KEYS[1], ARGV[1])
-        end
-        return current
+        Handles both rate limit and token blacklist Lua scripts:
+        - Rate limit: returns incremented counter
+        - Token blacklist: returns 0 (not blacklisted) or 1 (blacklisted)
         """
+        # For token blacklist script: KEYS[1]=negative_key, KEYS[2]=blacklist_key
+        # ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
+        if numkeys == 2 and len(keys_and_args) >= 5:
+            # Token blacklist script
+            negative_key = keys_and_args[0]
+            blacklist_key = keys_and_args[1]
+            token = keys_and_args[2]
+
+            # Check negative cache
+            if negative_key in self.store:
+                return 0  # Not blacklisted (cached)
+
+            # Check blacklist sorted set
+            zset = self.store.get(blacklist_key, {})
+            if not isinstance(zset, dict):
+                zset = {}
+            score = zset.get(token)
+
+            if score is None:
+                # Not in blacklist, cache negative result
+                self.store[negative_key] = "1"
+                return 0  # Not blacklisted
+
+            # Check if expired (score is timestamp)
+            now = float(keys_and_args[3]) if len(keys_and_args) > 3 else 0
+            if score < now:
+                # Expired, remove
+                if token in zset:
+                    del zset[token]
+                self.store[negative_key] = "1"
+                return 0  # Not blacklisted (expired)
+
+            return 1  # IS blacklisted
+
+        # Default: Rate limit script (single key)
         key = keys_and_args[0] if keys_and_args else "default_key"
         current = self.store.get(key, 0)
         if isinstance(current, str):
@@ -606,6 +696,48 @@ class FakeRedis:
         current += 1
         self.store[key] = current
         return current
+
+    async def zscore(self, key, member):
+        """Get the score of a member in a sorted set.
+
+        Returns None if the key doesn't exist or member is not in the set.
+        This is used by token_blacklist_cache.is_token_blacklisted.
+        """
+        zset = self.store.get(key)
+        if zset is None or not isinstance(zset, dict):
+            return None
+        return zset.get(member)
+
+    async def zadd(self, key, mapping, nx=False, xx=False, gt=False, lt=False):
+        """Add members to a sorted set with scores."""
+        if key not in self.store:
+            self.store[key] = {}
+        zset = self.store[key]
+        if not isinstance(zset, dict):
+            self.store[key] = {}
+            zset = self.store[key]
+        count = 0
+        for member, score in mapping.items():
+            if member not in zset:
+                count += 1
+            zset[member] = score
+        return count
+
+    async def zremrangebyscore(self, key, min_score, max_score):
+        """Remove members from a sorted set by score range."""
+        if key not in self.store:
+            return 0
+        zset = self.store.get(key, {})
+        if not isinstance(zset, dict):
+            return 0
+        to_remove = [m for m, s in zset.items() if min_score <= s <= max_score]
+        for m in to_remove:
+            del zset[m]
+        return len(to_remove)
+
+    async def pipeline(self, transaction=True):
+        """Return a pipeline mock for batched operations."""
+        return FakeRedisPipeline(self)
 
 
 @pytest.fixture(autouse=True)

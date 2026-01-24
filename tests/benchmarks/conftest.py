@@ -37,7 +37,7 @@ def mock_redis():
     redis.zscore = AsyncMock(return_value=None)  # Not blacklisted
     redis.incr = AsyncMock(return_value=1)
     redis.ttl = AsyncMock(return_value=60)
-    redis.evalsha = AsyncMock(return_value=[1, 60])
+    redis.evalsha = AsyncMock(return_value=0)  # 0 = not blacklisted (single int)
     redis.script_load = AsyncMock(return_value="test_sha")
     redis.pipeline = MagicMock(return_value=mock_pipe)  # Pipeline support for OPT-5
     return redis

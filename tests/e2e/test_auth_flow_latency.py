@@ -22,7 +22,7 @@ class TestAuthFlowLatency:
         """Test login endpoint latency meets p95 threshold."""
         # Skip first request (cold start)
         await async_client.post(
-            "/api/v1/auth/login",
+            "/api/v1/account/login",
             data={"username": "warmup@example.com", "password": "Warmup123!"},
         )
 
@@ -32,7 +32,7 @@ class TestAuthFlowLatency:
         for _ in range(iterations):
             perf_metrics.start_timer()
             response = await async_client.post(
-                "/api/v1/auth/login",
+                "/api/v1/account/login",
                 data={
                     "username": "test@example.com",
                     "password": "TestPassword123!",
@@ -60,7 +60,7 @@ class TestAuthFlowLatency:
         for _ in range(iterations):
             perf_metrics.start_timer()
             response = await async_client.post(
-                "/api/v1/auth/refresh",
+                "/api/v1/account/refresh",
                 json={"refresh_token": "fake-refresh-token"},
             )
             perf_metrics.stop_timer()
@@ -89,7 +89,7 @@ class TestAuthFlowLatency:
             perf_metrics.start_timer()
             try:
                 response = await async_client.get(
-                    "/api/v1/user/me/",
+                    "/api/v1/users/me",
                     headers={
                         "Authorization": "Bearer test-token",
                     },

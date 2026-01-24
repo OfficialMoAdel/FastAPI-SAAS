@@ -18,8 +18,16 @@ TEST_TENANT_HEADER = {"X-Tenant-ID": "1"}
 
 
 def _create_mock_user_service(**method_returns):
-    """Helper to create a mock UserService with specified method return values."""
+    """Helper to create a mock UserService with specified method return values.
+
+    Note: The router tries get_by_id first, then falls back to other methods.
+    We make get_by_id raise ValueError by default to trigger the fallback path.
+    """
     mock_service = Mock(spec=UserService)
+
+    # Default: make get_by_id raise ValueError so router falls back to username-based methods
+    mock_service.get_by_id = AsyncMock(side_effect=ValueError("Not an integer ID"))
+
     for method_name, return_value in method_returns.items():
         if isinstance(return_value, Exception):
             setattr(mock_service, method_name, AsyncMock(side_effect=return_value))
@@ -50,7 +58,7 @@ class TestWriteUser:
         mock_service = _create_mock_user_service(create=expected_result)
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/user", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
 
         assert response.status_code == 201
         assert response.json()["email"] == sample_user_data["email"]
@@ -60,7 +68,7 @@ class TestWriteUser:
         mock_service = _create_mock_user_service(create=DuplicateValueException("Email is already registered"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/user", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
 
         # DuplicateValueException from fastcrud returns 422
         assert response.status_code == 422
@@ -71,7 +79,7 @@ class TestWriteUser:
         mock_service = _create_mock_user_service(create=DuplicateValueException("Username not available"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/user", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
 
         # DuplicateValueException from fastcrud returns 422
         assert response.status_code == 422
@@ -87,7 +95,7 @@ class TestReadUser:
         mock_service = _create_mock_user_service(get_by_username=expected_result)
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.get("/api/v1/user/test_user", headers=auth_headers)
+        response = client.get("/api/v1/users/test_user", headers=auth_headers)
 
         assert response.status_code == 200
         assert response.json()["username"] == expected_result["username"]
@@ -97,7 +105,7 @@ class TestReadUser:
         mock_service = _create_mock_user_service(get_by_username=NotFoundException("User not found"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.get("/api/v1/user/nonexistent_user", headers=auth_headers)
+        response = client.get("/api/v1/users/nonexistent_user", headers=auth_headers)
 
         assert response.status_code == 404
 
@@ -111,7 +119,7 @@ class TestReadUsers:
         # This endpoint uses crud_users directly, not the service
         # Merge superuser_headers with tenant header
         headers = {**superuser_headers, **TEST_TENANT_HEADER}
-        response = client.get("/api/v1/users", headers=headers)
+        response = client.get("/api/v1/userss", headers=headers)
 
         # Should return 200 with pagination structure
         assert response.status_code == 200
@@ -130,7 +138,7 @@ class TestPatchUser:
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
         response = client.patch(
-            "/api/v1/user/test_user",
+            "/api/v1/users/test_user",
             json={"name": "Updated Name"},
             headers=auth_headers,
         )
@@ -143,7 +151,7 @@ class TestPatchUser:
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
         response = client.patch(
-            "/api/v1/user/other_user",
+            "/api/v1/users/other_user",
             json={"name": "Hacked Name"},
             headers=auth_headers,
         )
@@ -159,7 +167,7 @@ class TestEraseUser:
         mock_service = _create_mock_user_service(delete={"message": "User deleted successfully"})
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.delete("/api/v1/user/test_user", headers=auth_headers)
+        response = client.delete("/api/v1/users/test_user", headers=auth_headers)
 
         assert response.status_code == 200
 
@@ -168,7 +176,7 @@ class TestEraseUser:
         mock_service = _create_mock_user_service(delete=NotFoundException("User not found"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.delete("/api/v1/user/nonexistent_user", headers=auth_headers)
+        response = client.delete("/api/v1/users/nonexistent_user", headers=auth_headers)
 
         assert response.status_code == 404
 
@@ -177,6 +185,6 @@ class TestEraseUser:
         mock_service = _create_mock_user_service(delete=ForbiddenException("You can only delete your own account"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.delete("/api/v1/user/other_user", headers=auth_headers)
+        response = client.delete("/api/v1/users/other_user", headers=auth_headers)
 
         assert response.status_code == 403
