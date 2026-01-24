@@ -125,6 +125,19 @@ class RoleService:
         await self.db.delete(role)
         await self.db.commit()
 
+    async def get_all_permissions(self) -> Sequence[Permission]:
+        """Get all available permissions in the system.
+
+        Returns all permissions that can be assigned to roles.
+        This is a system-wide query and not tenant-specific.
+
+        Returns:
+            Sequence of all Permission objects
+        """
+        stmt = select(Permission).order_by(Permission.slug)
+        result = await self.db.execute(stmt)
+        return result.scalars().all()
+
     async def get_role_permissions(self, role_id: int) -> Sequence[Permission]:
         """Get all permissions for a role with L1+L2 caching.
 

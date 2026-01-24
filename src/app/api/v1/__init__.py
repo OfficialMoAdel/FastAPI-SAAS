@@ -8,6 +8,7 @@ from ...modules.auth.router import router as auth_router
 from ...modules.billing.router import router as billing_router
 from ...modules.checkouts.router import router as checkouts_router
 from ...modules.configurations import router as configurations_router
+from ...modules.dashboard.router import router as dashboard_router
 from ...modules.feature_flags.router import router as feature_flags_router
 from ...modules.files.router import router as files_router
 from ...modules.health.router import router as health_router
@@ -16,6 +17,8 @@ from ...modules.magic_link.router import router as magic_link_router
 from ...modules.notifications.router import router as notifications_router
 from ...modules.passkey.router import router as passkey_router
 from ...modules.posts.router import router as posts_router
+from ...modules.rbac.permissions_router import router as permissions_router
+from ...modules.rbac.router import router as rbac_router
 from ...modules.security.router import router as security_router
 from ...modules.prices.router import router as prices_router
 from ...modules.products.router import router as products_router
@@ -46,6 +49,8 @@ router.include_router(tiers_router)
 router.include_router(rate_limits_router)
 router.include_router(tenants_router)
 router.include_router(rbac_router)
+router.include_router(permissions_router)  # Standalone permissions endpoint
+router.include_router(dashboard_router)  # Dashboard metrics
 router.include_router(api_keys_router)
 # Core Services
 router.include_router(audit_logs_router)

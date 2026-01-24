@@ -211,6 +211,18 @@ class TestFrontendCompatibility:
         assert "features" in data
         assert "theme" in data
 
+    def test_dashboard_endpoint_exists(self):
+        """Dashboard metrics endpoint should exist"""
+        response = client.get("/api/v1/dashboard")
+        # Requires tenant header (will return 400 without it)
+        assert response.status_code != 404, "GET /dashboard must exist"
+
+    def test_permissions_endpoint_exists(self):
+        """Permissions listing endpoint should exist"""
+        response = client.get("/api/v1/permissions")
+        # Requires tenant header (will return 400 without it)
+        assert response.status_code != 404, "GET /permissions must exist"
+
     def test_roles_endpoints_exist(self):
         """Roles/RBAC endpoints should exist"""
         required_endpoints = [
