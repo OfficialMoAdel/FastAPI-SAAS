@@ -27,11 +27,23 @@ depends_on: Sequence[str] | None = None
 def upgrade() -> None:
     """Add credential_id_hash column with index.
 
-    Phase 1: Add nullable column
+    Phase 1: Add nullable column (if table exists)
     Phase 2: Application-level backfill (run separately)
     Phase 3: Index created immediately for new credentials
     Phase 4: After backfill, a separate migration can make column NOT NULL
     """
+    # Defensive: only run if passkey_credentials table exists
+    # (handles different migration branch orders)
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'passkey_credentials')")
+    )
+    table_exists = result.scalar()
+
+    if not table_exists:
+        # Table doesn't exist yet in this branch order, skip
+        return
+
     # Add nullable hash column (VARCHAR(64) for SHA256 hex digest)
     op.add_column(
         "passkey_credentials",
@@ -48,5 +60,15 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Remove credential_id_hash column and index."""
+    # Defensive: only run if passkey_credentials table exists
+    conn = op.get_bind()
+    result = conn.execute(
+        sa.text("SELECT EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'passkey_credentials')")
+    )
+    table_exists = result.scalar()
+
+    if not table_exists:
+        return
+
     op.drop_index("idx_passkey_credential_id_hash", table_name="passkey_credentials")
     op.drop_column("passkey_credentials", "credential_id_hash")

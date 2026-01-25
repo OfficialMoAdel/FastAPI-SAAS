@@ -43,19 +43,28 @@ def upgrade() -> None:
     )
 
     # Step 2: Backfill existing tenants with current file statistics
-    # This calculates the actual values from the files table
+    # This calculates the actual values from the files table (if it exists)
+    # Handle case where files table may not exist yet (different migration branches)
     op.execute(
         """
-        UPDATE tenants
-        SET
-            storage_usage_bytes = COALESCE(
-                (SELECT SUM(size_bytes) FROM files WHERE files.tenant_id = tenants.id),
-                0
-            ),
-            file_count = COALESCE(
-                (SELECT COUNT(*) FROM files WHERE files.tenant_id = tenants.id),
-                0
-            )
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'files') THEN
+                UPDATE tenants
+                SET
+                    storage_usage_bytes = COALESCE(
+                        (SELECT SUM(size_bytes) FROM files WHERE files.tenant_id = tenants.id),
+                        0
+                    ),
+                    file_count = COALESCE(
+                        (SELECT COUNT(*) FROM files WHERE files.tenant_id = tenants.id),
+                        0
+                    );
+            ELSE
+                -- Files table doesn't exist yet, initialize counters to 0
+                UPDATE tenants SET storage_usage_bytes = 0, file_count = 0;
+            END IF;
+        END $$;
         """
     )
 

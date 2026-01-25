@@ -49,15 +49,28 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Add composite index for files table listing queries.
 
-    Uses CONCURRENTLY to avoid table locks in production.
-    This allows reads and writes to continue during index creation.
+    Uses regular CREATE INDEX since CONCURRENTLY requires autocommit mode
+    which is complex with async SQLAlchemy. For production with large tables,
+    consider running this migration manually with CONCURRENTLY.
     """
     # Create composite index for file listing queries
-    # CONCURRENTLY prevents table locks during index creation
+    # NOTE: Using regular CREATE INDEX for compatibility with async migrations
+    # For large production tables, run manually:
+    # CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_files_tenant_user_created
+    # ON files (tenant_id, user_id, created_at)
     op.execute(
         """
-        CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_files_tenant_user_created
-        ON files (tenant_id, user_id, created_at)
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'files') THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes WHERE indexname = 'idx_files_tenant_user_created'
+                ) THEN
+                    CREATE INDEX idx_files_tenant_user_created
+                    ON files (tenant_id, user_id, created_at);
+                END IF;
+            END IF;
+        END $$;
         """
     )
 
@@ -69,9 +82,8 @@ def downgrade() -> None:
     File listing queries will be 10-50% slower after downgrade.
     """
     # Drop the composite index
-    # CONCURRENTLY also works for DROP to avoid locks
     op.execute(
         """
-        DROP INDEX CONCURRENTLY IF EXISTS idx_files_tenant_user_created
+        DROP INDEX IF EXISTS idx_files_tenant_user_created
         """
     )

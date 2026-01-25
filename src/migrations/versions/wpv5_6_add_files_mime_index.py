@@ -44,12 +44,22 @@ depends_on: str | Sequence[str] | None = None
 def upgrade() -> None:
     """Add composite index for files MIME type filtering.
 
-    Uses CONCURRENTLY to avoid table locks in production.
+    Uses regular CREATE INDEX for async SQLAlchemy compatibility.
+    For production with large tables, consider running manually with CONCURRENTLY.
     """
     op.execute(
         """
-        CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_files_tenant_mime
-        ON files (tenant_id, mime_type)
+        DO $$
+        BEGIN
+            IF EXISTS (SELECT 1 FROM information_schema.tables WHERE table_name = 'files') THEN
+                IF NOT EXISTS (
+                    SELECT 1 FROM pg_indexes WHERE indexname = 'ix_files_tenant_mime'
+                ) THEN
+                    CREATE INDEX ix_files_tenant_mime
+                    ON files (tenant_id, mime_type);
+                END IF;
+            END IF;
+        END $$;
         """
     )
 
@@ -61,6 +71,6 @@ def downgrade() -> None:
     """
     op.execute(
         """
-        DROP INDEX CONCURRENTLY IF EXISTS ix_files_tenant_mime
+        DROP INDEX IF EXISTS ix_files_tenant_mime
         """
     )

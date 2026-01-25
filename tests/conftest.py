@@ -634,6 +634,16 @@ class FakeRedis:
             keys = fnmatch.filter(keys, match)
         return 0, keys
 
+    async def scan_iter(self, match=None, count=None, _type=None):
+        """Simulate scan_iter."""
+        import fnmatch
+
+        keys = list(self.store.keys())
+        if match:
+            keys = fnmatch.filter(keys, match)
+        for key in keys:
+            yield key
+
     async def ping(self):
         """Simulate Redis ping for health checks."""
         return True
