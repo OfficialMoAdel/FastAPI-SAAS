@@ -297,30 +297,64 @@ All 21 modules have dedicated AGENTS.md files:
 - Make the plan extremely concise. Sacrifice grammar for the sake of concision.
 - At the end of each plan, give me a list of unresolved questions to answer, if any.
 
-## 📚 Required Skills & Best Practices
+<skills_system priority="1">
 
-You are expected to apply the expert skills located in the `.opencode/skill/` directory (or wherever you placed them).
+## Available Skills
 
-### 1. Database Design (PostgreSQL) 🗄️
+<!-- SKILLS_TABLE_START -->
+<usage>
+When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
 
-_Ref: `.opencode/skill/postgresql/` folder_
+How to use skills:
+- Invoke: Bash("openskills read <skill-name>")
+- The skill content will load with detailed instructions on how to complete the task
+- Base directory provided in output for resolving bundled resources (references/, scripts/, assets/)
 
-- **Primary Keys:** Use `BIGINT GENERATED ALWAYS AS IDENTITY` or `UUIDv7`.
-- **Timestamps:** ALWAYS use `TIMESTAMPTZ`.
-- **JSONB:** Use `JSONB` for flexible settings.
-- **RLS:** Enable **Row-Level Security** on the `tenants` table.
+Usage notes:
+- Only use skills listed in <available_skills> below
+- Do not invoke a skill that is already loaded in your context
+- Each skill invocation is stateless
+</usage>
 
-### 2. Async Patterns (FastAPI) ⚡
+<available_skills>
 
-_Ref: `.opencode/skill/async-python-patterns/` folder_
+<skill>
+<name>api-design-principles</name>
+<description>Master REST and GraphQL API design principles to build intuitive, scalable, and maintainable APIs that delight developers. Use when designing new APIs, reviewing API specifications, or establishing API design standards.</description>
+<location>global</location>
+</skill>
 
-- **Non-blocking:** All I/O MUST be `async/await`.
-- **Concurrency:** Use `asyncio.gather()` for aggregating data.
-- **HTTP Client:** Use `aiohttp` or `httpx` (async).
+<skill>
+<name>async-python-patterns</name>
+<description>Master Python asyncio, concurrent programming, and async/await patterns for high-performance applications. Use when building async APIs, concurrent systems, or I/O-bound applications requiring non-blocking operations.</description>
+<location>global</location>
+</skill>
 
-### 3. Testing Strategy 🧪
+<skill>
+<name>postgresql</name>
+<description>Design a PostgreSQL-specific schema. Covers best-practices, data types, indexing, constraints, performance patterns, and advanced features</description>
+<location>global</location>
+</skill>
 
-_Ref: `.opencode/skill/python-testing-patterns/` folder_
+<skill>
+<name>python-packaging</name>
+<description>Create distributable Python packages with proper project structure, setup.py/pyproject.toml, and publishing to PyPI. Use when packaging Python libraries, creating CLI tools, or distributing Python code.</description>
+<location>global</location>
+</skill>
 
-- **Fixtures:** Use `conftest.py` for shared async fixtures.
-- **Isolation:** Tests must be independent.
+<skill>
+<name>python-performance-optimization</name>
+<description>Profile and optimize Python code using cProfile, memory profilers, and performance best practices. Use when debugging slow Python code, optimizing bottlenecks, or improving application performance.</description>
+<location>global</location>
+</skill>
+
+<skill>
+<name>python-testing-patterns</name>
+<description>Implement comprehensive testing strategies with pytest, fixtures, mocking, and test-driven development. Use when writing Python tests, setting up test suites, or implementing testing best practices.</description>
+<location>global</location>
+</skill>
+
+</available_skills>
+<!-- SKILLS_TABLE_END -->
+
+</skills_system>
