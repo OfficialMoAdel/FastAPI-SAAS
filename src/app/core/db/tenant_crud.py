@@ -13,7 +13,7 @@ Usage:
     crud_users = CRUDUser(User)
 """
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
 from pydantic import BaseModel
@@ -94,7 +94,7 @@ class TenantAwareCRUD(
             The record as a dict if found, None otherwise.
         """
         kwargs = self._inject_tenant_filter(kwargs)
-        return await super().get(db, **kwargs)
+        return cast(dict[Any, Any] | None, await super().get(db, **kwargs))
 
     async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
         """Get multiple records, filtered by tenant context.
@@ -108,7 +108,7 @@ class TenantAwareCRUD(
             A dict containing the records and pagination info.
         """
         kwargs = self._inject_tenant_filter(kwargs)
-        return await super().get_multi(db, **kwargs)
+        return cast(dict[Any, Any], await super().get_multi(db, **kwargs))
 
     async def exists(self, db: AsyncSession, **kwargs: Any) -> bool:
         """Check if a record exists, filtered by tenant context.
@@ -147,7 +147,7 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the update.
         """
         kwargs = self._inject_tenant_filter(kwargs)
-        return await super().update(db, object, **kwargs)
+        await super().update(db, object, **kwargs)
 
     async def delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Soft delete records, filtered by tenant context.
