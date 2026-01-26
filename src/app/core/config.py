@@ -369,11 +369,11 @@ class R1UnifiedSettings(BaseSettings):
 
     TOKEN_NEGATIVE_CACHE_TTL: int = 300
     """Negative cache TTL for token blacklist checks (5 minutes default).
-    
+
     Trade-off:
     - Higher TTL = fewer Redis calls but delayed revocation detection
     - Lower TTL = faster revocation detection but more Redis calls
-    
+
     Risk: Revoked token accepted for up to TTL duration.
     For immediate revocation requirements, set to 60 or lower.
     """

@@ -66,12 +66,12 @@ else
     redis.call('SET', key, new_tat_ms)
     -- Expire key after period + emission_interval (cleanup)
     redis.call('PEXPIRE', key, period_ms + emission_interval_ms)
-    
+
     -- Calculate remaining requests
     -- remaining = how many more requests fit before new_tat > now + burst_tolerance
     local remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
     remaining = math.max(0, math.min(remaining, limit - 1))
-    
+
     return {1, remaining, 0, new_tat_ms}
 end
 """

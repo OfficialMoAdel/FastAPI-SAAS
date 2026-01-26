@@ -26,7 +26,13 @@ class WorkerSettings:
     - Eliminates pickle security vulnerabilities
     """
 
-    functions = [sample_background_task, deliver_webhook_task, migrate_sessions_task, flush_audit_logs_task, sync_bloom_filter_task]
+    functions = [
+        sample_background_task,
+        deliver_webhook_task,
+        migrate_sessions_task,
+        flush_audit_logs_task,
+        sync_bloom_filter_task,
+    ]
     redis_settings = RedisSettings(host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT)
     on_startup = startup
     on_shutdown = shutdown

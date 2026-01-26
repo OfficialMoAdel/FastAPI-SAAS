@@ -117,7 +117,7 @@ class LuaScriptManager:
         # Session eviction helper - Atomic ZPOPMIN + HDEL
         "session_evict_oldest": """
             -- KEYS[1]: session order zset key
-            -- KEYS[2]: session hash key  
+            -- KEYS[2]: session hash key
             -- ARGV[1]: count to evict
             -- Returns: list of evicted session IDs
             local evicted = {}
@@ -173,7 +173,7 @@ class LuaScriptManager:
             raise ScriptNotFoundError(f"Script '{name}' not registered")
         return self._scripts[name]
 
-    async def preload_scripts(self, redis: "Redis") -> dict[str, bool]:
+    async def preload_scripts(self, redis: Redis) -> dict[str, bool]:
         """Preload all registered scripts into Redis.
 
         This uses SCRIPT LOAD to cache scripts server-side,
@@ -214,7 +214,7 @@ class LuaScriptManager:
 
     async def execute(
         self,
-        redis: "Redis",
+        redis: Redis,
         script_name: str,
         keys: list[str] | None = None,
         args: list[str] | None = None,
@@ -275,7 +275,7 @@ class LuaScriptManager:
 
     async def execute_or_fallback(
         self,
-        redis: "Redis",
+        redis: Redis,
         script_name: str,
         keys: list[str] | None = None,
         args: list[str] | None = None,

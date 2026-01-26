@@ -8,7 +8,8 @@ P2-3: Add composite index on rate_limit(tier_id, path) for faster
 tier+path lookups during rate limiting checks.
 """
 
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
 from alembic import op
 

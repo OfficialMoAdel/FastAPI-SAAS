@@ -112,6 +112,7 @@ ignore = [
     "F401", # unused import
     "F403", # star imports
 ]
+"src/migrations/*" = ["E501"]
 
 [tool.ruff.lint.mccabe]
 max-complexity = 24

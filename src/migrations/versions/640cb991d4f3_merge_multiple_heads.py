@@ -5,11 +5,8 @@ Revises: 010_add_passkey_credential_id_hash, ad9d6d51c807, wpv5_6_files_mime_ind
 Create Date: 2026-01-25 00:37:32.687948
 
 """
-from typing import Sequence, Union
-
-from alembic import op
-import sqlalchemy as sa
-
+from collections.abc import Sequence
+from typing import Union
 
 # revision identifiers, used by Alembic.
 revision: str = '640cb991d4f3'

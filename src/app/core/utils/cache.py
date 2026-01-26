@@ -328,7 +328,6 @@ async def get_tenant_index_size(tenant_id: int | str) -> int:
 # =============================================================================
 
 import asyncio
-import random
 
 from structlog import get_logger
 
