@@ -57,6 +57,20 @@ class CryptSettings(BaseSettings):
                 )
         return self
 
+    @model_validator(mode="after")
+    def validate_production_secrets(self) -> "CryptSettings":
+        """Validate encryption keys are set to prevent runtime failures."""
+        import logging
+
+        # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
+        if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
+            logging.getLogger("app.core.config").warning(
+                "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing. "
+                "Features relying on encryption (e.g., webhooks, sensitive data) may fail."
+            )
+
+        return self
+
 
 class DatabaseSettings(BaseSettings):
     DB_POOL_SIZE: int = 20
@@ -349,8 +363,8 @@ class R1UnifiedSettings(BaseSettings):
     SESSION_MAX_EVICTION_BATCH_SIZE: int = 50
     """Maximum sessions to evict in a single batch operation."""
 
-    RBAC_CACHE_TTL_SECONDS: int = 3600
-    """TTL for RBAC permission cache entries (1 hour default)."""
+    RBAC_CACHE_TTL_SECONDS: int = 86400
+    """TTL for RBAC permission cache entries (24 hours default)."""
 
     DLQ_MAX_SIZE: int = 10000
     """Maximum entries in the Dead-Letter Queue."""

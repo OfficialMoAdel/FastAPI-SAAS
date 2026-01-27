@@ -84,6 +84,7 @@ class R1UnifiedMetrics:
             "r1_circuit_breaker_closes_total": 0,
             "r1_lua_script_executions_total": 0,
             "r1_lua_script_fallbacks_total": 0,
+            "r1_security_fail_open_total": 0,
         }
 
         # Gauges
@@ -363,6 +364,18 @@ def record_lua_script_execution(used_fallback: bool = False) -> None:
     metrics.inc_counter("r1_lua_script_executions_total")
     if used_fallback:
         metrics.inc_counter("r1_lua_script_fallbacks_total")
+
+
+def record_fail_open(operation: str) -> None:
+    """Record a fail-open security event.
+
+    Args:
+        operation: The operation that failed open (e.g., "session_validation")
+    """
+    metrics = get_r1_metrics()
+    metrics.inc_counter("r1_security_fail_open_total")
+    # Note: Operation label could be added if MetricValue supported it
+    # For now, relying on logs for details
 
 
 @contextmanager

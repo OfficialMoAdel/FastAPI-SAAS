@@ -60,42 +60,54 @@ class DashboardService:
         Returns:
             UserMetrics with aggregated data
         """
-        # Total users (all time)
-        total_users_query = select(func.count(User.id)).where(User.deleted_at.is_(None))
-        total_users_result = await db.execute(total_users_query)
-        total_users = total_users_result.scalar() or 0
+        # P2-3: Combine queries to reduce roundtrips (1 query instead of 4)
+        # We use scalar_subquery() to select multiple counts in one go
 
-        # New users in time range
-        new_users_query = select(func.count(User.id)).where(
-            User.created_at >= start_date,
-            User.created_at <= end_date,
-            User.deleted_at.is_(None),
-        )
-        new_users_result = await db.execute(new_users_query)
-        new_users = new_users_result.scalar() or 0
+        # 1. Total users
+        total_sub = select(func.count(User.id)).where(User.deleted_at.is_(None)).scalar_subquery()
 
-        # Active users (logged in during time range) - using audit logs
-        active_users_query = select(func.count(func.distinct(AuditLog.user_id))).where(
-            AuditLog.created_at >= start_date,
-            AuditLog.created_at <= end_date,
-            AuditLog.action == "login",
+        # 2. New users
+        new_sub = (
+            select(func.count(User.id))
+            .where(
+                User.created_at >= start_date,
+                User.created_at <= end_date,
+                User.deleted_at.is_(None),
+            )
+            .scalar_subquery()
         )
-        active_users_result = await db.execute(active_users_query)
-        active_users = active_users_result.scalar() or 0
 
-        # Deleted users in time range
-        deleted_users_query = select(func.count(User.id)).where(
-            User.deleted_at >= start_date,
-            User.deleted_at <= end_date,
+        # 3. Active users
+        active_sub = (
+            select(func.count(func.distinct(AuditLog.user_id)))
+            .where(
+                AuditLog.created_at >= start_date,
+                AuditLog.created_at <= end_date,
+                AuditLog.action == "login",
+            )
+            .scalar_subquery()
         )
-        deleted_users_result = await db.execute(deleted_users_query)
-        deleted_users = deleted_users_result.scalar() or 0
+
+        # 4. Deleted users
+        deleted_sub = (
+            select(func.count(User.id))
+            .where(
+                User.deleted_at >= start_date,
+                User.deleted_at <= end_date,
+            )
+            .scalar_subquery()
+        )
+
+        # Execute combined query
+        query = select(total_sub, new_sub, active_sub, deleted_sub)
+        result = await db.execute(query)
+        row = result.one()
 
         return UserMetrics(
-            total_users=total_users,
-            active_users=active_users,
-            new_users=new_users,
-            deleted_users=deleted_users,
+            total_users=row[0] or 0,
+            new_users=row[1] or 0,
+            active_users=row[2] or 0,
+            deleted_users=row[3] or 0,
         )
 
     async def _get_revenue_metrics(self, db: AsyncSession, start_date: datetime, end_date: datetime) -> RevenueMetrics:
@@ -133,40 +145,53 @@ class DashboardService:
         Returns:
             ActivityMetrics with aggregated data
         """
-        # Total logins
-        logins_query = select(func.count(AuditLog.id)).where(
-            AuditLog.created_at >= start_date,
-            AuditLog.created_at <= end_date,
-            AuditLog.action == "login",
-        )
-        logins_result = await db.execute(logins_query)
-        total_logins = logins_result.scalar() or 0
+        # P2-3: Combine queries (1 query instead of 3)
 
-        # API calls (all audit log entries)
-        api_calls_query = select(func.count(AuditLog.id)).where(
-            AuditLog.created_at >= start_date,
-            AuditLog.created_at <= end_date,
+        # 1. Total logins
+        logins_sub = (
+            select(func.count(AuditLog.id))
+            .where(
+                AuditLog.created_at >= start_date,
+                AuditLog.created_at <= end_date,
+                AuditLog.action == "login",
+            )
+            .scalar_subquery()
         )
-        api_calls_result = await db.execute(api_calls_query)
-        api_calls = api_calls_result.scalar() or 0
+
+        # 2. API calls
+        api_calls_sub = (
+            select(func.count(AuditLog.id))
+            .where(
+                AuditLog.created_at >= start_date,
+                AuditLog.created_at <= end_date,
+            )
+            .scalar_subquery()
+        )
+
+        # 3. Failed auth
+        failed_auth_sub = (
+            select(func.count(AuditLog.id))
+            .where(
+                AuditLog.created_at >= start_date,
+                AuditLog.created_at <= end_date,
+                AuditLog.action.in_(["login_failed", "authentication_failed"]),
+            )
+            .scalar_subquery()
+        )
+
+        # Execute combined query
+        query = select(logins_sub, api_calls_sub, failed_auth_sub)
+        result = await db.execute(query)
+        row = result.one()
 
         # Webhook deliveries - placeholder
         webhook_deliveries = 0
 
-        # Failed authentications
-        failed_auth_query = select(func.count(AuditLog.id)).where(
-            AuditLog.created_at >= start_date,
-            AuditLog.created_at <= end_date,
-            AuditLog.action.in_(["login_failed", "authentication_failed"]),
-        )
-        failed_auth_result = await db.execute(failed_auth_query)
-        failed_authentications = failed_auth_result.scalar() or 0
-
         return ActivityMetrics(
-            total_logins=total_logins,
-            api_calls=api_calls,
+            total_logins=row[0] or 0,
+            api_calls=row[1] or 0,
             webhook_deliveries=webhook_deliveries,
-            failed_authentications=failed_authentications,
+            failed_authentications=row[2] or 0,
         )
 
     async def get_metrics(self, db: AsyncSession, time_range: TimeRange = TimeRange.MONTH) -> DashboardMetricsResponse:

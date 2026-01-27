@@ -6,7 +6,7 @@ import anyio
 import fastapi
 import redis.asyncio as redis
 from arq import create_pool
-from arq.connections import RedisSettings
+from arq.connections import ArqRedis, RedisSettings
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -48,6 +48,7 @@ from .config import (
 from .db.database import Base
 from .db.database import async_engine as engine
 from .utils import cache, queue
+from . import redis_factory
 
 
 # -------------- database --------------
@@ -58,39 +59,41 @@ async def create_tables() -> None:
 
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
-    # P2-2: Configure connection pool with proper limits for production
-    cache.pool = redis.ConnectionPool.from_url(
-        settings.REDIS_CACHE_URL,
-        max_connections=settings.REDIS_CACHE_MAX_CONNECTIONS,
-        socket_timeout=settings.REDIS_CACHE_SOCKET_TIMEOUT,
-        socket_connect_timeout=settings.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
-        retry_on_timeout=True,
-    )
-    cache.client = redis.Redis.from_pool(cache.pool)  # type: ignore
+    # P2-2: Use shared connection pool from factory
+    cache.pool = await redis_factory.get_redis_pool()
+
+    # Cache client needs string decoding
+    # Note: The shared pool is raw (bytes), but client overrides decoding
+    cache.client = redis.Redis(connection_pool=cache.pool, decode_responses=True)
 
 
 async def close_redis_cache_pool() -> None:
     if cache.client is not None:
-        await cache.client.aclose()  # type: ignore
+        await cache.client.aclose()
+
+    # We close the shared pool separately or via factory
+    # But since cache.pool IS the shared pool, closing it here might affect others if not careful.
+    # However, redis_factory.close_redis_pool() handles the actual disconnect.
+    # Here we just clean up the client.
+    await redis_factory.close_redis_pool()
 
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
-    # P2-2: Configure connection pool with explicit limits matching cache settings
-    redis_settings = RedisSettings(
-        host=settings.REDIS_QUEUE_HOST,
-        port=settings.REDIS_QUEUE_PORT,
-        password=settings.REDIS_QUEUE_PASSWORD,
-        max_connections=settings.REDIS_QUEUE_MAX_CONNECTIONS,
-        conn_timeout=settings.REDIS_QUEUE_CONN_TIMEOUT,
-        conn_retries=settings.REDIS_QUEUE_CONN_RETRIES,
-    )
-    queue.pool = await create_pool(redis_settings)
+    # P2-2: Reuse the shared connection pool for ARQ
+    pool = await redis_factory.get_redis_pool()
+
+    # Create ArqRedis using the same pool
+    # ARQ uses default decoding (bytes) which matches the pool
+    queue.pool = ArqRedis(connection_pool=pool)
 
 
 async def close_redis_queue_pool() -> None:
     if queue.pool is not None:
-        await queue.pool.aclose()  # type: ignore
+        await queue.pool.aclose()
+        # Note: We don't close the shared pool here because close_redis_cache_pool handles it.
+        # Ideally, we should have a centralized shutdown, but lifespan calls both.
+        # Calling close on the pool multiple times is safe.
 
 
 # -------------- rate limit --------------

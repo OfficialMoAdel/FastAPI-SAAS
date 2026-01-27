@@ -334,92 +334,70 @@ class EventBus:
             await self._publish_sync(event_name, data, handlers)
             return
 
-        # P1-4: Parallel enqueue using asyncio.gather for reduced latency
-        # Changes Sum(RTT) to Max(RTT) for multiple handlers
-        async def enqueue_handler(
-            handler: Callable[..., Coroutine[Any, Any, None]],
-        ) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
-            """Enqueue a single handler, returning (success, handler, error)."""
-            # Check circuit breaker before attempting Redis enqueue
-            if not arq_circuit.is_closed:
-                logger.warning(
-                    "ARQ circuit breaker open - falling back to sync execution",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                )
-                try:
-                    await handler(data)
-                except Exception as e:
-                    logger.error(
-                        "Fallback sync handler failed",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        error=str(e),
-                    )
-                return (True, handler, None)  # Handled via fallback
+        # Check circuit breaker once before batch operation
+        if not arq_circuit.is_closed:
+            logger.warning(
+                "ARQ circuit breaker open - falling back to sync execution",
+                event_name=event_name,
+                handler_count=len(handlers),
+            )
+            await self._publish_sync(event_name, data, handlers)
+            return
 
-            try:
-                await self._arq_queue.enqueue_job(
-                    "process_event_handler",
-                    event_name,
-                    handler.__module__,
-                    handler.__name__,
-                    data,
-                    _queue_name="default" if priority == EventPriority.NORMAL else "low_priority",
-                )
+        from datetime import datetime, timezone
+        from uuid import uuid4
+
+        # Use pipeline for batch enqueue to reduce RTT
+        # We manually construct the ARQ job payload to avoid N calls to enqueue_job
+        try:
+            pipe = self._arq_queue.redis.pipeline()
+
+            # Determine Redis key for queue
+            # ARQ default is "arq:queue".
+            # We map NORMAL -> "arq:queue", LOW -> "arq:queue:low"
+            if priority == EventPriority.NORMAL:
+                queue_name = "arq:queue"
+            else:
+                queue_name = "arq:queue:low"
+
+            count = 0
+            for handler in handlers:
+                job_id = str(uuid4())
+                enqueue_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+
+                # Construct ARQ job payload matches arq.jobs.JobDef
+                job_payload = {
+                    "function": "process_event_handler",
+                    "args": (event_name, handler.__module__, handler.__name__, data),
+                    "kwargs": {},
+                    "job_try": 0,
+                    "enqueue_time": enqueue_time_ms,
+                    "job_id": job_id,
+                }
+
+                pipe.rpush(queue_name, json_dumps(job_payload))
+                count += 1
+
+            if count > 0:
+                await pipe.execute()
                 await arq_circuit.record_success()
                 logger.debug(
-                    "Event handler queued",
+                    "Enqueued event handlers",
+                    count=count,
                     event_name=event_name,
-                    handler=handler.__name__,
                     priority=priority,
                 )
-                return (True, handler, None)
-            except Exception as e:
-                await arq_circuit.record_failure(e)
-                logger.error(
-                    "Event handler queue failed",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                    error=str(e),
-                    exc_info=True,
-                )
-                return (False, handler, e)
 
-        # Enqueue all handlers in parallel
-        results = await asyncio.gather(
-            *[enqueue_handler(h) for h in handlers],
-            return_exceptions=True,
-        )
-
-        # Handle any failures with sync fallback
-        for result in results:
-            if isinstance(result, Exception):
-                # asyncio.gather caught an unexpected exception
-                logger.error(
-                    "Unexpected error during parallel enqueue",
-                    event_name=event_name,
-                    error=str(result),
-                )
-                continue
-
-            success, handler, error = result
-            if not success and error is not None:
-                # Graceful degradation: try sync execution
-                try:
-                    await handler(data)
-                    logger.info(
-                        "Handler executed synchronously after queue failure",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                    )
-                except Exception as handler_error:
-                    logger.error(
-                        "Sync fallback also failed",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        error=str(handler_error),
-                    )
+        except Exception as e:
+            await arq_circuit.record_failure(e)
+            logger.error(
+                "Batch enqueue failed - falling back to sync execution",
+                event_name=event_name,
+                error=str(e),
+                exc_info=True,
+            )
+            # Fallback to sync execution for ALL handlers
+            await self._publish_sync(event_name, data, handlers)
 
     def get_handlers(self, event_name: str) -> list[Callable[..., Coroutine[Any, Any, None]]]:
         """Get all handlers registered for an event.
@@ -500,9 +478,7 @@ class EventBus:
                         )
                 else:
                     # Original path (fallback)
-                    await self._redis_client.lpush(
-                        self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True)
-                    )
+                    await self._redis_client.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
                     dlq_size = await self._redis_client.llen(self.DLQ_REDIS_KEY)
                     update_dlq_size(dlq_size)
             except Exception as e:

@@ -57,13 +57,14 @@ class RateLimiter:
         -------
             Tuple (is_limited, current_count)
         """
-        client = self.get_client()
+        # client = self.get_client()  <-- Moved inside try block
         current_timestamp = int(datetime.now(UTC).timestamp())
         window_start = current_timestamp - (current_timestamp % period)
 
         redis_key = f"ratelimit:{key}:{window_start}"
 
         try:
+            client = self.get_client()
             # Use atomic Lua script to prevent race conditions
             script_sha = await self._get_script_sha(client)
             try:
@@ -81,8 +82,10 @@ class RateLimiter:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
             # Use configurable fail-open/fail-closed behavior
             from ...core.config import settings
+            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
             if settings.RATE_LIMIT_FAIL_OPEN:
+                record_fail_open("rate_limit")
                 return False, 0  # Allow request (fail-open)
             else:
                 return True, limit + 1  # Block request (fail-closed)

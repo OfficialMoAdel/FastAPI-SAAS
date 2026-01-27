@@ -217,9 +217,7 @@ class SessionManager:
         roundtrips = 0
 
         # Step 1: READ oldest sessions (non-destructive) - 1 roundtrip
-        oldest_sessions = await self._redis_client.zrange(
-            zset_key, 0, sessions_to_remove - 1, withscores=True
-        )
+        oldest_sessions = await self._redis_client.zrange(zset_key, 0, sessions_to_remove - 1, withscores=True)
         roundtrips += 1
 
         if not oldest_sessions:
@@ -234,10 +232,7 @@ class SessionManager:
             return roundtrips
 
         # Decode session IDs
-        session_ids = [
-            s[0].decode("utf-8") if isinstance(s[0], bytes) else s[0]
-            for s in oldest_sessions
-        ]
+        session_ids = [s[0].decode("utf-8") if isinstance(s[0], bytes) else s[0] for s in oldest_sessions]
 
         # Step 2: Batch HGET for session data - 1 roundtrip
         pipe = self._redis_client.pipeline()
@@ -365,6 +360,10 @@ class SessionManager:
         """
         if not self._redis_client:
             # Fail open if Redis unavailable - with critical logging for monitoring
+            from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            record_fail_open("session_validation")
+
             logger.critical(
                 "redis_unavailable_session_bypass",
                 extra={

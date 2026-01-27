@@ -136,6 +136,9 @@ async def is_token_blacklisted(token: str) -> bool | None:
         True if blacklisted, False if not, None if Redis unavailable (fail open)
     """
     if redis_client is None:
+        from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+        record_fail_open("token_blacklist")
         return None  # Redis not configured, fall back to DB
 
     try:
@@ -190,6 +193,9 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
     Used when Lua script loading fails.
     """
     if redis_client is None:
+        from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+        record_fail_open("token_blacklist_fallback")
         return None
 
     try:

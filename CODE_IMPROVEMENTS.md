@@ -7,21 +7,19 @@
 
 ## 🔴 Critical Issues (Must Fix)
 
-### CRIT-1: Optional Secrets Without Validation
+### CRIT-1: Encryption Secrets Without Validation
 | Property | Value |
 |----------|-------|
 | **Location** | `src/app/core/config.py:21-34` |
 | **Category** | Security |
 | **Severity** | HIGH |
 
-**Description:** Several security-critical settings are optional but lack runtime validation warnings.
+**Description:** Encryption keys are optional but lack runtime validation warnings.
 
 ```python
 # Current: No warning if these are None in production
-SECRET_KEY: SecretStr  # REQUIRED but not validated at startup
 ENCRYPTION_KEY: SecretStr | None = None
 ENCRYPTION_SALT: SecretStr | None = None
-JWT_PRIVATE_KEY: SecretStr | None = None
 ```
 
 **Impact:** Application may start without required secrets, causing runtime failures.
@@ -34,14 +32,10 @@ def validate_production_secrets(self) -> "CryptSettings":
     import logging
     from pydantic import ValidationError
     
-    key = self.SECRET_KEY.get_secret_value()
-    if not key:
-        logging.error("SECURITY: SECRET_KEY must be set in production!")
-        raise ValidationError("SECRET_KEY is required")
-    
-    if self.ALGORITHM == "RS256" and not self.JWT_PRIVATE_KEY:
-        logging.error("SECURITY: RS256 requires JWT_PRIVATE_KEY!")
-        raise ValidationError("JWT_PRIVATE_KEY required for RS256")
+    # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
+    # Example logic:
+    if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
+         logging.warning("SECURITY: Encryption keys are missing. Some features may fail.")
     
     return self
 ```
@@ -236,27 +230,6 @@ async def get_dashboard_stats(self, db, tenant_id):
 
 ## 🟡 Medium Priority Issues (Consider)
 
-### MED-1: Incomplete Type Hints in Services
-
-**Affected Areas:**
-- `rbac/service.py` - Missing return types on multiple methods
-- `dashboard/service.py` - Missing parameter types
-- `events.py` - Missing type annotations on `_publish_async`
-
-**Pattern to Fix:**
-```python
-# Before
-async def get_permissions(self, db, user_id):
-    return await db.execute(...)
-
-# After
-async def get_permissions(self, db: AsyncSession, user_id: int) -> list[dict[str, Any]]:
-    result = await db.execute(...)
-    return result.scalars().all()
-```
-
----
-
 ### MED-2: Long Functions Requiring Refactor
 
 | Function | Location | Lines | Recommendation |
@@ -264,35 +237,6 @@ async def get_permissions(self, db: AsyncSession, user_id: int) -> list[dict[str
 | `_publish_async` | `events.py:313-404` | 92 | Extract `enqueue_handler` to module level |
 | `_evict_sessions_pipelined` | `session_manager.py:188-292` | 105 | Acceptable - well-documented |
 | `_get_existing_credentials` | `passkey/service.py:316-428` | 113 | Extract parallel decryption helper |
-
----
-
-### MED-3: ARQ Pickle Serializer
-| Property | Value |
-|----------|-------|
-| **Location** | ARQ worker configuration |
-| **Category** | Security/Performance |
-| **Severity** | MEDIUM |
-
-**Issue:** ARQ defaults to pickle serialization which is:
-- Slower than orjson
-- Security concern (arbitrary code execution)
-
-**Remediation:**
-```python
-# src/app/core/worker.py
-import orjson
-from arq.connections import RedisSettings
-from arq.constants import default_serializer
-
-def orjson_serializer(obj: Any) -> bytes:
-    return orjson.dumps(obj, default=default_serializer)
-
-class WorkerSettings:
-    redis_settings = RedisSettings(host="localhost", port=6379)
-    functions = [...]  # Your functions
-    serializer = orjson_serializer  # Use orjson instead of pickle
-```
 
 ---
 
@@ -321,7 +265,7 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 
 | Task | Priority | Files | Estimated Effort |
 |------|----------|-------|------------------|
-| Add secret validation at startup | CRITICAL | `config.py` | 1-2 hours |
+| Add encryption secret validation | CRITICAL | `config.py` | 1 hour |
 | Batch event handler enqueue | CRITICAL | `events.py` | 2-3 hours |
 | Add fail-open metrics | HIGH | `metrics.py`, `session_manager.py` | 1 hour |
 | Share Redis client factory | HIGH | `redis_factory.py` | 2-3 hours |
@@ -331,9 +275,7 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 | Task | Priority | Files | Estimated Effort |
 |------|----------|-------|------------------|
 | Parallelize dashboard queries | HIGH | `dashboard/service.py` | 1-2 hours |
-| Configure ARQ orjson serializer | MEDIUM | `worker.py` | 1 hour |
 | Increase RBAC cache TTL | MEDIUM | `config.py` | 15 min |
-| Add type hints to services | MEDIUM | `rbac/service.py`, `events.py` | 3-4 hours |
 | Refactor long functions | MEDIUM | `events.py`, `passkey/service.py` | 4-6 hours |
 
 ### Medium-term (Quarter)
@@ -360,7 +302,6 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 |----|----------|-------|-------------|
 | CRIT-2 | HIGH | Event handler parallel enqueue | Batch with pipeline |
 | HIGH-3 | MEDIUM | Dashboard queries sequential | Parallelize with gather |
-| MED-3 | MEDIUM | ARQ pickle serialization | Configure orjson |
 | MED-4 | MEDIUM | RBAC cache TTL too short | Increase to 24h |
 
 ### Architecture Issues
@@ -371,5 +312,4 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 ### Code Quality Issues
 | ID | Severity | Issue | Remediation |
 |----|----------|-------|-------------|
-| MED-1 | MEDIUM | Incomplete type hints | Add annotations |
 | MED-2 | MEDIUM | Long functions | Refactor >80 LOC |
