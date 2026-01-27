@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.checkouts.router import router as checkouts_router
+from src.app.modules.billing.routes.checkouts import router as checkouts_router
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ def test_all_endpoints_exist():
 
 def test_create_checkout_delegates_to_billing():
     """Test that create checkout delegates to billing CheckoutService."""
-    from src.app.modules.checkouts.router import get_checkout_service
+    from src.app.modules.billing.routes.checkouts import get_checkout_service
     from src.app.modules.billing.service import get_checkout_service as billing_get_checkout
 
     # Should be the same function

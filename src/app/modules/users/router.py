@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
-from .crud import crud_users
 from .schemas import UserCreate, UserList, UserRead, UserTierUpdate, UserUpdate
 from .service import UserService, get_user_service
 
@@ -33,14 +32,7 @@ async def read_users(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, per_page: int = 10
 ) -> dict:
     """Get paginated list of users for the current tenant (superuser only)."""
-    offset = (page - 1) * per_page
-    users_data = await crud_users.get_multi(
-        db=db,
-        offset=offset,
-        limit=per_page,
-        is_deleted=False,
-        schema_to_select=UserRead,
-    )
+    users_data = await service.list_users(page=page, per_page=per_page, is_deleted=False)
 
     data = users_data.get("data", [])
     total = users_data.get("total_count", len(data))

@@ -13,8 +13,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules.billing.crud import crud_pricing
 from src.app.modules.billing.schemas import PricingCreate, PricingRead, PricingUpdate
+from src.app.modules.billing.service import PricingService
 
 router = APIRouter(prefix="/prices", tags=["prices"])
 logger = logging.getLogger(__name__)
@@ -41,8 +41,6 @@ async def create_price(
     Returns:
         Created price details
     """
-    from src.app.modules.billing.service import PricingService
-
     service = PricingService(db)
     return await service.create_pricing(product_id, data)
 
@@ -63,13 +61,8 @@ async def list_prices(
     Returns:
         List of prices
     """
-    filters = {}
-    if product_id is not None:
-        filters["product_id"] = product_id
-    if is_active is not None:
-        filters["is_active"] = is_active
-
-    result = await crud_pricing.get_multi(db=db, schema_to_select=PricingRead, **filters)
+    service = PricingService(db)
+    result = await service.list_prices(limit=100, product_id=product_id, is_active=is_active)
     return result.get("data", [])
 
 
@@ -87,8 +80,6 @@ async def get_price(
     Returns:
         Price details
     """
-    from src.app.modules.billing.service import PricingService
-
     service = PricingService(db)
     return await service.get_pricing(price_id)
 
@@ -115,8 +106,6 @@ async def update_price(
     Returns:
         Updated price details
     """
-    from src.app.modules.billing.service import PricingService
-
     service = PricingService(db)
     return await service.update_pricing(price_id, data)
 
@@ -140,8 +129,6 @@ async def delete_price(
     Returns:
         Success message
     """
-    from src.app.modules.billing.service import PricingService
-
     service = PricingService(db)
     # Soft delete by setting is_active=False
     update_data = PricingUpdate(is_active=False)

@@ -12,7 +12,7 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from jose import JWTError
+from jwt.exceptions import PyJWTError as JWTError
 
 from src.app.modules.auth.service import AuthService
 

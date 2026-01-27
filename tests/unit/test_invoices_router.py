@@ -4,7 +4,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.invoices.router import router as invoices_router
+from src.app.modules.billing.routes.invoices import router as invoices_router
 
 
 @pytest.fixture
@@ -38,7 +38,7 @@ def test_all_endpoints_exist():
 
 def test_delegates_to_billing_record_service():
     """Test that the router delegates to billing BillingRecordService."""
-    from src.app.modules.invoices.router import get_billing_record_service
+    from src.app.modules.billing.routes.invoices import get_billing_record_service
     from src.app.modules.billing.service import get_billing_record_service as billing_get_service
 
     # Should be the same function

@@ -12,9 +12,9 @@ import hashlib
 import hmac
 from datetime import UTC, datetime, timedelta
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
-from sqlalchemy import select
+from sqlalchemy import select, insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -91,22 +91,60 @@ class WebhookService:
         Returns the created delivery records.
         """
         endpoints = await self.get_active_endpoints(tenant_id, event_type)
+        if not endpoints:
+            return []
 
-        # Parallelize webhook triggering for better performance
-        if endpoints:
-            results = await asyncio.gather(
-                *(self.trigger_endpoint(endpoint, event_type, payload) for endpoint in endpoints),
+        # Prepare deliveries for bulk insert
+        deliveries_data = []
+
+        for endpoint in endpoints:
+            secret = ""
+            if endpoint.secret:
+                try:
+                    secret = decrypt_data(endpoint.secret)
+                except Exception as e:
+                    logger.error(
+                        "webhook_secret_decryption_failed",
+                        endpoint_id=str(endpoint.id),
+                        error=str(e),
+                    )
+                    # Skip this endpoint but continue with others
+                    continue
+
+            signature = self._generate_signature(payload, secret)
+            now = datetime.now(UTC)
+
+            deliveries_data.append(
+                {
+                    "id": uuid4(),
+                    "webhook_endpoint_id": endpoint.id,
+                    "tenant_id": endpoint.tenant_id,
+                    "event_type": event_type,
+                    "payload": payload,
+                    "signature": signature,
+                    "status": WebhookDeliveryStatus.PENDING,
+                    "attempt_count": 0,
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
+
+        if not deliveries_data:
+            return []
+
+        # Perform Bulk Insert (Single Transaction)
+        stmt = insert(WebhookDelivery).values(deliveries_data).returning(WebhookDelivery)
+        result = await self.db.execute(stmt)
+        deliveries = list(result.scalars().all())
+
+        await self.db.commit()
+
+        # Enqueue tasks concurrently (Redis is safe for concurrent ops)
+        if deliveries:
+            await asyncio.gather(
+                *(self._enqueue_delivery(d.id) for d in deliveries),
                 return_exceptions=True,
             )
-            # Filter out exceptions and log them
-            deliveries = []
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    logger.error(f"Webhook trigger failed for endpoint {endpoints[i].id}: {result}")
-                else:
-                    deliveries.append(result)
-        else:
-            deliveries = []
 
         logger.info(f"Triggered {len(deliveries)} webhooks for event {event_type} in tenant {tenant_id}")
         return deliveries

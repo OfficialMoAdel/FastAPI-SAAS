@@ -16,7 +16,7 @@ from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_users
 from .models import User
-from .schemas import UserCreate, UserCreateInternal, UserTierUpdate, UserUpdate
+from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -53,6 +53,23 @@ class UserService(BaseService[User]):
     def __init__(self, db: AsyncSession):
         super().__init__(User, db)
         self.crud = crud_users
+
+    async def list_users(
+        self,
+        *,
+        page: int = 1,
+        per_page: int = 10,
+        is_deleted: bool = False,
+    ) -> dict[str, Any]:
+        """Get paginated list of users."""
+        offset = (page - 1) * per_page
+        return await self.crud.get_multi(
+            db=self.db,
+            offset=offset,
+            limit=per_page,
+            is_deleted=is_deleted,
+            schema_to_select=UserRead,
+        )
 
     async def _cache_user(self, user: User | dict[str, Any]) -> None:
         """Cache user profile in Redis."""

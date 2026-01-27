@@ -159,9 +159,9 @@ ignore_missing_imports = true
 mypy_path = "."
 namespace_packages = true
 packages = ["src"]
-check_untyped_defs = false
+check_untyped_defs = true
 disallow_any_generics = false
-ignore_errors = true
+# ignore_errors = true
 
 [[tool.mypy.overrides]]
 module = "src.app.*"

@@ -6,7 +6,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.prices.router import router as prices_router
+from src.app.modules.billing.routes.prices import router as prices_router
 
 
 @pytest.fixture
@@ -53,11 +53,12 @@ def test_create_requires_product_id_query():
 
 def test_list_endpoint_supports_filters():
     """Test that list endpoint supports filtering by product_id and is_active."""
-    with patch("src.app.modules.prices.router.crud_pricing") as mock_crud:
-        mock_crud.get_multi = AsyncMock(return_value={"data": [], "total_count": 0})
+    with patch("src.app.modules.billing.routes.prices.PricingService") as MockService:
+        mock_instance = MockService.return_value
+        mock_instance.list_prices = AsyncMock(return_value={"data": [], "total_count": 0})
 
         # Mock the database dependency
-        with patch("src.app.modules.prices.router.async_get_db"):
+        with patch("src.app.modules.billing.routes.prices.async_get_db"):
             from fastapi.testclient import TestClient
             from fastapi import FastAPI
 
@@ -68,11 +69,12 @@ def test_list_endpoint_supports_filters():
             # Make request with filters
             response = client.get("/api/v1/prices?product_id=1&is_active=true")
 
-            # CRUD should be called with correct filters
-            mock_crud.get_multi.assert_called_once()
-            call_kwargs = mock_crud.get_multi.call_args.kwargs
+            # Service should be called with correct filters
+            mock_instance.list_prices.assert_called_once()
+            call_kwargs = mock_instance.list_prices.call_args.kwargs
             assert call_kwargs.get("product_id") == 1
             assert call_kwargs.get("is_active") is True
+            assert call_kwargs.get("limit") == 100
 
 
 def test_delegates_to_billing_pricing_service():

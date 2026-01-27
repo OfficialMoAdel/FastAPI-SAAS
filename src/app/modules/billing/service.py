@@ -240,11 +240,7 @@ class ProductService(BaseService[Product]):
         Uses selectinload to fetch product and pricing in a single query,
         avoiding N+1 query issues.
         """
-        stmt = (
-            select(Product)
-            .options(selectinload(Product.pricing_tiers))
-            .where(Product.id == product_id)
-        )
+        stmt = select(Product).options(selectinload(Product.pricing_tiers)).where(Product.id == product_id)
         result = await self.db.execute(stmt)
         product = result.scalar_one_or_none()
 
@@ -321,6 +317,29 @@ class PricingService(BaseService[Pricing]):
     async def get_product_pricing(self, product_id: int) -> dict[str, Any]:
         """Get all pricing tiers for a product."""
         return await crud_pricing.get_multi(db=self.db, product_id=product_id, schema_to_select=PricingRead)
+
+    async def list_prices(
+        self,
+        page: int = 1,
+        limit: int = 100,
+        product_id: int | None = None,
+        is_active: bool | None = None,
+    ) -> dict[str, Any]:
+        """List prices with optional filtering."""
+        offset = (page - 1) * limit
+        filters: dict[str, Any] = {}
+        if product_id is not None:
+            filters["product_id"] = product_id
+        if is_active is not None:
+            filters["is_active"] = is_active
+
+        return await crud_pricing.get_multi(
+            db=self.db,
+            offset=offset,
+            limit=limit,
+            schema_to_select=PricingRead,
+            **filters,
+        )
 
     async def update_pricing(self, pricing_id: int, data: PricingUpdate) -> dict[str, Any]:
         """Update a pricing tier."""
