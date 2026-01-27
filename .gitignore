@@ -197,3 +197,5 @@ reports/*.json
 !reports/.gitkeep
 API_COMPATIBILITY_*.md
 PLAN_FOR_ADVANCED_*
+CONTRIBUTING.md
+SECURITY.md

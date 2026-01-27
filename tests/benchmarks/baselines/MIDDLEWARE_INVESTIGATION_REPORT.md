@@ -16,16 +16,16 @@ Investigation reveals that **middleware is already highly optimized** with sub-m
 
 ### Summary by Category
 
-| Category | Ops | Total Mean (us) | Max p99 (us) | Assessment |
-|----------|-----|-----------------|--------------|------------|
-| Path Exemption | 5 | 6.87 | 14.0 | EXCELLENT |
-| IP Parsing | 4 | 46.84 | 50.1 | GOOD |
-| JWT Operations | 3 | 95.84 | 250.3 | GOOD (cached) |
-| Request ID | 2 | 29.25 | 25.2 | GOOD |
-| Security Headers | 1 | 2.98 | 3.3 | EXCELLENT |
-| Cache Keys | 3 | 5.89 | 2.7 | EXCELLENT |
-| JSON Cache | 5 | 70.25 | 84.0 | GOOD |
-| Timestamp | 2 | 11.18 | 18.2 | GOOD |
+| Category       | Ops | Total Mean (us) | Max p99 (us) | Assessment |
+|----------      |-----|-----------------|--------------|------------|
+| Path Exemption | 5   | 6.87            | 14.0         | EXCELLENT  |
+| IP Parsing     | 4   | 46.84           | 50.1         | GOOD       |
+| JWT Operations | 3   | 95.84           | 250.3        | GOOD (cached) |
+| Request ID     | 2   | 29.25           | 25.2         | GOOD       |
+| Security Headers | 1 | 2.98            | 3.3          | EXCELLENT  |
+| Cache Keys     | 3   | 5.89            | 2.7          | EXCELLENT  |
+| JSON Cache     | 5   | 70.25           | 84.0         | GOOD       |
+| Timestamp      | 2   | 11.18           | 18.2         | GOOD       |
 
 ### Key Findings
 
