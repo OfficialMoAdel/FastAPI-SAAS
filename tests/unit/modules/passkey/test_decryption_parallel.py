@@ -60,6 +60,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path to test the crud_passkey_credentials code path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -101,6 +102,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -147,6 +149,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -185,6 +188,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -221,6 +225,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = []
 
@@ -247,6 +252,7 @@ class TestParallelDecryption:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -302,6 +308,7 @@ class TestParallelDecryptionForEmail:
         # Arrange - disable optimized path
         mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
         mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_user = MagicMock()
         mock_user.id = 123
