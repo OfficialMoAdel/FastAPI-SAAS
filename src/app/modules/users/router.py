@@ -14,22 +14,31 @@ from .service import UserService, get_user_service
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+async def _get_username_from_id(service: UserService, user_id: str) -> str:
+    """Helper to get username from ID, handling both ORM objects and cached dicts."""
+    user = await service.get(int(user_id))
+    if not user:
+        raise ValueError("User not found")
+    return user["username"] if isinstance(user, dict) else user.username
+
+
 async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
     """Dependency for UserService injection."""
     return get_user_service(db)
 
 
 @router.post("", response_model=UserRead, status_code=201)
-async def write_user(
-    request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)
-) -> dict[str, Any]:
+async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
     """Create a new user."""
     return await service.create(user)
 
 
 @router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
 async def read_users(
-    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, per_page: int = 10
+    request: Request,
+    page: int = 1,
+    per_page: int = 10,
+    service: UserService = Depends(_get_user_service),
 ) -> dict:
     """Get paginated list of users for the current tenant (superuser only)."""
     users_data = await service.list_users(page=page, per_page=per_page, is_deleted=False)
@@ -53,16 +62,14 @@ async def read_users_me(request: Request, current_user: Annotated[dict, Depends(
 
 
 @router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])
-async def read_user(
-    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
-) -> dict[str, Any]:
+async def read_user(request: Request, user_id: str, service: UserService = Depends(_get_user_service)) -> Any:
     """Get user by ID or username (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
     # Try to get by ID first, then fall back to username
     try:
-        return await service.get_by_id(int(user_id))
+        return await service.get(int(user_id))
     except (ValueError, KeyError):
         # If not a valid integer or not found, try username
         return await service.get_by_username(user_id)
@@ -82,7 +89,7 @@ async def patch_user(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 
@@ -118,7 +125,7 @@ async def erase_user(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 
@@ -138,7 +145,7 @@ async def erase_db_user(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 
@@ -155,7 +162,7 @@ async def read_user_rate_limits(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 
@@ -172,7 +179,7 @@ async def read_user_tier(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 
@@ -189,7 +196,7 @@ async def patch_user_tier(
     """
     # Try to get by ID first, then fall back to username
     try:
-        username = (await service.get_by_id(int(user_id)))["username"]
+        username = await _get_username_from_id(service, user_id)
     except (ValueError, KeyError):
         username = user_id
 

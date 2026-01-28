@@ -9,6 +9,7 @@ import asyncio
 import importlib
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
+from datetime import UTC
 from enum import Enum
 from pathlib import Path
 from typing import Any
@@ -344,7 +345,7 @@ class EventBus:
             await self._publish_sync(event_name, data, handlers)
             return
 
-        from datetime import datetime, timezone
+        from datetime import datetime
         from uuid import uuid4
 
         # Use pipeline for batch enqueue to reduce RTT
@@ -363,7 +364,7 @@ class EventBus:
             count = 0
             for handler in handlers:
                 job_id = str(uuid4())
-                enqueue_time_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
+                enqueue_time_ms = int(datetime.now(UTC).timestamp() * 1000)
 
                 # Construct ARQ job payload matches arq.jobs.JobDef
                 job_payload = {

@@ -378,12 +378,10 @@ class PasskeyService:
         from sqlalchemy import select
 
         from src.app.core.config import settings
-        from src.app.core.monitoring.r1_unified_metrics import record_passkey_query
         from src.app.modules.passkey.models import PasskeyCredential
 
-        start_time = time.perf_counter()
-
         # P3-2 Optimization: Column-specific SELECT for credential_id only
+
         if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id)
@@ -465,7 +463,6 @@ class PasskeyService:
         from sqlalchemy import select
 
         from src.app.core.config import settings
-        from src.app.core.monitoring.r1_unified_metrics import record_passkey_query
         from src.app.modules.passkey.models import PasskeyCredential
         from src.app.modules.users.crud import crud_users
 
@@ -474,9 +471,8 @@ class PasskeyService:
         if not user:
             return []
 
-        start_time = time.perf_counter()
-
         # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
+
         if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id, PasskeyCredential.transports)

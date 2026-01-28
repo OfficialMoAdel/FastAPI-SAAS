@@ -18,7 +18,7 @@ from datetime import UTC, datetime, timedelta
 from typing import BinaryIO
 
 from azure.core.exceptions import ResourceNotFoundError
-from azure.storage.blob import BlobSasPermissions, generate_blob_sas
+from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult
@@ -87,7 +87,7 @@ class AzureBlobStorage(StorageProvider):
             await blob_client.upload_blob(
                 content,
                 overwrite=True,
-                content_settings={"content_type": mime_type},
+                content_settings=ContentSettings(content_type=mime_type),
             )
 
             logger.info(f"Uploaded blob: {path}, size: {size} bytes")

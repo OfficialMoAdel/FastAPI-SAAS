@@ -1,4 +1,5 @@
-from redis.asyncio import ConnectionPool, Redis
+from redis.asyncio import ConnectionPool
+
 from .config import settings
 
 _redis_pool: ConnectionPool | None = None

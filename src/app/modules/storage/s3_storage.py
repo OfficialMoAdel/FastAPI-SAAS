@@ -198,7 +198,8 @@ class S3Storage(StorageProvider):
                 },
                 ExpiresIn=expires_in,
             )
-            return url
+            return str(url)
+
         except Exception:
             return ""
 

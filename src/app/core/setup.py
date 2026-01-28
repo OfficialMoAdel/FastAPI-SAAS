@@ -5,8 +5,7 @@ from typing import Any
 import anyio
 import fastapi
 import redis.asyncio as redis
-from arq import create_pool
-from arq.connections import ArqRedis, RedisSettings
+from arq.connections import ArqRedis
 from fastapi import APIRouter, Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -34,6 +33,7 @@ from ..models import (  # noqa: F401
     WebhookDelivery,
     WebhookEndpoint,
 )
+from . import redis_factory
 from .config import (
     AppSettings,
     ClientSideCacheSettings,
@@ -43,12 +43,10 @@ from .config import (
     EnvironmentSettings,
     RedisCacheSettings,
     RedisQueueSettings,
-    settings,
 )
 from .db.database import Base
 from .db.database import async_engine as engine
 from .utils import cache, queue
-from . import redis_factory
 
 
 # -------------- database --------------

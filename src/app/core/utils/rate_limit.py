@@ -81,8 +81,9 @@ class RateLimiter:
         except Exception as e:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
             # Use configurable fail-open/fail-closed behavior
-            from ...core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            from ...core.config import settings
 
             if settings.RATE_LIMIT_FAIL_OPEN:
                 record_fail_open("rate_limit")

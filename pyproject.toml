@@ -149,6 +149,8 @@ dev = [
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
     "structlog>=25.5.0",
+    "types-aiofiles>=25.1.0.20251011",
+    "types-cachetools>=6.2.0.20251022",
 ]
 
 [tool.mypy]
