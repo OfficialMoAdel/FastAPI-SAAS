@@ -16,7 +16,7 @@ async def get_redis_pool() -> ConnectionPool:
             socket_timeout=settings.REDIS_CACHE_SOCKET_TIMEOUT,
             socket_connect_timeout=settings.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
             retry_on_timeout=True,
-            decode_responses=True,  # Important: Cache expects strings
+            decode_responses=False,  # Shared pool must use bytes for ARQ compatibility
         )
 
     return _redis_pool

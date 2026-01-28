@@ -21,6 +21,8 @@ async def test_redis_factory_singleton():
 
     assert pool1 is pool2
     assert isinstance(pool1, ConnectionPool)
+    # Check decode_responses is False (bytes mode) for ARQ compatibility
+    assert pool1.connection_kwargs.get("decode_responses") is False
 
     await redis_factory.close_redis_pool()
     assert redis_factory._redis_pool is None
