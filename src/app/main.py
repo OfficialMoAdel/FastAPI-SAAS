@@ -47,6 +47,14 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
     setup_logging()
 
+    # Environment Validation
+    from .core.env_validator import EnvironmentValidator
+
+    # Validate environment (optional - can block on errors)
+    if not EnvironmentValidator.validate_and_log():
+        if settings.ENVIRONMENT == "production":
+            raise RuntimeError("Environment validation failed - refusing to start in production")
+
     # Get the default lifespan
     default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
 
