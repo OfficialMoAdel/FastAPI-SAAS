@@ -15,7 +15,6 @@ Run: uv run pytest tests/unit/test_r2_hybrid_comprehensive.py -v
 
 import re
 import time
-from datetime import datetime, timezone
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -43,7 +42,7 @@ class TestL1TenantCacheComprehensive:
     @pytest.mark.asyncio
     async def test_l1_cache_hit_skips_redis(self):
         """Verify L1 hit returns data without Redis call."""
-        from src.app.middleware.tenant import TenantMiddleware, _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, TenantMiddleware
 
         _L1_TENANT_CACHE["test-tenant"] = {"id": "t-001", "slug": "test-tenant", "is_active": True}
 
@@ -60,7 +59,7 @@ class TestL1TenantCacheComprehensive:
     @pytest.mark.asyncio
     async def test_l1_negative_cache_prevents_redis_call(self):
         """Verify L1 negative cache prevents unnecessary Redis calls."""
-        from src.app.middleware.tenant import TenantMiddleware, _L1_TENANT_CACHE
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, TenantMiddleware
 
         _L1_TENANT_CACHE["nonexistent"] = None  # Negative cache
 
@@ -96,7 +95,7 @@ class TestL1RBACCacheComprehensive:
     @pytest.mark.asyncio
     async def test_l1_cache_hit_skips_redis_and_db(self):
         """Verify L1 hit returns permissions without Redis/DB calls."""
-        from src.app.modules.rbac.service import RoleService, _L1_RBAC_CACHE
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 
         tenant_id = "tenant-test"
         role_id = 99
@@ -127,7 +126,7 @@ class TestL1RBACCacheComprehensive:
     @pytest.mark.asyncio
     async def test_cache_invalidation_clears_l1_and_l2(self):
         """Verify cache invalidation clears both L1 and L2."""
-        from src.app.modules.rbac.service import RoleService, _L1_RBAC_CACHE
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 
         tenant_id = "tenant-inv"
         role_id = 50

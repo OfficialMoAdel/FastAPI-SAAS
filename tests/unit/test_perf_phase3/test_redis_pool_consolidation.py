@@ -4,7 +4,7 @@ Tests verifying that a single Redis connection pool is used globally
 and shared across all components (cache, session, rate limiting).
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -51,7 +51,6 @@ class TestPoolSharing:
 
     def test_cache_module_exports_pool(self):
         """Verify cache module exports pool for sharing."""
-        from src.app.core.utils.cache import client, pool
 
         # These are the shared instances (None before startup)
         # The important thing is they exist as module-level exports

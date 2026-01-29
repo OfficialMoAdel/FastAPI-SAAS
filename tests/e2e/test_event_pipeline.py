@@ -1,6 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, Mock, patch
-from src.app.core.events import EventBus, EventPriority
+
+import pytest
+
+from src.app.core.events import EventBus
 
 
 @pytest.mark.asyncio

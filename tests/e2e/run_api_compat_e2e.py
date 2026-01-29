@@ -7,7 +7,6 @@ Usage:
     python tests/e2e/run_api_compat_e2e.py
 """
 
-import asyncio
 import logging
 import sys
 from datetime import datetime

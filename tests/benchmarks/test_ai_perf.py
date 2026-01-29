@@ -5,7 +5,6 @@ Uses simple timing assertions (no pytest-benchmark dependency).
 """
 
 import time
-from unittest.mock import AsyncMock
 
 import pytest
 

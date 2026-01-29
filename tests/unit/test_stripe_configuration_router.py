@@ -51,8 +51,8 @@ def test_webhooks_endpoint_plural():
 
 def test_delegates_to_billing_service():
     """Test that the router delegates to billing StripeSettingsService."""
-    from src.app.modules.configurations.stripe_router import get_stripe_settings_service
     from src.app.modules.billing.service import get_stripe_settings_service as billing_get_service
+    from src.app.modules.configurations.stripe_router import get_stripe_settings_service
 
     # Should be the same function
     assert get_stripe_settings_service is billing_get_service
@@ -60,11 +60,13 @@ def test_delegates_to_billing_service():
 
 def test_uses_billing_webhook_handler():
     """Test that webhook endpoint uses billing module's webhook handler."""
-    from src.app.modules.configurations.stripe_router import handle_webhook_event, verify_webhook_signature
     from src.app.modules.billing.webhook import (
         handle_webhook_event as billing_handle,
+    )
+    from src.app.modules.billing.webhook import (
         verify_webhook_signature as billing_verify,
     )
+    from src.app.modules.configurations.stripe_router import handle_webhook_event, verify_webhook_signature
 
     # Should be the same functions
     assert handle_webhook_event is billing_handle

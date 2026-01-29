@@ -74,12 +74,11 @@ if not _test_encryption_key:
     _test_encryption_key = Fernet.generate_key().decode()
 settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
-from sqlalchemy.pool import NullPool, StaticPool
-
 # Use SQLite for tests - fresh database each run, no data conflicts
 # We use a file-based DB to allow sharing between sync engine (setup) and async engine (app)
 import os
-import uuid
+
+from sqlalchemy.pool import NullPool
 
 _base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Use a unique filename to avoid file locking issues on Windows during concurrent runs or rapid re-runs
@@ -120,33 +119,12 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 
 from src.app.core.db.database import Base
 
+# Features
+from src.app.modules.tenants.models import Tenant
+
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # Core & Auth
 from src.app.modules.users.models import User
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
-
-# Features
-from src.app.modules.api_keys.models import APIKey
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.billing.models import (
-    BillingRecord,
-    Pricing,
-    Product,
-    StripeSettings,
-    SubscriptionPlan,
-    UserSubscription,
-)
-from src.app.modules.files.models import File
-from src.app.modules.notifications.models import EmailTemplateOverride, Notification
-from src.app.modules.posts.models import Post
-from src.app.modules.rate_limits.models import RateLimit
-from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
-from src.app.modules.sso.models import UserSSOConnection
-from src.app.modules.sso_settings.models import SSOSettings
-from src.app.modules.tiers.models import Tier
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
-from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")

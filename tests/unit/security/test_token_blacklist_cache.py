@@ -4,7 +4,7 @@ Tests verify O(1) lookup via Redis sorted sets with proper
 fail-open behavior and cache warming.
 """
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -54,7 +54,7 @@ class TestIsTokenBlacklisted:
         # Negative cache miss
         mock_redis.exists = AsyncMock(return_value=0)
         # Score is expiry timestamp in future
-        future_expiry = (datetime.now(timezone.utc) + timedelta(hours=1)).timestamp()
+        future_expiry = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         mock_redis.zscore = AsyncMock(return_value=future_expiry)
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
@@ -105,7 +105,7 @@ class TestAddTokenToBlacklist:
         mock_redis = MagicMock()
         mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
-        expires_at = datetime.now(timezone.utc) + timedelta(hours=1)
+        expires_at = datetime.now(UTC) + timedelta(hours=1)
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await add_token_to_blacklist("token123", expires_at)
@@ -119,7 +119,7 @@ class TestAddTokenToBlacklist:
     async def test_returns_false_when_redis_unavailable(self) -> None:
         """Should return False when Redis is not configured."""
         with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
-            result = await add_token_to_blacklist("token", datetime.now(timezone.utc))
+            result = await add_token_to_blacklist("token", datetime.now(UTC))
             assert result is False
 
 
@@ -133,9 +133,9 @@ class TestBulkOperations:
         mock_redis.zadd = AsyncMock(return_value=3)
 
         tokens = [
-            ("token1", datetime.now(timezone.utc) + timedelta(hours=1)),
-            ("token2", datetime.now(timezone.utc) + timedelta(hours=2)),
-            ("token3", datetime.now(timezone.utc) + timedelta(hours=3)),
+            ("token1", datetime.now(UTC) + timedelta(hours=1)),
+            ("token2", datetime.now(UTC) + timedelta(hours=2)),
+            ("token3", datetime.now(UTC) + timedelta(hours=3)),
         ]
 
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
@@ -162,7 +162,7 @@ class TestCacheWarming:
         mock_redis = AsyncMock()
         mock_redis.zadd = AsyncMock(return_value=1)
 
-        now = datetime.now(timezone.utc)
+        now = datetime.now(UTC)
         tokens = [
             ("expired", now - timedelta(hours=1)),  # Should be filtered out
             ("active", now + timedelta(hours=1)),  # Should be added

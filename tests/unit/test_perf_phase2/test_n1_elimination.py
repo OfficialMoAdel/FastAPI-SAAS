@@ -4,7 +4,7 @@ Tests verifying that UserService.get_with_rate_limits uses eager loading
 (joinedload) to fetch User + Tier + RateLimits in a single query.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
 
 import pytest

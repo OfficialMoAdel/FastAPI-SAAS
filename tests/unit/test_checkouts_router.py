@@ -1,6 +1,5 @@
 """Unit tests for the /checkouts router (API compatibility layer)."""
 
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI

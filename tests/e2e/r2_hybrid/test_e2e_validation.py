@@ -8,11 +8,7 @@ Requirements:
 - Running Redis (test instance)
 """
 
-import asyncio
 import logging
-import time
-from datetime import datetime
-from typing import Any
 
 import pytest
 
@@ -45,8 +41,9 @@ class TestL1CacheE2E:
         """E2E: Verify L1 cache reduces Redis calls for repeated tenant lookups."""
         log_section("Tenant L1 Cache Redis Reduction")
 
-        from src.app.middleware.tenant import TenantMiddleware, _L1_TENANT_CACHE
         from unittest.mock import AsyncMock, MagicMock, patch
+
+        from src.app.middleware.tenant import _L1_TENANT_CACHE, TenantMiddleware
 
         # Clear cache
         _L1_TENANT_CACHE.clear()
@@ -89,8 +86,9 @@ class TestL1CacheE2E:
         """E2E: Verify RBAC L1 cache reduces Redis calls for permission checks."""
         log_section("RBAC L1 Cache Redis Reduction")
 
-        from src.app.modules.rbac.service import RoleService, _L1_RBAC_CACHE
         from unittest.mock import AsyncMock, patch
+
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 
         # Clear cache
         _L1_RBAC_CACHE.clear()

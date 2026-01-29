@@ -5,7 +5,7 @@ Target: <=2 queries for product with pricing tiers (1 product + 1 eager load).
 """
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock
 
 import pytest
 

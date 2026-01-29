@@ -7,7 +7,7 @@ Tests verify:
 - Performance improvement from avoiding extra DB round-trip
 """
 
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

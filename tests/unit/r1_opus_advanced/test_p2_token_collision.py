@@ -3,7 +3,6 @@
 Verifies that token cache uses hash-based keys instead of prefix.
 """
 
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch
 
 import pytest

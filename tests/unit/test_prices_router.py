@@ -59,8 +59,8 @@ def test_list_endpoint_supports_filters():
 
         # Mock the database dependency
         with patch("src.app.modules.billing.routes.prices.async_get_db"):
-            from fastapi.testclient import TestClient
             from fastapi import FastAPI
+            from fastapi.testclient import TestClient
 
             app = FastAPI()
             app.include_router(prices_router, prefix="/api/v1")

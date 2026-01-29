@@ -6,7 +6,6 @@ environment with mocked Redis/PostgreSQL to simulate real behavior.
 Run with: uv run pytest tests/e2e/test_r1_opus_e2e.py -v -s
 """
 
-import asyncio
 import json
 import logging
 import time
@@ -436,7 +435,6 @@ class TestJWTPEMCachingIntegration:
 
     def test_jwt_cache_functionality(self, e2e_results):
         """Verify JWT key caching works correctly."""
-        from unittest.mock import patch
 
         from src.app.core.security.jwt_utils import (
             _get_parsed_verification_key,

@@ -1,5 +1,5 @@
 """Unit tests for P3-1: DLQ Bounded Size Optimization."""
-from datetime import UTC, datetime
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -142,14 +142,14 @@ async def test_dlq_alert_threshold_warning(mock_redis_client, mock_settings):
 
     # Verify warning was logged (should be called twice: capacity warning + moved to DLQ)
     assert mock_logger.warning.call_count == 2
-    
+
     # Find the capacity warning call
     capacity_warning = None
     for call in mock_logger.warning.call_args_list:
         if "DLQ approaching capacity" in call[0][0]:
             capacity_warning = call
             break
-    
+
     assert capacity_warning is not None, "DLQ approaching capacity warning not found"
     assert capacity_warning[1]["dlq_size"] == 850
     assert capacity_warning[1]["max_size"] == 1000

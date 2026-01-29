@@ -1,6 +1,6 @@
 """Unit tests for P4-1: Circuit Breaker TOCTOU Double-Check Pattern."""
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 

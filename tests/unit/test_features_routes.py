@@ -57,8 +57,8 @@ def test_route_count():
 def test_response_models():
     """Test that endpoints have correct response models."""
     from src.app.modules.feature_flags.schemas import (
-        FeatureFlagsResponse,
         FeatureFlagCheckResponse,
+        FeatureFlagsResponse,
     )
 
     # Find routes and check response models

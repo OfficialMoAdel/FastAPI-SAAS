@@ -4,7 +4,7 @@ Tests verifying that projection schemas limit SELECT columns
 to only what's needed for the response, reducing data transfer.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from pydantic import BaseModel
@@ -160,8 +160,9 @@ class TestIsomorphismProjection:
     @pytest.mark.asyncio
     async def test_projection_preserves_data_integrity(self):
         """Verify no data loss in projected fields."""
-        from pydantic import BaseModel
         from uuid import uuid4
+
+        from pydantic import BaseModel
 
         class UserRead(BaseModel):
             id: int

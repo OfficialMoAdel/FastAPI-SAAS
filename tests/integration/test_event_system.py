@@ -4,8 +4,6 @@ Tests: U3 (Parallel Handlers), U18 (Handler Pre-registration), U19 (Handler Time
 """
 
 import asyncio
-import time
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
@@ -232,7 +230,7 @@ class TestHandlerTimeout:
         with perf_timer:
             try:
                 result = await asyncio.wait_for(slow_handler(), timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result = "timeout"
 
         assert result == "timeout"
@@ -253,7 +251,7 @@ class TestHandlerTimeout:
         async def run_with_timeout(coro, timeout):
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return "timeout"
 
         with perf_timer:
@@ -301,7 +299,7 @@ class TestHandlerTimeout:
         async def run_with_timeout(coro, timeout):
             try:
                 return await asyncio.wait_for(coro, timeout=timeout)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 return None
 
         results = await asyncio.gather(

@@ -3,8 +3,6 @@
 Tests: U16 (FastCRUD Projection), U17 (Service Registry), U22 (Slug Normalization)
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog

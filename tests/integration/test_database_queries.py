@@ -7,13 +7,10 @@ Note: Some tests require specific tables to exist in test_db.
 Run `scripts/init_test_db.py` to create them.
 """
 
-import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog
 from sqlalchemy import text
-from sqlalchemy.exc import ProgrammingError
 
 logger = structlog.get_logger(__name__)
 

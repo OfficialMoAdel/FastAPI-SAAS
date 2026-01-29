@@ -56,10 +56,10 @@ class TestCachePipeline:
 
     def test_cache_decorator_pipeline_code_exists(self) -> None:
         """Verify cache decorator has pipeline implementation."""
-        from src.app.core.utils import cache
-
         # Read the source to verify pipeline pattern
         import inspect
+
+        from src.app.core.utils import cache
 
         source = inspect.getsource(cache)
 

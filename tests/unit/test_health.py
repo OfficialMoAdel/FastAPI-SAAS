@@ -1,8 +1,8 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from httpx import AsyncClient
-from fastapi import status
 
+import pytest
+from fastapi import status
+from httpx import AsyncClient
 
 from src.app.core.health import HealthResult
 

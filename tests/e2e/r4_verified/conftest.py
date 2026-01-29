@@ -333,9 +333,10 @@ def synchronous_event_bus():
     This prevents 'Task was destroyed but it is pending' errors when
     background tasks (like audit logs) try to run after test completion.
     """
-    from src.app.core.events import event_bus
-    from src.app.core.config import settings
     from unittest.mock import patch
+
+    from src.app.core.config import settings
+    from src.app.core.events import event_bus
 
     # Enable GCRA algorithm for tests to get Retry-After headers
     patcher = patch.object(settings, "RATE_LIMIT_ALGORITHM", "gcra")

@@ -4,7 +4,6 @@ Verifies that file uploads use streaming without loading entire file into memory
 """
 
 from tempfile import SpooledTemporaryFile
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

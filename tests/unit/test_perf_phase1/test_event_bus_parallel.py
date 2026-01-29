@@ -1,6 +1,8 @@
 import asyncio
 import time
+
 import pytest
+
 from src.app.core.events import EventBus, EventPriority
 
 

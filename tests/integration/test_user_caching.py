@@ -6,8 +6,6 @@ verifying cache hit/miss patterns, TTL expiration, and invalidation.
 
 import asyncio
 import json
-from datetime import datetime, timezone
-from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
 import pytest

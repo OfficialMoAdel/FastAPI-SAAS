@@ -5,7 +5,7 @@ TDD: These tests are written first and should FAIL until implementation is compl
 Task: T020 [US1] Write unit tests for MagicLinkService
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

@@ -3,9 +3,9 @@
 Tests the in-memory TTLCache layer for role permissions.
 """
 
+from unittest.mock import AsyncMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from datetime import datetime
 
 from src.app.modules.rbac.service import _L1_RBAC_CACHE, RoleService
 

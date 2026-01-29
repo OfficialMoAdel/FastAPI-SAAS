@@ -33,6 +33,7 @@ class TestCacheOptimizations:
     async def test_u5_precompiled_bracket_pattern(self):
         """U5: Verify _BRACKET_PATTERN is pre-compiled at module level."""
         import re
+
         from src.app.core.utils import cache as cache_module
 
         assert hasattr(cache_module, "_BRACKET_PATTERN"), "U5: _BRACKET_PATTERN should be defined at module level"

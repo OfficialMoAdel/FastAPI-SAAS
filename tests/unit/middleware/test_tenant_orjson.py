@@ -6,11 +6,7 @@ while being 3-5x faster.
 
 import json
 import logging
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
-
-import pytest
 
 logger = logging.getLogger(__name__)
 
@@ -175,7 +171,6 @@ class TestTenantMiddlewareIntegration:
 
     def test_json_utils_imported_in_tenants(self) -> None:
         """Verify tenants module uses json_utils, not stdlib json."""
-        import inspect
         import os
 
         # Check if tenants module exists and uses json_utils

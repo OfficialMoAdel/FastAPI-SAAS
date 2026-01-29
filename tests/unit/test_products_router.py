@@ -72,8 +72,8 @@ def test_list_endpoint_pagination():
 
         # Mock the database dependency
         with patch("src.app.modules.billing.routes.products.async_get_db"):
-            from fastapi.testclient import TestClient
             from fastapi import FastAPI
+            from fastapi.testclient import TestClient
 
             app = FastAPI()
             app.include_router(products_router, prefix="/api/v1")
@@ -117,7 +117,7 @@ def test_pricing_endpoint_exists():
 
 def test_response_models():
     """Test that endpoints have correct response models."""
-    from src.app.modules.billing.schemas import ProductRead, ProductList, PricingRead
+    from src.app.modules.billing.schemas import PricingRead, ProductList, ProductRead
 
     # Find routes and check response models
     for route in products_router.routes:

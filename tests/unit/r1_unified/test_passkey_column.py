@@ -1,13 +1,10 @@
 """Unit tests for P3-2: Passkey Column-Specific SELECT optimization."""
-import asyncio
 import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy import select
 
-from src.app.modules.passkey.models import PasskeyCredential
 from src.app.modules.passkey.service import PasskeyService
 
 

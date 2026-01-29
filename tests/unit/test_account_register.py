@@ -1,13 +1,13 @@
 """Unit tests for the /account/register endpoint."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.auth.router import _get_user_service, router as account_router
-from src.app.modules.users.schemas import UserCreate
+from src.app.modules.auth.router import _get_user_service
+from src.app.modules.auth.router import router as account_router
 
 
 @pytest.fixture

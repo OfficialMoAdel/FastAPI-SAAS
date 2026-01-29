@@ -118,7 +118,7 @@ def test_route_count():
 
 def test_response_models():
     """Test that endpoints have correct response models."""
-    from src.app.modules.users.schemas import UserRead, UserList
+    from src.app.modules.users.schemas import UserList, UserRead
 
     # Find routes and check response models
     for route in users_router.routes:

@@ -64,11 +64,10 @@ class TestPermissionsService:
     @pytest.mark.asyncio
     async def test_get_all_permissions_returns_sequence(self):
         """get_all_permissions should return a sequence."""
-        from collections.abc import Sequence
-        from src.app.modules.rbac.service import RoleService
-
         # Check method signature
         import inspect
+
+        from src.app.modules.rbac.service import RoleService
 
         sig = inspect.signature(RoleService.get_all_permissions)
         return_annotation = sig.return_annotation

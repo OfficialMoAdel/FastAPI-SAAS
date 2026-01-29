@@ -1,6 +1,6 @@
 import asyncio
+
 from arq.connections import ArqRedis
-from redis.asyncio import Redis
 
 
 async def inspect_arq():

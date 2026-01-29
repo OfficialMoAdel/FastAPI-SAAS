@@ -1,6 +1,5 @@
 """Unit tests for SSO route changes to /account/sso prefix."""
 
-from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import FastAPI

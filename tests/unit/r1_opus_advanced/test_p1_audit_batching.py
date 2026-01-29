@@ -3,11 +3,9 @@
 Verifies that audit logs are buffered in Redis and batch-flushed.
 """
 
-from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
-import orjson
 import pytest
 
 

@@ -8,7 +8,6 @@ Run with: python -m pytest tests/e2e/test_api_compat_e2e.py -v -s
 """
 
 import logging
-from typing import Dict
 
 import httpx
 import pytest

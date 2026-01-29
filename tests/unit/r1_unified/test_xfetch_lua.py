@@ -1,5 +1,4 @@
 """Unit tests for P2-2: XFetch Lua Script Optimization."""
-import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest

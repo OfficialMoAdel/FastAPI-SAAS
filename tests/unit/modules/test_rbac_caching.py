@@ -121,7 +121,7 @@ class TestRBACPermissionsCaching:
     @pytest.mark.asyncio
     async def test_cache_disabled_always_queries_db(self, mock_db: AsyncMock, mock_redis: AsyncMock) -> None:
         """Test that disabled cache always queries database."""
-        from src.app.modules.rbac.models import Permission, Role
+        from src.app.modules.rbac.models import Role
         from src.app.modules.rbac.service import RoleService
 
         # Mock role query
@@ -154,7 +154,7 @@ class TestRBACPermissionsCaching:
     @pytest.mark.asyncio
     async def test_cache_read_error_falls_back_to_db(self, mock_db: AsyncMock, mock_redis: AsyncMock) -> None:
         """Test that cache read error falls back to database."""
-        from src.app.modules.rbac.models import Permission, Role
+        from src.app.modules.rbac.models import Role
         from src.app.modules.rbac.service import RoleService
 
         # Redis read fails

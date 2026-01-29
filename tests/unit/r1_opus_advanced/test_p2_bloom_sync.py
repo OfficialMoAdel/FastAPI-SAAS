@@ -3,7 +3,7 @@
 Verifies that Bloom filter syncs periodically via ARQ cron.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -33,10 +33,9 @@ class TestBloomFilterSync:
 
     def test_cron_runs_every_5_minutes(self) -> None:
         """Verify cron runs every 5 minutes."""
-        from src.app.core.worker.settings import WorkerSettings
-
         # Find the bloom filter sync cron job
         from src.app.core.worker.functions import sync_bloom_filter_task
+        from src.app.core.worker.settings import WorkerSettings
 
         bloom_cron = None
         for job in WorkerSettings.cron_jobs:

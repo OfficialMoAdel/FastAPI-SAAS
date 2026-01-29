@@ -1,6 +1,8 @@
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
 from redis.asyncio import ConnectionPool
+
 from src.app.core import redis_factory, setup
 
 

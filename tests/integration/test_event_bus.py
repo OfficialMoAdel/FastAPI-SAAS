@@ -5,12 +5,11 @@ verifying parallel handling, priority ordering, and error isolation.
 """
 
 import asyncio
-from datetime import datetime, timezone
 from uuid import uuid4
 
 import pytest
 
-from src.app.core.events import event_bus, EventPriority
+from src.app.core.events import EventPriority, event_bus
 
 pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 

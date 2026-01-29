@@ -10,8 +10,7 @@ Tests the following components:
 from __future__ import annotations
 
 import asyncio
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -30,7 +29,6 @@ from src.app.core.monitoring.r1_unified_metrics import (
 )
 from src.app.core.utils.lua_manager import (
     LuaScript,
-    LuaScriptError,
     LuaScriptManager,
     ScriptNotFoundError,
     get_lua_manager,
@@ -40,7 +38,6 @@ from src.app.core.utils.r1_error_handling import (
     CacheError,
     DLQError,
     ErrorTracker,
-    LuaScriptError as ErrorLuaScriptError,
     R1OptimizationError,
     RBACError,
     SessionError,
@@ -50,7 +47,9 @@ from src.app.core.utils.r1_error_handling import (
     with_fallback_sync,
     with_retry,
 )
-
+from src.app.core.utils.r1_error_handling import (
+    LuaScriptError as ErrorLuaScriptError,
+)
 
 # =============================================================================
 # LuaScriptManager Tests

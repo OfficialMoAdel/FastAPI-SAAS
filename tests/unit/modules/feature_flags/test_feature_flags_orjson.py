@@ -6,8 +6,6 @@ to stdlib json while providing 3-5x performance improvement.
 
 import json
 import logging
-from typing import Any
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 

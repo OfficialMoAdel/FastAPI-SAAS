@@ -88,7 +88,7 @@ class TestEventBusPerformance:
         perf_metrics: PerformanceMetrics,
     ):
         """Test event bus handles parallel events efficiently."""
-        from src.app.core.events import event_bus, EventPriority
+        from src.app.core.events import EventPriority, event_bus
 
         # Clear existing handlers
         event_bus._handlers.clear()

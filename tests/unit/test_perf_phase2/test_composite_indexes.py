@@ -4,10 +4,9 @@ Tests verifying that composite indexes are correctly defined on User model
 and that queries leverage them for efficient lookups.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import Index
 
 from src.app.modules.users.models import User
 

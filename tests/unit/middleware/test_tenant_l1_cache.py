@@ -3,8 +3,9 @@
 Tests the in-memory TTLCache layer that reduces Redis calls for hot tenants.
 """
 
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
 
 from src.app.middleware.tenant import _L1_TENANT_CACHE
 

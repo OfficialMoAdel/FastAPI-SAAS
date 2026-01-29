@@ -26,8 +26,6 @@ from __future__ import annotations
 
 import inspect
 
-import pytest
-
 from src.app.modules.tenants.service import TenantService
 
 

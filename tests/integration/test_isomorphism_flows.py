@@ -5,7 +5,6 @@ Verifies that optimized code paths produce identical results to baseline impleme
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 import structlog
@@ -248,7 +247,6 @@ class TestQueryFlowIsomorphism:
     @pytest.mark.asyncio
     async def test_joined_vs_separate_queries_isomorphism(self, real_postgres):
         """Verify joined query returns same data as separate queries."""
-        from sqlalchemy import text
 
         # This test verifies the concept - actual tables may not exist
         # The key point: joined data equals separate data

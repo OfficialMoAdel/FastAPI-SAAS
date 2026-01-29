@@ -3,7 +3,6 @@
 Provides real Redis and PostgreSQL connections for integration testing.
 """
 
-import asyncio
 from collections.abc import AsyncGenerator
 from typing import Any
 

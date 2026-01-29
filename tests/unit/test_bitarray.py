@@ -6,7 +6,6 @@ Tests the bitarray C extension used for bit manipulation in BloomFilter.
 import logging
 import timeit
 
-import pytest
 from bitarray import bitarray
 
 from src.app.core.security.bloom_filter import BloomFilter

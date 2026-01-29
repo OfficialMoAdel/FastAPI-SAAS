@@ -4,10 +4,11 @@ Ensures that credential lookup uses O(1) hash index and DOES NOT fall back
 to O(n) decryption loop.
 """
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from src.app.modules.passkey.service import PasskeyService
-from src.app.modules.passkey.models import PasskeyCredential
 
 
 @pytest.fixture

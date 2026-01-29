@@ -1,5 +1,7 @@
+from unittest.mock import patch
+
 import pytest
-from unittest.mock import Mock, patch, AsyncMock
+
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics, reset_r1_metrics
 
 
@@ -58,7 +60,6 @@ async def test_token_blacklist_fail_open():
 async def test_rate_limit_fail_open():
     """Verify rate limiter records metric on failure when configured to fail open."""
     from src.app.core.utils.rate_limit import RateLimiter
-    from src.app.core.config import settings
 
     reset_r1_metrics()
     metrics = get_r1_metrics()

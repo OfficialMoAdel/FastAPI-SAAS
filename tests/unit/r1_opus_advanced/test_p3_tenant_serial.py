@@ -3,7 +3,7 @@
 Verifies that tenant caching uses bytes directly instead of string conversion.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -47,9 +47,9 @@ class TestTenantSerialization:
 
     def test_tenant_middleware_uses_bytes(self) -> None:
         """Verify tenant middleware uses bytes (no as_str=True)."""
-        from src.app.middleware import tenant
-
         import inspect
+
+        from src.app.middleware import tenant
 
         source = inspect.getsource(tenant)
 

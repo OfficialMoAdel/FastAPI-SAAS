@@ -4,7 +4,6 @@ Tests the O(log n) eviction using Redis ZSET + Hash hybrid structure.
 Tests verify the legacy ZPOPMIN path when SESSION_USE_PIPELINE_EVICTION=False.
 """
 
-import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 

@@ -2,7 +2,6 @@
 Unit tests for Bloom filter implementation.
 """
 
-import pytest
 
 from src.app.core.security.bloom_filter import (
     BloomFilter,

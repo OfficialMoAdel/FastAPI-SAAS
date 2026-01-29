@@ -16,8 +16,8 @@ from src.app.core.security.token_blacklist_cache import (
     BLACKLIST_CHECK_LUA_SCRIPT,
     BLACKLIST_KEY,
     NEGATIVE_CACHE_KEY,
-    _get_negative_cache_ttl,
     _ensure_script_loaded,
+    _get_negative_cache_ttl,
     _is_token_blacklisted_fallback,
     is_token_blacklisted,
 )

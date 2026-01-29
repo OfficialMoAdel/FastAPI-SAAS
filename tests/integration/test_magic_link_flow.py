@@ -11,7 +11,7 @@ This test validates the complete end-to-end flow:
 4. System validates token and returns JWT tokens
 """
 
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 

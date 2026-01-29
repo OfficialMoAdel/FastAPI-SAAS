@@ -15,8 +15,7 @@ import re
 import time
 from datetime import datetime
 from typing import Any
-from unittest.mock import MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import uuid4
 
 import pytest
 import structlog
@@ -28,12 +27,12 @@ from src.app.core.utils.cache import (
     _format_prefix,
 )
 from src.app.modules.users.schemas import (
-    UserCreate,
-    UserRead,
     _PASSWORD_DIGIT_RE,
     _PASSWORD_LOWERCASE_RE,
     _PASSWORD_SPECIAL_RE,
     _PASSWORD_UPPERCASE_RE,
+    UserCreate,
+    UserRead,
 )
 
 logger = structlog.get_logger(__name__)

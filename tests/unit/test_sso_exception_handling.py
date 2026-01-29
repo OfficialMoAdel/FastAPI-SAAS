@@ -4,9 +4,8 @@ Tests verify that the SSO router correctly catches orjson.JSONDecodeError
 when parsing Apple Sign-In user data, not stdlib json.JSONDecodeError.
 """
 
-import pytest
-
 import orjson
+import pytest
 
 from src.app.core.json_utils import json_loads
 

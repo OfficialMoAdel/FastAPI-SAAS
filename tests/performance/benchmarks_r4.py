@@ -37,9 +37,7 @@ import time
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Final
-from unittest.mock import AsyncMock, MagicMock, patch
-
-import pytest
+from unittest.mock import MagicMock, patch
 
 if TYPE_CHECKING:
     from pytest_benchmark.fixture import BenchmarkFixture

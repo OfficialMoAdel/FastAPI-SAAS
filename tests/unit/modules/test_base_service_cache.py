@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import asyncio
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import MagicMock
 
 import pytest
 from fastcrud import FastCRUD
 
-from src.app.modules._base.service import BaseService, _CRUD_CACHE
-from src.app.modules.users.models import User
+from src.app.modules._base.service import _CRUD_CACHE, BaseService
 from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
 
 
 @pytest.fixture(autouse=True)

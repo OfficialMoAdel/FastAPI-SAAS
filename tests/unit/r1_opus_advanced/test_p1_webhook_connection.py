@@ -5,8 +5,6 @@ Verifies that webhook delivery releases DB connection before HTTP calls.
 
 import inspect
 
-import pytest
-
 
 class TestWebhookConnectionRelease:
     """Tests for DB connection release during webhook HTTP calls."""

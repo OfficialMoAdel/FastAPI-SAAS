@@ -114,6 +114,7 @@ class TestAuthSecurityRegression:
     async def test_a1_auth_service_has_user_validation(self):
         """A1: Verify auth service checks user validity on token refresh."""
         import inspect
+
         from src.app.modules.auth.service import AuthService
 
         # Verify the refresh_access_token method exists
@@ -132,6 +133,7 @@ class TestAuthSecurityRegression:
     async def test_a2_user_crud_has_is_deleted_field(self):
         """A2: Verify user CRUD handles is_deleted field."""
         import inspect
+
         from src.app.modules.users.crud import CRUDUser
 
         source = inspect.getsource(CRUDUser)

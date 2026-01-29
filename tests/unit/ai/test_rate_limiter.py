@@ -3,7 +3,7 @@
 Tests verify atomic single-call rate limiting via EVALSHA.
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock
 
 import pytest
 

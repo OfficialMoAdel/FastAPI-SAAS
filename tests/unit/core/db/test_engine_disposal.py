@@ -7,9 +7,7 @@ Verifies:
 - Dispose is idempotent (safe to call multiple times)
 """
 
-import asyncio
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

@@ -6,8 +6,6 @@ Tests the Brian Kernighan O(k) algorithm for decoding permission bitmasks.
 import logging
 import random
 
-import pytest
-
 from src.app.core.rbac.bitmask import PermissionBitmask
 
 logger = logging.getLogger(__name__)

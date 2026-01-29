@@ -4,8 +4,9 @@ Tests validate P2-5 middleware reordering ensures TenantMiddleware
 runs before RateLimitMiddleware for proper tenant context access.
 """
 
+from unittest.mock import MagicMock
+
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch
 
 
 class TestMiddlewareOrder:
@@ -14,6 +15,7 @@ class TestMiddlewareOrder:
     def test_middleware_stack_order_in_main(self):
         """Verify middleware is added in correct order for tenant-aware rate limiting."""
         import inspect
+
         from src.app import main
 
         source = inspect.getsource(main)
@@ -56,6 +58,7 @@ class TestMiddlewareOrder:
     def test_p2_5_comment_documents_ordering(self):
         """Verify P2-5 optimization is documented in code."""
         import inspect
+
         from src.app import main
 
         source = inspect.getsource(main)
@@ -72,7 +75,7 @@ class TestTenantContextAvailability:
     @pytest.mark.asyncio
     async def test_tenant_context_set_before_rate_limit(self):
         """Verify tenant context is set before rate limit middleware runs."""
-        from src.app.core.tenancy.context import set_tenant_context, get_tenant_context
+        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 
         # Simulate TenantMiddleware setting context
         mock_tenant = MagicMock()
@@ -91,7 +94,7 @@ class TestTenantContextAvailability:
     @pytest.mark.asyncio
     async def test_rate_limit_can_use_tenant_for_key(self):
         """Test rate limiter can incorporate tenant into rate limit key."""
-        from src.app.core.tenancy.context import set_tenant_context, get_tenant_context
+        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 
         mock_tenant = MagicMock()
         mock_tenant.id = 456
@@ -153,7 +156,7 @@ class TestRateLimitMiddlewareTenantIntegration:
     async def test_rate_limit_respects_tenant_tier(self):
         """Test rate limiter can apply tenant-specific limits."""
         # This tests the capability enabled by P2-5
-        from src.app.core.tenancy.context import set_tenant_context, get_tenant_context
+        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 
         # Tenant with premium tier (higher limits)
         premium_tenant = MagicMock()

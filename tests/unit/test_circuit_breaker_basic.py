@@ -64,6 +64,7 @@ async def test_circuit_breaker_with_feature_flag_disabled():
     This test verifies the legacy path behavior when explicitly disabled.
     """
     from unittest.mock import patch
+
     from src.app.core.config import settings
 
     # Patch the feature flag to test legacy path

@@ -33,6 +33,13 @@ bd dep add bd-123 --blocks bd-456      # Blocking
 bd create "Task" --parent bd-789       # Epic child
 bd create "Bug" --discovered-from bd-5  # Found during work
 
+## 🧩 ID Hierarchy Pattern (Epic → Task → Sub-task)
+
+ Pattern:
+ - <EPIC_ID>        (Epic)      مثال: bd-a3f8
+ - <EPIC_ID>.1      (Task)      مثال: bd-a3f8.1
+ - <EPIC_ID>.1.1    (Sub-task)  مثال: bd-a3f8.1.1
+ 
 ## 🔍 Discovery Commands:
 
 bd blocked                    # Show blocked tasks

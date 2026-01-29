@@ -4,10 +4,6 @@ Tests: U2 (Pool Consolidation), U4 (Pipeline), U10 (Rate Limits Cache),
        U12 (Session Hash), U13 (Lock Backoff), U15 (SETEX)
 """
 
-import asyncio
-import time
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import structlog

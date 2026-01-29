@@ -6,7 +6,7 @@ for all supported types with performance improvements over stdlib json.
 
 import json
 import time
-from datetime import date, datetime, timezone
+from datetime import UTC, date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -49,7 +49,7 @@ class TestOrjsonDumpsDefault:
 
     def test_datetime_serialization(self):
         """Test datetime is serialized to ISO format."""
-        test_dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        test_dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         result = orjson_dumps_default(test_dt)
         assert "2024-01-15" in result
         assert isinstance(result, str)
@@ -125,7 +125,7 @@ class TestJsonDumps:
 
     def test_datetime_in_dict(self):
         """Test datetime in dictionary is serialized."""
-        test_dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=timezone.utc)
+        test_dt = datetime(2024, 1, 15, 10, 30, 45, tzinfo=UTC)
         data = {"created_at": test_dt}
         result = json_dumps(data, as_str=True)
         assert "2024-01-15" in result
@@ -240,7 +240,7 @@ class TestPerformance:
             "metadata": {
                 "count": 100,
                 "page": 1,
-                "created_at": datetime.now(timezone.utc),
+                "created_at": datetime.now(UTC),
             },
         }
 

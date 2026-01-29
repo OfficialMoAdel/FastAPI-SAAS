@@ -5,8 +5,6 @@ Verifies that webhook delivery uses selectinload to avoid N+1 queries.
 
 import inspect
 
-import pytest
-
 
 class TestWebhookN1Fix:
     """Tests for webhook N+1 query fix using selectinload."""

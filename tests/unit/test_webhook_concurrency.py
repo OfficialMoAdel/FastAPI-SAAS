@@ -5,11 +5,13 @@ Tests cover:
 - Concurrency safety (no shared session race conditions)
 """
 
-import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, ANY
+from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
-from src.app.modules.webhooks.service import WebhookService
+
+import pytest
+
 from src.app.modules.webhooks.models import WebhookEndpoint
+from src.app.modules.webhooks.service import WebhookService
 
 
 @pytest.fixture

@@ -5,7 +5,7 @@ SET + EXPIRE calls, reducing Redis round-trips by 50% for cache writes.
 """
 
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, call, patch
+from unittest.mock import AsyncMock, MagicMock, call
 
 import pytest
 

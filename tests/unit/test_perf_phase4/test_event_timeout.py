@@ -1,8 +1,10 @@
 import asyncio
-import pytest
 from unittest.mock import Mock, patch
-from src.app.core.events import EventBus, EventPriority
+
+import pytest
+
 from src.app.core.config import settings
+from src.app.core.events import EventBus, EventPriority
 
 
 @pytest.fixture

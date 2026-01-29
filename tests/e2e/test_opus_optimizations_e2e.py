@@ -17,9 +17,8 @@ import hmac
 import logging
 import sys
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
@@ -178,7 +177,7 @@ class TestConcurrentLoadWithOptimizations:
         from src.app.core.json_utils import json_dumps, json_loads
 
         async def json_roundtrip(user_id: int) -> dict[str, Any]:
-            data = {"user_id": user_id, "timestamp": datetime.now(timezone.utc).isoformat()}
+            data = {"user_id": user_id, "timestamp": datetime.now(UTC).isoformat()}
             serialized = json_dumps(data)
             return json_loads(serialized)
 

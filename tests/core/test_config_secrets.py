@@ -1,6 +1,7 @@
-import pytest
 import logging
-from pydantic import SecretStr, ValidationError
+
+from pydantic import SecretStr
+
 from src.app.core.config import CryptSettings
 
 

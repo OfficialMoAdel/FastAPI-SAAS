@@ -8,11 +8,9 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import UUID, uuid4
-
-import pytest
+from uuid import UUID
 
 from src.app.core.json_utils import json_dumps_sorted
 
@@ -145,7 +143,7 @@ class TestJsonDumpsSortedDatetimeHandling:
 
     def test_json_dumps_sorted_datetime_handling(self) -> None:
         """Verify datetime objects serialize correctly with UTC Z suffix."""
-        dt = datetime(2024, 6, 15, 12, 30, 45, tzinfo=timezone.utc)
+        dt = datetime(2024, 6, 15, 12, 30, 45, tzinfo=UTC)
         payload = {"created_at": dt}
 
         result = json_dumps_sorted(payload)
@@ -161,7 +159,7 @@ class TestJsonDumpsSortedDatetimeHandling:
 
     def test_datetime_determinism(self) -> None:
         """Verify datetime serialization is deterministic."""
-        dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=timezone.utc)
+        dt = datetime(2024, 1, 1, 0, 0, 0, tzinfo=UTC)
         payload = {"ts": dt}
 
         result1 = json_dumps_sorted(payload)
@@ -267,7 +265,7 @@ class TestJsonDumpsSortedSpecialTypes:
         payload = {
             "id": UUID("12345678-1234-5678-1234-567812345678"),
             "amount": Decimal("99.99"),
-            "created": datetime(2024, 1, 1, tzinfo=timezone.utc),
+            "created": datetime(2024, 1, 1, tzinfo=UTC),
             "active": True,
             "count": 42,
             "name": "test",

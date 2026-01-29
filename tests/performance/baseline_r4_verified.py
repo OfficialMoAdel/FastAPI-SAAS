@@ -33,13 +33,12 @@ Optimizations being baselined:
 
 from __future__ import annotations
 
-import asyncio
 import hashlib
 import hmac
 import json
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Final
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock
 from uuid import uuid4
 
 import pytest

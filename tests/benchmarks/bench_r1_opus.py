@@ -13,7 +13,6 @@ Run with: uv run pytest tests/benchmarks/bench_r1_opus.py -v -s
 import hashlib
 import json
 import logging
-import os
 import random
 import time
 import timeit

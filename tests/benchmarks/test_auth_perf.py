@@ -4,7 +4,6 @@ Tests verify auth operations meet P95 latency requirements.
 Uses simple timing assertions (no pytest-benchmark dependency).
 """
 
-import asyncio
 import time
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, patch

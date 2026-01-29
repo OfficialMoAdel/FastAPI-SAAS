@@ -6,8 +6,6 @@ Tests the lru_cache-based PEM key caching for RS256 deployments.
 import logging
 from unittest.mock import MagicMock, patch
 
-import pytest
-
 logger = logging.getLogger(__name__)
 
 

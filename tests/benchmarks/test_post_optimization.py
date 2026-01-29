@@ -17,12 +17,10 @@ import json
 import logging
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
-from uuid import UUID, uuid4
-
-import pytest
+from uuid import uuid4
 
 from src.app.core.json_utils import json_dumps, json_dumps_sorted, json_loads
 
@@ -260,8 +258,8 @@ class TestSpecialTypesSerialization:
     def test_datetime_serialization(self) -> None:
         """Benchmark datetime serialization."""
         payload = {
-            "created_at": datetime.now(timezone.utc),
-            "updated_at": datetime.now(timezone.utc),
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
         }
 
         result = run_benchmark("datetime_serialization", lambda: json_dumps(payload))
