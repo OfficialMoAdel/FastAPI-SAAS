@@ -1,13 +1,14 @@
 from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import pytest
-from uuid import uuid4
+
+from src.app.core.db.database import async_get_db
+from src.app.core.worker.functions import deliver_webhook_task, sample_background_task
+from src.app.main import app
 
 # Import test helpers
 from tests.conftest import TestingSessionLocal, override_get_db
-from src.app.core.db.database import async_get_db
-from src.app.main import app
-from src.app.core.worker.functions import sample_background_task, deliver_webhook_task
 
 
 def create_simple_mock_engine():
@@ -35,9 +36,9 @@ async def test_job_monitoring_e2e_flow(e2e_client):
     # Patch middleware engine to avoid RLS errors
     with patch("src.app.middleware.tenant.async_engine", new=create_simple_mock_engine()):
         # Seeding user:
-        from src.app.modules.users.models import User
-        from src.app.modules.tenants.models import Tenant
         from src.app.core.security import get_password_hash
+        from src.app.modules.tenants.models import Tenant
+        from src.app.modules.users.models import User
 
         # Use TestingSessionLocal for seeding to write to test DB
         async with TestingSessionLocal() as db:
@@ -124,9 +125,6 @@ async def test_job_monitoring_e2e_flow(e2e_client):
                     break
 
             assert found
-
-    # Cleanup dependency overrides
-    app.dependency_overrides = {}
 
     # Cleanup dependency overrides
     app.dependency_overrides = {}

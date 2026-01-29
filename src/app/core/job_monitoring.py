@@ -56,9 +56,6 @@ class JobMonitoringService:
             v_val = v.decode("utf-8") if isinstance(v, bytes) else v
             parsed_data[k_str] = v_val
 
-        # Determine status
-        # status = parsed_data.get("status", "unknown") # Unused variable
-
         # Calculate duration if applicable
         start_ts = float(parsed_data.get("start_time", 0) or 0)
         finish_ts = float(parsed_data.get("finish_time", 0) or 0)
@@ -79,7 +76,6 @@ class JobMonitoringService:
         if not cache.client:
             return
 
-        # now = time.time() # Unused variable
         pipe = cache.client.pipeline()
 
         # Increment total jobs for function
