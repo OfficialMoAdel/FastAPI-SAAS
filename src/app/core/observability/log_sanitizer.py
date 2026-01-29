@@ -210,29 +210,41 @@ class SanitizingProcessor:
     structlog processor for automatic log sanitization.
 
     Usage:
-        structlog.configure(
-            processors=[
-                SanitizingProcessor(),
-                # ... other processors
-            ]
-        )
+        Add to structlog processors list BEFORE the renderer:
+
+        shared_processors = [
+            structlog.contextvars.merge_contextvars,
+            structlog.stdlib.add_log_level,
+            SanitizingProcessor(),  # <-- Add here
+            structlog.processors.JSONRenderer(),
+        ]
     """
+
+    def __init__(self, max_depth: int = 10) -> None:
+        """
+        Initialize the sanitizing processor.
+
+        Args:
+            max_depth: Maximum recursion depth for nested dict sanitization.
+                       Default 10 prevents stack overflow on circular refs.
+        """
+        self._max_depth = max_depth
 
     def __call__(
         self, logger: Any, method_name: str, event_dict: dict[str, Any]
     ) -> dict[str, Any]:
         """
-        Process log event and sanitize sensitive data.
+        Process log event by sanitizing all values.
 
         Args:
-            logger: Logger instance
-            method_name: Log method name (info, error, etc.)
+            logger: Logger instance (unused but required by protocol)
+            method_name: Log method name (info, debug, etc.)
             event_dict: Event dictionary to sanitize
 
         Returns:
             Sanitized event dictionary
         """
-        return LogSanitizer.sanitize_dict(event_dict)
+        return LogSanitizer.sanitize_dict(event_dict, _max_depth=self._max_depth)
 
 
 class SecureFormatter(logging.Formatter):
