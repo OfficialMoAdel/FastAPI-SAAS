@@ -216,6 +216,52 @@ def get_current_tenant() -> Tenant:
 - Tenant Middleware: `src/app/middleware/tenant.py` - X-Tenant-ID header validation
 - Tenant Dependency: `src/app/api/dependencies.py` - `get_current_tenant()` dependency
 
+### Observability
+- Log Sanitizer: `src/app/core/observability/log_sanitizer.py` - Strips sensitive data from logs
+- Structlog Config: `src/app/core/observability/logger.py` - Logging configuration with sanitizer integration
+
+## Observability Module
+Location: src/app/core/observability/
+
+### Log Sanitizer
+Purpose: Strips sensitive data from logs before output to prevent credential leakage.
+
+Key files:
+- `log_sanitizer.py`: LogSanitizer class, SanitizingProcessor
+
+Patterns detected and redacted:
+- JWTs (eyJ pattern)
+- API keys (api_key, Api-Key, X-API-Key)
+- Database URLs (postgresql://, mysql://, mongodb://)
+- Email addresses (user@domain.com → u***@domain.com)
+- Credit card numbers (Luhn algorithm validation)
+- Cloud provider keys (AWS, GCP, Azure patterns)
+- Bearer tokens
+- Session tokens
+
+Usage patterns:
+```python
+# Add to structlog processor chain
+from src.app.core.observability.log_sanitizer import SanitizingProcessor
+
+shared_processors = [
+    SanitizingProcessor(),
+    # ... other processors
+]
+
+structlog.configure(
+    processors=shared_processors + [
+        structlog.processors.JSONRenderer()
+    ]
+)
+```
+
+Integration with logger.py:
+- SanitizingProcessor added to shared_processors
+- Runs before JSON/Console renderer
+- Sanitizes all log event dict values recursively
+- Preserves log structure while redacting sensitive content
+
 ## JIT Index Hints
 
 ### Core Component Searches

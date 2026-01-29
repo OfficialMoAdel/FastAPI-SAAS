@@ -77,7 +77,101 @@ __table_args__ = (
 src/app/core/db/
 ├── __init__.py           # Exports async_get_db, local_session
 ├── database.py           # Engine, sessionmaker, Base
-└── models.py             # UUIDMixin, TimestampMixin
+├── models.py             # UUIDMixin, TimestampMixin
+└── rls.py                # Row Level Security helpers
+```
+
+## Row Level Security (RLS) Module
+
+### Purpose
+Database-level tenant isolation using PostgreSQL RLS policies. Provides fail-closed security that prevents cross-tenant data leaks even if application-level checks are bypassed.
+
+### Key Functions
+
+```python
+from src.app.core.db.rls import set_rls_context, clear_rls_context, rls_context, bypass_rls
+
+# Set tenant context (used in middleware)
+await set_rls_context(conn, tenant_id=123, user_id=456)
+
+# Clear context (used in finally blocks)
+await clear_rls_context(conn)
+
+# Context manager for request lifecycle
+async with rls_context(session, tenant_id, user_id):
+    # All queries are automatically filtered
+    result = await session.execute(select(User))
+
+# Bypass RLS for admin operations
+async with bypass_rls(session, reason="Admin data export"):
+    # Can query all tenants' data
+    result = await session.execute(select(Tenant))
+```
+
+### Usage Patterns
+
+**In middleware (automatic):**
+```python
+# src/app/middleware/tenant.py
+from src.app.core.db.rls import rls_context
+
+async with rls_context(db_session, tenant.id, user.id):
+    response = await call_next(request)
+```
+
+**In background jobs:**
+```python
+# src/app/core/worker/rls_context.py
+from src.app.core.db.rls import rls_context, clear_rls_context
+
+# Set context before job runs
+await set_rls_context(session, tenant_id, user_id)
+# ... job executes ...
+await clear_rls_context(session)
+```
+
+**For super-admin operations:**
+```python
+# Create audit log entry and bypass RLS
+async with bypass_rls(session, reason="System maintenance"):
+    # All data visible, bypass logged to audit table
+    tenants = await session.execute(select(Tenant))
+```
+
+### Tables Protected
+See migration `20250128_000011_enable_rls_policies.py` for full list. All tables with `tenant_id` foreign key are protected:
+- users
+- tenants
+- posts
+- audit_logs
+- api_keys
+- webhooks
+- notifications
+- files
+- storage_settings
+- feature_flags
+- billing_customers
+- billing_subscriptions
+- billing_invoices
+- billing_payment_methods
+- user_preferences
+- sso_providers
+- magic_links
+- passkey_credentials
+
+### Performance Impact
+Measured overhead: < 10% for typical queries (baseline vs RLS-enabled). See `tests/performance/test_rls_performance.py` for benchmarks.
+
+### Testing
+```bash
+# Run RLS integration tests
+uv run pytest tests/integration/test_rls_isolation.py -v
+
+# Run performance benchmarks
+uv run pytest tests/performance/test_rls_performance.py -v
+
+# Verify isolation manually
+uv run scripts/verify_rls_isolation.py
 ```
 
 ## Touch Points
