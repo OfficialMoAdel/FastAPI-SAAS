@@ -7,6 +7,12 @@ This module provides resilience patterns including:
 - Helper functions for accessing the global registry
 """
 
+from src.app.core.resilience.db_circuit_breaker import (
+    db_circuit,
+    execute_query_with_circuit_breaker,
+    execute_transaction_with_circuit_breaker,
+    get_read_only_fallback,
+)
 from src.app.core.resilience.registry import (
     CircuitBreakerRegistry,
     CircuitBreakerSpec,
@@ -38,4 +44,9 @@ __all__ = [
     "CircuitBreakerOpen",
     "CircuitState",
     "circuit_breaker",
+    # Database resilience
+    "db_circuit",
+    "execute_query_with_circuit_breaker",
+    "execute_transaction_with_circuit_breaker",
+    "get_read_only_fallback",
 ]
