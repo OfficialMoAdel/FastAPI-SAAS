@@ -14,6 +14,7 @@ import structlog
 from structlog.types import Processor
 
 from .config import EnvironmentOption, settings
+from .observability.log_sanitizer import SanitizingProcessor
 
 # Log directory setup
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")
@@ -42,6 +43,7 @@ def setup_logging() -> None:
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),
+        SanitizingProcessor(),  # Sanitize sensitive data before rendering
     ]
 
     if IS_PRODUCTION:

@@ -7,6 +7,7 @@ including credentials, tokens, API keys, PII, and database connection strings.
 
 import logging
 import re
+from collections.abc import MutableMapping
 from dataclasses import dataclass
 from typing import Any
 
@@ -231,7 +232,7 @@ class SanitizingProcessor:
         self._max_depth = max_depth
 
     def __call__(
-        self, logger: Any, method_name: str, event_dict: dict[str, Any]
+        self, logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
     ) -> dict[str, Any]:
         """
         Process log event by sanitizing all values.
@@ -244,7 +245,7 @@ class SanitizingProcessor:
         Returns:
             Sanitized event dictionary
         """
-        return LogSanitizer.sanitize_dict(event_dict, _max_depth=self._max_depth)
+        return LogSanitizer.sanitize_dict(dict(event_dict), _max_depth=self._max_depth)
 
 
 class SecureFormatter(logging.Formatter):
