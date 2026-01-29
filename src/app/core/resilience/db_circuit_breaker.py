@@ -140,7 +140,7 @@ async def execute_transaction_with_circuit_breaker(
     attempt = 0
     last_error: Optional[Exception] = None
 
-    while attempt < max_retries:
+    while attempt <= max_retries:
         # Check circuit state
         if db_circuit.state == CircuitState.OPEN:
             logger.error(f"Database circuit OPEN, aborting transaction after {attempt} attempts")
@@ -163,7 +163,7 @@ async def execute_transaction_with_circuit_breaker(
             attempt += 1
 
             # Exponential backoff
-            if attempt < max_retries:
+            if attempt <= max_retries:
                 wait_time = 2**attempt
                 logger.warning(
                     f"Transaction failed, retrying in {wait_time}s (attempt {attempt}/{max_retries})",
