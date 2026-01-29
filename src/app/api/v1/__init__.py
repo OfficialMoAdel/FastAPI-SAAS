@@ -32,6 +32,7 @@ from ...modules.tiers.router import router as tiers_router
 from ...modules.user_preferences.router import router as user_preferences_router
 from ...modules.users.router import router as users_router
 from ...modules.webhooks.router import router as webhooks_router
+from ..v1.admin.circuit_breakers import router as circuit_breakers_router
 
 router = APIRouter(prefix="/v1")
 router.include_router(health_router)
@@ -69,3 +70,5 @@ router.include_router(checkouts_router)  # API compatibility layer
 router.include_router(invoices_router)  # API compatibility layer
 router.include_router(configurations_router)  # API compatibility layer (Stripe)
 router.include_router(ai_router)
+# Admin endpoints
+router.include_router(circuit_breakers_router, prefix="/admin")
