@@ -312,6 +312,20 @@ class MockUser:
         return self.is_superuser or permission in self.permissions
 
 
+def create_mock_engine():
+    """Create a mock SQLAlchemy engine that ignores RLS commands."""
+    mock_conn = AsyncMock()
+    mock_conn.execute = AsyncMock()
+
+    mock_cm = AsyncMock()
+    mock_cm.__aenter__.return_value = mock_conn
+    mock_cm.__aexit__.return_value = None
+
+    mock_engine = Mock()
+    mock_engine.connect.return_value = mock_cm
+    return mock_engine
+
+
 @pytest.fixture
 async def full_mock_context():
     """Full mock context for async integration tests.
@@ -373,6 +387,7 @@ async def full_mock_context():
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
+        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 
@@ -410,6 +425,7 @@ async def unauthenticated_mock_context():
             return_value=fake_tenant,
         ),
         patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 
@@ -537,6 +553,26 @@ class FakeRedisPipeline:
         self._commands.append(("set", key, value, ex))
         return self
 
+    def hincrby(self, key, field, amount):
+        """Queue a hincrby command."""
+        self._commands.append(("hincrby", key, field, amount))
+        return self
+
+    def hincrbyfloat(self, key, field, amount):
+        """Queue a hincrbyfloat command."""
+        self._commands.append(("hincrbyfloat", key, field, amount))
+        return self
+
+    def lpush(self, key, value):
+        """Queue a lpush command."""
+        self._commands.append(("lpush", key, value))
+        return self
+
+    def ltrim(self, key, start, end):
+        """Queue a ltrim command."""
+        self._commands.append(("ltrim", key, start, end))
+        return self
+
     async def execute(self):
         """Execute all queued commands and return results."""
         results = []
@@ -555,6 +591,18 @@ class FakeRedisPipeline:
                 results.append(result)
             elif cmd[0] == "set":
                 result = await self.redis.set(cmd[1], cmd[2], ex=cmd[3] if len(cmd) > 3 else None)
+                results.append(result)
+            elif cmd[0] == "hincrby":
+                result = await self.redis.hincrby(cmd[1], cmd[2], cmd[3])
+                results.append(result)
+            elif cmd[0] == "hincrbyfloat":
+                result = await self.redis.hincrbyfloat(cmd[1], cmd[2], cmd[3])
+                results.append(result)
+            elif cmd[0] == "lpush":
+                result = await self.redis.lpush(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "ltrim":
+                result = await self.redis.ltrim(cmd[1], cmd[2], cmd[3])
                 results.append(result)
             else:
                 results.append(None)
@@ -582,6 +630,103 @@ class FakeRedis:
                 del self.store[k]
                 count += 1
         return count
+
+    def _get_key(self, key):
+        if isinstance(key, bytes):
+            return key.decode("utf-8")
+        return key
+
+    async def hgetall(self, key):
+        key = self._get_key(key)
+        if key not in self.store:
+            return {}
+        val = self.store.get(key)
+        if not isinstance(val, dict):
+            return {}
+        # Return bytes keys/values as redis-py does
+        return {
+            k.encode("utf-8") if isinstance(k, str) else k: str(v).encode("utf-8") if not isinstance(v, bytes) else v
+            for k, v in val.items()
+        }
+
+    async def hset(self, key, mapping):
+        key = self._get_key(key)
+        if key not in self.store:
+            self.store[key] = {}
+        if not isinstance(self.store[key], dict):
+            self.store[key] = {}
+
+        for field, value in mapping.items():
+            self.store[key][field] = value
+        return len(mapping)
+
+    async def hincrby(self, key, field, amount):
+        key = self._get_key(key)
+        if key not in self.store:
+            self.store[key] = {}
+        if not isinstance(self.store[key], dict):
+            self.store[key] = {}
+
+        current = int(self.store[key].get(field, 0))
+        new_val = current + amount
+        self.store[key][field] = str(new_val)
+        return new_val
+
+    async def hincrbyfloat(self, key, field, amount):
+        key = self._get_key(key)
+        if key not in self.store:
+            self.store[key] = {}
+        if not isinstance(self.store[key], dict):
+            self.store[key] = {}
+
+        current = float(self.store[key].get(field, 0.0))
+        new_val = current + amount
+        self.store[key][field] = str(new_val)
+        return new_val
+
+    async def lpush(self, key, value):
+        key = self._get_key(key)
+        if key not in self.store:
+            self.store[key] = []
+        if not isinstance(self.store[key], list):
+            self.store[key] = []
+
+        self.store[key].insert(0, value)
+        return len(self.store[key])
+
+    async def lrange(self, key, start, end):
+        key = self._get_key(key)
+        if key not in self.store:
+            return []
+        lst = self.store.get(key)
+        if not isinstance(lst, list):
+            return []
+
+        if end == -1:
+            slice_end = len(lst)
+        else:
+            slice_end = end + 1
+
+        result = lst[start:slice_end]
+        return [str(x).encode("utf-8") if not isinstance(x, bytes) else x for x in result]
+
+    async def ltrim(self, key, start, end):
+        key = self._get_key(key)
+        if key in self.store:
+            lst = self.store[key]
+            if isinstance(lst, list):
+                if end == -1:
+                    self.store[key] = lst[start:]
+                else:
+                    self.store[key] = lst[start : end + 1]
+        return True
+
+    async def llen(self, key):
+        key = self._get_key(key)
+        lst = self.store.get(key)
+        if isinstance(lst, list):
+            return len(lst)
+        return 0
 
     async def incr(self, key):
         val = int(self.store.get(key, 0)) + 1
@@ -723,7 +868,7 @@ class FakeRedis:
             del zset[m]
         return len(to_remove)
 
-    async def pipeline(self, transaction=True):
+    def pipeline(self, transaction=True):
         """Return a pipeline mock for batched operations."""
         return FakeRedisPipeline(self)
 

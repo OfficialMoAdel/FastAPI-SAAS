@@ -3,7 +3,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, Optional
 
-from src.app.core.utils.cache import client
+from src.app.core.utils import cache
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +28,7 @@ class JobMonitoringService:
         Returns:
             Dict containing job status, result, and metadata
         """
-        if not client:
+        if not cache.client:
             logger.warning("Redis client not initialized, cannot get job status")
             return {"status": "unknown", "error": "Redis unavailable"}
 
@@ -45,7 +45,7 @@ class JobMonitoringService:
         # Note: ARQ stores results with a specific key pattern or in the job object itself if using Result backend.
         # Here we query what's in Redis.
 
-        data = await client.hgetall(key)  # type: ignore
+        data = await cache.client.hgetall(key)  # type: ignore
         if not data:
             return {"status": "not_found", "job_id": job_id}
 
@@ -76,11 +76,11 @@ class JobMonitoringService:
         """
         Record the start of a job for metrics.
         """
-        if not client:
+        if not cache.client:
             return
 
         # now = time.time() # Unused variable
-        pipe = client.pipeline()
+        pipe = cache.client.pipeline()
 
         # Increment total jobs for function
         pipe.hincrby(f"{JOB_STATS_PREFIX}{function_name}", "total", 1)
@@ -93,10 +93,10 @@ class JobMonitoringService:
         """
         Record a successful job execution.
         """
-        if not client:
+        if not cache.client:
             return
 
-        pipe = client.pipeline()
+        pipe = cache.client.pipeline()
         key = f"{JOB_STATS_PREFIX}{function_name}"
 
         pipe.hincrby(key, "success", 1)
@@ -110,10 +110,10 @@ class JobMonitoringService:
         """
         Record a failed job execution.
         """
-        if not client:
+        if not cache.client:
             return
 
-        pipe = client.pipeline()
+        pipe = cache.client.pipeline()
         key = f"{JOB_STATS_PREFIX}{function_name}"
 
         pipe.hincrby(key, "failed", 1)
@@ -130,7 +130,7 @@ class JobMonitoringService:
         """
         Get aggregated metrics for all job functions.
         """
-        if not client:
+        if not cache.client:
             return {}
 
         # Scan for stats keys
@@ -138,12 +138,12 @@ class JobMonitoringService:
         stats = {}
 
         while True:
-            cursor, keys = await client.scan(cursor, match=f"{JOB_STATS_PREFIX}*", count=100)  # type: ignore
+            cursor, keys = await cache.client.scan(cursor, match=f"{JOB_STATS_PREFIX}*", count=100)  # type: ignore
             for key in keys:
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 func_name = key_str.replace(JOB_STATS_PREFIX, "")
 
-                data = await client.hgetall(key)  # type: ignore
+                data = await cache.client.hgetall(key)  # type: ignore
                 if data:
                     stats[func_name] = self._parse_metrics(data)
 
@@ -182,11 +182,11 @@ class JobMonitoringService:
         """
         Get items from the Dead Letter Queue.
         """
-        if not client:
+        if not cache.client:
             return []
 
         # LRANGE is 0-based inclusive
-        items = await client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore
+        items = await cache.client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore
         parsed_items = []
 
         for item in items:
@@ -216,17 +216,17 @@ class JobMonitoringService:
         """
         Get the current size of the Dead Letter Queue.
         """
-        if not client:
+        if not cache.client:
             return 0
-        return await client.llen(DLQ_KEY)  # type: ignore
+        return await cache.client.llen(DLQ_KEY)  # type: ignore
 
     async def clear_dlq(self) -> bool:
         """
         Clear the Dead Letter Queue.
         """
-        if not client:
+        if not cache.client:
             return False
-        await client.delete(DLQ_KEY)  # type: ignore
+        await cache.client.delete(DLQ_KEY)  # type: ignore
         return True
 
     async def get_summary(self) -> dict[str, Any]:
