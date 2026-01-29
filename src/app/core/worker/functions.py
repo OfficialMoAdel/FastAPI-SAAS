@@ -3,8 +3,10 @@ import logging
 from uuid import UUID
 
 from arq.worker import Worker
+from sqlalchemy import text
 
 from src.app.core.db.database import local_session
+from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.webhooks.service import WebhookService
 
 try:
@@ -32,14 +34,28 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
     if isinstance(delivery_id, str):
         delivery_id = UUID(delivery_id)
 
-    async with local_session() as db:
-        service = WebhookService(db)
-        try:
-            await service.deliver_webhook(delivery_id)
-            return f"Webhook {delivery_id} delivered."
-        except Exception as e:
-            logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
-            raise e
+    # First, get tenant_id from delivery record (bypass needed for lookup)
+    async with job_bypass_context("Fetching tenant_id for webhook delivery"):
+        async with local_session() as db:
+            result = await db.execute(
+                text("SELECT tenant_id FROM webhook_deliveries WHERE id = :id"),
+                {"id": str(delivery_id)},
+            )
+            row = result.fetchone()
+            if not row:
+                raise ValueError(f"Webhook delivery {delivery_id} not found")
+            tenant_id = row[0]
+
+    # Now process with proper tenant context
+    async with job_tenant_context(tenant_id):
+        async with local_session() as db:
+            service = WebhookService(db)
+            try:
+                await service.deliver_webhook(delivery_id)
+                return f"Webhook {delivery_id} delivered."
+            except Exception as e:
+                logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
+                raise e
 
 
 async def migrate_sessions_task(ctx: Worker) -> str:
@@ -60,6 +76,8 @@ async def flush_audit_logs_task(ctx: dict) -> str:
 
     Should be scheduled as a cron job (every 10-60 seconds).
     Drains the Redis buffer completely in batches of 100.
+
+    System task - requires RLS bypass.
     """
     from src.app.modules.audit_logs.service import (
         AUDIT_LOG_BATCH_SIZE,
@@ -69,20 +87,21 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     logging.info("Starting audit log flush task")
     total = 0
 
-    try:
-        # Drain buffer completely
-        while True:
-            flushed = await flush_audit_log_buffer()
-            total += flushed
-            if flushed < AUDIT_LOG_BATCH_SIZE:
-                break
+    async with job_bypass_context("Flushing audit logs to database"):
+        try:
+            # Drain buffer completely
+            while True:
+                flushed = await flush_audit_log_buffer()
+                total += flushed
+                if flushed < AUDIT_LOG_BATCH_SIZE:
+                    break
 
-        if total > 0:
-            logging.info(f"Flushed {total} audit logs to database")
-        return f"Flushed {total} audit logs."
-    except Exception as e:
-        logging.error(f"Audit log flush failed: {e}")
-        raise e
+            if total > 0:
+                logging.info(f"Flushed {total} audit logs to database")
+            return f"Flushed {total} audit logs."
+        except Exception as e:
+            logging.error(f"Audit log flush failed: {e}")
+            raise e
 
 
 async def sync_bloom_filter_task(ctx: dict) -> str:
@@ -90,18 +109,22 @@ async def sync_bloom_filter_task(ctx: dict) -> str:
 
     Should be scheduled as a cron job (every 5 minutes).
     Ensures all instances have consistent Bloom filter state for token blacklist.
+
+    System task - requires RLS bypass.
     """
     from src.app.core.security.bloom_filter import sync_bloom_filter_from_redis
 
     logging.info("Starting Bloom filter sync task")
-    try:
-        count = await sync_bloom_filter_from_redis()
-        if count > 0:
-            logging.info(f"Synced {count} tokens to Bloom filter")
-        return f"Synced {count} tokens to Bloom filter."
-    except Exception as e:
-        logging.error(f"Bloom filter sync failed: {e}")
-        raise e
+
+    async with job_bypass_context("Syncing bloom filter from Redis"):
+        try:
+            count = await sync_bloom_filter_from_redis()
+            if count > 0:
+                logging.info(f"Synced {count} tokens to Bloom filter")
+            return f"Synced {count} tokens to Bloom filter."
+        except Exception as e:
+            logging.error(f"Bloom filter sync failed: {e}")
+            raise e
 
 
 # -------- base functions --------

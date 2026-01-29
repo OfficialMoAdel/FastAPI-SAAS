@@ -4,6 +4,7 @@ This middleware:
 - Validates X-Tenant-ID header on all requests except whitelisted paths
 - Looks up tenant in database and validates it's active
 - Sets tenant context for downstream request processing
+- Sets PostgreSQL RLS session variables for database-level isolation
 - Clears context in finally block to prevent leakage
 
 Performance Optimization (R2-HYBRID MED-1):
@@ -17,18 +18,19 @@ from typing import TYPE_CHECKING
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
-from sqlalchemy import select
+from sqlalchemy import select, text
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
 from src.app.core.config import settings
-from src.app.core.db.database import local_session
+from src.app.core.db.database import async_engine, local_session
+from src.app.core.db.rls import RLS_TENANT_VAR, RLS_USER_VAR
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
 from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
-    from sqlalchemy.ext.asyncio import AsyncSession
+    pass
 
 logger = get_logger(__name__)
 
@@ -88,6 +90,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request and validate tenant header.
 
+        Sets both application-level and database-level (RLS) tenant context.
+
         Args:
             request: The incoming request.
             call_next: The next middleware or route handler.
@@ -101,67 +105,88 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if is_path_exempt(path) or request.method == "OPTIONS":
             return await call_next(request)
 
-        try:
-            tenant_slug = request.headers.get(TENANT_HEADER)
+        # Acquire a connection from the pool for this request
+        async with async_engine.connect() as connection:
+            try:
+                tenant_slug = request.headers.get(TENANT_HEADER)
 
-            if not tenant_slug or not tenant_slug.strip():
-                logger.warning(
-                    "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
-                    path,
-                    request.method,
-                    request.client.host if request.client else "unknown",
+                if not tenant_slug or not tenant_slug.strip():
+                    logger.warning(
+                        "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
+                        path,
+                        request.method,
+                        request.client.host if request.client else "unknown",
+                    )
+                    return JSONResponse(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        content={"detail": f"Missing required header: {TENANT_HEADER}"},
+                    )
+
+                # Normalize slug to ensure case-insensitive lookup
+                tenant_slug = tenant_slug.strip().lower()
+
+                tenant = await self._get_tenant_by_slug(tenant_slug)
+
+                if tenant is None:
+                    logger.warning(
+                        "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
+                        tenant_slug,
+                        path,
+                        request.method,
+                        request.client.host if request.client else "unknown",
+                    )
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Access denied"},
+                    )
+
+                if not tenant.is_active:
+                    logger.warning(
+                        "Tenant resolution failed: inactive_tenant | slug=%s | "
+                        "tenant_id=%s | path=%s | method=%s | client=%s",
+                        tenant_slug,
+                        tenant.id,
+                        path,
+                        request.method,
+                        request.client.host if request.client else "unknown",
+                    )
+                    return JSONResponse(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        content={"detail": "Tenant inactive. Contact support."},
+                    )
+
+                # Set application-level tenant context
+                set_tenant_context(tenant)
+
+                # Set PostgreSQL RLS session variables on this connection
+                await connection.execute(
+                    text(f"SET LOCAL {RLS_TENANT_VAR} = :tenant_id"),
+                    {"tenant_id": str(tenant.id)},
                 )
-                return JSONResponse(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    content={"detail": f"Missing required header: {TENANT_HEADER}"},
-                )
-
-            # Normalize slug to ensure case-insensitive lookup
-            tenant_slug = tenant_slug.strip().lower()
-
-            tenant = await self._get_tenant_by_slug(tenant_slug)
-
-            if tenant is None:
-                logger.warning(
-                    "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
-                    tenant_slug,
-                    path,
-                    request.method,
-                    request.client.host if request.client else "unknown",
-                )
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"detail": "Access denied"},
-                )
-
-            if not tenant.is_active:
-                logger.warning(
-                    "Tenant resolution failed: inactive_tenant | slug=%s | "
-                    "tenant_id=%s | path=%s | method=%s | client=%s",
+                logger.debug(
+                    "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s | rls_context=set",
                     tenant_slug,
                     tenant.id,
                     path,
-                    request.method,
-                    request.client.host if request.client else "unknown",
-                )
-                return JSONResponse(
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    content={"detail": "Tenant inactive. Contact support."},
                 )
 
-            set_tenant_context(tenant)
-            logger.debug(
-                "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s",
-                tenant_slug,
-                tenant.id,
-                path,
-            )
+                # Store connection in request state for use by handlers
+                request.state.rls_connection = connection
 
-            response = await call_next(request)
-            return response
+                response = await call_next(request)
+                return response
 
-        finally:
-            clear_tenant_context()
+            finally:
+                # Clear RLS context before returning connection to pool
+                try:
+                    await connection.execute(text(f"RESET {RLS_TENANT_VAR}"))
+                    await connection.execute(text(f"RESET {RLS_USER_VAR}"))
+                    logger.debug("RLS context cleared")
+                except Exception as e:
+                    logger.warning("Failed to clear RLS context: %s", e)
+
+                # Clear application-level tenant context
+                clear_tenant_context()
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | None:
         """Look up tenant by slug with L1+L2 caching.
@@ -226,7 +251,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # L3: Cache miss - query DB
         async with local_session() as session:
-            session: AsyncSession
             stmt = select(Tenant).where(Tenant.slug == slug)
             result = await session.execute(stmt)
             tenant = result.scalar_one_or_none()
