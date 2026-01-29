@@ -33,6 +33,7 @@ from ...modules.user_preferences.router import router as user_preferences_router
 from ...modules.users.router import router as users_router
 from ...modules.webhooks.router import router as webhooks_router
 from ..v1.admin.circuit_breakers import router as circuit_breakers_router
+from ..v1.admin.jobs import router as jobs_router
 
 router = APIRouter(prefix="/v1")
 router.include_router(health_router)
@@ -72,3 +73,4 @@ router.include_router(configurations_router)  # API compatibility layer (Stripe)
 router.include_router(ai_router)
 # Admin endpoints
 router.include_router(circuit_breakers_router, prefix="/admin")
+router.include_router(jobs_router, prefix="/admin")

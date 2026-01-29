@@ -11,7 +11,7 @@ from src.app.schemas.job import (
     JobSummaryResponse,
 )
 
-router = APIRouter()
+router = APIRouter(prefix="/jobs", tags=["admin", "jobs"])
 
 
 @router.get("/summary", response_model=JobSummaryResponse)
