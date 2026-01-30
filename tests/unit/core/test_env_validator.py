@@ -1,10 +1,10 @@
 import os
-import logging
 from unittest import mock
+
 import pytest
+
 from src.app.core.env_validator import (
     EnvironmentValidator,
-    ValidationResult,
     ValidationSeverity,
 )
 

@@ -9,21 +9,21 @@ Usage:
     API route handlers.
 """
 
-import asyncio
-from typing import Any, Annotated
+from typing import Annotated, Any
 
-from fastapi import Depends, APIRouter, HTTPException
-from sqlalchemy.ext.asyncio import AsyncSession
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.core.db.database import async_get_db
 
 # Import the circuit breaker utilities
 from src.app.core.resilience import (
+    db_circuit,
     execute_query_with_circuit_breaker,
     execute_transaction_with_circuit_breaker,
     get_read_only_fallback,
-    db_circuit,
 )
-from src.app.core.db.database import async_get_db
 from src.app.core.utils.circuit_breaker import CircuitState
 
 # Mock router for examples
@@ -165,7 +165,8 @@ async def create_post(title: str, db: Annotated[AsyncSession, Depends(async_get_
 # Example 5: Integration with FastAPI Dependency
 # -----------------------------------------------------------------------------
 # You can create a reusable dependency for resilience
-from typing import Callable, Any
+from collections.abc import Callable
+from typing import Any
 
 
 async def resilient_query_runner(db: Annotated[AsyncSession, Depends(async_get_db)]) -> Callable[..., Any]:

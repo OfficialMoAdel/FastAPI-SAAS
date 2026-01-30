@@ -8,13 +8,13 @@ retrieve metrics, and inspect the Dead Letter Queue (DLQ).
 import asyncio
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 # Add project root to path
 sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 from src.app.core.job_monitoring import JobMonitoringService
-from src.app.core.setup import create_redis_cache_pool, close_redis_cache_pool
+from src.app.core.setup import close_redis_cache_pool, create_redis_cache_pool
 
 
 async def main():
@@ -29,7 +29,7 @@ async def main():
 
         # 1. Simulate Job Success
         job_id_success = "job_success_001"
-        start_time = datetime.now(timezone.utc).timestamp()
+        start_time = datetime.now(UTC).timestamp()
 
         print(f"\n[1] Starting job {job_id_success} ({function_name})...")
         await service.record_job_start(job_id_success, function_name)
@@ -42,7 +42,7 @@ async def main():
 
         # 2. Simulate Job Failure
         job_id_fail = "job_fail_002"
-        start_time_fail = datetime.now(timezone.utc).timestamp()
+        start_time_fail = datetime.now(UTC).timestamp()
 
         print(f"\n[3] Starting job {job_id_fail} ({function_name})...")
         await service.record_job_start(job_id_fail, function_name)

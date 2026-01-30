@@ -1,14 +1,14 @@
 import asyncio
-import sys
 import os
+import sys
 
 # Add src to path
 sys.path.append(os.getcwd())
 
 from src.app.core.db.database import async_session_maker
-from src.app.modules.users.crud import crud_users
 from src.app.modules.tiers.crud import crud_tiers
 from src.app.modules.tiers.schemas import TierCreateInternal
+from src.app.modules.users.crud import crud_users
 
 
 async def upgrade_perf_user():

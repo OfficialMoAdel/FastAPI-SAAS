@@ -1,8 +1,10 @@
-import pytest
 import time
-from unittest.mock import MagicMock, AsyncMock, patch
-from typing import Any, Dict, List, Optional
-from src.app.core.job_monitoring import JobMonitoringService, get_job_monitor
+from typing import Dict, List
+from unittest.mock import patch
+
+import pytest
+
+from src.app.core.job_monitoring import JobMonitoringService
 
 
 # Mock Redis implementation for Hash and List operations

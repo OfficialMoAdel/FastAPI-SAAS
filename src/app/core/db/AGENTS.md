@@ -173,6 +173,7 @@ Protects the database from cascading failures during outages or high load. Autom
 - **Static Fallback**: Returns default values (empty lists, safe defaults) if configured.
 - **Transaction Retries**: Automatically retries transient transaction failures with exponential backoff.
 - **Read-Only Mode**: Helpers to detect degraded state and prevent write operations.
+- **Admin Control**: Reset circuit breakers via API (`/admin/circuit-breakers`).
 
 ### Usage Patterns
 

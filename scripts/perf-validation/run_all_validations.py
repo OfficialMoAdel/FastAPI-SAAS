@@ -22,8 +22,6 @@ from pathlib import Path
 from typing import Any
 
 import structlog
-
-from baseline_capture import BASELINE_METRICS
 from compare_results import compare_with_baseline
 from isomorphism_validator import run_isomorphism_validation
 from report_generator import generate_html_report

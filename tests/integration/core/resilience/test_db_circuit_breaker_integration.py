@@ -4,19 +4,18 @@ Tests real database interactions, cache fallback, and circuit breaker behavior
 with actual Postgres and Redis instances.
 """
 
-import asyncio
 import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.app.core.resilience.db_circuit_breaker import (
     db_circuit,
     execute_query_with_circuit_breaker,
     execute_transaction_with_circuit_breaker,
     get_read_only_fallback,
 )
-from src.app.core.utils.circuit_breaker import CircuitState, CircuitBreakerOpen
-from src.app.core.utils.cache import cache as cache_decorator
 from src.app.core.utils.cache import client as redis_client
+from src.app.core.utils.circuit_breaker import CircuitState
 
 
 @pytest.fixture(autouse=True)

@@ -1,12 +1,14 @@
-import pytest
 import time
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock
+
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
+
 from src.app.core.resilience.db_circuit_breaker import (
+    db_circuit,
     execute_query_with_circuit_breaker,
     execute_transaction_with_circuit_breaker,
     get_read_only_fallback,
-    db_circuit,
 )
 from src.app.core.utils.circuit_breaker import CircuitState
 

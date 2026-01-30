@@ -7,14 +7,14 @@ Note: These tests use the router directly without database dependencies since
 circuit breakers are in-memory only. This avoids tenant middleware issues.
 """
 
-import pytest
 import time
+
+import pytest
 from fastapi.testclient import TestClient
 
 from src.app.api.v1.admin.circuit_breakers import router
 from src.app.core.resilience.registry import ServiceType, get_registry
 from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
-
 
 # ============================================================================
 # Fixtures

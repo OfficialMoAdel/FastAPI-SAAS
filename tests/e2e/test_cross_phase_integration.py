@@ -1,11 +1,10 @@
-import pytest
-import pytest_asyncio
 import asyncio
-from unittest.mock import MagicMock, patch
 
+import pytest
+
+from src.app.core.job_monitoring import get_job_monitor
 from src.app.core.resilience.db_circuit_breaker import db_circuit
-from src.app.core.job_monitoring import get_job_monitor, JobMonitoringService
-from src.app.core.utils.circuit_breaker import CircuitState, CircuitBreakerOpen
+from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, CircuitState
 
 
 @pytest.fixture

@@ -1,8 +1,7 @@
-import pytest
-import asyncio
 from unittest.mock import AsyncMock, patch
+
+import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import text
 
 from src.app.core.resilience.db_circuit_breaker import (
     db_circuit,
@@ -10,8 +9,7 @@ from src.app.core.resilience.db_circuit_breaker import (
     execute_transaction_with_circuit_breaker,
     get_read_only_fallback,
 )
-from src.app.core.utils.circuit_breaker import CircuitState, CircuitBreakerOpen
-from src.app.core.utils import cache
+from src.app.core.utils.circuit_breaker import CircuitState
 
 
 @pytest.mark.asyncio

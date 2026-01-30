@@ -23,54 +23,54 @@ async def init_test_db():
     """Create all tables and stamp alembic to HEAD."""
     # Import after path setup
     from app.core.db.database import Base, async_engine
+    from app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
 
     # Import all models from the central models module
     # This registers them with Base.metadata
     from app.models import (  # noqa: F401
         APIKey,
         AuditLog,
+        EmailTemplateOverride,
         EmailVerificationToken,
-        PasswordResetToken,
         FeatureFlagOverride,
         File,
         MagicLink,
-        EmailTemplateOverride,
         Notification,
         PasskeyCredential,
+        PasswordResetToken,
+        Permission,
         Post,
         RateLimit,
-        Permission,
         Role,
         RolePermission,
-        UserRole,
-        UserSSOConnection,
         StorageSettings,
         Tenant,
         Tier,
-        UserPreferences,
         User,
+        UserPreferences,
+        UserRole,
+        UserSSOConnection,
         WebhookDelivery,
         WebhookEndpoint,
+    )
+    from app.modules.ai.models import (  # noqa: F401
+        AIChatMessage,
+        AIChatSession,
+        AISettings,
+    )
+    from app.modules.billing.models import (  # noqa: F401
+        BillingRecord,
+        Pricing,
+        Product,
+        StripeSettings,
+        SubscriptionPlan,
+        UserSubscription,
     )
 
     # Import additional models not in the central module
     from app.modules.sso_settings.models import SSOSettings  # noqa: F401
-    from app.modules.billing.models import (  # noqa: F401
-        StripeSettings,
-        SubscriptionPlan,
-        Product,
-        Pricing,
-        UserSubscription,
-        BillingRecord,
-    )
-    from app.modules.ai.models import (  # noqa: F401
-        AIChatSession,
-        AIChatMessage,
-        AISettings,
-    )
-    from app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
 
-    print(f"Creating tables in database...")
+    print("Creating tables in database...")
     print(f"Engine URL: {async_engine.url}")
 
     async with async_engine.begin() as conn:

@@ -1,11 +1,8 @@
-import asyncio
-import httpx
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 # Use absolute import instead of relative to avoid import errors
 from src.app.main import app
-from src.app.core.config import settings
 
 # Circuit Breaker states
 CLOSED = "CLOSED"
@@ -48,7 +45,7 @@ async def test_smoke_circuit_breaker_registry(e2e_client):
     # registry directly if possible, OR rely on the fact that if the app started, registry is initialized.
 
     # Let's try to access the circuit breaker registry directly from the app state or singleton
-    from src.app.core.resilience.registry import get_registry, ServiceType, CircuitState
+    from src.app.core.resilience.registry import CircuitState, get_registry
 
     # Verify default circuits are registered (webhook, email)
     # These are registered in src/app/core/utils/circuit_breaker.py which is imported by app startup
@@ -78,7 +75,7 @@ async def test_circuit_breaker_state_transition_simulation():
     """
     Simulate state transitions in a circuit breaker.
     """
-    from src.app.core.resilience.registry import get_registry, CircuitState
+    from src.app.core.resilience.registry import CircuitState, get_registry
     from src.app.core.utils.circuit_breaker import CircuitBreakerOpen
 
     registry = get_registry()

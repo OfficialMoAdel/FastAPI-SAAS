@@ -266,6 +266,18 @@ uv run pytest tests/test_migrations.py -v
 uv run pytest tests/test_models.py -v
 ```
 
+### Resilience Testing (Phase 2)
+```bash
+# Test circuit breaker logic
+uv run pytest tests/unit/core/resilience/test_circuit_breaker.py -v
+
+# Test registry
+uv run pytest tests/unit/core/resilience/test_registry.py -v
+
+# Test database circuit breaker integration
+uv run pytest tests/integration/core/resilience/test_db_circuit_breaker_integration.py -v
+```
+
 ## Phase 1 Security Testing
 
 ### Log Sanitizer Unit Tests
@@ -355,6 +367,79 @@ uv run pytest --durations=10
 # Run tests in parallel
 uv run pytest -n auto
 ```
+
+## Phase 2 Resilience Testing
+
+### Circuit Breaker Unit Tests
+Location: `tests/unit/core/resilience/test_circuit_breaker.py`
+
+Purpose: Verify state transitions, failure counting, and recovery logic.
+
+Run:
+```bash
+uv run pytest tests/unit/core/resilience/test_circuit_breaker.py -v
+```
+
+Test Coverage:
+- State transitions (CLOSED -> OPEN -> HALF_OPEN -> CLOSED)
+- Failure threshold enforcement
+- Recovery timeout handling
+- Success threshold for recovery
+- Concurrency safety
+
+Expected Results: 12 tests, 100% pass rate
+
+### Circuit Breaker Registry Tests
+Location: `tests/unit/core/resilience/test_registry.py`
+
+Purpose: Verify centralized management of circuit breakers.
+
+Run:
+```bash
+uv run pytest tests/unit/core/resilience/test_registry.py -v
+```
+
+Test Coverage:
+- Registration and retrieval
+- Singleton pattern
+- Reset operations
+- Health summary generation
+
+Expected Results: 8 tests, 100% pass rate
+
+### DB Circuit Breaker Integration Tests
+Location: `tests/integration/core/resilience/test_db_circuit_breaker_integration.py`
+
+Purpose: Verify database protection and fallback mechanisms.
+
+Run:
+```bash
+uv run pytest tests/integration/core/resilience/test_db_circuit_breaker_integration.py -v
+```
+
+Test Coverage:
+- Circuit opening on DB failure
+- Cache fallback usage
+- Static fallback usage
+- Transaction retries
+- Read-only mode degradation
+
+Expected Results: 6 tests, 100% pass rate
+
+### Performance Benchmarks (Phase 2)
+Location: `tests/performance/test_resilience_benchmarks.py`
+
+Purpose: Ensure resilience features add minimal overhead.
+
+Run:
+```bash
+uv run pytest tests/performance/test_resilience_benchmarks.py -v
+```
+
+Metrics:
+- Circuit breaker overhead: < 1ms
+- Registry lookup overhead: < 0.1ms
+- Job monitoring overhead: < 5ms
 
 ## Phase 1 Security Testing
 

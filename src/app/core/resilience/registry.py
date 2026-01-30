@@ -106,9 +106,7 @@ class CircuitBreakerRegistry:
             tags=tags,
         )
 
-        logger.info(
-            f"Registered circuit breaker: {name} ({service_type.value})"
-        )
+        logger.info(f"Registered circuit breaker: {name} ({service_type.value})")
 
         return breaker
 
@@ -120,6 +118,7 @@ class CircuitBreakerRegistry:
         success_threshold: int = 2,
         service_type: ServiceType = ServiceType.UNKNOWN,
         description: str = "",
+        tags: list[str] | None = None,
     ) -> CircuitBreaker:
         """Create and register a new circuit breaker.
 
@@ -131,6 +130,7 @@ class CircuitBreakerRegistry:
             success_threshold: Successes needed to close from half-open
             service_type: Category of service
             description: Human-readable description
+            tags: Optional categorization tags
 
         Returns
         -------
@@ -148,6 +148,7 @@ class CircuitBreakerRegistry:
             breaker=breaker,
             description=description,
             service_type=service_type,
+            tags=tags,
         )
 
     def get(self, name: str) -> CircuitBreaker | None:
@@ -202,11 +203,7 @@ class CircuitBreakerRegistry:
         -------
             Dictionary of circuit breakers with the specified tag
         """
-        return {
-            name: spec
-            for name, spec in self._breakers.items()
-            if spec.tags and tag in spec.tags
-        }
+        return {name: spec for name, spec in self._breakers.items() if spec.tags and tag in spec.tags}
 
     def get_by_state(self, state: CircuitState) -> list[CircuitBreaker]:
         """Get all circuit breakers in a specific state.
@@ -219,11 +216,7 @@ class CircuitBreakerRegistry:
         -------
             List of circuit breakers in the specified state
         """
-        return [
-            spec.breaker
-            for spec in self._breakers.values()
-            if spec.breaker.state == state
-        ]
+        return [spec.breaker for spec in self._breakers.values() if spec.breaker.state == state]
 
     def get_by_service_type(self, service_type: ServiceType) -> list[CircuitBreaker]:
         """Get all circuit breakers for a specific service type.
@@ -236,11 +229,7 @@ class CircuitBreakerRegistry:
         -------
             List of circuit breakers for the specified service type
         """
-        return [
-            spec.breaker
-            for spec in self._breakers.values()
-            if spec.service_type == service_type
-        ]
+        return [spec.breaker for spec in self._breakers.values() if spec.service_type == service_type]
 
     async def reset(self, name: str) -> bool:
         """Reset a circuit breaker to closed state.

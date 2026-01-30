@@ -1,10 +1,9 @@
-import asyncio
+from datetime import UTC, datetime
+
 import pytest
+
 from src.app.core.job_monitoring import JobMonitoringService
 from src.app.core.utils import cache
-from arq.connections import ArqRedis
-from unittest.mock import MagicMock
-from datetime import datetime, timezone
 
 
 # Use the existing integration test setup style
@@ -43,7 +42,7 @@ async def test_job_monitoring_flow():
     assert stats.get("failed", 0) == 0
 
     # 2. Record Success
-    start_time = datetime.now(timezone.utc).timestamp()
+    start_time = datetime.now(UTC).timestamp()
     await service.record_job_success(job_id, function_name, start_time)
 
     # Verify 'success' count

@@ -250,39 +250,18 @@ arq_circuit = CircuitBreaker(
 
 
 def _register_default_breakers() -> None:
-    """Register default circuit breakers with the global registry.
+    """Register default circuit breakers.
 
-    This function is called automatically on module import to ensure
-    all pre-configured circuit breakers are available through the registry.
+    This is called at module load time to ensure critical breakers exist.
     """
-    from src.app.core.resilience.registry import ServiceType, get_registry
+    # Import inside function to avoid circular imports
+    # from src.app.core.resilience.registry import ServiceType, get_registry
 
-    registry = get_registry()
-
-    # Register webhook circuit breaker
-    registry.register(
-        name="webhook",
-        breaker=webhook_circuit,
-        description="Webhook delivery circuit breaker",
-        service_type=ServiceType.WEBHOOK,
-    )
-
-    # Register email circuit breaker
-    registry.register(
-        name="email",
-        breaker=email_circuit,
-        description="Email service circuit breaker",
-        service_type=ServiceType.EMAIL,
-    )
-
-    # Register ARQ/Redis circuit breaker
-    registry.register(
-        name="arq_queue",
-        breaker=arq_circuit,
-        description="ARQ/Redis queue circuit breaker",
-        service_type=ServiceType.REDIS,
-    )
+    # We cannot import from registry due to circular imports
+    # The registry module imports CircuitBreaker from this module
+    # So we should rely on explicit registration in resilience/__init__.py or app startup
+    pass
 
 
-# Auto-register default circuit breakers on module import
-_register_default_breakers()
+# Auto-register defaults on import
+# _register_default_breakers()

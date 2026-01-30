@@ -1,10 +1,12 @@
-import pytest
 import asyncio
-from unittest.mock import MagicMock, AsyncMock, patch
-from src.app.core.resilience.registry import CircuitBreakerRegistry, ServiceType
-from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
-from src.app.core.resilience import db_circuit_breaker
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
 from src.app.core.job_monitoring import JobMonitoringService
+from src.app.core.resilience import db_circuit_breaker
+from src.app.core.resilience.registry import CircuitBreakerRegistry, ServiceType
+from src.app.core.utils.circuit_breaker import CircuitBreaker
 
 # --- Circuit Breaker Registry Benchmarks ---
 

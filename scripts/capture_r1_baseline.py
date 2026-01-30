@@ -23,7 +23,7 @@ import asyncio
 import json
 import sys
 import timeit
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 # Add src to path for imports
@@ -70,7 +70,7 @@ async def benchmark_session_eviction() -> dict:
             session_data = {
                 "user_id": f"user_{i}",
                 "session_id": f"session_{i}",
-                "created_at": datetime.now(timezone.utc).isoformat(),
+                "created_at": datetime.now(UTC).isoformat(),
             }
             test_sessions.append(json.dumps(session_data))
 
@@ -104,7 +104,6 @@ async def benchmark_session_eviction() -> dict:
 async def benchmark_jwt_pem_parsing() -> dict:
     """Benchmark JWT decode with PEM string parsing overhead."""
     try:
-        import jwt
 
         # Sample RS256 token and public key (for testing only)
         # In production, this would be real keys
@@ -181,7 +180,7 @@ async def capture_baseline() -> dict:
     print("Capturing R1-OPUS baseline performance metrics...")
 
     results = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "timestamp": datetime.now(UTC).isoformat(),
         "environment": {
             "python": f"{sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro}",
             "note": "Redis and PostgreSQL versions require runtime connection",

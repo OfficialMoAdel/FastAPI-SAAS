@@ -8,8 +8,8 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.utils import cache
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
+from src.app.core.utils import cache
 from src.app.core.utils.circuit_breaker import CircuitState
 
 logger = logging.getLogger("db.circuit_breaker")

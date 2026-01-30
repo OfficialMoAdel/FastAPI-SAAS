@@ -120,6 +120,29 @@ async def send_email(ctx: dict, recipient: str, subject: str, body: str) -> None
     logger.info(f"Email sent to {recipient}: {subject}")
 ```
 
+### Job Monitoring (Phase 2)
+✅ DO: Use JobMonitor for background job observability
+```python
+# src/app/core/jobs/monitor.py (lines 10-30)
+from src.app.core.job_monitoring import get_job_monitor
+
+monitor = get_job_monitor()
+await monitor.track_job_start(
+    job_id=ctx["job_id"],
+    function_name="process_data",
+    tenant_id=tenant_id
+)
+try:
+    # ... job logic ...
+    await monitor.track_job_complete(job_id=ctx["job_id"], status="success")
+except Exception as e:
+    await monitor.track_job_complete(
+        job_id=ctx["job_id"], 
+        status="failed", 
+        error=str(e)
+    )
+```
+
 ### Caching Patterns
 ✅ DO: Use Redis for caching with proper serialization
 ```python
@@ -211,6 +234,32 @@ def get_current_tenant() -> Tenant:
 - HTTP Exceptions: `src/app/core/exceptions/http_exceptions.py` - Custom HTTP exceptions
 - Cache Exceptions: `src/app/core/exceptions/cache_exceptions.py` - Cache-related exceptions
 
+### Resilience Patterns
+✅ DO: Use database circuit breaker for fault tolerance
+```python
+# src/app/core/resilience/db_circuit_breaker.py
+from src.app.core.resilience import execute_query_with_circuit_breaker
+
+results = await execute_query_with_circuit_breaker(
+    db=db,
+    query="SELECT * FROM users WHERE tenant_id = :tid",
+    params={"tid": tenant_id},
+    cache_key=f"users:list:{tenant_id}",
+    cache_ttl=300
+)
+```
+
+✅ DO: Use centralized registry for circuit breaker management
+```python
+# src/app/core/resilience/registry.py
+from src.app.core.resilience import get_registry
+
+registry = get_registry()
+breaker = registry.get("database")
+if breaker.is_open:
+    return get_fallback_response()
+```
+
 ### Multi-Tenancy
 - Tenant Context: `src/app/core/tenancy/context.py` - ContextVar for async-safe tenant isolation
 - Tenant Middleware: `src/app/middleware/tenant.py` - X-Tenant-ID header validation
@@ -219,6 +268,7 @@ def get_current_tenant() -> Tenant:
 ### Observability
 - Log Sanitizer: `src/app/core/observability/log_sanitizer.py` - Strips sensitive data from logs
 - Structlog Config: `src/app/core/observability/logger.py` - Logging configuration with sanitizer integration
+- Job Monitoring: `src/app/core/job_monitoring.py` - Background job status and health tracking
 
 ## Observability Module
 Location: src/app/core/observability/

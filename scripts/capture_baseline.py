@@ -19,8 +19,8 @@ import statistics
 import subprocess
 import sys
 import time
-from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -90,7 +90,7 @@ class BaselineReport:
     """Complete baseline performance report."""
 
     round_number: int
-    captured_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    captured_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     git_commit: str = ""
     git_branch: str = ""
     git_dirty: bool = False

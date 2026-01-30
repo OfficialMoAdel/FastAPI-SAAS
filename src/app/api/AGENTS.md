@@ -90,6 +90,10 @@ async def get_user(id: int):
 - Users Router: `src/app/modules/users/router.py` - User management
 - Tiers Router: `src/app/modules/tiers/router.py` - Subscription tiers
 
+### Admin Routers (Phase 2)
+- Circuit Breakers: `src/app/api/v1/admin/circuit_breakers.py` - Circuit breaker monitoring and control
+- Jobs Admin: `src/app/api/v1/admin/jobs.py` - Background job monitoring and DLQ management
+
 ## JIT Index Hints
 
 ### Find API Routes
