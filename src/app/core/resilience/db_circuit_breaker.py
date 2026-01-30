@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.utils import cache
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
+from src.app.core.utils.circuit_breaker import CircuitState
 
 logger = logging.getLogger("db.circuit_breaker")
 
@@ -46,10 +47,9 @@ async def execute_query_with_circuit_breaker(
     Returns:
         Query results or fallback data
     """
-    from src.app.core.utils.circuit_breaker import CircuitState
-
     # Check circuit state first (fast path)
-    if db_circuit.state == CircuitState.OPEN:
+    current_state = db_circuit.state
+    if current_state == CircuitState.OPEN:
         logger.warning("Database circuit OPEN, attempting cache fallback")
 
         # Try cache fallback
@@ -72,6 +72,12 @@ async def execute_query_with_circuit_breaker(
 
         # No fallback available
         raise RuntimeError("Database circuit breaker is OPEN and no fallback available")
+
+    # Handle HALF_OPEN transition manually since we aren't using the decorator
+    if current_state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
+        async with db_circuit._lock:
+            if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
+                db_circuit._state = CircuitState.HALF_OPEN
 
     # Execute query
     try:
@@ -135,16 +141,21 @@ async def execute_transaction_with_circuit_breaker(
     Returns:
         List of operation results
     """
-    from src.app.core.utils.circuit_breaker import CircuitState
-
     attempt = 0
     last_error: Optional[Exception] = None
 
     while attempt <= max_retries:
         # Check circuit state
-        if db_circuit.state == CircuitState.OPEN:
+        current_state = db_circuit.state
+        if current_state == CircuitState.OPEN:
             logger.error(f"Database circuit OPEN, aborting transaction after {attempt} attempts")
             break
+
+        # Handle HALF_OPEN transition manually
+        if current_state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
+            async with db_circuit._lock:
+                if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
+                    db_circuit._state = CircuitState.HALF_OPEN
 
         try:
             # Execute operations

@@ -45,7 +45,7 @@ async def set_rls_context(
     try:
         # Set tenant context (required)
         await connection.execute(
-            text(f"SET LOCAL {RLS_TENANT_VAR} = :tenant_id"),
+            text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
             {"tenant_id": tenant_id},
         )
         logger.debug("RLS context set", tenant_id=tenant_id)
@@ -53,7 +53,7 @@ async def set_rls_context(
         # Set user context (optional)
         if user_id:
             await connection.execute(
-                text(f"SET LOCAL {RLS_USER_VAR} = :user_id"),
+                text(f"SELECT set_config('{RLS_USER_VAR}', :user_id, true)"),
                 {"user_id": user_id},
             )
             logger.debug("RLS user context set", user_id=user_id)
@@ -156,7 +156,7 @@ async def bypass_rls(
     try:
         # Set bypass flag
         await connection.execute(
-            text(f"SET LOCAL {RLS_BYPASS_VAR} = 'true'"),
+            text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"),
         )
 
         # Log bypass event (CRITICAL for security audit)
@@ -231,9 +231,7 @@ async def get_current_tenant_id(connection: AsyncConnection) -> str | None:
         Current tenant ID or None if not set
     """
     try:
-        result = await connection.execute(
-            text(f"SELECT current_setting('{RLS_TENANT_VAR}', true)")
-        )
+        result = await connection.execute(text(f"SELECT current_setting('{RLS_TENANT_VAR}', true)"))
         tenant_id = result.scalar()
         return tenant_id if tenant_id else None
     except Exception as e:
@@ -274,9 +272,7 @@ async def verify_rls_enabled(connection: AsyncConnection, table_name: str) -> bo
         return False
 
 
-async def list_rls_policies(
-    connection: AsyncConnection, table_name: str
-) -> list[dict[str, Any]]:
+async def list_rls_policies(connection: AsyncConnection, table_name: str) -> list[dict[str, Any]]:
     """
     List all RLS policies on a table.
 

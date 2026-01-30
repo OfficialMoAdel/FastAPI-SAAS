@@ -159,8 +159,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 set_tenant_context(tenant)
 
                 # Set PostgreSQL RLS session variables on this connection
+                # Use set_config for parameterized query safety with asyncpg
                 await connection.execute(
-                    text(f"SET LOCAL {RLS_TENANT_VAR} = :tenant_id"),
+                    text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
                     {"tenant_id": str(tenant.id)},
                 )
                 logger.debug(
