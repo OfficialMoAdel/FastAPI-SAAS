@@ -150,7 +150,7 @@ def mock_redis_client():
 @pytest.fixture
 def service(mock_redis_client):
     # Patch the imported client in job_monitoring module
-    with patch("src.app.core.job_monitoring.client", mock_redis_client):
+    with patch("src.app.core.utils.cache.client", mock_redis_client):
         yield JobMonitoringService()
 
 
@@ -198,7 +198,7 @@ async def test_get_job_status_not_found(service):
 
 @pytest.mark.asyncio
 async def test_get_job_status_no_redis():
-    with patch("src.app.core.job_monitoring.client", None):
+    with patch("src.app.core.utils.cache.client", None):
         srv = JobMonitoringService()
         status = await srv.get_job_status("any")
         assert status["error"] == "Redis unavailable"
