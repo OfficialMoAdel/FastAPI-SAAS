@@ -21,7 +21,7 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Generic, TypeVar
+from typing import Any, Callable, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -71,7 +71,8 @@ class BaseService(Generic[T]):
         Returns:
             The record if found, None otherwise.
         """
-        return await self.crud.get(db=self.db, id=id)
+        result = await self.crud.get(db=self.db, id=id)
+        return cast(T | None, result)
 
     async def get_multi(
         self,
@@ -99,8 +100,8 @@ class BaseService(Generic[T]):
         )
         # FastCRUD returns dict with 'data' key containing the records list
         if isinstance(result, dict):
-            return result.get("data", [])
-        return result
+            return cast(list[T], result.get("data", []))
+        return cast(list[T], result)
 
     async def create(self, **kwargs: Any) -> T:
         """Create a new record.
@@ -111,7 +112,8 @@ class BaseService(Generic[T]):
         Returns:
             The created record.
         """
-        return await self.crud.create(db=self.db, object=kwargs)
+        result = await self.crud.create(db=self.db, object=kwargs)
+        return cast(T, result)
 
     async def update(self, id: Any, **kwargs: Any) -> T | None:
         """Update a record by ID.
@@ -123,21 +125,19 @@ class BaseService(Generic[T]):
         Returns:
             The updated record if found, None otherwise.
         """
-        return await self.crud.update(db=self.db, object=kwargs, id=id)
+        result = await self.crud.update(db=self.db, object=kwargs, id=id)
+        return cast(T | None, result)
 
-    async def delete(self, id: Any) -> dict[str, Any]:
+    async def delete(self, id: Any) -> None:
         """Delete a record by ID.
 
         Args:
             id: The record ID.
-
-        Returns:
-            Deletion result.
         """
-        return await self.crud.delete(db=self.db, id=id)
+        await self.crud.delete(db=self.db, id=id)
 
 
-def get_base_service(model: type[T]) -> callable:
+def get_base_service(model: type[T]) -> Callable[[AsyncSession], BaseService[T]]:
     """Factory function for creating service instances via DI.
 
     Args:

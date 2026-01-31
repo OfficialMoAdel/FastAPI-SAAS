@@ -19,8 +19,18 @@ def generate_webhook_signature(payload: dict[str, Any], secret: str) -> str:
     -------
         Hexadecimal signature string
     """
-    payload_str = json_dumps(payload, as_str=True)
-    signature = hmac.new(secret.encode("utf-8"), payload_str.encode("utf-8"), hashlib.sha256).hexdigest()
+    if isinstance(payload, bytes):
+        payload_bytes = payload
+    else:
+        # json_dumps returns bytes | str. We need bytes.
+        # If it returns str (unexpected but possible by type hint), encode it.
+        dumped = json_dumps(payload)
+        if isinstance(dumped, str):
+            payload_bytes = dumped.encode("utf-8")
+        else:
+            payload_bytes = dumped
+
+    signature = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
 
     return signature
 

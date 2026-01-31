@@ -11,6 +11,7 @@ from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
 from ...core.utils.cache import async_get_redis
+from ..users.models import User
 from ..users.schemas import UserCreate, UserRead
 from ..users.service import UserService
 from .schemas import (
@@ -55,7 +56,7 @@ async def register(
     request: Request,
     user: UserCreate,
     user_service: Annotated[UserService, Depends(_get_user_service)],
-) -> dict[str, Any]:
+) -> User:
     """Register a new user account."""
     return await user_service.create(user)
 

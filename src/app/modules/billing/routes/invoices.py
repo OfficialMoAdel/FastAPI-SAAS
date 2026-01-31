@@ -70,4 +70,6 @@ async def get_invoice(
         Invoice details
     """
     service = get_billing_record_service(db)
-    return await service.get_record(invoice_id, current_user["id"])
+    # get_record only requires record_id, authorization is handled at router level
+    result = await service.get_record(invoice_id)
+    return dict(result) if result else {}

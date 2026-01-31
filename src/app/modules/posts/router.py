@@ -29,7 +29,7 @@ async def write_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
-    return await service.create(post, current_user)
+    return await service.create_post(post, current_user)
 
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
@@ -47,7 +47,7 @@ async def read_posts(
     items_per_page: int = 10,
 ) -> dict:
     """Get paginated list of posts for a user."""
-    return await service.get_multi(current_user["id"], page, items_per_page)
+    return await service.get_posts(current_user["id"], page, items_per_page)
 
 
 @router.get("/{username}/post/{id}", response_model=PostRead)
@@ -60,7 +60,7 @@ async def read_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
-    return await service.get(id, current_user["id"])
+    return await service.get_post(id, current_user["id"])
 
 
 @router.patch("/{username}/post/{id}")
@@ -74,7 +74,7 @@ async def patch_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
-    return await service.update(id, values, current_user)
+    return await service.update_post(id, values, current_user)
 
 
 @router.delete("/{username}/post/{id}")
@@ -87,7 +87,7 @@ async def erase_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Soft delete a post."""
-    return await service.delete(id, current_user)
+    return await service.delete_post(id, current_user)
 
 
 @router.delete("/{username}/db_post/{id}", dependencies=[Depends(get_current_superuser)])

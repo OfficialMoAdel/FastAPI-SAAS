@@ -1,10 +1,22 @@
 from typing import Annotated
 
+import bcrypt
 from crudadmin import CRUDAdmin
 from crudadmin.admin_interface.model_view import PasswordTransformer
 from pydantic import BaseModel, Field
 
-from ..core.security import get_password_hash
+from ..core.config import settings
+
+
+def _sync_hash_password(password: str) -> str:
+    """Sync wrapper for password hashing (for admin panel)."""
+    hashed: bytes = bcrypt.hashpw(
+        password.encode(),
+        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+    )
+    return hashed.decode()
+
+
 from ..modules.posts.models import Post
 from ..modules.posts.schemas import PostUpdate
 from ..modules.tiers.models import Tier
@@ -32,7 +44,7 @@ def register_admin_views(admin: CRUDAdmin) -> None:
     password_transformer = PasswordTransformer(
         password_field="password",
         hashed_field="hashed_password",
-        hash_function=get_password_hash,
+        hash_function=_sync_hash_password,
         required_fields=["name", "username", "email"],
     )
 

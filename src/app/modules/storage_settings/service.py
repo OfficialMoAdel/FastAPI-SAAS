@@ -21,6 +21,9 @@ from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
 from src.app.modules.storage_settings.models import StorageProviderType, StorageSettings
 from src.app.modules.storage_settings.schemas import (
+    StorageProviderType as SchemaProviderType,
+)
+from src.app.modules.storage_settings.schemas import (
     StorageSettingsCreate,
     StorageSettingsRead,
     StorageSettingsUpdate,
@@ -111,15 +114,18 @@ class StorageSettingsService:
         credentials = self._extract_credentials(data)
 
         # Validate credentials by testing connection (clarification Q3)
-        await self._validate_credentials(data.provider, credentials)
+        # Convert schema enum to model enum for validation
+        await self._validate_credentials(StorageProviderType(data.provider.value), credentials)
 
         # Encrypt credentials
-        encrypted = encrypt_value(json_dumps(credentials, as_str=True))
+        credentials_json = json_dumps(credentials, as_str=True)
+        assert isinstance(credentials_json, str)
+        encrypted = encrypt_value(credentials_json)
 
         # Create settings
         settings = StorageSettings(
             tenant_id=tenant_id,
-            provider=data.provider.value,
+            provider=StorageProviderType(data.provider.value).value,
             credentials_encrypted=encrypted,
             bucket_name=credentials.get("bucket_name") or credentials.get("container_name"),
             region=credentials.get("region"),
@@ -127,7 +133,7 @@ class StorageSettingsService:
             allowed_file_types=data.allowed_file_types,
             max_file_count=data.max_file_count,
             storage_quota_bytes=data.storage_quota_bytes,
-        )
+        )  # type: ignore[call-arg]
 
         self.db.add(settings)
         await self.db.commit()
@@ -169,11 +175,17 @@ class StorageSettingsService:
         new_credentials = self._extract_credentials_optional(data)
         if new_credentials:
             # Validate new credentials
-            provider = data.provider or StorageProviderType(settings.provider)
-            await self._validate_credentials(provider, new_credentials)
+            provider_type = (
+                StorageProviderType(data.provider.value)
+                if data.provider is not None
+                else StorageProviderType(settings.provider)
+            )
+            await self._validate_credentials(provider_type, new_credentials)
 
             # Encrypt with current key (handles rotation automatically)
-            settings.credentials_encrypted = encrypt_value(json_dumps(new_credentials, as_str=True))
+            credentials_json = json_dumps(new_credentials, as_str=True)
+            assert isinstance(credentials_json, str)
+            settings.credentials_encrypted = encrypt_value(credentials_json)
 
             # Update bucket/container name if changed
             settings.bucket_name = (
@@ -236,7 +248,7 @@ class StorageSettingsService:
         return StorageSettingsRead(
             id=settings.id,
             tenant_id=settings.tenant_id,
-            provider=StorageProviderType(settings.provider),
+            provider=SchemaProviderType(settings.provider),
             bucket_name=settings.bucket_name,
             region=settings.region,
             max_file_size_mb=settings.max_file_size_mb,
@@ -294,7 +306,7 @@ class StorageSettingsService:
             return data.local_credentials.model_dump()
         return None
 
-    def _decrypt_credentials(self, settings: StorageSettings) -> dict:
+    def _decrypt_credentials(self, settings: StorageSettings) -> dict[str, str]:
         """Decrypt stored credentials.
 
         Supports key rotation (per clarification Q5) via encryption module.
@@ -308,12 +320,13 @@ class StorageSettingsService:
         if not settings.credentials_encrypted:
             return {}
         decrypted = decrypt_value(settings.credentials_encrypted)
-        return json_loads(decrypted)
+        result: dict[str, str] = json_loads(decrypted)
+        return result
 
     async def _validate_credentials(
         self,
         provider: StorageProviderType,
-        credentials: dict,
+        credentials: dict[str, str],
     ) -> None:
         """Validate credentials by testing connection.
 
@@ -329,21 +342,21 @@ class StorageSettingsService:
         storage = self._create_provider(provider, credentials)
 
         try:
-            is_valid = await storage.validate_connection()
-            if not is_valid:
-                raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials")
+            # Use exists() as a connection validation check
+            # This will fail if credentials are invalid
+            await storage.exists("__connection_test__")
         except Exception as e:
             logger.error(f"Credential validation failed for {provider.value}: {e}")
             raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}")
         finally:
             # Cleanup connection
             if hasattr(storage, "close"):
-                await storage.close()
+                await storage.close()  # type: ignore[attr-defined]
 
     def _create_provider(
         self,
         provider: StorageProviderType,
-        credentials: dict,
+        credentials: dict[str, str],
     ) -> StorageProvider:
         """Create a storage provider instance.
 

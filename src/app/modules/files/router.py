@@ -73,13 +73,13 @@ async def upload_file(
     """
     # Get file size without reading entire content into memory
     # Use UploadFile.size if available (FastAPI provides this from Content-Length header)
-    # Otherwise, use seek to determine size efficiently
+    # Otherwise, read content to determine size (UploadFile doesn't expose tell())
     if file.size is not None:
         size_bytes = file.size
     else:
-        # Fallback: seek to end to get size, then reset position
-        await file.seek(0, 2)  # Seek to end (whence=2)
-        size_bytes = await file.tell()
+        # Fallback: read content to get size, then reset position
+        content = await file.read()
+        size_bytes = len(content)
         await file.seek(0)  # Reset to beginning
 
     try:

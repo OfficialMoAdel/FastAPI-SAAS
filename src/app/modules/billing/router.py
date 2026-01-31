@@ -316,11 +316,12 @@ async def add_product_pricing(
 async def get_my_subscriptions(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> list:
+) -> list[UserSubscriptionRead]:
     """Get current user's subscriptions."""
     service = get_user_subscription_service(db)
     result = await service.get_user_subscriptions(current_user["id"])
-    return result.get("data", [])
+    data: list[UserSubscriptionRead] = result.get("data", [])
+    return data
 
 
 @router.post("/subscriptions/{subscription_id}/cancel", response_model=UserSubscriptionRead)
@@ -353,7 +354,7 @@ async def create_checkout_session(
     data: CheckoutCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> CheckoutSession:
     """Create a Stripe checkout session."""
     service = get_checkout_service(db)
     return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)

@@ -15,20 +15,27 @@ from .models import (
 )
 from .schemas import (
     BillingRecordCreate,
+    BillingRecordDelete,
     BillingRecordRead,
+    BillingRecordUpdate,
     PricingCreate,
+    PricingDelete,
     PricingRead,
     PricingUpdate,
     ProductCreate,
+    ProductDelete,
     ProductRead,
     ProductUpdate,
     StripeSettingsCreate,
+    StripeSettingsDelete,
     StripeSettingsRead,
     StripeSettingsUpdate,
     SubscriptionPlanCreate,
+    SubscriptionPlanDelete,
     SubscriptionPlanRead,
     SubscriptionPlanUpdate,
     UserSubscriptionCreate,
+    UserSubscriptionDelete,
     UserSubscriptionRead,
     UserSubscriptionUpdate,
 )
@@ -39,7 +46,7 @@ CRUDStripeSettings = TenantAwareCRUD[
     StripeSettingsCreate,
     StripeSettingsUpdate,
     StripeSettingsUpdate,
-    None,
+    StripeSettingsDelete,
     StripeSettingsRead,
 ]
 crud_stripe_settings = CRUDStripeSettings(StripeSettings)
@@ -51,7 +58,7 @@ CRUDSubscriptionPlan = TenantAwareCRUD[
     SubscriptionPlanCreate,
     SubscriptionPlanUpdate,
     SubscriptionPlanUpdate,
-    None,
+    SubscriptionPlanDelete,
     SubscriptionPlanRead,
 ]
 crud_subscription_plans = CRUDSubscriptionPlan(SubscriptionPlan)
@@ -63,7 +70,7 @@ CRUDProduct = TenantAwareCRUD[
     ProductCreate,
     ProductUpdate,
     ProductUpdate,
-    None,
+    ProductDelete,
     ProductRead,
 ]
 crud_products = CRUDProduct(Product)
@@ -75,7 +82,7 @@ CRUDPricing = TenantAwareCRUD[
     PricingCreate,
     PricingUpdate,
     PricingUpdate,
-    None,
+    PricingDelete,
     PricingRead,
 ]
 crud_pricing = CRUDPricing(Pricing)
@@ -87,7 +94,7 @@ CRUDUserSubscription = TenantAwareCRUD[
     UserSubscriptionCreate,
     UserSubscriptionUpdate,
     UserSubscriptionUpdate,
-    None,
+    UserSubscriptionDelete,
     UserSubscriptionRead,
 ]
 crud_user_subscriptions = CRUDUserSubscription(UserSubscription)
@@ -97,9 +104,9 @@ crud_user_subscriptions = CRUDUserSubscription(UserSubscription)
 CRUDBillingRecord = TenantAwareCRUD[
     BillingRecord,
     BillingRecordCreate,
-    None,
-    None,
-    None,
+    BillingRecordUpdate,
+    BillingRecordUpdate,
+    BillingRecordDelete,
     BillingRecordRead,
 ]
 crud_billing_records = CRUDBillingRecord(BillingRecord)

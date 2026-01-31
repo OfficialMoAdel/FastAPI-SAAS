@@ -152,7 +152,9 @@ async def buffer_audit_log(log_data: dict[str, Any]) -> None:
         return
 
     try:
-        await redis_client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
+        lpush_result = redis_client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
+        if hasattr(lpush_result, "__await__"):
+            await lpush_result
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
         await _direct_insert_log(log_data)
@@ -211,19 +213,20 @@ async def flush_audit_log_buffer() -> int:
     for raw_data in logs_data:
         try:
             data = orjson.loads(raw_data)
-            log_entries.append(
-                AuditLog(
-                    tenant_id=int(data["tenant_id"]),
-                    action=data["action"],
-                    entity_type=data.get("entity_type"),
-                    entity_id=data.get("entity_id"),
-                    user_id=int(data["user_id"]) if data.get("user_id") else None,
-                    details=data.get("details", {}),
-                    ip_address=data.get("ip_address"),
-                    user_agent=data.get("user_agent"),
-                    created_at=datetime.fromisoformat(data["created_at"]) if data.get("created_at") else None,
-                )
+            log_entry = AuditLog(
+                tenant_id=int(data["tenant_id"]),
+                action=data["action"],
+                entity_type=data.get("entity_type"),
+                entity_id=data.get("entity_id"),
+                user_id=int(data["user_id"]) if data.get("user_id") else None,
+                details=data.get("details", {}),
+                ip_address=data.get("ip_address"),
+                user_agent=data.get("user_agent"),
             )
+            # Set created_at directly on the object (bypassing __init__ since init=False)
+            if data.get("created_at"):
+                object.__setattr__(log_entry, "created_at", datetime.fromisoformat(data["created_at"]))
+            log_entries.append(log_entry)
         except Exception as e:
             logger.error("audit_log_parse_failed", error=str(e), raw_data=raw_data[:100])
 

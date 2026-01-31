@@ -46,10 +46,9 @@ VALID_TRANSITIONS: dict[SubscriptionStatus, set[SubscriptionStatus]] = {
         # Reactivation requires new subscription
         SubscriptionStatus.EXPIRED,  # Final cleanup
     },
-    SubscriptionStatus.EXPIRED: {
-        # Expired is terminal - no valid transitions
-        # User must create new subscription
-    },
+    # Expired is terminal - no valid transitions
+    # User must create new subscription
+    SubscriptionStatus.EXPIRED: set(),
 }
 
 

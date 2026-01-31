@@ -88,7 +88,7 @@ class AIRateLimiter:
         """
         sha = await self._get_script_sha()
         try:
-            result = await self.redis.evalsha(sha, 1, key, window)
+            result = await self.redis.evalsha(sha, 1, key, str(window))  # type: ignore[misc]
             # Handle both real Redis (returns list) and FakeRedis (may return int)
             if isinstance(result, list | tuple) and len(result) >= 2:
                 return (int(result[0]), int(result[1]))
@@ -200,6 +200,8 @@ def get_ai_rate_limiter(redis_client: Redis | None = None) -> AIRateLimiter:
 
             redis_client = cache_client
 
+        if redis_client is None:
+            raise ValueError("Redis client is required for AIRateLimiter")
         _rate_limiter = AIRateLimiter(redis_client=redis_client)
 
     return _rate_limiter

@@ -70,7 +70,7 @@ class StorageProvider(ABC):
         pass
 
     @abstractmethod
-    async def download(self, path: str) -> AsyncGenerator[bytes, None]:
+    def download(self, path: str) -> AsyncGenerator[bytes, None]:
         """Download a file from storage.
 
         Args:
@@ -79,7 +79,7 @@ class StorageProvider(ABC):
         Yields:
             Chunks of file content.
         """
-        pass
+        ...
 
     @abstractmethod
     async def delete(self, path: str) -> StorageResult:

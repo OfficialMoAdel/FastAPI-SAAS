@@ -11,7 +11,7 @@ Direct imports:
 
 __all__ = [
     "UserPreferences",
-    "UserPreferencesService",
+    "PreferencesService",
     "router",
 ]
 
@@ -22,10 +22,10 @@ def __getattr__(name: str):
         from .router import router
 
         return router
-    if name == "UserPreferencesService":
-        from .service import UserPreferencesService
+    if name == "PreferencesService":
+        from .service import PreferencesService
 
-        return UserPreferencesService
+        return PreferencesService
     if name == "UserPreferences":
         from .models import UserPreferences
 

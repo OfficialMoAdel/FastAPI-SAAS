@@ -61,7 +61,7 @@ async def execute_query_with_circuit_breaker(
                     # Assume simple JSON serialization for fallback data
                     import json
 
-                    return json.loads(cached)
+                    return list(json.loads(cached))
             except Exception as cache_error:
                 logger.error(f"Cache retrieval failed: {cache_error}")
 
@@ -115,7 +115,7 @@ async def execute_query_with_circuit_breaker(
                     logger.info(f"Using cached data after failure for key: {cache_key}")
                     import json
 
-                    return json.loads(cached)
+                    return list(json.loads(cached))
             except Exception:
                 pass
 

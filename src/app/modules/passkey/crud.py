@@ -9,6 +9,8 @@ Provides database operations for:
 - Deleting credentials
 """
 
+from typing import Any
+
 from fastcrud import FastCRUD
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -35,13 +37,13 @@ class CRUDPasskeyCredential(
 
     MAX_PASSKEYS_PER_USER = 10
 
-    async def get(
+    async def get_credential(
         self,
         db: AsyncSession,
         id: int | None = None,
         credential_id: bytes | None = None,
         user_id: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> PasskeyCredential | None:
         """Get passkey credential by ID or credential_id.
 
@@ -55,7 +57,10 @@ class CRUDPasskeyCredential(
             PasskeyCredential or None if not found
         """
         if id is not None:
-            return await super().get(db=db, id=id)
+            # Use parent get with return_as_model for the model object
+            query = select(self.model).where(self.model.id == id)
+            result = await db.execute(query)
+            return result.scalar_one_or_none()
 
         query = select(self.model)
         if credential_id is not None:
@@ -121,7 +126,7 @@ class CRUDPasskeyCredential(
         count = await self.count_by_user(db=db, user_id=user_id)
         return count < self.MAX_PASSKEYS_PER_USER
 
-    async def delete(
+    async def delete_credential(
         self,
         db: AsyncSession,
         id: int | None = None,

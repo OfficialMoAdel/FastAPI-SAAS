@@ -44,7 +44,7 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             path=request.url.path,
         )
 
-        response = await call_next(request)
+        response: Response = await call_next(request)
 
         # Add to response headers
         response.headers[REQUEST_ID_HEADER] = request_id

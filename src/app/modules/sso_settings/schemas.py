@@ -47,6 +47,12 @@ class SSOSettingsUpdateInternal(BaseUpdate):
     is_enabled: bool | None = None
 
 
+class SSOSettingsDelete(BaseUpdate):
+    """Schema for delete operations."""
+
+    pass
+
+
 class SSOSettingsRead(BaseRead):
     """Schema for reading SSO settings.
 

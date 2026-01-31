@@ -109,9 +109,10 @@ class FeatureFlag(Base):
     )
 
     # Indexes
-    __table_args__ = (
+    __table_args__: tuple[Index, Index, dict[str, bool]] = (  # type: ignore[assignment]
         Index("idx_feature_flag_key", "key", unique=True),
         Index("idx_feature_flag_system", "is_system"),
+        {"extend_existing": True},
     )
 
     def __repr__(self) -> str:
@@ -199,7 +200,7 @@ class FeatureFlagOverride(Base):
     )
 
     # Constraints
-    __table_args__ = (
+    __table_args__: tuple[UniqueConstraint, Index, Index, dict[str, bool]] = (  # type: ignore[assignment]
         UniqueConstraint(
             "tenant_id",
             "feature_flag_id",
@@ -207,6 +208,7 @@ class FeatureFlagOverride(Base):
         ),
         Index("idx_feature_flag_override_tenant", "tenant_id"),
         Index("idx_feature_flag_override_flag", "feature_flag_id"),
+        {"extend_existing": True},
     )
 
     def __repr__(self) -> str:

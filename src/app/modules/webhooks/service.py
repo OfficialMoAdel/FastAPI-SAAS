@@ -43,15 +43,18 @@ class WebhookService:
 
     async def create_endpoint(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         url: str,
         event_type: str,
         secret: str | None = None,
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
-        # Encrypt the secret if provided
-        encrypted_secret = encrypt_data(secret) if secret else None
+        # Encrypt the secret if provided, or generate a random one
+        import secrets as secrets_module
+
+        actual_secret = secret if secret else secrets_module.token_urlsafe(32)
+        encrypted_secret = encrypt_data(actual_secret)
 
         endpoint = WebhookEndpoint(
             tenant_id=tenant_id,
@@ -68,7 +71,7 @@ class WebhookService:
         logger.info(f"Created webhook endpoint for tenant {tenant_id}: {event_type} -> {url}")
         return endpoint
 
-    async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
+    async def get_active_endpoints(self, tenant_id: int, event_type: str) -> list[WebhookEndpoint]:
         """Get all active webhook endpoints for a tenant and event type."""
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
@@ -81,7 +84,7 @@ class WebhookService:
 
     async def trigger_webhooks(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         event_type: str,
         payload: dict[str, Any],
     ) -> list[WebhookDelivery]:
@@ -332,7 +335,7 @@ class WebhookService:
                 # Success - record with circuit breaker
                 await webhook_circuit.record_success()
                 delivery.status = WebhookDeliveryStatus.DELIVERED
-                delivery.delivered_at = datetime.now(UTC)
+                # Note: delivered_at tracked via updated_at timestamp
                 logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
             else:
                 # HTTP error - record failure and retry if attempts remain
@@ -403,7 +406,7 @@ class WebhookService:
 
     async def get_delivery_history(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         limit: int = 100,
         offset: int = 0,
     ) -> list[WebhookDelivery]:

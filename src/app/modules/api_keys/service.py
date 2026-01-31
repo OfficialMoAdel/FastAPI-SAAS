@@ -83,30 +83,33 @@ class APIKeyService(BaseService[APIKey]):
         full_key, prefix, hashed_key = self._generate_key()
 
         # Prepare scopes as JSON string if provided
-        scopes_json = json_dumps(api_key_data.scopes) if api_key_data.scopes else None
+        scopes_json: str | None = None
+        if api_key_data.scopes:
+            scopes_result = json_dumps(api_key_data.scopes, as_str=True)
+            scopes_json = scopes_result if isinstance(scopes_result, str) else scopes_result.decode("utf-8")
 
-        # Create the API key record
-        key_record = await crud_api_keys.create(
-            db=self.db,
-            object={
-                "name": api_key_data.name,
-                "key_prefix": prefix,
-                "hashed_key": hashed_key,
-                "user_id": user_id,
-                "tenant_id": tenant_id,
-                "scopes": scopes_json,
-                "expires_at": api_key_data.expires_at,
-                "is_active": True,
-            },
+        # Create the API key record using SQLAlchemy model directly
+        key_record = APIKey(
+            name=api_key_data.name,
+            key_prefix=prefix,
+            hashed_key=hashed_key,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            scopes=scopes_json,
+            expires_at=api_key_data.expires_at,
+            is_active=True,
         )
+        self.db.add(key_record)
+        await self.db.commit()
+        await self.db.refresh(key_record)
 
         return APIKeyResponse(
-            id=key_record["id"],
-            name=key_record["name"],
+            id=key_record.id,
+            name=key_record.name,
             key=full_key,  # Only returned on creation!
             key_prefix=prefix,
-            expires_at=key_record.get("expires_at"),
-            created_at=key_record["created_at"],
+            expires_at=key_record.expires_at,
+            created_at=key_record.created_at,
         )
 
     async def list_api_keys(
@@ -141,7 +144,7 @@ class APIKeyService(BaseService[APIKey]):
             is_deleted=False,
             offset=(page - 1) * items_per_page,
             limit=items_per_page,
-            schema_to_select=APIKeyRead,
+            schema_to_select=APIKeyRead,  # type: ignore[arg-type]
         )
 
     async def revoke_api_key(
@@ -173,17 +176,27 @@ class APIKeyService(BaseService[APIKey]):
         ForbiddenException
             If user doesn't own the key
         """
-        key = await crud_api_keys.get(db=self.db, id=key_id, is_deleted=False)
+        key = await crud_api_keys.get(
+            db=self.db,
+            id=key_id,
+            is_deleted=False,
+            return_as_model=True,  # type: ignore[call-overload]
+        )
 
         if not key:
             raise ModelNotFoundError("APIKey", key_id)
 
-        if key["user_id"] != user_id or key["tenant_id"] != tenant_id:
+        # Cast to APIKey since we use return_as_model=True
+        api_key = key if isinstance(key, APIKey) else None
+        if api_key is None:
+            raise ModelNotFoundError("APIKey", key_id)
+
+        if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
             raise ForbiddenException("You don't have permission to revoke this key")
 
         # Invalidate cache before revoking (using hashed_key from DB record)
-        if redis_client is not None and key.get("hashed_key"):
-            cache_key = self._get_cache_key(key["hashed_key"])
+        if redis_client is not None and api_key.hashed_key:
+            cache_key = self._get_cache_key(api_key.hashed_key)
             await redis_client.delete(cache_key)
 
         await crud_api_keys.update(

@@ -15,16 +15,22 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import DEFAULT_PREFERENCES, UserPreferences
-from .schemas import UserPreferencesCreate, UserPreferencesRead
+from .schemas import (
+    UserPreferencesCreate,
+    UserPreferencesDeleteInternal,
+    UserPreferencesRead,
+    UserPreferencesUpdate,
+    UserPreferencesUpdateInternal,
+)
 
 
 class CRUDUserPreferences(
     FastCRUD[
         UserPreferences,
         UserPreferencesCreate,
-        dict[str, Any],  # Update schema (dict for partial updates)
-        dict[str, Any],
-        dict[str, Any],
+        UserPreferencesUpdate,
+        UserPreferencesUpdateInternal,
+        UserPreferencesDeleteInternal,
         UserPreferencesRead,
     ]
 ):

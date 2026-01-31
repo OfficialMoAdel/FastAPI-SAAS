@@ -14,7 +14,7 @@ from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.modules.billing.schemas import (
     CheckoutCreate,
-    CheckoutSession,
+    CheckoutSession as CheckoutSessionSchema,
     UserSubscriptionRead,
 )
 from src.app.modules.billing.service import (
@@ -26,12 +26,12 @@ router = APIRouter(prefix="/checkouts", tags=["checkouts"])
 logger = logging.getLogger(__name__)
 
 
-@router.post("", response_model=CheckoutSession)
+@router.post("", response_model=CheckoutSessionSchema)
 async def create_checkout(
     data: CheckoutCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> CheckoutSessionSchema:
     """Create a Stripe checkout session for subscription.
 
     Args:
@@ -75,7 +75,7 @@ async def get_current_subscription(
         # Filter for active subscriptions
         active_subs = [s for s in subscriptions if s.get("status") == "active"]
         if active_subs:
-            return active_subs[0]
+            return dict(active_subs[0])
 
     return None
 

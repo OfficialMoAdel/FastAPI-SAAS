@@ -14,7 +14,7 @@ from ...core.tenancy.context import get_tenant_context
 from ...core.utils import cache
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
-from .crud import crud_users
+from .crud import CRUDUser, crud_users
 from .models import User
 from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
@@ -50,9 +50,11 @@ def _user_auth_cache_key(identifier: str) -> str:
 class UserService(BaseService[User]):
     """Service class for user-related business logic."""
 
-    def __init__(self, db: AsyncSession):
+    crud: "CRUDUser"  # Override type for custom CRUD with get_user_with_tier_eager
+
+    def __init__(self, db: AsyncSession) -> None:
         super().__init__(User, db)
-        self.crud = crud_users
+        self.crud = crud_users  # type: ignore[assignment]
 
     async def list_users(
         self,
@@ -147,12 +149,13 @@ class UserService(BaseService[User]):
         try:
             cached = await cache.client.get(cache_key)
             if cached:
-                return json_loads(cached)
+                result: dict[str, Any] = json_loads(cached)
+                return result
         except Exception as e:
             logger.warning(f"Failed to get cached user: {e}")
         return None
 
-    async def create(self, user: UserCreate) -> User:
+    async def create(self, user: UserCreate) -> User:  # type: ignore[override]
         """Create a new user with validation and password hashing.
 
         Parameters
@@ -192,7 +195,8 @@ class UserService(BaseService[User]):
             user_dict["tenant_id"] = tenant.id
 
         user_internal = UserCreateInternal(**user_dict)
-        return await self.crud.create(db=self.db, object=user_internal)
+        result = await self.crud.create(db=self.db, object=user_internal)
+        return result  # type: ignore[return-value]
 
     async def get_user_auth_info(
         self, *, username: str | None = None, email: str | None = None
@@ -235,7 +239,7 @@ class UserService(BaseService[User]):
             except Exception as e:
                 logger.warning(f"Failed to cache auth info for {identifier}: {e}")
 
-        return user_with_tier
+        return user_with_tier  # type: ignore[return-value]
 
     async def get_by_username(self, username: str) -> User | dict[str, Any]:
         """Get a user by username with Redis caching.
@@ -268,7 +272,7 @@ class UserService(BaseService[User]):
         await self._cache_user(db_user)
         return db_user
 
-    async def get(self, user_id: Any) -> User | dict[str, Any] | None:
+    async def get(self, user_id: Any) -> User | dict[str, Any] | None:  # type: ignore[override]
         """Get a user by ID with Redis caching.
 
         Parameters
@@ -316,7 +320,7 @@ class UserService(BaseService[User]):
             await self._cache_user(user)
         return user
 
-    async def update(
+    async def update(  # type: ignore[override]
         self,
         username: str,
         values: UserUpdate,
@@ -379,7 +383,7 @@ class UserService(BaseService[User]):
 
         return {"message": "User updated"}
 
-    async def delete(
+    async def delete(  # type: ignore[override]
         self,
         username: str,
         current_user: dict[str, Any],

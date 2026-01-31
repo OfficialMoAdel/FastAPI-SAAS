@@ -121,7 +121,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
             return Response("Too Many Requests", status_code=429, headers=headers)
 
-        response = await call_next(request)
+        response: Response = await call_next(request)
 
         # Add rate limit headers to response
         for name, value in headers.items():

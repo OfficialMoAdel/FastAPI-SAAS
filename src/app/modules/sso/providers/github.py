@@ -62,13 +62,20 @@ class GitHubProvider(BaseOAuthProvider):
         # Try to get user emails (requires user:email scope)
         email_verified = False
         try:
-            emails_data = await self._http_get(
+            # GitHub emails endpoint returns a list, not a dict
+            # We need to use sso_http_get directly and handle the list response
+            from src.app.modules.sso.http_client import get_sso_http_client
+
+            client = await get_sso_http_client()
+            emails_response = await client.get(
                 "https://api.github.com/user/emails",
                 headers={
                     "Authorization": f"Bearer {access_token}",
                     "Accept": "application/vnd.github.v3+json",
                 },
             )
+            emails_response.raise_for_status()
+            emails_data: list[dict[str, Any]] = emails_response.json()
             # Find primary verified email
             primary_email = None
             for email_obj in emails_data:

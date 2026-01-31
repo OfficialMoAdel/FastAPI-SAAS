@@ -88,7 +88,7 @@ class AppleProvider(BaseOAuthProvider):
         return "https://appleid.apple.com/auth/token"
 
     @property
-    def userinfo_endpoint(self) -> str | None:
+    def userinfo_endpoint(self) -> str | None:  # type: ignore[override]
         """Apple doesn't have a userinfo endpoint - uses id_token."""
         return None
 
@@ -180,7 +180,7 @@ class AppleProvider(BaseOAuthProvider):
             headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
 
-    async def get_user_info(self, id_token: str, user_data: dict[str, Any] | None = None) -> AppleUserInfo:
+    async def get_user_info(self, id_token: str, user_data: dict[str, Any] | None = None) -> AppleUserInfo:  # type: ignore[override]
         """Extract user info from Apple's id_token JWT.
 
         Unlike other providers, Apple embeds user info in the id_token.
@@ -228,6 +228,7 @@ class AppleProvider(BaseOAuthProvider):
         # Decode without verification for now
         # In production, fetch Apple's public keys and verify signature
         try:
-            return jwt.decode(id_token, options={"verify_signature": False})
+            claims: dict[str, Any] = jwt.decode(id_token, options={"verify_signature": False})
+            return claims
         except jwt.DecodeError as e:
             raise ValueError(f"Invalid id_token: {e}")

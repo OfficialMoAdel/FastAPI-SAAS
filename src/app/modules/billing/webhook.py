@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal, cast
 
 import stripe
 from fastapi import HTTPException, status
@@ -12,8 +12,9 @@ from src.app.core.db.database import local_session
 
 from .crud import crud_billing_records, crud_user_subscriptions
 from .schemas import (
-    BillingRecordCreate,
-    UserSubscriptionCreate,
+    BillingRecordCreateInternal,
+    SubscriptionStatus,
+    UserSubscriptionCreateInternal,
     UserSubscriptionUpdate,
 )
 
@@ -37,7 +38,7 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
     """
     try:
         event = stripe.Webhook.construct_event(payload, sig_header, secret)
-        return event
+        return cast(stripe.Event, event)
     except ValueError as e:
         # Invalid payload
         logger.error(f"Invalid payload: {e}")
@@ -119,18 +120,22 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
     # Retrieve subscription details from Stripe
     if stripe_subscription_id:
         try:
-            stripe_sub = await asyncio.to_thread(
-                stripe.Subscription.retrieve, stripe_subscription_id
-            )
-            current_period_start = datetime.fromtimestamp(stripe_sub.current_period_start, UTC)
-            current_period_end = datetime.fromtimestamp(stripe_sub.current_period_end, UTC)
+            stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id)
+            # Access Stripe subscription period timestamps using subscript notation
+            current_period_start = datetime.fromtimestamp(stripe_sub["current_period_start"], UTC)
+            current_period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], UTC)
 
             # Determine billing interval from Stripe subscription
-            interval = stripe_sub.items.data[0].price.recurring.interval if stripe_sub.items.data else "month"
-            billing_interval = "yearly" if interval == "year" else "monthly"
+            interval = "month"
+            if stripe_sub.items.data:
+                price = stripe_sub.items.data[0].price
+                if price.recurring and price.recurring.interval:
+                    interval = price.recurring.interval
+            billing_interval: Literal["monthly", "yearly"] = "yearly" if interval == "year" else "monthly"
 
-            # Create user subscription
-            subscription_data = UserSubscriptionCreate(
+            # Create user subscription with tenant_id in the object
+            subscription_data = UserSubscriptionCreateInternal(
+                tenant_id=tenant_id,
                 user_id=user_id,
                 subscription_plan_id=plan_id,
                 stripe_subscription_id=stripe_subscription_id,
@@ -143,8 +148,7 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
 
             await crud_user_subscriptions.create(
                 db=db,
-                tenant_id=tenant_id,
-                obj_in=subscription_data,
+                object=subscription_data,
             )
 
             logger.info(f"Created subscription for user {user_id} in tenant {tenant_id}")
@@ -181,7 +185,7 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
         return
 
     # Map Stripe status to our status
-    status_map = {
+    status_map: dict[str, SubscriptionStatus] = {
         "active": "active",
         "past_due": "past_due",
         "canceled": "canceled",
@@ -190,7 +194,7 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
         "incomplete_expired": "expired",
         "trialing": "trialing",
     }
-    new_status = status_map.get(subscription["status"], "active")
+    new_status: SubscriptionStatus = status_map.get(subscription["status"], "active")
 
     # Update subscription
     update_data = UserSubscriptionUpdate(
@@ -205,9 +209,8 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
 
     await crud_user_subscriptions.update(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        db_obj=db_subscription,
-        obj_in=update_data,
+        object=update_data,
+        id=db_subscription.id,
     )
 
     logger.info(f"Updated subscription {stripe_subscription_id} to status {new_status}")
@@ -243,9 +246,8 @@ async def handle_subscription_deleted(db: AsyncSession, event: stripe.Event) -> 
 
     await crud_user_subscriptions.update(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        db_obj=db_subscription,
-        obj_in=update_data,
+        object=update_data,
+        id=db_subscription.id,
     )
 
     logger.info(f"Marked subscription {stripe_subscription_id} as canceled")
@@ -279,8 +281,9 @@ async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event
         logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
         return
 
-    # Create billing record
-    billing_record = BillingRecordCreate(
+    # Create billing record with tenant_id in the object
+    billing_record = BillingRecordCreateInternal(
+        tenant_id=db_subscription.tenant_id,
         user_id=db_subscription.user_id,
         user_subscription_id=db_subscription.id,
         stripe_payment_intent_id=invoice.get("payment_intent"),
@@ -293,8 +296,7 @@ async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event
 
     await crud_billing_records.create(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        obj_in=billing_record,
+        object=billing_record,
     )
 
     logger.info(f"Created succeeded billing record for invoice {invoice['id']}")
@@ -329,7 +331,8 @@ async def handle_invoice_payment_failed(db: AsyncSession, event: stripe.Event) -
         return
 
     # Create billing record with failed status
-    billing_record = BillingRecordCreate(
+    billing_record = BillingRecordCreateInternal(
+        tenant_id=db_subscription.tenant_id,
         user_id=db_subscription.user_id,
         user_subscription_id=db_subscription.id,
         stripe_payment_intent_id=invoice.get("payment_intent"),
@@ -342,17 +345,15 @@ async def handle_invoice_payment_failed(db: AsyncSession, event: stripe.Event) -
 
     await crud_billing_records.create(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        obj_in=billing_record,
+        object=billing_record,
     )
 
     # Update subscription to past_due
     update_data = UserSubscriptionUpdate(status="past_due")
     await crud_user_subscriptions.update(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        db_obj=db_subscription,
-        obj_in=update_data,
+        object=update_data,
+        id=db_subscription.id,
     )
 
     logger.info(f"Created failed billing record and updated subscription to past_due for invoice {invoice['id']}")
@@ -381,9 +382,7 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
     db_subscription = None
     if stripe_invoice_id:
         try:
-            invoice = await asyncio.to_thread(
-                stripe.Invoice.retrieve, stripe_invoice_id
-            )
+            invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
             if stripe_subscription_id:
                 result = await db.execute(
@@ -401,7 +400,8 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
 
     # Create billing record with refunded status
     refund_amount = charge.get("amount_refunded", 0)
-    billing_record = BillingRecordCreate(
+    billing_record = BillingRecordCreateInternal(
+        tenant_id=db_subscription.tenant_id,
         user_id=db_subscription.user_id,
         user_subscription_id=db_subscription.id,
         stripe_payment_intent_id=stripe_payment_intent_id,
@@ -414,8 +414,7 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
 
     await crud_billing_records.create(
         db=db,
-        tenant_id=db_subscription.tenant_id,
-        obj_in=billing_record,
+        object=billing_record,
     )
 
     logger.info(f"Created refunded billing record for charge {charge['id']}")

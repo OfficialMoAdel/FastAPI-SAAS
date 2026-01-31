@@ -84,7 +84,7 @@ class BaseOAuthProvider(ABC):
         Returns:
             JSON response as dictionary
         """
-        return await sso_http_post(url, data=data, headers=headers)
+        return await sso_http_post(url, data=data or {}, headers=headers)
 
     async def _http_get(
         self,

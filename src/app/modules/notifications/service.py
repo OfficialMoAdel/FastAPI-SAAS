@@ -21,7 +21,7 @@ from ...core.config import settings
 from ...core.events import EventPriority, event_bus
 from ...core.utils.cache import client as redis_client
 from ...core.utils.rate_limit import rate_limiter
-from .models import EmailTemplateOverride, Notification
+from .models import EmailTemplateOverride, Notification, NotificationStatus
 
 logger = get_logger(__name__)
 
@@ -44,7 +44,7 @@ class NotificationService:
 
     async def get_template_content(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         template_name: str,
     ) -> tuple[str, str]:
         """Get email template content (subject and body).
@@ -88,9 +88,7 @@ class NotificationService:
             # Use default file template
             try:
                 # Non-blocking template loading with thread pool
-                template = await asyncio.to_thread(
-                    jinja_env.get_template, f"{template_name}.html.jinja2"
-                )
+                template = await asyncio.to_thread(jinja_env.get_template, f"{template_name}.html.jinja2")
                 # Default subject from template metadata or template name
                 subject = template_name.replace("_", " ").title()
                 data = (subject, template.render())
@@ -113,7 +111,7 @@ class NotificationService:
 
     async def render_template(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         template_name: str,
         context: dict[str, Any],
     ) -> tuple[str, str]:
@@ -139,11 +137,11 @@ class NotificationService:
 
     async def send_email(
         self,
-        tenant_id: UUID,
+        tenant_id: int,
         to_email: str,
         template_name: str,
         context: dict[str, Any],
-        user_id: UUID | None = None,
+        user_id: int | None = None,
     ) -> Notification:
         """Send an email notification.
 
@@ -183,7 +181,7 @@ class NotificationService:
             template_name=template_name,
             to_email=to_email,
             subject=subject,
-            status="pending",
+            status=NotificationStatus.PENDING,
         )
         self.db.add(notification)
         await self.db.commit()
@@ -218,7 +216,7 @@ class NotificationService:
         """
         notification = await self.db.get(Notification, notification_id)
         if notification:
-            notification.status = "sent"
+            notification.status = NotificationStatus.SENT
             notification.sent_at = datetime.now(UTC)
             await self.db.commit()
 
@@ -231,7 +229,7 @@ class NotificationService:
         """
         notification = await self.db.get(Notification, notification_id)
         if notification:
-            notification.status = "failed"
+            notification.status = NotificationStatus.FAILED
             notification.error_message = error_message
             await self.db.commit()
 
@@ -295,7 +293,7 @@ async def send_email_task(
             # Create SMTP message
             msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
-            msg["From"] = settings.SMTP_FROM_EMAIL
+            msg["From"] = settings.EMAIL_FROM_ADDRESS
             msg["To"] = to_email
 
             # Attach HTML content
@@ -350,7 +348,7 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
             - subject: Email subject line
             - html_content: Rendered HTML body
     """
-    from ...core.utils.queue import queue
+    from ...core.utils.queue import pool as arq_pool
 
     notification_id = data.get("notification_id")
     to_email = data.get("to_email")
@@ -368,9 +366,9 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
         return
 
     # Enqueue the email delivery task via ARQ
-    if queue.pool:
+    if arq_pool:
         try:
-            await queue.pool.enqueue_job(
+            await arq_pool.enqueue_job(
                 "send_email_task",
                 notification_id,
                 to_email,

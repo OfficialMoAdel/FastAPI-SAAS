@@ -14,7 +14,7 @@ from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_tenant_context
 from ..auth.schemas import AuthTokenResponse
 from .crud import crud_user_sso_connections
-from .schemas import SSOProvider, SSOProvidersResponse
+from .schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
 from .service import SSOService, get_sso_service
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
@@ -28,7 +28,8 @@ async def list_providers(
 ) -> SSOProvidersResponse:
     """List enabled SSO providers."""
     providers = await sso_service.get_enabled_providers(db)
-    return {"providers": providers}
+    provider_reads = [SSOProviderRead(**p) for p in providers]
+    return SSOProvidersResponse(providers=provider_reads)
 
 
 @router.get("/{provider}/authorize")
@@ -147,7 +148,7 @@ async def connect_provider(
     tenant = get_tenant_context()
     tenant_id = tenant.id if tenant else None
 
-    existing_connection = await crud_user_sso_connections.exists(
+    existing_connection = await crud_user_sso_connections.exists_for_user(
         db=db,
         user_id=current_user["id"],
         provider=provider.value,

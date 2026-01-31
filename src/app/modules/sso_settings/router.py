@@ -1,6 +1,6 @@
 """SSO Settings router - HTTP handlers for SSO provider management (admin only)."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ async def create_sso_settings(
     settings: SSOSettingsCreate,
     current_superuser: Annotated[dict, Depends(get_current_superuser)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> SSOSettingsRead:
     """Create new SSO provider settings (superuser only)."""
     from .service import sso_settings_service
 
@@ -36,7 +36,8 @@ async def create_sso_settings(
             detail=f"SSO settings for provider {settings.provider} already exist",
         )
 
-    return await sso_settings_service.create_settings(db, settings, user_id=current_superuser["id"])
+    result = await sso_settings_service.create_settings(db, settings, user_id=current_superuser["id"])
+    return SSOSettingsRead.model_validate(result)
 
 
 @router.get("/", response_model=SSOSettingsList, dependencies=[Depends(get_current_superuser)])
@@ -55,8 +56,10 @@ async def list_sso_settings(
         schema_to_select=SSOSettingsRead,
     )
 
-    data = settings_data.get("data", [])
-    total = settings_data.get("total_count", len(data))
+    data_raw = settings_data.get("data", [])
+    data: list[dict[str, Any]] = data_raw if isinstance(data_raw, list) else []
+    total_count = settings_data.get("total_count")
+    total: int = total_count if isinstance(total_count, int) else len(data)
     return {
         "items": data,
         "total": total,
@@ -111,7 +114,7 @@ async def update_sso_settings(
     values: SSOSettingsUpdate,
     current_superuser: Annotated[dict, Depends(get_current_superuser)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> SSOSettingsRead:
     """Update SSO settings for a specific provider (superuser only)."""
     from .service import sso_settings_service
 
@@ -122,7 +125,8 @@ async def update_sso_settings(
             detail=f"SSO settings for provider {provider} not found",
         )
 
-    return await sso_settings_service.update_settings(db, provider, values, user_id=current_superuser["id"])
+    result = await sso_settings_service.update_settings(db, provider, values, user_id=current_superuser["id"])
+    return SSOSettingsRead.model_validate(result)
 
 
 @router.delete("/{provider}", status_code=200, dependencies=[Depends(get_current_superuser)])

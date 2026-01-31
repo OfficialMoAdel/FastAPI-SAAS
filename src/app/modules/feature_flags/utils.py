@@ -39,7 +39,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
             cached_value = await redis_client.get(cache_key)
             if cached_value is not None:
                 # Redis returns bytes, need to decode
-                val_str = cached_value.decode().lower()
+                val_str: str = cached_value.decode().lower()
                 return val_str == "true"
         except Exception as e:
             logger.debug(f"Cache get failed: {e}")
@@ -49,7 +49,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
     enabled = default
 
     if result and result.feature_flags:
-        enabled = result.feature_flags.get(feature_name, default)
+        enabled = bool(result.feature_flags.get(feature_name, default))
 
     # Update cache
     if redis_client:
@@ -80,7 +80,8 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         try:
             cached_value = await redis_client.get(cache_key)
             if cached_value:
-                return json_loads(cached_value)
+                result_data: dict[str, Any] = json_loads(cached_value)
+                return result_data
         except Exception as e:
             logger.debug(f"Cache get failed: {e}")
 

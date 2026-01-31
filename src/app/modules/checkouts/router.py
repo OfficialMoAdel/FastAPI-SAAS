@@ -31,7 +31,7 @@ async def create_checkout(
     data: CheckoutCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> CheckoutSession:
     """Create a Stripe checkout session for subscription.
 
     Args:
@@ -54,7 +54,7 @@ async def create_checkout(
 async def get_current_subscription(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict | None:
+) -> UserSubscriptionRead | None:
     """Get the current user's active subscription.
 
     Returns the most recent active subscription if one exists.
@@ -68,14 +68,14 @@ async def get_current_subscription(
     """
     service = get_user_subscription_service(db)
     result = await service.get_user_subscriptions(current_user["id"])
-    subscriptions = result.get("data", [])
+    subscriptions: list[dict] = result.get("data", [])
 
     # Return the first active subscription (most recent)
     if subscriptions:
         # Filter for active subscriptions
         active_subs = [s for s in subscriptions if s.get("status") == "active"]
         if active_subs:
-            return active_subs[0]
+            return UserSubscriptionRead.model_validate(active_subs[0])
 
     return None
 

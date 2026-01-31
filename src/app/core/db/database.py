@@ -1,4 +1,5 @@
 from collections.abc import AsyncGenerator
+from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
@@ -12,10 +13,13 @@ class Base(DeclarativeBase, MappedAsDataclass):
 
     Includes extend_existing=True to prevent duplicate table registration
     errors during alembic migrations when models are imported from multiple paths.
+
+    Subclasses can override __table_args__ with tuples containing Index/Constraint
+    objects plus dict, e.g.: (Index(...), {"extend_existing": True})
     """
 
     @declared_attr.directive
-    def __table_args__(cls) -> dict:
+    def __table_args__(cls) -> dict[str, Any] | tuple[Any, ...]:  # type: ignore[override]
         return {"extend_existing": True}
 
 

@@ -7,7 +7,6 @@ Performance Optimization (R2-HYBRID MED-2):
 """
 
 from collections.abc import Sequence
-from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, Any
 
 from cachetools import TTLCache
@@ -102,12 +101,11 @@ class RoleService:
             raise ForbiddenError("System roles cannot be modified", reason="system_role")
 
         # Check for duplicate name if name is being changed
-        if role_in.name != role.name:
+        if role_in.name is not None and role_in.name != role.name:
             existing = await self.get_role_by_name(role_in.name)
             if existing:
                 raise DuplicateError("name", role_in.name)
-
-        role.name = role_in.name
+            role.name = role_in.name
         if role_in.description is not None:
             role.description = role_in.description
 
@@ -224,8 +222,6 @@ class RoleService:
                 "id": p.id,
                 "slug": p.slug,
                 "description": p.description,
-                "created_at": p.created_at.isoformat() if p.created_at else None,
-                "updated_at": p.updated_at.isoformat() if p.updated_at else None,
             }
             for p in permissions
         ]
@@ -276,10 +272,6 @@ class RoleService:
             )
             # Set id after creation (init=False on id field)
             object.__setattr__(perm, "id", p["id"])
-            if p.get("created_at"):
-                object.__setattr__(perm, "created_at", datetime.fromisoformat(p["created_at"]))
-            if p.get("updated_at"):
-                object.__setattr__(perm, "updated_at", datetime.fromisoformat(p["updated_at"]))
             permissions.append(perm)
         return permissions
 
@@ -392,13 +384,13 @@ class RoleService:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Check if already assigned
-        stmt = select(RolePermission).where(
+        rp_stmt = select(RolePermission).where(
             and_(
                 RolePermission.role_id == role_id,
                 RolePermission.permission_id == permission.id,
             )
         )
-        result = await self.db.execute(stmt)
+        result = await self.db.execute(rp_stmt)
         if result.scalar_one_or_none():
             return  # Already assigned, idempotent
 
@@ -427,13 +419,13 @@ class RoleService:
             raise ModelNotFoundError("Permission", permission_slug)
 
         # Find and delete the role permission
-        stmt = select(RolePermission).where(
+        rp_stmt = select(RolePermission).where(
             and_(
                 RolePermission.role_id == role_id,
                 RolePermission.permission_id == permission.id,
             )
         )
-        result = await self.db.execute(stmt)
+        result = await self.db.execute(rp_stmt)
         role_permission = result.scalar_one_or_none()
         if role_permission:
             await self.db.delete(role_permission)

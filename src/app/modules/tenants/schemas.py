@@ -85,6 +85,12 @@ class TenantUpdateInternal(TenantUpdate):
     updated_at: datetime
 
 
+class TenantDelete(BaseUpdate):
+    """Schema for soft-deleting a tenant."""
+
+    is_active: bool
+
+
 class TenantResponse(BaseRead):
     """Schema for tenant response."""
 

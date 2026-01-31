@@ -1,6 +1,6 @@
 """Rate limit service layer - encapsulates all rate limit business logic."""
 
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends
 from fastcrud import compute_offset, paginated_response
@@ -36,7 +36,7 @@ class RateLimitService(BaseService[RateLimit]):
         from ...core.service_registry import get_service
 
         tier_service = get_service("tier", self.db)
-        return await tier_service.get_tier(tier_name)
+        return cast(dict[str, Any], await tier_service.get_tier(tier_name))
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
         """Invalidate rate limits cache for a tier."""
@@ -66,7 +66,7 @@ class RateLimitService(BaseService[RateLimit]):
         if cache.client:
             cached = await cache.client.get(cache_key)
             if cached:
-                return json_loads(cached)
+                return cast(dict[str, Any], json_loads(cached))
 
         rate_limits_data = await crud_rate_limits.get_multi(db=self.db, tier_id=tier_id)
 

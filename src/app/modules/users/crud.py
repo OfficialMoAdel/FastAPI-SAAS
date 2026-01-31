@@ -41,15 +41,12 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         else:
             lookup_clause = User.email == email
 
-        stmt = (
-            select(User)
-            .options(joinedload(User.tier))
-            .where(
-                lookup_clause,
-                User.is_deleted.is_(False),
-                User.tenant_id == tenant.id if tenant else True,
-            )
-        )
+        # Build base statement
+        stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
+
+        # Add tenant filter only if tenant context exists
+        if tenant is not None:
+            stmt = stmt.where(User.tenant_id == tenant.id)
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()
 

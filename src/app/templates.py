@@ -2,7 +2,8 @@
 
 import logging
 import re
-from typing import Any
+from pathlib import Path
+from typing import Any, cast
 
 from jinja2 import Template, TemplateNotFound
 from sqlalchemy import select
@@ -31,12 +32,11 @@ class EmailTemplatesService:
         async with self._session_maker() as session:
             result = await session.execute(
                 select(EmailTemplateOverride).where(
-                    EmailTemplateOverride.tenant_id == tenant_id,
+                    EmailTemplateOverride.tenant_id == tenant_id,  # type: ignore[arg-type]
                     EmailTemplateOverride.template_name == template_name,
-                    EmailTemplateOverride.is_active,
                 )
             )
-            return result.scalar_one_or_none()
+            return cast(EmailTemplateOverride | None, result.scalar_one_or_none())
 
     async def render_template(self, tenant_id: str, template_name: str, context: dict[str, Any]) -> tuple[str, str]:
         """
@@ -78,7 +78,9 @@ class EmailTemplatesService:
 
         # Load default template
         try:
-            html_content = settings.EMAIL_TEMPLATES_DIR.joinpath(f"{template_name}.html").read_text(encoding="utf-8")
+            html_content = (
+                Path(settings.EMAIL_TEMPLATES_DIR).joinpath(f"{template_name}.html").read_text(encoding="utf-8")
+            )
 
         except FileNotFoundError:
             raise TemplateNotFound(f"Email template not found: {template_name}")

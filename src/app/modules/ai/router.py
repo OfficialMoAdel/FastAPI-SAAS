@@ -257,7 +257,8 @@ async def chat_completion_stream(
     async def generate():
         try:
             async for chunk in service.complete_stream(session_id, current_user["id"], request):
-                yield f"data: {json_dumps(chunk, as_str=True)}\n\n"
+                data = str(json_dumps(chunk, as_str=True))
+                yield f"data: {data}\n\n"
         except ChatCompletionError as e:
             error = {
                 "error": True,
@@ -265,7 +266,8 @@ async def chat_completion_stream(
                 "error_code": e.error_code,
                 "model": e.model,
             }
-            yield f"data: {json_dumps(error, as_str=True)}\n\n"
+            data = str(json_dumps(error, as_str=True))
+            yield f"data: {data}\n\n"
 
     return StreamingResponse(
         generate(),

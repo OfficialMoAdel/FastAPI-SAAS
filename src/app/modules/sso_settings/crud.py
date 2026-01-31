@@ -3,6 +3,7 @@ from fastcrud import FastCRUD
 from .models import SSOSettings
 from .schemas import (
     SSOSettingsCreateInternal,
+    SSOSettingsDelete,
     SSOSettingsRead,
     SSOSettingsUpdateInternal,
 )
@@ -14,7 +15,7 @@ class CRUDSSOSettings(
         SSOSettingsCreateInternal,
         SSOSettingsUpdateInternal,
         SSOSettingsUpdateInternal,
-        dict,
+        SSOSettingsDelete,
         SSOSettingsRead,
     ]
 ):

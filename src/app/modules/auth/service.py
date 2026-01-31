@@ -2,6 +2,7 @@
 
 import asyncio
 from datetime import timedelta
+from typing import Any
 
 from fastapi import Request, Response
 from jwt.exceptions import PyJWTError as JWTError
@@ -28,13 +29,29 @@ from ...modules.users.service import get_user_service
 logger = get_logger(__name__)
 
 
+def get_auth_service() -> "AuthService":
+    """Factory function to get AuthService instance.
+
+    Returns
+    -------
+    AuthService
+        Singleton-like auth service instance.
+    """
+    return AuthService()
+
+
 class AuthService:
     """Service class for authentication-related business logic."""
 
-    async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict | bool:
+    async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
 
         Uses eager loading to include tier data for rate limiting in JWT claims.
+
+        Returns
+        -------
+        dict[str, Any] | None
+            User data dict if authentication successful, None otherwise.
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         # Use UserService to benefit from auth info caching
@@ -45,10 +62,10 @@ class AuthService:
             db_user = await user_service.get_user_auth_info(username=username_or_email)
 
         if not db_user:
-            return False
+            return None
 
         if not await verify_password(password, db_user["hashed_password"]):
-            return False
+            return None
 
         return db_user
 

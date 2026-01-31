@@ -20,7 +20,7 @@ from src.app.core.security import (
 )
 from src.app.core.security.tokens import MagicLinkManager
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users import crud_users
+from src.app.modules.users.crud import crud_users
 
 from .exceptions import (
     InvalidMagicLinkError,
@@ -192,7 +192,7 @@ class MagicLinkService:
         """
         return MagicLinkManager(redis=self.redis)
 
-    async def _get_user_by_email(self, email: str) -> dict | None:
+    async def _get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Get user by email address with tier eager-loaded.
 
         Args:

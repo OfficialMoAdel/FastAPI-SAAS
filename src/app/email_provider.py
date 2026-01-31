@@ -108,8 +108,8 @@ class SMTPProvider(EmailProvider):
             # Prepare message
             msg = MIMEMultipart("alternative")
 
-            from_email = message.from_email or self.from_email
-            from_name = message.from_name or self.from_name
+            from_email = message.from_email or self.from_email or ""
+            from_name = message.from_name or self.from_name or ""
 
             msg["From"] = formataddr((from_name, from_email))
             msg["To"] = message.to_email

@@ -4,7 +4,7 @@ This module provides a singleton httpx.AsyncClient that is reused across
 all SSO provider HTTP requests, eliminating TCP/TLS handshake overhead.
 """
 
-from typing import Any
+from typing import Any, cast
 
 import httpx
 
@@ -70,7 +70,7 @@ async def sso_http_post(url: str, data: dict[str, Any], headers: dict[str, str] 
     client = await get_sso_http_client()
     response = await client.post(url, data=data, headers=headers)
     response.raise_for_status()
-    return response.json()
+    return cast(dict[str, Any], response.json())
 
 
 async def sso_http_get(url: str, headers: dict[str, str] | None = None) -> dict[str, Any]:
@@ -91,4 +91,4 @@ async def sso_http_get(url: str, headers: dict[str, str] | None = None) -> dict[
     client = await get_sso_http_client()
     response = await client.get(url, headers=headers)
     response.raise_for_status()
-    return response.json()
+    return cast(dict[str, Any], response.json())

@@ -69,7 +69,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Add security headers to response."""
-        response = await call_next(request)
+        response: Response = await call_next(request)
 
         # XSS Prevention Headers
         response.headers["X-Content-Type-Options"] = "nosniff"

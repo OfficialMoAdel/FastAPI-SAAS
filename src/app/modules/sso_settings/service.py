@@ -133,7 +133,7 @@ class SSOSettingsService:
             if tenant:
                 tenant_id = tenant.id
 
-        update_data = {}
+        update_data: dict[str, bytes | dict[str, Any] | bool | None] = {}
         encryption = get_encryption()
 
         if settings.client_id is not None:

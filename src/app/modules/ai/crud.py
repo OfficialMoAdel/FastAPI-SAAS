@@ -17,7 +17,7 @@ from .schemas import (
 )
 
 # Chat Session CRUD (tenant-aware)
-CRUDChatSession = TenantAwareCRUD[
+CRUDChatSession = TenantAwareCRUD[  # type: ignore[type-var]
     AIChatSession,
     ChatSessionCreate,
     ChatSessionUpdate,
@@ -25,11 +25,11 @@ CRUDChatSession = TenantAwareCRUD[
     None,
     ChatSessionRead,
 ]
-crud_chat_sessions = CRUDChatSession(AIChatSession)
+crud_chat_sessions = CRUDChatSession(AIChatSession)  # type: ignore[type-var]
 
 
 # Chat Message CRUD (no tenant_id, linked via session)
-CRUDChatMessage = TenantAwareCRUD[
+CRUDChatMessage = TenantAwareCRUD[  # type: ignore[type-var]
     AIChatMessage,
     ChatMessageCreate,
     None,
@@ -37,11 +37,11 @@ CRUDChatMessage = TenantAwareCRUD[
     None,
     ChatMessageRead,
 ]
-crud_chat_messages = CRUDChatMessage(AIChatMessage)
+crud_chat_messages = CRUDChatMessage(AIChatMessage)  # type: ignore[type-var]
 
 
 # AI Settings CRUD (user-level, no tenant_id)
-CRUDAISettings = TenantAwareCRUD[
+CRUDAISettings = TenantAwareCRUD[  # type: ignore[type-var]
     AISettings,
     AISettingsUpdate,
     AISettingsUpdate,
@@ -49,4 +49,4 @@ CRUDAISettings = TenantAwareCRUD[
     None,
     AISettingsRead,
 ]
-crud_ai_settings = CRUDAISettings(AISettings)
+crud_ai_settings = CRUDAISettings(AISettings)  # type: ignore[type-var]

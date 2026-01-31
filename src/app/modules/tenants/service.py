@@ -165,7 +165,8 @@ class TenantService(BaseService[Tenant]):
         if is_active is not None:
             kwargs["is_active"] = is_active
 
-        return await self.crud.get_multi(**kwargs)
+        result: dict[str, Any] = await self.crud.get_multi(**kwargs)
+        return result
 
     async def update_tenant(
         self,

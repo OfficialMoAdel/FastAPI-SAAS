@@ -135,3 +135,15 @@ class UserPreferencesRead(BaseRead):
 
     user_id: int
     preferences: dict[str, Any]
+
+
+class UserPreferencesUpdateInternal(BaseModel):
+    """Internal schema for updating user preferences."""
+
+    preferences: dict[str, Any] | None = None
+
+
+class UserPreferencesDeleteInternal(BaseModel):
+    """Internal schema for deleting user preferences."""
+
+    pass

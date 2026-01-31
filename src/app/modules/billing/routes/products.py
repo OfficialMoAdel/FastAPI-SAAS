@@ -125,7 +125,8 @@ async def delete_product(
     # Try to convert to int first for database IDs
     try:
         product_id_int = int(product_id)
-        return await service.delete_product(product_id_int)
+        result = await service.deactivate_product(product_id_int)
+        return dict(result) if result else {}
     except ValueError:
         # If not a valid int, treat as Stripe ID string
         raise

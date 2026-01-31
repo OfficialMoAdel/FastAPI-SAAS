@@ -100,6 +100,11 @@ class PasswordResetToken(Base):
         """Check if token has expired."""
         return datetime.now(UTC) > self.expires_at
 
+    @property
+    def is_valid(self) -> bool:
+        """Check if token is valid (not used and not expired)."""
+        return not self.used and not self.is_expired
+
 
 class EmailVerificationToken(Base):
     """Token for email verification requests.

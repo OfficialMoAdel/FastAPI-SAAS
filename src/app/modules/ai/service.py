@@ -106,7 +106,7 @@ def truncate_context(
         return messages[-1:] if messages else []
 
     # Start from the most recent messages (FIFO removes oldest first)
-    truncated = []
+    truncated: list[dict[str, str]] = []
     current_tokens = 0
 
     # Iterate from newest to oldest
@@ -152,7 +152,8 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
-        return await crud_chat_sessions.create(db=self.db, object=session_data)
+        result = await crud_chat_sessions.create(db=self.db, object=ChatSessionCreate(**session_data))
+        return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
         """Get a chat session by ID with ownership check."""
@@ -179,7 +180,10 @@ class ChatSessionService(BaseService[AIChatSession]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_chat_sessions.update(db=self.db, object=update_data, id=session_id)
-        return await crud_chat_sessions.get(db=self.db, id=session_id)
+        result = await crud_chat_sessions.get(db=self.db, id=session_id)
+        if result is None:
+            raise ModelNotFoundError("ChatSession", session_id)
+        return result
 
     async def delete_session(self, session_id: int, user_id: int) -> dict[str, str]:
         """Delete a chat session."""
@@ -207,16 +211,17 @@ class ChatMessageService(BaseService[AIChatMessage]):
             content: str
             token_count: int | None = None
 
-        # Handle both enum and string roles
-        role_str = data.role.value if hasattr(data.role, "value") else str(data.role)
-
+        # Role is already a string (Literal type)
         internal_data = ChatMessageInternal(
             session_id=session_id,
-            role=role_str,
+            role=str(data.role),
             content=data.content,
             token_count=token_count,
         )
-        return await crud_chat_messages.create(db=self.db, object=internal_data)
+        result = await crud_chat_messages.create(
+            db=self.db, object=ChatMessageCreate(role=data.role, content=data.content)
+        )
+        return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
         """Get paginated messages for a session."""
@@ -243,16 +248,16 @@ class AISettingsService(BaseService[AISettings]):
         settings = await crud_ai_settings.get(db=self.db, user_id=user_id)
         if settings is None:
             # Create default settings
-            settings = await crud_ai_settings.create(
-                db=self.db,
-                object={
-                    "user_id": user_id,
-                    "model": "gemma3",
-                    "temperature": 0.7,
-                    "max_tokens": 2048,
-                    "system_prompt": None,
-                },
+            default_settings = AISettingsUpdate(
+                model="gemma3",
+                temperature=0.7,
+                max_tokens=2048,
+                system_prompt=None,
             )
+            result = await crud_ai_settings.create(db=self.db, object=default_settings)
+            # Manually add user_id since it's not in AISettingsUpdate
+            settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
+            settings["user_id"] = user_id
         return settings
 
     async def update_settings(self, user_id: int, data: AISettingsUpdate) -> dict[str, Any]:
@@ -263,15 +268,23 @@ class AISettingsService(BaseService[AISettings]):
         update_data["updated_at"] = datetime.now(UTC)
 
         if settings is None:
-            # Create with provided values
-            update_data["user_id"] = user_id
-            update_data.setdefault("model", "gemma3")
-            update_data.setdefault("temperature", 0.7)
-            update_data.setdefault("max_tokens", 2048)
-            return await crud_ai_settings.create(db=self.db, object=update_data)
+            # Create with provided values - build AISettingsUpdate schema
+            create_data = AISettingsUpdate(
+                model=update_data.get("model", "gemma3"),  # type: ignore[arg-type]
+                temperature=update_data.get("temperature", 0.7),  # type: ignore[arg-type]
+                max_tokens=update_data.get("max_tokens", 2048),  # type: ignore[arg-type]
+                system_prompt=update_data.get("system_prompt"),  # type: ignore[arg-type]
+            )
+            result = await crud_ai_settings.create(db=self.db, object=create_data)
+            result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
+            result_dict["user_id"] = user_id
+            return result_dict
         else:
             await crud_ai_settings.update(db=self.db, object=update_data, id=settings["id"])
-            return await crud_ai_settings.get(db=self.db, id=settings["id"])
+            updated_settings = await crud_ai_settings.get(db=self.db, id=settings["id"])
+            if updated_settings is None:
+                raise ModelNotFoundError("AISettings", settings["id"])
+            return updated_settings
 
 
 # Dependency injection factories

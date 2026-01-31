@@ -138,12 +138,12 @@ class Pricing(Base):
     product: Mapped["Product"] = relationship(back_populates="pricing_tiers", init=False)
 
 
-class UserSubscription(Base):
+class UserSubscription(Base, kw_only=True):
     """User subscription status and lifecycle tracking."""
 
     __tablename__ = "user_subscriptions"
 
-    __table_args__ = (Index("idx_subscription_tenant_user_status", "tenant_id", "user_id", "status"),)
+    __table_args__ = (Index("idx_subscription_tenant_user_status", "tenant_id", "user_id", "status"),)  # type: ignore[assignment]
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)

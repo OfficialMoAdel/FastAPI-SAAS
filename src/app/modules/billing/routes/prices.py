@@ -63,7 +63,8 @@ async def list_prices(
     """
     service = PricingService(db)
     result = await service.list_prices(limit=100, product_id=product_id, is_active=is_active)
-    return result.get("data", [])
+    data = result.get("data", [])
+    return list(data) if data else []
 
 
 @router.get("/{price_id}", response_model=PricingRead)

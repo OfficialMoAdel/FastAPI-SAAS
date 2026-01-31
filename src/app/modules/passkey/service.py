@@ -33,6 +33,7 @@ from webauthn.helpers.structs import (
     PublicKeyCredentialDescriptor,
     PublicKeyCredentialRequestOptions,
     PublicKeyCredentialType,
+    ResidentKeyRequirement,
     UserVerificationRequirement,
 )
 
@@ -47,7 +48,19 @@ logger = logging.getLogger(__name__)
 # Constants
 CHALLENGE_TTL = 300  # 5 minutes
 AUTH_CHALLENGE_TTL = 300  # 5 minutes for authentication challenges
-RP_ID = "localhost" if settings.ENVIRONMENT == EnvironmentOption.LOCAL else settings.DOMAIN_NAME
+
+
+def _get_rp_id() -> str:
+    """Get the relying party ID based on environment."""
+    if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
+        return "localhost"
+    # Extract domain from FRONTEND_URL (e.g., https://example.com -> example.com)
+    from urllib.parse import urlparse
+
+    parsed = urlparse(settings.FRONTEND_URL)
+    return parsed.netloc or "localhost"
+
+
 RP_NAME = settings.APP_NAME
 
 
@@ -88,7 +101,7 @@ class PasskeyService:
 
         # 3. Generate registration options
         options: PublicKeyCredentialCreationOptions = generate_registration_options(
-            rp_id=RP_ID,
+            rp_id=_get_rp_id(),
             rp_name=RP_NAME,
             user_id=str(user_id).encode(),
             user_name=user["email"],
@@ -97,7 +110,7 @@ class PasskeyService:
             authenticator_selection=AuthenticatorSelectionCriteria(
                 authenticator_attachment=AuthenticatorAttachment.CROSS_PLATFORM,
                 user_verification=UserVerificationRequirement.PREFERRED,
-                resident_key=UserVerificationRequirement.PREFERRED,
+                resident_key=ResidentKeyRequirement.PREFERRED,
             ),
             exclude_credentials=existing_creds,
         )
@@ -106,7 +119,8 @@ class PasskeyService:
         if redis:
             await self._store_challenge(redis, user_id, options.challenge, device_type)
 
-        return json_loads(options_to_json(options))
+        result: dict[str, Any] = json_loads(options_to_json(options))
+        return result
 
     async def verify_registration(
         self,
@@ -150,7 +164,7 @@ class PasskeyService:
                 credential=parsed_credential,
                 expected_challenge=challenge,
                 expected_origin=self._get_origin(),
-                expected_rp_id=RP_ID,
+                expected_rp_id=_get_rp_id(),
             )
         except Exception as e:
             logger.warning(f"Passkey verification failed for user {user_id}: {e}")
@@ -194,11 +208,11 @@ class PasskeyService:
 
     async def delete_credential(self, db: AsyncSession, user_id: int, credential_id: int) -> None:
         """Delete a passkey credential."""
-        cred = await crud_passkey_credentials.get(db=db, id=credential_id)
+        cred = await crud_passkey_credentials.get_credential(db=db, id=credential_id)
         if not cred or cred.user_id != user_id:
             raise NotFoundException(detail="Passkey credential not found.")
 
-        await crud_passkey_credentials.delete(db=db, db_object=cred)
+        await crud_passkey_credentials.delete_credential(db=db, db_object=cred)
 
     # ============================================================================
     # Authentication Methods (T079, T080)
@@ -227,7 +241,7 @@ class PasskeyService:
 
         # 2. Generate authentication options
         options: PublicKeyCredentialRequestOptions = generate_authentication_options(
-            rp_id=RP_ID,
+            rp_id=_get_rp_id(),
             user_verification=UserVerificationRequirement.PREFERRED,
             allow_credentials=allowed_credentials if allowed_credentials else None,
         )
@@ -236,7 +250,8 @@ class PasskeyService:
         if redis:
             await self._store_auth_challenge(redis, options.challenge)
 
-        return json_loads(options_to_json(options))
+        result: dict[str, Any] = json_loads(options_to_json(options))
+        return result
 
     async def verify_authentication(
         self,
@@ -267,6 +282,8 @@ class PasskeyService:
 
         # 2. Find credential in database by raw ID
         raw_id = credential.get("rawId") or credential.get("id")
+        if not raw_id:
+            raise BadRequestException(detail="Credential ID is required.")
         db_credential = await self._find_credential_by_id(db, raw_id)
         if not db_credential:
             raise BadRequestException(detail="Credential not found.")
@@ -277,7 +294,7 @@ class PasskeyService:
                 credential=credential,
                 expected_challenge=stored_challenge,
                 expected_origin=self._get_origin(),
-                expected_rp_id=RP_ID,
+                expected_rp_id=_get_rp_id(),
                 db_credential=db_credential,
             )
         except Exception as e:
@@ -315,7 +332,7 @@ class PasskeyService:
 
     async def _decrypt_credentials_parallel(
         self,
-        credentials_data: list[tuple[str, Any | None]],
+        credentials_data: list[tuple[bytes, Any | None]],
         user_identifier: int | str,
     ) -> list[PublicKeyCredentialDescriptor]:
         """Decrypt credentials in parallel with concurrency control.
@@ -340,7 +357,7 @@ class PasskeyService:
         # Parallel decryption with concurrency limit
         semaphore = asyncio.Semaphore(settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
 
-        async def decrypt_one(cred_id: str, transports: Any | None):
+        async def decrypt_one(cred_id: bytes, transports: Any | None) -> PublicKeyCredentialDescriptor | None:
             async with semaphore:
                 try:
                     decrypted_id = await asyncio.to_thread(encryption.decrypt_credential, cred_id)
@@ -382,6 +399,7 @@ class PasskeyService:
 
         # P3-2 Optimization: Column-specific SELECT for credential_id only
 
+        creds_to_decrypt: list[tuple[bytes, list[str] | None]]
         if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id)
@@ -420,7 +438,7 @@ class PasskeyService:
         if not data:
             return None
 
-        parsed = json_loads(data)
+        parsed: dict[str, Any] = json_loads(data)
         # Convert challenge back to bytes (base64url decoded) from stored string
         # Note: webauthn expects bytes for expected_challenge
         from webauthn.helpers import base64url_to_bytes
@@ -433,18 +451,24 @@ class PasskeyService:
         key = f"passkey:challenge:{user_id}"
         await redis.delete(key)
 
-    async def _store_credential(self, db: AsyncSession, cred_in: PasskeyCredentialCreate) -> Any:
+    async def _store_credential(self, db: AsyncSession, cred_in: PasskeyCredentialCreate) -> dict[str, Any]:
         """Store new credential in database."""
-        from src.app.modules.passkey.schemas import PasskeyCredentialResponse
-
-        return await crud_passkey_credentials.create(db=db, object=cred_in, schema_to_select=PasskeyCredentialResponse)
+        result = await crud_passkey_credentials.create(db=db, object=cred_in)
+        # Return as dict for API response
+        return {
+            "id": result.id,
+            "device_type": result.device_type,
+            "created_at": result.created_at,
+            "last_used_at": result.last_used_at,
+            "transports": result.transports,
+        }
 
     def _get_origin(self) -> str:
         """Get expected origin based on environment."""
         if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
             return "http://localhost:3000"  # Default frontend port
         # In production, use configured frontend URL
-        return settings.FRONTEND_URL if hasattr(settings, "FRONTEND_URL") else f"https://{settings.DOMAIN_NAME}"
+        return settings.FRONTEND_URL
 
     async def _count_user_passkeys(self, db: AsyncSession, user_id: int) -> int:
         """Count user passkeys."""
@@ -471,12 +495,14 @@ class PasskeyService:
         if not user:
             return []
 
+        user_id = user["id"]
+
         # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
 
         if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id, PasskeyCredential.transports)
-                .where(PasskeyCredential.user_id == user.id)
+                .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
                 .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
@@ -485,7 +511,7 @@ class PasskeyService:
             creds_to_decrypt = [(row[0], row[1]) for row in result.fetchall()]
         else:
             # Fallback path
-            creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user.id)
+            creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
             if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
                 creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
 
@@ -592,11 +618,51 @@ class PasskeyService:
         credential.last_used_at = datetime.now(UTC)
         await db.commit()
 
-    async def _get_user_for_credential(self, db: AsyncSession, credential: Any) -> dict | None:
+    async def _get_user_for_credential(self, db: AsyncSession, credential: Any) -> dict[str, Any] | None:
         """Get the user associated with a passkey credential with tier eager-loaded."""
-        from src.app.modules.users.crud import crud_users
+        from sqlalchemy import select
+        from sqlalchemy.orm import joinedload
 
-        return await crud_users.get_user_with_tier_eager(db=db, id=credential.user_id)
+        from src.app.modules.users.models import User
+
+        # Query user by ID with tier eager-loaded
+        stmt = (
+            select(User).options(joinedload(User.tier)).where(User.id == credential.user_id, User.is_deleted.is_(False))
+        )
+        result = await db.execute(stmt)
+        user = result.unique().scalar_one_or_none()
+
+        if not user:
+            return None
+
+        # Direct dict construction for consistency with auth service patterns
+        user_dict: dict[str, Any] = {
+            "id": user.id,
+            "created_at": user.created_at,
+            "updated_at": user.updated_at,
+            "name": user.name,
+            "username": user.username,
+            "email": user.email,
+            "hashed_password": user.hashed_password,
+            "profile_image_url": user.profile_image_url,
+            "tier_id": user.tier_id,
+            "tenant_id": user.tenant_id,
+            "is_superuser": user.is_superuser,
+            "is_deleted": user.is_deleted,
+            "is_email_verified": user.is_email_verified,
+        }
+
+        if user.tier:
+            user_dict["tier"] = {
+                "id": user.tier.id,
+                "created_at": user.tier.created_at,
+                "updated_at": user.tier.updated_at,
+                "name": user.tier.name,
+            }
+        else:
+            user_dict["tier"] = None
+
+        return user_dict
 
     async def _generate_auth_tokens(self, user: dict) -> dict[str, Any]:
         """Generate JWT authentication tokens for a user with tier info for rate limiting."""

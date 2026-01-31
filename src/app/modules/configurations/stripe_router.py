@@ -7,7 +7,7 @@ Delegates to billing module's StripeSettingsService and webhook handler.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, Header, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
@@ -104,20 +104,20 @@ async def handle_stripe_webhooks(
 
     if not sig_header:
         logger.error("Missing Stripe signature header")
-        return {"error": "Missing signature"}, 400
+        raise HTTPException(status_code=400, detail="Missing signature")
 
     webhook_secret = app_settings.STRIPE_WEBHOOK_SECRET
 
     if not webhook_secret:
         logger.error("Stripe webhook secret not configured")
-        return {"error": "Webhook secret not configured"}, 500
+        raise HTTPException(status_code=500, detail="Webhook secret not configured")
 
     # Verify webhook signature
     try:
         event = verify_webhook_signature(payload, sig_header, webhook_secret)
     except Exception as e:
         logger.error(f"Webhook signature verification failed: {e}")
-        return {"error": "Invalid signature"}, 400
+        raise HTTPException(status_code=400, detail="Invalid signature")
 
     # Idempotency check
     event_id = event.get("id")

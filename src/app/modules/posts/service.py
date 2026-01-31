@@ -32,7 +32,7 @@ class PostService(BaseService[Post]):
         if current_user_id != target_user_id:
             raise ForbiddenException()
 
-    async def create(
+    async def create_post(
         self,
         post: PostCreate,
         current_user: dict[str, Any],
@@ -74,7 +74,7 @@ class PostService(BaseService[Post]):
 
         return created_post
 
-    async def get_multi(
+    async def get_posts(
         self,
         user_id: int,
         page: int = 1,
@@ -108,7 +108,7 @@ class PostService(BaseService[Post]):
         response: dict[str, Any] = paginated_response(crud_data=posts_data, page=page, items_per_page=items_per_page)
         return response
 
-    async def get(self, post_id: int, user_id: int) -> dict[str, Any]:
+    async def get_post(self, post_id: int, user_id: int) -> dict[str, Any]:
         """Get a single post by ID.
 
         Parameters
@@ -136,7 +136,7 @@ class PostService(BaseService[Post]):
 
         return db_post
 
-    async def update(
+    async def update_post(
         self,
         post_id: int,
         values: PostUpdate,
@@ -176,7 +176,7 @@ class PostService(BaseService[Post]):
         await crud_posts.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
 
-    async def delete(
+    async def delete_post(
         self,
         post_id: int,
         current_user: dict[str, Any],
@@ -264,7 +264,7 @@ class _LegacyPostService:
         self, username: str, post: PostCreate, current_user: dict[str, Any], db: AsyncSession
     ) -> dict[str, Any]:
         service = PostService(db)
-        return await service.create(post, current_user)
+        return await service.create_post(post, current_user)
 
     async def get_posts(
         self, username: str, db: AsyncSession, page: int = 1, items_per_page: int = 10
@@ -275,7 +275,7 @@ class _LegacyPostService:
         user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)
         service = PostService(db)
-        return await service.get_multi(user.id, page, items_per_page)
+        return await service.get_posts(user.id, page, items_per_page)
 
     async def get_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, Any]:
         from ...core.service_registry import get_service
@@ -283,19 +283,19 @@ class _LegacyPostService:
         user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)
         service = PostService(db)
-        return await service.get(post_id, user.id)
+        return await service.get_post(post_id, user.id)
 
     async def update_post(
         self, username: str, post_id: int, values: PostUpdate, current_user: dict[str, Any], db: AsyncSession
     ) -> dict[str, str]:
         service = PostService(db)
-        return await service.update(post_id, values, current_user)
+        return await service.update_post(post_id, values, current_user)
 
     async def delete_post(
         self, username: str, post_id: int, current_user: dict[str, Any], db: AsyncSession
     ) -> dict[str, str]:
         service = PostService(db)
-        return await service.delete(post_id, current_user)
+        return await service.delete_post(post_id, current_user)
 
     async def hard_delete_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, str]:
         service = PostService(db)

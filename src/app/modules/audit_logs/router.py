@@ -234,10 +234,10 @@ async def export_audit_logs(
     logs = result.scalars().all()
 
     # Log the export event
-    from src.app.modules.audit_logs.service import log_audit_event
+    from src.app.modules.audit_logs.service import AuditLogService
 
-    await log_audit_event(
-        db=db,
+    audit_service = AuditLogService(db)
+    await audit_service.create_log(
         tenant_id=current_tenant.id,
         user_id=current_user.id,
         action="audit_logs.export",
@@ -281,31 +281,7 @@ async def export_audit_logs(
     async def generate_jsonl() -> AsyncGenerator[str, None]:
         """Generate JSONL content (one JSON object per line)."""
         for log in logs:
-            yield (
-                json_dumps(
-                    {
-                        "id": str(log.id),
-                        "action": log.action,
-                        "user_id": str(log.user_id) if log.user_id else None,
-                        "entity_type": log.entity_type,
-                        "entity_id": str(log.entity_id) if log.entity_id else None,
-                        "details": log.details,
-                        "ip_address": log.ip_address,
-                        "user_agent": log.user_agent,
-                        "created_at": log.created_at.isoformat() if log.created_at else None,
-                    },
-                    as_str=True,
-                )
-                + "\n"
-            )
-
-    async def generate_json() -> AsyncGenerator[str, None]:
-        """Generate JSON array content."""
-        yield "[\n"
-        for i, log in enumerate(logs):
-            if i > 0:
-                yield ",\n"
-            yield json_dumps(
+            line = json_dumps(
                 {
                     "id": str(log.id),
                     "action": log.action,
@@ -319,6 +295,29 @@ async def export_audit_logs(
                 },
                 as_str=True,
             )
+            yield str(line) + "\n"
+
+    async def generate_json() -> AsyncGenerator[str, None]:
+        """Generate JSON array content."""
+        yield "[\n"
+        for i, log in enumerate(logs):
+            if i > 0:
+                yield ",\n"
+            line = json_dumps(
+                {
+                    "id": str(log.id),
+                    "action": log.action,
+                    "user_id": str(log.user_id) if log.user_id else None,
+                    "entity_type": log.entity_type,
+                    "entity_id": str(log.entity_id) if log.entity_id else None,
+                    "details": log.details,
+                    "ip_address": log.ip_address,
+                    "user_agent": log.user_agent,
+                    "created_at": log.created_at.isoformat() if log.created_at else None,
+                },
+                as_str=True,
+            )
+            yield str(line)
         yield "\n]"
 
     # Generate response based on format

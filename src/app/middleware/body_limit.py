@@ -120,7 +120,7 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
         request._receive = limited_receive
 
         try:
-            response = await call_next(request)
+            response: Response = await call_next(request)
 
             # Check if we exceeded during streaming
             if bytes_received > self.max_body_size:

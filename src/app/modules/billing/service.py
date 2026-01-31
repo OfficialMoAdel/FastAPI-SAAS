@@ -80,7 +80,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
         tenant = get_tenant_context()
         if tenant is None:
             return None
-        return await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
+        result = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
+        return dict(result) if result else None
 
     async def update_settings(self, data: StripeSettingsUpdate) -> dict[str, Any]:
         """Update Stripe settings for the current tenant."""
@@ -94,8 +95,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
         # Encrypt the secret key if provided
         if "stripe_secret_key" in update_data and update_data["stripe_secret_key"]:
-            encrypted = self._encryption.encrypt(update_data.pop("stripe_secret_key"))
-            update_data["encrypted_secret_key"] = encrypted
+            encrypted = self._encryption.encrypt_column(update_data.pop("stripe_secret_key"))
+            update_data["encrypted_secret_key"] = encrypted.encode()
 
         update_data["updated_at"] = datetime.now(UTC)
 
@@ -104,11 +105,15 @@ class StripeSettingsService(BaseService[StripeSettings]):
             update_data["tenant_id"] = tenant.id
             # Create object must be a Pydantic model for FastCRUD
             create_obj = StripeSettingsCreateInternal(**update_data)
-            return await crud_stripe_settings.create(db=self.db, object=create_obj, schema_to_select=StripeSettingsRead)
+            create_result = await crud_stripe_settings.create(
+                db=self.db, object=create_obj, schema_to_select=StripeSettingsRead
+            )
+            return dict(create_result) if create_result else {}
         else:
             # Update existing settings
             await crud_stripe_settings.update(db=self.db, object=update_data, id=settings["id"])
-            return await crud_stripe_settings.get(db=self.db, id=settings["id"])
+            update_result = await crud_stripe_settings.get(db=self.db, id=settings["id"])
+            return dict(update_result) if update_result else {}
 
 
 class SubscriptionPlanService(BaseService[SubscriptionPlan]):
@@ -163,7 +168,8 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_subscription_plans.update(db=self.db, object=update_data, id=plan_id)
-        return await crud_subscription_plans.get(db=self.db, id=plan_id)
+        result = await crud_subscription_plans.get(db=self.db, id=plan_id)
+        return dict(result) if result else {}
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
@@ -222,7 +228,8 @@ class ProductService(BaseService[Product]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_products.update(db=self.db, object=update_data, id=product_id)
-        return await crud_products.get(db=self.db, id=product_id)
+        result = await crud_products.get(db=self.db, id=product_id)
+        return dict(result) if result else {}
 
     async def deactivate_product(self, product_id: int) -> dict[str, Any]:
         """Deactivate a product."""
@@ -232,7 +239,8 @@ class ProductService(BaseService[Product]):
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
         await crud_products.update(db=self.db, object=update_data, id=product_id)
-        return await crud_products.get(db=self.db, id=product_id)
+        result = await crud_products.get(db=self.db, id=product_id)
+        return dict(result) if result else {}
 
     async def get_product_with_pricing(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID with its pricing tiers.
@@ -350,7 +358,8 @@ class PricingService(BaseService[Pricing]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_pricing.update(db=self.db, object=update_data, id=pricing_id)
-        return await crud_pricing.get(db=self.db, id=pricing_id)
+        result = await crud_pricing.get(db=self.db, id=pricing_id)
+        return dict(result) if result else {}
 
 
 class UserSubscriptionService(BaseService[UserSubscription]):
@@ -398,7 +407,8 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_user_subscriptions.update(db=self.db, object=update_data, id=subscription_id)
-        return await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        return dict(result) if result else {}
 
     async def cancel_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Cancel a subscription at period end.
@@ -453,7 +463,8 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             },
             id=subscription_id,
         )
-        return await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        return dict(result) if result else {}
 
 
 class BillingRecordService(BaseService[BillingRecord]):
@@ -557,16 +568,11 @@ class CheckoutService:
             )
 
         try:
-            # Create Stripe Session
-            session_params = {
+            # Create Stripe Session - build kwargs conditionally to satisfy type checker
+            session_kwargs: dict[str, Any] = {
                 "api_key": api_key,
                 "payment_method_types": ["card"],
-                "line_items": [
-                    {
-                        "price": price_id,
-                        "quantity": 1,
-                    }
-                ],
+                "line_items": [{"price": price_id, "quantity": 1}],
                 "mode": "subscription",
                 "success_url": data.success_url,
                 "cancel_url": data.cancel_url,
@@ -578,15 +584,22 @@ class CheckoutService:
             }
 
             if customer_id:
-                session_params["customer"] = customer_id
+                session_kwargs["customer"] = customer_id
             else:
-                session_params["customer_email"] = user_email
+                session_kwargs["customer_email"] = user_email
 
             # Wrap sync Stripe call in thread to avoid blocking event loop
-            session = await asyncio.to_thread(stripe.checkout.Session.create, **session_params)
+            session = await asyncio.to_thread(lambda: stripe.checkout.Session.create(**session_kwargs))
+
+            checkout_url = session.url
+            if checkout_url is None:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Stripe did not return a checkout URL",
+                )
 
             return CheckoutSession(
-                checkout_url=session.url,
+                checkout_url=checkout_url,
                 session_id=session.id,
                 expires_at=datetime.fromtimestamp(session.expires_at, UTC),
             )

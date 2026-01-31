@@ -44,7 +44,7 @@ class FeatureFlagsService:
         """
         flags = await self._load_tenant_flags(tenant_id)
 
-        return flags.get(flag_name, default)
+        return bool(flags.get(flag_name, default))
 
     async def get_flag(self, tenant_id: str, flag_name: str, default: Any = None) -> Any:
         """

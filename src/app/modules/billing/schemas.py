@@ -411,6 +411,53 @@ class BillingRecordPage(BaseCreate):
 
 
 # =============================================================================
+# DELETE SCHEMAS (used for CRUD type parameters)
+# =============================================================================
+
+
+class StripeSettingsDelete(BaseUpdate):
+    """Schema for deleting Stripe settings (placeholder for CRUD typing)."""
+
+    pass
+
+
+class SubscriptionPlanDelete(BaseUpdate):
+    """Schema for deleting subscription plans (placeholder for CRUD typing)."""
+
+    pass
+
+
+class ProductDelete(BaseUpdate):
+    """Schema for deleting products (placeholder for CRUD typing)."""
+
+    pass
+
+
+class PricingDelete(BaseUpdate):
+    """Schema for deleting pricing (placeholder for CRUD typing)."""
+
+    pass
+
+
+class UserSubscriptionDelete(BaseUpdate):
+    """Schema for deleting user subscriptions (placeholder for CRUD typing)."""
+
+    pass
+
+
+class BillingRecordDelete(BaseUpdate):
+    """Schema for deleting billing records (placeholder for CRUD typing)."""
+
+    pass
+
+
+class BillingRecordUpdate(BaseUpdate):
+    """Schema for updating billing records (placeholder for CRUD typing)."""
+
+    pass
+
+
+# =============================================================================
 # ERROR SCHEMAS
 # =============================================================================
 

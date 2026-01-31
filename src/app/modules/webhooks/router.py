@@ -85,8 +85,8 @@ async def create_webhook_endpoint(
 
     endpoint = await service.create_endpoint(
         tenant_id=current_tenant.id,
-        url=request.url,
-        event_types=request.event_types,
+        url=str(request.url),
+        event_type=request.event_type,
         secret=request.secret,
     )
 

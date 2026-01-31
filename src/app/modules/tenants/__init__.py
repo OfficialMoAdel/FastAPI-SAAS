@@ -2,15 +2,16 @@
 
 Components are imported lazily to avoid circular imports.
 Direct imports:
-    from .service import tenant_service
+    from .service import get_tenant_service, TenantService
     from .router import router as tenants_router
     from .crud import crud_tenants
 """
 
 __all__ = [
     "Tenant",
+    "TenantService",
     "crud_tenants",
-    "tenant_service",
+    "get_tenant_service",
     "tenants_router",
 ]
 
@@ -21,10 +22,14 @@ def __getattr__(name: str):
         from .router import router as tenants_router
 
         return tenants_router
-    if name == "tenant_service":
-        from .service import tenant_service
+    if name == "get_tenant_service":
+        from .service import get_tenant_service
 
-        return tenant_service
+        return get_tenant_service
+    if name == "TenantService":
+        from .service import TenantService
+
+        return TenantService
     if name == "crud_tenants":
         from .crud import crud_tenants
 

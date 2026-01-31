@@ -127,10 +127,12 @@ class FileService:
             raise Exception(f"Storage upload failed: {result.error}")
 
         # Create database record
+        # Note: File model uses int FKs; tenant.id and user.id are UUID in API but
+        # the mapped_column stores the underlying int PK. Cast for type checker.
         try:
             file_record = File(
-                tenant_id=tenant_id,
-                user_id=user_id,
+                tenant_id=int(tenant_id),  # type: ignore[arg-type]
+                user_id=int(user_id),  # type: ignore[arg-type]
                 original_name=filename,
                 storage_path=storage_path,
                 mime_type=mime_type,
@@ -399,7 +401,8 @@ class FileService:
         file = await self.get_file_or_raise(tenant_id, file_id)
         provider = await self._storage_service.get_provider(tenant_id)
 
-        return await provider.get_url(file.storage_path, expires_in)
+        url: str = await provider.get_url(file.storage_path, expires_in)
+        return url
 
     async def transfer_ownership(
         self,

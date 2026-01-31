@@ -174,7 +174,8 @@ class PreferencesService:
             endpoint_url=settings.AWS_ENDPOINT_URL,
         )
 
-        file_ext = file.filename.split(".")[-1] if "." in file.filename else "png"
+        filename = file.filename or "image.png"
+        file_ext = filename.split(".")[-1] if "." in filename else "png"
         path = f"users/{user_id}/profile.{file_ext}"
 
         # UploadFile.file IS a binary file-like object

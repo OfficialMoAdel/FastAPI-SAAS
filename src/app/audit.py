@@ -3,6 +3,8 @@
 import logging
 from datetime import UTC, datetime
 
+from pydantic import SecretStr
+
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.email_provider import EmailMessage, EmailProvider, SMTPProvider
@@ -25,8 +27,8 @@ class EmailService:
             self._provider = SMTPProvider(
                 host=settings.SMTP_HOST,
                 port=settings.SMTP_PORT,
-                username=settings.SMTP_USER,
-                password=settings.SMTP_PASSWORD,
+                username=settings.SMTP_USER or "",
+                password=SecretStr(settings.SMTP_PASSWORD or ""),
                 use_tls=settings.SMTP_USE_TLS,
                 from_email=settings.EMAIL_FROM_ADDRESS,
                 from_name=settings.EMAIL_FROM_NAME,
@@ -36,8 +38,8 @@ class EmailService:
 
     async def send_email(
         self,
-        tenant_id: str,
-        user_id: str,
+        tenant_id: int,
+        user_id: int | None,
         to_email: str,
         subject: str,
         html_content: str,
@@ -105,8 +107,8 @@ class EmailService:
 
     async def _log_notification(
         self,
-        tenant_id: str,
-        user_id: str,
+        tenant_id: int,
+        user_id: int | None,
         template_name: str,
         to_email: str,
         subject: str,
@@ -122,9 +124,12 @@ class EmailService:
                 to_email=to_email,
                 subject=subject,
                 status=status,
-                sent_at=datetime.now(UTC) if status == NotificationStatus.SENT else None,
-                error_message=error_message,
             )
+            # Set init=False fields after creation
+            if status == NotificationStatus.SENT:
+                notification.sent_at = datetime.now(UTC)
+            if error_message:
+                notification.error_message = error_message
 
             session.add(notification)
             await session.commit()

@@ -1,5 +1,5 @@
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -16,6 +16,7 @@ from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
 
 from .crud import crud_user_sso_connections
@@ -93,7 +94,7 @@ class SSOService:
             redirect_uri = f"{base_url}/api/v1/auth/sso/{provider}/callback"
 
         tenant = get_tenant_context()
-        extra_data = {"tenant_id": tenant.id} if tenant else {}
+        extra_data: dict[str, Any] = {"tenant_id": tenant.id} if tenant else {}
 
         # Store connect mode info in state for callback
         if connect_mode:
@@ -149,14 +150,29 @@ class SSOService:
         redirect_uri = state_data["redirect_uri"]
 
         extra_data = state_data.get("extra_data") or {}
-        tenant_id = extra_data.get("tenant_id")
+        tenant_id: int | None = extra_data.get("tenant_id")
 
         if tenant_id:
             from src.app.modules.tenants.crud import crud_tenants
 
-            tenant_obj = await crud_tenants.get(db, id=tenant_id)
-            if tenant_obj:
-                set_tenant_context(tenant_obj)
+            tenant_result = await crud_tenants.get(db, id=tenant_id)
+            if tenant_result:
+                # tenant_result may be dict or model - handle both
+                if isinstance(tenant_result, dict):
+                    # Need to fetch actual model for set_tenant_context
+                    from sqlalchemy import select
+
+                    from src.app.modules.tenants.models import Tenant as TenantModel
+
+                    query = select(TenantModel).where(TenantModel.id == tenant_id)
+                    result = await db.execute(query)
+                    tenant_model = result.scalar_one_or_none()
+                    if tenant_model:
+                        set_tenant_context(tenant_model)
+                    else:
+                        raise BadRequestException("Tenant context not found")
+                else:
+                    set_tenant_context(cast(Tenant, tenant_result))
             else:
                 raise BadRequestException("Tenant context not found")
 
@@ -175,18 +191,21 @@ class SSOService:
             raise BadRequestException("No access token received from provider")
 
         # Apple uses id_token for user info (no userinfo endpoint)
+        user_info: Any
         try:
             if provider == SSOProvider.APPLE:
                 id_token = token_response.get("id_token")
                 if not id_token:
                     raise BadRequestException("No id_token received from Apple")
-                user_info = await oauth_provider.get_user_info(id_token, user_data=user_data)
+                # Apple provider has different signature, cast to access it
+                apple_provider = cast(AppleProvider, oauth_provider)
+                user_info = await apple_provider.get_user_info(id_token, user_data=user_data)
             else:
                 user_info = await oauth_provider.get_user_info(access_token)
         except Exception as e:
             raise BadRequestException(f"Failed to fetch user info: {str(e)}")
 
-        connection = await crud_user_sso_connections.get(
+        connection = await crud_user_sso_connections.get_by_criteria(
             db=db,
             provider=provider,
             provider_user_id=user_info.provider_user_id,
@@ -294,18 +313,21 @@ class SSOService:
             token_type="bearer",
         )
 
-    async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any):
+    async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any) -> None:
         """Create UserSSOConnection."""
+        current_tenant = get_tenant_context()
+        if not current_tenant:
+            raise BadRequestException("Cannot link account without tenant context")
         connection_in = UserSSOConnectionCreate(
             user_id=user_id,
-            tenant_id=get_tenant_context().id,
-            provider=provider,
+            tenant_id=current_tenant.id,
+            provider=SSOProvider(provider),
             provider_user_id=user_info.provider_user_id,
             provider_email=user_info.email,
         )
         await crud_user_sso_connections.create(db=db, object=connection_in)
 
-    async def _create_sso_user(self, db: AsyncSession, user_info: Any) -> dict[str, Any]:
+    async def _create_sso_user(self, db: AsyncSession, user_info: Any) -> Any:
         """Create a new user from SSO data."""
         from src.app.core.security.tokens import TokenGenerator
 
@@ -328,7 +350,8 @@ class SSOService:
         from src.app.core.service_registry import get_service
 
         user_svc = get_service("user", db)
-        return await user_svc.create(user=user_in)
+        result = await user_svc.create(user=user_in)
+        return result
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
         """List all available SSO providers with their status."""
@@ -395,7 +418,7 @@ class SSOService:
             NotFoundException: If no connection exists
         """
         # Check if connection exists
-        connection = await crud_user_sso_connections.get(
+        connection = await crud_user_sso_connections.get_by_criteria(
             db=db,
             user_id=user_id,
             provider=provider,
@@ -414,7 +437,7 @@ class SSOService:
             )
 
         # Delete the connection
-        await crud_user_sso_connections.delete(db=db, id=connection.id)
+        await crud_user_sso_connections.delete_by_criteria(db=db, id=connection.id)
 
     async def _can_disconnect(
         self,
@@ -438,11 +461,15 @@ class SSOService:
         """
         # Check if user has a password
         user = await get_service("user", db).get(user_id)
-        if user and user.get("hashed_password"):
-            return True
+        if user:
+            hashed_pw = (
+                user.get("hashed_password") if isinstance(user, dict) else getattr(user, "hashed_password", None)
+            )
+            if hashed_pw:
+                return True
 
         # Check if user has multiple SSO connections
-        connection_count = await crud_user_sso_connections.count(
+        connection_count = await crud_user_sso_connections.count_for_user(
             db=db,
             user_id=user_id,
             tenant_id=tenant_id,

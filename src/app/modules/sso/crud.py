@@ -1,3 +1,5 @@
+from typing import Any
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +23,7 @@ class CRUDUserSSOConnection(
         UserSSOConnectionRead,
     ]
 ):
-    async def get(
+    async def get_by_criteria(
         self,
         db: AsyncSession,
         id: int | None = None,
@@ -29,13 +31,12 @@ class CRUDUserSSOConnection(
         provider_user_id: str | None = None,
         user_id: int | None = None,
         tenant_id: int | None = None,
-        **kwargs,
     ) -> UserSSOConnection | None:
         """Get SSO connection by various criteria."""
-        if id is not None:
-            return await super().get(db=db, id=id)
-
         query = select(self.model)
+
+        if id is not None:
+            query = query.where(self.model.id == id)
         if provider is not None:
             query = query.where(self.model.provider == provider)
         if provider_user_id is not None:
@@ -48,7 +49,7 @@ class CRUDUserSSOConnection(
         result = await db.execute(query)
         return result.scalar_one_or_none()
 
-    async def exists(
+    async def exists_for_user(
         self,
         db: AsyncSession,
         user_id: int,
@@ -68,14 +69,15 @@ class CRUDUserSSOConnection(
             query = query.where(self.model.tenant_id == tenant_id)
 
         result = await db.execute(query)
-        return result.scalar() > 0
+        count = result.scalar()
+        return (count or 0) > 0
 
-    async def count(
+    async def count_for_user(
         self,
         db: AsyncSession,
         user_id: int | None = None,
         tenant_id: int | None = None,
-        **kwargs,
+        **kwargs: Any,
     ) -> int:
         """Count SSO connections for a user."""
         if user_id is None and "id" in kwargs:
@@ -91,7 +93,7 @@ class CRUDUserSSOConnection(
         result = await db.execute(query)
         return result.scalar() or 0
 
-    async def delete(
+    async def delete_by_criteria(
         self,
         db: AsyncSession,
         id: int | None = None,
@@ -104,7 +106,7 @@ class CRUDUserSSOConnection(
             await super().delete(db=db, id=id)
             return
 
-        connection = await self.get(
+        connection = await self.get_by_criteria(
             db=db,
             user_id=user_id,
             provider=provider,

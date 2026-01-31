@@ -1,8 +1,8 @@
-"""Enable Row Level Security (RLS) for tenant isolation
+"""Layer 8: Enable Row Level Security (RLS) for tenant isolation
 
-Revision ID: 011_enable_rls_policies
-Revises: 640cb991d4f3
-Create Date: 2026-01-29 15:30:00.000000
+Revision ID: 08_enable_rls_policies
+Revises: 07_observability
+Create Date: 2026-01-30
 
 This migration enables PostgreSQL Row Level Security (RLS) on all multi-tenant
 tables to enforce tenant isolation at the database engine level.
@@ -12,15 +12,13 @@ See: tests/performance/baseline_pre_rls.py
 """
 
 from collections.abc import Sequence
-from typing import Union
 
 from alembic import op
 
-# revision identifiers, used by Alembic.
-revision: str = "011_enable_rls_policies"
-down_revision: Union[str, None] = "640cb991d4f3"
-branch_labels: Union[str, Sequence[str], None] = None
-depends_on: Union[str, Sequence[str], None] = None
+revision: str = "08_enable_rls_policies"
+down_revision: str | None = "07_observability"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
 
 # Tables that have tenant_id and require RLS
 TENANT_TABLES = [
@@ -32,7 +30,6 @@ TENANT_TABLES = [
     "stripe_settings",
     "subscription_plans",
     "products",
-    "pricing",
     "user_subscriptions",
     "billing_records",
     "roles",
@@ -43,7 +40,7 @@ TENANT_TABLES = [
     "notifications",
     "email_template_overrides",
     "ai_chat_sessions",
-    "user",  # Users ARE tenant-scoped in this codebase
+    "user",
 ]
 
 
@@ -88,12 +85,9 @@ def upgrade() -> None:
     for table in TENANT_TABLES:
         # Enable RLS
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(
-            f"COMMENT ON TABLE {table} IS 'RLS enabled for tenant isolation'"
-        )
+        op.execute(f"COMMENT ON TABLE {table} IS 'RLS enabled for tenant isolation'")
 
         # Create tenant isolation policy
-        # This policy applies to SELECT, INSERT, UPDATE, DELETE
         op.execute(
             f"""
             CREATE POLICY tenant_isolation ON {table}
@@ -113,7 +107,7 @@ def upgrade() -> None:
             """
         )
 
-        # Add comment to policies
+        # Add comments to policies
         op.execute(
             f"""
             COMMENT ON POLICY tenant_isolation ON {table} IS
@@ -127,11 +121,7 @@ def upgrade() -> None:
             """
         )
 
-    # 6. Create indexes for RLS performance (if not already exist)
-    # Most tables already have tenant_id indexes, but we'll add composite ones
-    # for common query patterns
-
-    # Post table - common query: active posts by tenant
+    # 6. Create indexes for RLS performance
     op.execute(
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_post_tenant_active
@@ -140,7 +130,6 @@ def upgrade() -> None:
         """
     )
 
-    # Audit logs - common query: recent logs by tenant
     op.execute(
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_logs_tenant_recent
@@ -148,7 +137,6 @@ def upgrade() -> None:
         """
     )
 
-    # Files - common query: active files by tenant
     op.execute(
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_files_tenant_active
@@ -157,7 +145,6 @@ def upgrade() -> None:
         """
     )
 
-    # User table - common query: active users by tenant
     op.execute(
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_tenant_active
@@ -166,21 +153,12 @@ def upgrade() -> None:
         """
     )
 
-    # Webhook deliveries - common query: recent deliveries by tenant
     op.execute(
         """
         CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webhook_deliveries_tenant_recent
         ON webhook_deliveries(tenant_id, created_at DESC)
         """
     )
-
-    # Print success message
-    print(f"✓ RLS enabled on {len(TENANT_TABLES)} tables")
-    print("✓ Tenant isolation policies created")
-    print("✓ Bypass policies created for admin operations")
-    print("✓ Performance indexes created")
-    print("\nIMPORTANT: Set app.current_tenant_id in session context before queries!")
-    print("Example: SET LOCAL app.current_tenant_id = '<tenant-uuid>';")
 
 
 def downgrade() -> None:
@@ -189,8 +167,6 @@ def downgrade() -> None:
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
         op.execute(f"DROP POLICY IF EXISTS bypass_rls ON {table}")
-
-        # Disable RLS
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
 
     # 2. Drop indexes created for RLS
@@ -198,18 +174,11 @@ def downgrade() -> None:
     op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_audit_logs_tenant_recent")
     op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_files_tenant_active")
     op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_user_tenant_active")
-    op.execute(
-        "DROP INDEX CONCURRENTLY IF EXISTS idx_webhook_deliveries_tenant_recent"
-    )
+    op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_webhook_deliveries_tenant_recent")
 
     # 3. Drop functions
     op.execute("DROP FUNCTION IF EXISTS auth.current_tenant_id()")
     op.execute("DROP FUNCTION IF EXISTS auth.bypass_rls()")
 
-    # 4. Drop auth schema (only if empty)
+    # 4. Drop auth schema
     op.execute("DROP SCHEMA IF EXISTS auth CASCADE")
-
-    print(f"✓ RLS disabled on {len(TENANT_TABLES)} tables")
-    print("✓ All policies removed")
-    print("✓ Auth functions dropped")
-    print("✓ Performance indexes removed")

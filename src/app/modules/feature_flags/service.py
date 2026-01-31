@@ -32,7 +32,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
     def __init__(self, db: AsyncSession):
         super().__init__(model=FeatureFlag, db=db)
-        self.override_crud = FastCRUD(FeatureFlagOverride)
+        self.override_crud: FastCRUD[FeatureFlagOverride, Any, Any, Any, Any, Any] = FastCRUD(FeatureFlagOverride)
 
     # =========================================================================
     # Core Flag Operations
@@ -51,14 +51,19 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Raises:
             ModelNotFoundError: If flag doesn't exist
         """
-        flag = await self.crud.get(db=self.db, key=key)
-        if not flag:
+        result = await self.crud.get(db=self.db, key=key)
+        if not result:
             raise ModelNotFoundError("FeatureFlag", key)
+        flag: FeatureFlag = result  # type: ignore[assignment]
         return flag
 
     async def get_flag_by_key_or_none(self, key: str) -> FeatureFlag | None:
         """Get a feature flag by key, returns None if not found."""
-        return await self.crud.get(db=self.db, key=key)
+        result = await self.crud.get(db=self.db, key=key)
+        if result is None:
+            return None
+        flag: FeatureFlag = result  # type: ignore[assignment]
+        return flag
 
     async def create_flag(self, data: FeatureFlagCreate) -> FeatureFlag:
         """
@@ -91,17 +96,14 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             raise ModelNotFoundError("FeatureFlag", flag_id)
         return flag
 
-    async def delete_flag(self, flag_id: int) -> dict[str, Any]:
+    async def delete_flag(self, flag_id: int) -> None:
         """
         Delete a feature flag.
 
         Args:
             flag_id: ID of the flag to delete
-
-        Returns:
-            Deletion result
         """
-        return await self.delete(flag_id)
+        await self.delete(flag_id)
 
     # =========================================================================
     # Override Operations
@@ -109,19 +111,29 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
     async def get_override(self, feature_flag_id: int, tenant_id: UUID) -> FeatureFlagOverride | None:
         """Get a feature flag override for a tenant."""
-        return await self.override_crud.get(db=self.db, feature_flag_id=feature_flag_id, tenant_id=tenant_id)
+        result = await self.override_crud.get(db=self.db, feature_flag_id=feature_flag_id, tenant_id=tenant_id)
+        if result is None:
+            return None
+        override: FeatureFlagOverride = result  # type: ignore[assignment]
+        return override
 
     async def create_override(self, data: FeatureFlagOverrideCreate) -> FeatureFlagOverride:
         """Create a feature flag override."""
-        return await self.override_crud.create(db=self.db, object=data.model_dump())
+        result = await self.override_crud.create(db=self.db, object=data.model_dump())
+        override: FeatureFlagOverride = result  # type: ignore[assignment]
+        return override
 
     async def update_override(self, override_id: int, data: FeatureFlagOverrideUpdate) -> FeatureFlagOverride | None:
         """Update a feature flag override."""
-        return await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
+        result = await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
+        if result is None:
+            return None
+        override: FeatureFlagOverride = result  # type: ignore[assignment]
+        return override
 
-    async def delete_override(self, override_id: int) -> dict[str, Any]:
+    async def delete_override(self, override_id: int) -> None:
         """Delete a feature flag override."""
-        return await self.override_crud.delete(db=self.db, id=override_id)
+        await self.override_crud.delete(db=self.db, id=override_id)
 
     # =========================================================================
     # Tenant Feature Flags (JSONB-based)
@@ -144,7 +156,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             try:
                 cached_value = await redis_client.get(cache_key)
                 if cached_value:
-                    return json_loads(cached_value)
+                    result_data: dict[str, Any] = json_loads(cached_value)
+                    return result_data
             except Exception as e:
                 logger.debug(f"Cache get failed: {e}")
 
@@ -183,7 +196,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             try:
                 cached_value = await redis_client.get(cache_key)
                 if cached_value is not None:
-                    val_str = cached_value.decode().lower()
+                    val_str: str = cached_value.decode().lower()
                     return val_str == "true"
             except Exception as e:
                 logger.debug(f"Cache get failed: {e}")
@@ -193,7 +206,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         enabled = default
 
         if tenant and tenant.feature_flags:
-            enabled = tenant.feature_flags.get(feature_name, default)
+            enabled = bool(tenant.feature_flags.get(feature_name, default))
 
         # Update cache
         if redis_client:
