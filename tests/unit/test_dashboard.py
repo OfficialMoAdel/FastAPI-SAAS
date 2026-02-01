@@ -6,29 +6,24 @@ Unit tests for the dashboard module.
 
 import pytest
 from fastapi import status
-from fastapi.testclient import TestClient
-
-from src.app.main import app
-
-client = TestClient(app)
 
 
 class TestDashboardEndpoint:
     """Test dashboard metrics endpoint."""
 
-    def test_dashboard_requires_tenant(self):
+    def test_dashboard_requires_tenant(self, client):
         """Should return 400 when tenant header missing."""
         response = client.get("/api/v1/dashboard")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
         assert "Missing required header" in response.json()["detail"]
 
-    def test_dashboard_with_time_range_params(self):
+    def test_dashboard_with_time_range_params(self, client):
         """Should accept time_range query parameter."""
         # Without auth, should still validate params
         response = client.get("/api/v1/dashboard?time_range=week")
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_dashboard_registered_in_openapi(self):
+    def test_dashboard_registered_in_openapi(self, client):
         """Dashboard endpoint should be in OpenAPI spec."""
         response = client.get("/openapi.json")
         assert response.status_code == 200
@@ -44,7 +39,7 @@ class TestDashboardEndpoint:
         endpoint = paths["/api/v1/dashboard"]["get"]
         assert "dashboard" in endpoint["tags"]
 
-    def test_dashboard_time_range_enum(self):
+    def test_dashboard_time_range_enum(self, client):
         """Dashboard should document time_range enum values."""
         response = client.get("/openapi.json")
         spec = response.json()

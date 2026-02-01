@@ -34,9 +34,7 @@ class TestAPIKeyValidationCaching:
         return APIKeyService(mock_db_session)
 
     @pytest.mark.asyncio
-    async def test_cache_hit_returns_cached_data(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_cache_hit_returns_cached_data(self, api_key_service: Any) -> None:
         """Cache hit should return cached data without DB query."""
         cached_data = {
             "user_id": 1,
@@ -48,8 +46,7 @@ class TestAPIKeyValidationCaching:
 
         with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
             cached_json = (
-                '{"user_id": 1, "tenant_id": 1, "scopes": ["read", "write"], '
-                '"key_id": 42, "expires_at": null}'
+                '{"user_id": 1, "tenant_id": 1, "scopes": ["read", "write"], "key_id": 42, "expires_at": null}'
             )
             mock_redis.get = AsyncMock(return_value=cached_json)
 
@@ -64,9 +61,7 @@ class TestAPIKeyValidationCaching:
             api_key_service.db.execute.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_cache_miss_queries_db_and_caches_result(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_cache_miss_queries_db_and_caches_result(self, api_key_service: Any) -> None:
         """Cache miss should query DB and cache the result."""
         # Mock the database response
         mock_key = MagicMock()
@@ -99,9 +94,7 @@ class TestAPIKeyValidationCaching:
             assert call_args[0][1] == 300  # TTL
 
     @pytest.mark.asyncio
-    async def test_expired_key_in_cache_is_deleted(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_expired_key_in_cache_is_deleted(self, api_key_service: Any) -> None:
         """Expired key found in cache should be deleted and return None."""
         expired_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         cached_data = f'{{"user_id": 1, "tenant_id": 1, "scopes": [], "key_id": 42, "expires_at": "{expired_time}"}}'
@@ -117,14 +110,11 @@ class TestAPIKeyValidationCaching:
             mock_redis.delete.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_non_expired_key_in_cache_is_returned(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_non_expired_key_in_cache_is_returned(self, api_key_service: Any) -> None:
         """Non-expired key in cache should be returned."""
         future_time = (datetime.now(UTC) + timedelta(hours=1)).isoformat()
         cached_data = (
-            f'{{"user_id": 1, "tenant_id": 1, "scopes": ["admin"], '
-            f'"key_id": 42, "expires_at": "{future_time}"}}'
+            f'{{"user_id": 1, "tenant_id": 1, "scopes": ["admin"], "key_id": 42, "expires_at": "{future_time}"}}'
         )
 
         with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
@@ -163,24 +153,24 @@ class TestAPIKeyRevocationCacheInvalidation:
     @pytest.mark.asyncio
     async def test_revoke_invalidates_cache(self, api_key_service: Any) -> None:
         """Revoking an API key should invalidate its cache entry."""
-        key_data = {
-            "id": 42,
-            "user_id": 1,
-            "tenant_id": 1,
-            "hashed_key": "abcdef1234567890deadbeefcafe1234",
-        }
+        from src.app.modules.api_keys.models import APIKey
+
+        # Create a proper mock APIKey model object
+        mock_key = MagicMock(spec=APIKey)
+        mock_key.id = 42
+        mock_key.user_id = 1
+        mock_key.tenant_id = 1
+        mock_key.hashed_key = "abcdef1234567890deadbeefcafe1234"
 
         with (
             patch("src.app.modules.api_keys.service.redis_client") as mock_redis,
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
-            mock_crud.get = AsyncMock(return_value=key_data)
+            mock_crud.get = AsyncMock(return_value=mock_key)
             mock_crud.update = AsyncMock()
             mock_redis.delete = AsyncMock()
 
-            await api_key_service.revoke_api_key(
-                key_id=42, user_id=1, tenant_id=1
-            )
+            await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)
 
             # Verify cache was invalidated
             mock_redis.delete.assert_called_once()
@@ -188,27 +178,25 @@ class TestAPIKeyRevocationCacheInvalidation:
             assert call_args.startswith("api_key:")
 
     @pytest.mark.asyncio
-    async def test_revoke_without_redis_still_works(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_revoke_without_redis_still_works(self, api_key_service: Any) -> None:
         """Revocation should work even if Redis is unavailable."""
-        key_data = {
-            "id": 42,
-            "user_id": 1,
-            "tenant_id": 1,
-            "hashed_key": "abcdef1234567890deadbeefcafe1234",
-        }
+        from src.app.modules.api_keys.models import APIKey
+
+        # Create a proper mock APIKey model object
+        mock_key = MagicMock(spec=APIKey)
+        mock_key.id = 42
+        mock_key.user_id = 1
+        mock_key.tenant_id = 1
+        mock_key.hashed_key = "abcdef1234567890deadbeefcafe1234"
 
         with (
             patch("src.app.modules.api_keys.service.redis_client", None),
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
-            mock_crud.get = AsyncMock(return_value=key_data)
+            mock_crud.get = AsyncMock(return_value=mock_key)
             mock_crud.update = AsyncMock()
 
-            result = await api_key_service.revoke_api_key(
-                key_id=42, user_id=1, tenant_id=1
-            )
+            result = await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)
 
             assert result["message"] == "API key revoked successfully"
             mock_crud.update.assert_called_once()
@@ -230,9 +218,7 @@ class TestAPIKeyValidationWithoutRedis:
         return APIKeyService(mock_db_session)
 
     @pytest.mark.asyncio
-    async def test_validation_works_without_redis(
-        self, api_key_service: Any
-    ) -> None:
+    async def test_validation_works_without_redis(self, api_key_service: Any) -> None:
         """Validation should fall back to DB when Redis is unavailable."""
         mock_key = MagicMock()
         mock_key.user_id = 1

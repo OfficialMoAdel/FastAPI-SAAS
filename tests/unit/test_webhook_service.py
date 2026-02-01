@@ -110,38 +110,62 @@ class TestWebhookServiceTrigger:
     """Tests for triggering webhooks."""
 
     @pytest.mark.asyncio
-    async def test_trigger_webhooks_success(self, webhook_service, mock_webhook_endpoint):
-        """Test triggering webhooks for an event."""
+    async def test_trigger_webhooks_success(self, webhook_service, mock_webhook_endpoint, mock_db):
+        """Test triggering webhooks for an event - creates deliveries and returns them."""
+        from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
+        # Mock get_active_endpoints to return our endpoint
+        webhook_service.get_active_endpoints = AsyncMock(return_value=[mock_webhook_endpoint])
+
+        # Mock decrypt_data
+        with patch("src.app.modules.webhooks.service.decrypt_data", return_value="decrypted_secret"):
+            # Mock the DB execute to return deliveries
+            mock_delivery = MagicMock(spec=WebhookDelivery)
+            mock_delivery.id = uuid4()
+            mock_delivery.status = WebhookDeliveryStatus.PENDING
+
+            mock_result = MagicMock()
+            mock_result.scalars.return_value.all.return_value = [mock_delivery]
+            mock_db.execute = AsyncMock(return_value=mock_result)
+
+            # Mock _enqueue_delivery
+            webhook_service._enqueue_delivery = AsyncMock()
+
+            result = await webhook_service.trigger_webhooks(
+                tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
+            )
+
+        assert len(result) == 1
+        assert result[0] == mock_delivery
+        mock_db.commit.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_trigger_webhooks_no_endpoints_returns_empty(self, webhook_service, mock_db):
+        """Test triggering webhooks when no active endpoints exist."""
+        # Mock get_active_endpoints to return empty
+        webhook_service.get_active_endpoints = AsyncMock(return_value=[])
+
+        result = await webhook_service.trigger_webhooks(tenant_id=uuid4(), event_type="user.created", payload={"id": 1})
+
+        assert result == []
+        mock_db.commit.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_trigger_webhooks_decryption_failure_skips_endpoint(
+        self, webhook_service, mock_webhook_endpoint, mock_db
+    ):
+        """Test that decryption failures skip the endpoint but continue."""
         # Mock get_active_endpoints
         webhook_service.get_active_endpoints = AsyncMock(return_value=[mock_webhook_endpoint])
 
-        # Mock trigger_endpoint
-        mock_delivery = MagicMock()
-        webhook_service.trigger_endpoint = AsyncMock(return_value=mock_delivery)
+        # Mock decrypt_data to fail
+        with patch("src.app.modules.webhooks.service.decrypt_data", side_effect=Exception("Decrypt fail")):
+            result = await webhook_service.trigger_webhooks(
+                tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
+            )
 
-        result = await webhook_service.trigger_webhooks(
-            tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
-        )
-
-        assert len(result) == 1
-        webhook_service.trigger_endpoint.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_trigger_webhooks_partial_failure(self, webhook_service, mock_webhook_endpoint):
-        """Test triggering webhooks where some fail."""
-        webhook_service.get_active_endpoints = AsyncMock(return_value=[mock_webhook_endpoint, mock_webhook_endpoint])
-
-        # One success, one failure
-        mock_delivery = MagicMock()
-        webhook_service.trigger_endpoint = AsyncMock(side_effect=[mock_delivery, ValueError("Trigger failed")])
-
-        result = await webhook_service.trigger_webhooks(
-            tenant_id=mock_webhook_endpoint.tenant_id, event_type="user.created", payload={"id": 1}
-        )
-
-        # Should return only successful deliveries
-        assert len(result) == 1
-        assert result[0] == mock_delivery
+        # Should return empty list because the only endpoint failed decryption
+        assert result == []
 
     @pytest.mark.asyncio
     async def test_trigger_endpoint_decryption_error(self, webhook_service, mock_webhook_endpoint):

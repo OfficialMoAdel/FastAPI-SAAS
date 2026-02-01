@@ -152,7 +152,7 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
-        result = await crud_chat_sessions.create(db=self.db, object=ChatSessionCreate(**session_data))
+        result = await crud_chat_sessions.create(db=self.db, object=session_data)
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
@@ -218,9 +218,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
             content=data.content,
             token_count=token_count,
         )
-        result = await crud_chat_messages.create(
-            db=self.db, object=ChatMessageCreate(role=data.role, content=data.content)
-        )
+        result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
@@ -247,15 +245,16 @@ class AISettingsService(BaseService[AISettings]):
         """Get AI settings for a user, creating defaults if needed."""
         settings = await crud_ai_settings.get(db=self.db, user_id=user_id)
         if settings is None:
-            # Create default settings
+            # Create default settings - convert to dict and add user_id
             default_settings = AISettingsUpdate(
                 model="gemma3",
                 temperature=0.7,
                 max_tokens=2048,
                 system_prompt=None,
             )
-            result = await crud_ai_settings.create(db=self.db, object=default_settings)
-            # Manually add user_id since it's not in AISettingsUpdate
+            create_data = default_settings.model_dump()
+            create_data["user_id"] = user_id
+            result = await crud_ai_settings.create(db=self.db, object=create_data)
             settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             settings["user_id"] = user_id
         return settings
@@ -268,14 +267,15 @@ class AISettingsService(BaseService[AISettings]):
         update_data["updated_at"] = datetime.now(UTC)
 
         if settings is None:
-            # Create with provided values - build AISettingsUpdate schema
-            create_data = AISettingsUpdate(
-                model=update_data.get("model", "gemma3"),  # type: ignore[arg-type]
-                temperature=update_data.get("temperature", 0.7),  # type: ignore[arg-type]
-                max_tokens=update_data.get("max_tokens", 2048),  # type: ignore[arg-type]
-                system_prompt=update_data.get("system_prompt"),  # type: ignore[arg-type]
-            )
-            result = await crud_ai_settings.create(db=self.db, object=create_data)
+            # Create with provided values - convert to dict and add user_id
+            create_data_dict = {
+                "model": update_data.get("model", "gemma3"),
+                "temperature": update_data.get("temperature", 0.7),
+                "max_tokens": update_data.get("max_tokens", 2048),
+                "system_prompt": update_data.get("system_prompt"),
+                "user_id": user_id,
+            }
+            result = await crud_ai_settings.create(db=self.db, object=create_data_dict)
             result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             result_dict["user_id"] = user_id
             return result_dict

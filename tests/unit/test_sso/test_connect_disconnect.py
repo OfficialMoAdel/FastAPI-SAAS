@@ -98,10 +98,16 @@ class TestDisconnectProviderService:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch.object(crud_user_sso_connections, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = MagicMock(id=1, user_id=123, provider="google")
+        # Mock the connection lookup
+        mock_connection = MagicMock()
+        mock_connection.id = 1
+        mock_connection.user_id = 123
+        mock_connection.provider = "google"
 
-            with patch.object(crud_user_sso_connections, "delete", new_callable=AsyncMock) as mock_delete:
+        with patch.object(crud_user_sso_connections, "get_by_criteria", new_callable=AsyncMock) as mock_get:
+            mock_get.return_value = mock_connection
+
+            with patch.object(crud_user_sso_connections, "delete_by_criteria", new_callable=AsyncMock) as mock_delete:
                 with patch.object(service, "_can_disconnect", new_callable=AsyncMock) as mock_can:
                     mock_can.return_value = True
 
@@ -145,9 +151,11 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
-            # User has password (hashed_password is not None)
-            mock_user.return_value = {"id": 123, "hashed_password": "hashed_pw_value"}
+        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+            # Mock user service to return user with password
+            mock_user_service = MagicMock()
+            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": "hashed_pw_value"})
+            mock_get_service.return_value = mock_user_service
 
             result = await service._can_disconnect(
                 db=mock_db,
@@ -163,12 +171,14 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
-            # User has no password (SSO-only user)
-            mock_user.return_value = {"id": 123, "hashed_password": None}
+        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+            # Mock user service to return user without password
+            mock_user_service = MagicMock()
+            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
+            mock_get_service.return_value = mock_user_service
 
             with patch(
-                "src.app.modules.sso.crud.crud_user_sso_connections.count",
+                "src.app.modules.sso.crud.crud_user_sso_connections.count_for_user",
                 new_callable=AsyncMock,
             ) as mock_count:
                 # User has 2 SSO providers
@@ -188,12 +198,14 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_user:
-            # User has no password (SSO-only user)
-            mock_user.return_value = {"id": 123, "hashed_password": None}
+        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+            # Mock user service to return user without password
+            mock_user_service = MagicMock()
+            mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
+            mock_get_service.return_value = mock_user_service
 
             with patch(
-                "src.app.modules.sso.crud.crud_user_sso_connections.count",
+                "src.app.modules.sso.crud.crud_user_sso_connections.count_for_user",
                 new_callable=AsyncMock,
             ) as mock_count:
                 # User has only 1 SSO provider

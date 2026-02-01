@@ -5,7 +5,7 @@ TDD: These tests are written first and should FAIL until implementation is compl
 Task: T039 [US3] Write unit tests for GitHubProvider
 """
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -110,7 +110,7 @@ class TestGitHubProvider:
 
     @pytest.mark.asyncio
     async def test_github_get_user_info(self):
-        """Verify user info retrieval from GitHub."""
+        """Verify get_user_info returns correct user info."""
         from src.app.modules.sso.providers.github import GitHubProvider
 
         provider = GitHubProvider(
@@ -135,11 +135,22 @@ class TestGitHubProvider:
             }
         ]
 
-        # First call for user info, second for emails
-        with patch.object(
-            provider, "_http_get", new_callable=AsyncMock, side_effect=[mock_user_data, mock_emails_data]
-        ):
-            user_info = await provider.get_user_info("test-access-token")
+        # Mock _http_get for /user endpoint
+        with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
+            # Mock the http client for /user/emails endpoint
+            mock_response = MagicMock()
+            mock_response.json.return_value = mock_emails_data
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+
+            with patch(
+                "src.app.modules.sso.http_client.get_sso_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ):
+                user_info = await provider.get_user_info("test-access-token")
 
         assert user_info.provider_user_id == "12345"
         assert user_info.email == "test@example.com"
@@ -225,10 +236,22 @@ class TestGitHubProvider:
             {"email": "unverified@example.com", "primary": False, "verified": False},
         ]
 
-        with patch.object(
-            provider, "_http_get", new_callable=AsyncMock, side_effect=[mock_user_data, mock_emails_data]
-        ):
-            user_info = await provider.get_user_info("test-access-token")
+        # Mock _http_get for /user endpoint
+        with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
+            # Mock the http client for /user/emails endpoint
+            mock_response = MagicMock()
+            mock_response.json.return_value = mock_emails_data
+            mock_response.raise_for_status = MagicMock()
+
+            mock_client = AsyncMock()
+            mock_client.get = AsyncMock(return_value=mock_response)
+
+            with patch(
+                "src.app.modules.sso.http_client.get_sso_http_client",
+                new_callable=AsyncMock,
+                return_value=mock_client,
+            ):
+                user_info = await provider.get_user_info("test-access-token")
 
         assert user_info.email == "test@example.com"
         assert user_info.email_verified is True

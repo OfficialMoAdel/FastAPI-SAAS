@@ -69,13 +69,14 @@ class TestStripeSettingsService:
 
                 service = StripeSettingsService(mock_db)
                 service._encryption = MagicMock()
-                service._encryption.encrypt = MagicMock(return_value="encrypted_key")
+                # The service calls encrypt_column (not encrypt), and the result gets .encode()
+                service._encryption.encrypt_column = MagicMock(return_value="encrypted_key")
 
                 data = StripeSettingsUpdate(stripe_secret_key="sk_test_123")
                 await service.update_settings(data)
 
-                # Verify encryption was called
-                service._encryption.encrypt.assert_called_once_with("sk_test_123")
+                # Verify encryption was called with the secret key
+                service._encryption.encrypt_column.assert_called_once_with("sk_test_123")
 
     @pytest.mark.asyncio
     async def test_update_settings_creates_new_when_none_exists(self, mock_db, mock_tenant_context):

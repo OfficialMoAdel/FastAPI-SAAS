@@ -407,7 +407,7 @@ class TestPasskeyServiceCredentialDeletion:
         mock_db = AsyncMock()
 
         with patch(
-            "src.app.modules.passkey.crud.crud_passkey_credentials.get",
+            "src.app.modules.passkey.crud.crud_passkey_credentials.get_credential",
             new_callable=AsyncMock,
         ) as mock_get:
             mock_get.return_value = None  # Credential not found
@@ -430,13 +430,13 @@ class TestPasskeyServiceCredentialDeletion:
         mock_cred = MagicMock(id=1, user_id=1)
 
         with patch(
-            "src.app.modules.passkey.crud.crud_passkey_credentials.get",
+            "src.app.modules.passkey.crud.crud_passkey_credentials.get_credential",
             new_callable=AsyncMock,
         ) as mock_get:
             mock_get.return_value = mock_cred
 
             with patch(
-                "src.app.modules.passkey.crud.crud_passkey_credentials.delete",
+                "src.app.modules.passkey.crud.crud_passkey_credentials.delete_credential",
                 new_callable=AsyncMock,
             ) as mock_delete:
                 await service.delete_credential(

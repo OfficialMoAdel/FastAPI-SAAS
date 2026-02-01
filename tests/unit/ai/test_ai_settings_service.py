@@ -60,9 +60,7 @@ class TestAISettingsService:
             assert result is not None
             assert result["user_id"] == user_id
             assert result["model"] == "gemma3"
-            mock_crud.get.assert_called_once_with(
-                db=ai_settings_service.db, user_id=user_id
-            )
+            mock_crud.get.assert_called_once_with(db=ai_settings_service.db, user_id=user_id)
 
     @pytest.mark.asyncio
     async def test_get_settings_not_found(self, ai_settings_service):
@@ -77,9 +75,7 @@ class TestAISettingsService:
             assert result is None
 
     @pytest.mark.asyncio
-    async def test_get_or_create_settings_existing(
-        self, ai_settings_service, sample_settings
-    ):
+    async def test_get_or_create_settings_existing(self, ai_settings_service, sample_settings):
         """Test get_or_create returns existing settings."""
         user_id = 1
 
@@ -117,12 +113,17 @@ class TestAISettingsService:
             assert result["temperature"] == 0.7
             assert result["max_tokens"] == 2048
             mock_crud.create.assert_called_once()
-            # Verify default values were used
+            # Verify default values were used - now the service passes a dict
             call_args = mock_crud.create.call_args
             create_obj = call_args.kwargs.get("object", {})
-            assert create_obj["model"] == "gemma3"
-            assert create_obj["temperature"] == 0.7
-            assert create_obj["max_tokens"] == 2048
+            if isinstance(create_obj, dict):
+                assert create_obj["model"] == "gemma3"
+                assert create_obj["temperature"] == 0.7
+                assert create_obj["max_tokens"] == 2048
+            else:
+                assert create_obj.model == "gemma3"
+                assert create_obj.temperature == 0.7
+                assert create_obj.max_tokens == 2048
 
     @pytest.mark.asyncio
     async def test_update_settings_existing(self, ai_settings_service, sample_settings):
@@ -183,9 +184,7 @@ class TestAISettingsService:
             assert result["model"] == "gemma3"  # Unchanged
 
     @pytest.mark.asyncio
-    async def test_update_settings_system_prompt(
-        self, ai_settings_service, sample_settings
-    ):
+    async def test_update_settings_system_prompt(self, ai_settings_service, sample_settings):
         """Test updating system prompt."""
         user_id = 1
         new_prompt = "You are a helpful coding assistant."
@@ -202,9 +201,7 @@ class TestAISettingsService:
             assert result["system_prompt"] == new_prompt
 
     @pytest.mark.asyncio
-    async def test_update_settings_multiple_fields(
-        self, ai_settings_service, sample_settings
-    ):
+    async def test_update_settings_multiple_fields(self, ai_settings_service, sample_settings):
         """Test updating multiple fields at once."""
         user_id = 1
         updated_settings = {
@@ -218,9 +215,7 @@ class TestAISettingsService:
             mock_crud.get = AsyncMock(side_effect=[sample_settings, updated_settings])
             mock_crud.update = AsyncMock(return_value=None)
 
-            update_data = AISettingsUpdate(
-                model="mistral", temperature=1.0, max_tokens=4096
-            )
+            update_data = AISettingsUpdate(model="mistral", temperature=1.0, max_tokens=4096)
             result = await ai_settings_service.update_settings(user_id, update_data)
 
             assert result is not None

@@ -128,9 +128,7 @@ class TestSessionLimit:
                 assert exc_info.value.current_count == 150
 
     @pytest.mark.asyncio
-    async def test_create_session_just_under_limit_succeeds(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_create_session_just_under_limit_succeeds(self, mock_db_session, mock_user, mock_tenant):
         """Test creating a session when at 99 sessions succeeds."""
         from src.app.modules.ai.schemas import ChatSessionCreate
 

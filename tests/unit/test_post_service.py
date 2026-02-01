@@ -96,7 +96,7 @@ class TestPostServiceCreate:
             mock_tenant.id = 1
             mock_context.return_value = mock_tenant
 
-            result = await service.create(
+            result = await service.create_post(
                 post=post_create,
                 current_user=mock_user,
             )
@@ -119,7 +119,7 @@ class TestPostServiceGet:
         with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
-            result = await service.get(
+            result = await service.get_post(
                 post_id=1,
                 user_id=mock_user["id"],
             )
@@ -139,7 +139,7 @@ class TestPostServiceGet:
             mock_crud.get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
-                await service.get(post_id=999, user_id=mock_user["id"])
+                await service.get_post(post_id=999, user_id=mock_user["id"])
 
     @pytest.mark.asyncio
     async def test_get_posts_paginated(self, mock_db, mock_user, mock_post):
@@ -152,7 +152,7 @@ class TestPostServiceGet:
         with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get_multi.return_value = mock_response
 
-            result = await service.get_multi(
+            result = await service.get_posts(
                 user_id=mock_user["id"],
                 page=1,
                 items_per_page=10,
@@ -177,7 +177,7 @@ class TestPostServiceUpdate:
             mock_crud.get.return_value = mock_post
             mock_crud.update.return_value = updated_post
 
-            result = await service.update(
+            result = await service.update_post(
                 post_id=1,
                 values=post_update,
                 current_user=mock_user,
@@ -199,7 +199,7 @@ class TestPostServiceUpdate:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):
-                await service.update(
+                await service.update_post(
                     post_id=1,
                     values=post_update,
                     current_user=other_user,
@@ -218,9 +218,9 @@ class TestPostServiceDelete:
 
         with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
-            mock_crud.update.return_value = None
+            mock_crud.delete.return_value = None
 
-            result = await service.delete(
+            result = await service.delete_post(
                 post_id=1,
                 current_user=mock_user,
             )
@@ -237,7 +237,7 @@ class TestPostServiceDelete:
 
         with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
-            mock_crud.delete.return_value = None
+            mock_crud.db_delete.return_value = None
 
             result = await service.hard_delete(
                 post_id=1,
@@ -259,7 +259,7 @@ class TestPostServiceDelete:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):
-                await service.delete(
+                await service.delete_post(
                     post_id=1,
                     current_user=other_user,
                 )

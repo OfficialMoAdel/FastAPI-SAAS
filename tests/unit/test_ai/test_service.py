@@ -150,10 +150,14 @@ class TestChatMessageService:
             data = ChatMessageCreate(role="user", content="Hello")
             await service.add_message(session_id=1, data=data)
 
-            # Verify create was called with a Pydantic model containing session_id
+            # Verify create was called with a dict containing session_id
             call_args = mock_crud.create.call_args
             schema_obj = call_args.kwargs["object"]
-            assert schema_obj.session_id == 1
+            # The service now passes a dict from model_dump()
+            if isinstance(schema_obj, dict):
+                assert schema_obj["session_id"] == 1
+            else:
+                assert schema_obj.session_id == 1
 
     @pytest.mark.asyncio
     async def test_add_message_includes_token_count_if_provided(self, mock_db):
@@ -168,10 +172,14 @@ class TestChatMessageService:
             data = ChatMessageCreate(role="assistant", content="Hello!")
             await service.add_message(session_id=1, data=data, token_count=50)
 
-            # Verify create was called with a Pydantic model containing token_count
+            # Verify create was called with a dict containing token_count
             call_args = mock_crud.create.call_args
             schema_obj = call_args.kwargs["object"]
-            assert schema_obj.token_count == 50
+            # The service now passes a dict from model_dump()
+            if isinstance(schema_obj, dict):
+                assert schema_obj["token_count"] == 50
+            else:
+                assert schema_obj.token_count == 50
 
     @pytest.mark.asyncio
     async def test_get_session_messages_filters_by_session_id(self, mock_db):
@@ -223,10 +231,20 @@ class TestAISettingsService:
 
             mock_crud.create.assert_called_once()
             call_args = mock_crud.create.call_args
-            assert call_args.kwargs["object"]["user_id"] == 1
-            assert call_args.kwargs["object"]["model"] == "gemma3"
-            assert call_args.kwargs["object"]["temperature"] == 0.7
-            assert call_args.kwargs["object"]["max_tokens"] == 2048
+            create_obj = call_args.kwargs.get("object", {})
+            # The service passes a dict (not a schema), so access as dict
+            if hasattr(create_obj, "user_id"):
+                # It's a Pydantic model
+                assert create_obj.user_id == 1
+                assert create_obj.model == "gemma3"
+                assert create_obj.temperature == 0.7
+                assert create_obj.max_tokens == 2048
+            else:
+                # It's a dict
+                assert create_obj["user_id"] == 1
+                assert create_obj["model"] == "gemma3"
+                assert create_obj["temperature"] == 0.7
+                assert create_obj["max_tokens"] == 2048
 
     @pytest.mark.asyncio
     async def test_get_or_create_settings_returns_existing(self, mock_db):
@@ -260,8 +278,13 @@ class TestAISettingsService:
 
             mock_crud.create.assert_called_once()
             call_args = mock_crud.create.call_args
-            assert call_args.kwargs["object"]["user_id"] == 1
-            assert call_args.kwargs["object"]["model"] == "llama3"
+            create_obj = call_args.kwargs.get("object", {})
+            if hasattr(create_obj, "user_id"):
+                assert create_obj.user_id == 1
+                assert create_obj.model == "llama3"
+            else:
+                assert create_obj["user_id"] == 1
+                assert create_obj["model"] == "llama3"
 
     @pytest.mark.asyncio
     async def test_update_settings_updates_existing(self, mock_db):
@@ -393,16 +416,23 @@ class TestChatCompletionService:
                     # Verify two messages were saved (user + assistant)
                     assert mock_messages.create.call_count == 2
 
-                    # Check first call was user message (now using Pydantic model)
+                    # Check first call was user message (using dict from model_dump)
                     first_call = mock_messages.create.call_args_list[0]
                     first_obj = first_call.kwargs["object"]
-                    assert first_obj.role == "user"
-                    assert first_obj.content == "Hello"
+                    if isinstance(first_obj, dict):
+                        assert first_obj["role"] == "user"
+                        assert first_obj["content"] == "Hello"
+                    else:
+                        assert first_obj.role == "user"
+                        assert first_obj.content == "Hello"
 
                     # Check second call was assistant message
                     second_call = mock_messages.create.call_args_list[1]
                     second_obj = second_call.kwargs["object"]
-                    assert second_obj.role == "assistant"
+                    if isinstance(second_obj, dict):
+                        assert second_obj["role"] == "assistant"
+                    else:
+                        assert second_obj.role == "assistant"
 
     @pytest.mark.asyncio
     async def test_complete_uses_request_overrides(self, mock_db, mock_ollama_client):
