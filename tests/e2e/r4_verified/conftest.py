@@ -22,7 +22,6 @@ from cryptography.fernet import Fernet
 import json
 import os
 from src.app.core.utils import cache
-from src.app.main import app
 
 # Configure detailed logging for E2E tests
 logging.basicConfig(
@@ -39,7 +38,11 @@ TEST_TENANT_SLUG = "test-tenant-e2e"
 
 @pytest.fixture(scope="session")
 def event_loop():
-    """Create event loop for session-scoped async fixtures."""
+    """Create event loop for session-scoped async fixtures.
+
+    E2E tests use session-scoped fixtures for database setup efficiency.
+    This overrides the default function-scoped event loop from root conftest.
+    """
     import asyncio
 
     loop = asyncio.new_event_loop()
@@ -162,6 +165,8 @@ async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture
 async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
     """Provide async HTTP client for E2E tests."""
+    from src.app.main import app
+
     transport = ASGITransport(app=app)
     async with AsyncClient(
         transport=transport,

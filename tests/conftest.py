@@ -19,7 +19,9 @@ from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
 
 from src.app.core.config import settings
-from src.app.main import app
+
+# DO NOT import app globally - it causes state pollution in coverage runs
+# from src.app.main import app  # REMOVED - use get_test_app() fixture instead
 
 
 # SQLite type compilers for PostgreSQL types
@@ -119,17 +121,59 @@ TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_
 
 from src.app.core.db.database import Base
 
-# Features
-from src.app.modules.tenants.models import Tenant
-
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
-# Core & Auth
+# This is critical - SQLAlchemy needs all models imported before create_all()
+from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
+from src.app.modules.billing.models import (
+    BillingRecord,
+    Pricing,
+    Product,
+    StripeSettings,
+    SubscriptionPlan,
+    UserSubscription,
+)
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.files.models import File
+from src.app.modules.magic_link.models import MagicLink
+from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+from src.app.modules.passkey.models import PasskeyCredential
+from src.app.modules.posts.models import Post
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.sso.models import UserSSOConnection
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.storage_settings.models import StorageSettings
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.tiers.models import Tier
+from src.app.modules.user_preferences.models import UserPreferences
 from src.app.modules.users.models import User
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")
 
 fake = Faker()
+
+
+@pytest.fixture(scope="function")
+def get_test_app():
+    """Get a fresh app instance for each test to prevent state pollution.
+
+    This fixture imports the app lazily to avoid global state issues during
+    coverage runs where all test modules are loaded simultaneously.
+    """
+    from src.app.main import app
+
+    # Clear any existing dependency overrides from previous tests
+    app.dependency_overrides.clear()
+
+    yield app
+
+    # Cleanup after test
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -168,8 +212,10 @@ async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-def client() -> Generator[TestClient, Any, None]:
+def client(get_test_app) -> Generator[TestClient, Any, None]:
     """Sync TestClient fixture with standard mocking for general API tests."""
+    app = get_test_app
+
     fake_tenant = Mock()
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant"
@@ -212,13 +258,15 @@ def client() -> Generator[TestClient, Any, None]:
         with TestClient(app) as _client:
             yield _client
 
-    app.dependency_overrides.pop(async_get_db, None)
-    app.dependency_overrides.pop(get_current_user, None)
+    # Explicit cleanup - critical for test isolation
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
-def client_auth() -> Generator[TestClient, Any, None]:
+def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     """Client fixture for authentication tests - patches tenant and uses SQLite DB."""
+    app = get_test_app
+
     fake_tenant = Mock()
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
@@ -247,12 +295,22 @@ def client_auth() -> Generator[TestClient, Any, None]:
         with TestClient(app) as _client:
             yield _client
 
-    # Cleanup
-    app.dependency_overrides.pop(async_get_db, None)
+    # Explicit cleanup - critical for test isolation
+    app.dependency_overrides.clear()
 
 
-def override_dependency(dependency: Callable[..., Any], mocked_response: Any) -> None:
-    app.dependency_overrides[dependency] = lambda: mocked_response
+def override_dependency(dependency: Callable[..., Any], mocked_response: Any, app_instance=None) -> None:
+    """Override a FastAPI dependency with a mocked response.
+
+    Args:
+        dependency: The dependency function to override
+        mocked_response: The mock response to return
+        app_instance: Optional app instance (if None, imports lazily)
+    """
+    if app_instance is None:
+        from src.app.main import app
+        app_instance = app
+    app_instance.dependency_overrides[dependency] = lambda: mocked_response
 
 
 @pytest.fixture
@@ -327,11 +385,13 @@ def create_mock_engine():
 
 
 @pytest.fixture
-async def full_mock_context():
+async def full_mock_context(get_test_app):
     """Full mock context for async integration tests.
 
     Sets up common mocks: tenant, rate limiting, cache warming, db override, auth.
     """
+    app = get_test_app
+
     fake_tenant = Mock()
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
@@ -391,17 +451,19 @@ async def full_mock_context():
     ):
         yield
 
-    app.dependency_overrides.pop(async_get_db, None)
-    app.dependency_overrides.pop(get_current_user, None)
+    # Explicit cleanup - critical for test isolation
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
-async def unauthenticated_mock_context():
+async def unauthenticated_mock_context(get_test_app):
     """Mock context WITHOUT authentication for testing auth-required endpoints.
 
     Sets up common mocks: tenant, rate limiting, cache warming, db override.
     Does NOT mock get_current_user - allows real auth dependency to run.
     """
+    app = get_test_app
+
     fake_tenant = Mock()
     fake_tenant.id = 1
     fake_tenant.slug = "test-tenant-integration"
@@ -429,7 +491,8 @@ async def unauthenticated_mock_context():
     ):
         yield
 
-    app.dependency_overrides.pop(async_get_db, None)
+    # Explicit cleanup - critical for test isolation
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
@@ -440,8 +503,9 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def async_client(full_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture."""
+    app = get_test_app
     # Note: ASGITransport(app=app) handles lifespan automatically.
     async with AsyncClient(
         transport=ASGITransport(app=app),
@@ -452,11 +516,12 @@ async def async_client(full_mock_context) -> AsyncGenerator[AsyncClient, None]:
 
 
 @pytest.fixture
-async def unauthenticated_async_client(unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
+async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
     """Async client WITHOUT authentication for testing auth-required endpoints.
 
     Use this fixture when testing that endpoints correctly reject unauthenticated requests.
     """
+    app = get_test_app
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -466,8 +531,9 @@ async def unauthenticated_async_client(unauthenticated_mock_context) -> AsyncGen
 
 
 @pytest.fixture
-async def superuser_token_headers(full_mock_context):
+async def superuser_token_headers(get_test_app, full_mock_context):
     """Headers for superuser requests (overrides get_current_user)."""
+    app = get_test_app
     from src.app.api.dependencies import get_current_user
 
     # Create superuser mock
@@ -489,8 +555,9 @@ async def superuser_token_headers(full_mock_context):
 
 
 @pytest.fixture
-async def regular_user_token_headers(full_mock_context):
+async def regular_user_token_headers(get_test_app, full_mock_context):
     """Headers for regular user requests (non-superuser)."""
+    app = get_test_app
     from src.app.api.dependencies import get_current_user
 
     # Create regular user (NOT superuser)
