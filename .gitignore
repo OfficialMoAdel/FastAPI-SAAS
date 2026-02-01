@@ -208,3 +208,4 @@ unique_failed*
 failed.txt
 anlus.txt
 COMPLETION_SUMMARY.md
+storage_test/tenants/1/files/*.txt*
