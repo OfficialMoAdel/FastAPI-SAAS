@@ -96,6 +96,79 @@ async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, No
         await session.rollback()
 
 
+# -----------------------------------------------------------------------------
+# Factory Fixtures
+# -----------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def test_tier(real_postgres):
+    """Create a test tier."""
+    from tests.factories import TierFactory
+
+    return await TierFactory.create_async(real_postgres, name="TestTier")
+
+
+@pytest_asyncio.fixture
+async def test_tenant(real_postgres):
+    """Create a test tenant."""
+    from tests.factories import TenantFactory
+
+    return await TenantFactory.create_async(real_postgres)
+
+
+@pytest_asyncio.fixture
+async def test_user(real_postgres, test_tenant):
+    """Create a test user with associated tenant."""
+    from tests.factories import UserFactory
+
+    return await UserFactory.create_async(real_postgres, tenant_id=test_tenant.id)
+
+
+@pytest_asyncio.fixture
+async def test_post(real_postgres, test_user):
+    """Create a test post with associated user."""
+    from tests.factories import PostFactory
+
+    return await PostFactory.create_async(
+        real_postgres,
+        tenant_id=test_user.tenant_id,
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+    )
+
+
+@pytest_asyncio.fixture
+async def test_posts(real_postgres, test_user):
+    """Create multiple test posts for RLS testing (2 posts in 2 tenants)."""
+    from tests.factories import TenantFactory, UserFactory, PostFactory
+
+    # Create second tenant and user
+    tenant_b = await TenantFactory.create_async(real_postgres, name="Tenant B", slug="tenant-b")
+    user_b = await UserFactory.create_async(real_postgres, tenant_id=tenant_b.id)
+
+    # Create posts in each tenant
+    post_a = await PostFactory.create_async(
+        real_postgres,
+        tenant_id=test_user.tenant_id,
+        user_id=test_user.id,
+        created_by_user_id=test_user.id,
+        title="Post in Tenant A",
+    )
+    post_b = await PostFactory.create_async(
+        real_postgres,
+        tenant_id=tenant_b.id,
+        user_id=user_b.id,
+        created_by_user_id=user_b.id,
+        title="Post in Tenant B",
+    )
+
+    return (post_a, post_b)
+
+
+# -----------------------------------------------------------------------------
+# Query Tracking Fixtures
+# -----------------------------------------------------------------------------
+
+
 @pytest.fixture
 def query_counter():
     """Counter for tracking SQL query count."""
@@ -340,129 +413,6 @@ def pytest_configure(config):
         "markers",
         "slow: marks tests as slow (>1s execution time)",
     )
-
-
-# -----------------------------------------------------------------------------
-# RLS Test Fixtures
-# -----------------------------------------------------------------------------
-@pytest_asyncio.fixture
-async def db_session(real_postgres):
-    """Alias for real_postgres session."""
-    yield real_postgres
-
-
-@pytest_asyncio.fixture
-async def test_posts(real_postgres, tenant_factory, user_factory):
-    """Create test posts for RLS testing - two posts in different tenants."""
-    from uuid import uuid4
-    from src.app.modules.posts.models import Post
-    from src.app.modules.tenants.models import Tenant
-    from src.app.modules.users.models import User
-    from src.app.modules.tiers.models import Tier
-
-    # Create tiers first
-    tier_a = Tier(
-        id=1,
-        uuid=uuid4(),
-        name="Free",
-        max_users=10,
-        max_storage_gb=1,
-        price_monthly=0,
-        price_yearly=0,
-    )
-    tier_b = Tier(
-        id=2,
-        uuid=uuid4(),
-        name="Pro",
-        max_users=100,
-        max_storage_gb=10,
-        price_monthly=10,
-        price_yearly=100,
-    )
-
-    try:
-        real_postgres.add(tier_a)
-        real_postgres.add(tier_b)
-        await real_postgres.flush()
-    except Exception:
-        await real_postgres.rollback()
-        # Tiers may already exist
-        pass
-
-    # Create tenants
-    tenant_a_data = tenant_factory(name="Tenant A", slug="tenant-a")
-    tenant_b_data = tenant_factory(name="Tenant B", slug="tenant-b")
-
-    tenant_a = Tenant(**tenant_a_data, tier_id=1)
-    tenant_b = Tenant(**tenant_b_data, tier_id=2)
-    real_postgres.add(tenant_a)
-    real_postgres.add(tenant_b)
-    await real_postgres.flush()
-
-    # Create users
-    user_a_data = user_factory(tenant_id=tenant_a.id)
-    user_b_data = user_factory(tenant_id=tenant_b.id)
-
-    user_a = User(**user_a_data)
-    user_b = User(**user_b_data)
-    real_postgres.add(user_a)
-    real_postgres.add(user_b)
-    await real_postgres.flush()
-
-    # Create posts
-    post_a = Post(
-        title="Post in Tenant A",
-        text="Content A",
-        uuid=uuid4(),
-        tenant_id=tenant_a.id,
-        user_id=user_a.id,
-        created_by_user_id=user_a.id,
-    )
-    post_b = Post(
-        title="Post in Tenant B",
-        text="Content B",
-        uuid=uuid4(),
-        tenant_id=tenant_b.id,
-        user_id=user_b.id,
-        created_by_user_id=user_b.id,
-    )
-    real_postgres.add(post_a)
-    real_postgres.add(post_b)
-    await real_postgres.flush()
-
-    yield (post_a, post_b)
-
-    # Cleanup
-    await real_postgres.delete(post_a)
-    await real_postgres.delete(post_b)
-    await real_postgres.delete(user_a)
-    await real_postgres.delete(user_b)
-    await real_postgres.delete(tenant_a)
-    await real_postgres.delete(tenant_b)
-    await real_postgres.commit()
-
-
-@pytest.fixture
-def rls_context():
-    """RLS context manager for setting tenant context in database session."""
-    from src.app.core.db.database import local_session
-
-    class RLSContext:
-        def __init__(self):
-            self.current_tenant_id = None
-
-        async def set(self, tenant_id: int):
-            """Set RLS context for tenant."""
-            self.current_tenant_id = tenant_id
-            # In real RLS, this would execute:
-            # SET app.current_tenant_id = tenant_id
-            # For now, this is a placeholder
-
-        async def clear(self):
-            """Clear RLS context."""
-            self.current_tenant_id = None
-
-    return RLSContext()
 
 
 @pytest.fixture(autouse=True)

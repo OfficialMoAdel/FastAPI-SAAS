@@ -7,7 +7,6 @@ Note: Some tests require specific tables to exist in test_db.
 Run `scripts/init_test_db.py` to create them.
 """
 
-
 import pytest
 import structlog
 from sqlalchemy import text
@@ -19,9 +18,7 @@ logger = structlog.get_logger(__name__)
 async def table_exists(session, table_name: str) -> bool:
     """Check if a table exists in the database."""
     result = await session.execute(
-        text(
-            "SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = :table)"
-        ).bindparams(table=table_name)
+        text("SELECT EXISTS (SELECT FROM pg_tables WHERE tablename = :table)").bindparams(table=table_name)
     )
     row = result.fetchone()
     return row[0] if row else False
@@ -140,11 +137,12 @@ class TestFilesQuotaFusion:
         query_counter.reset()
 
         # Fused query: COUNT + SUM in single SELECT
+        # Note: File model doesn't have is_deleted column (uses hard delete)
         result = await real_postgres.execute(
             text("""
                 SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_size
                 FROM files
-                WHERE tenant_id = 1 AND is_deleted = false
+                WHERE tenant_id = 1
             """)
         )
         row = result.fetchone()

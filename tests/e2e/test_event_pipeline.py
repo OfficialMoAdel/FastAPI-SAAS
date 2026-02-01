@@ -6,8 +6,8 @@ from src.app.core.events import EventBus
 
 
 @pytest.mark.asyncio
-async def test_event_publish_uses_pipeline():
-    """Verify that multiple handlers are enqueued using a Redis pipeline."""
+async def test_event_publish_uses_parallel_enqueue():
+    """Verify that multiple handlers are enqueued in parallel via asyncio.gather."""
 
     # Setup Event Bus
     bus = EventBus()
@@ -27,15 +27,8 @@ async def test_event_publish_uses_pipeline():
     bus.subscribe(event_name)(handler2)
     bus.subscribe(event_name)(handler3)
 
-    # Mock ARQ Queue and Redis
-    mock_queue = Mock()
-    mock_redis = AsyncMock()
-    mock_pipeline = AsyncMock()
-
-    # Configure mock chain: queue.redis.pipeline() -> mock_pipeline
-    # redis.pipeline() is synchronous in redis-py, so we use Mock not AsyncMock for the method
-    mock_redis.pipeline = Mock(return_value=mock_pipeline)
-    mock_queue.redis = mock_redis
+    # Mock ARQ Queue
+    mock_queue = AsyncMock()
 
     # Set the queue on the bus
     bus._arq_queue = mock_queue
@@ -46,52 +39,47 @@ async def test_event_publish_uses_pipeline():
 
     # Verifications
 
-    # 1. Pipeline should be created once
-    mock_redis.pipeline.assert_called_once()
+    # 1. enqueue_job should be called 3 times (once per handler)
+    assert mock_queue.enqueue_job.call_count == 3
 
-    # 2. rpush should be called 3 times on the pipeline (once per handler)
-    assert mock_pipeline.rpush.call_count == 3
+    # 2. Verify each call is for "process_event_handler"
+    for call in mock_queue.enqueue_job.call_args_list:
+        args, kwargs = call
+        assert args[0] == "process_event_handler"
+        assert args[1] == event_name
 
-    # 3. execute should be called once on the pipeline
-    mock_pipeline.execute.assert_awaited_once()
-
-    # 4. Verify payloads (optional but good)
-    # Check first call args
-    args, _ = mock_pipeline.rpush.call_args_list[0]
-    queue_name, payload = args
-    assert "arq:queue" in queue_name
-    assert b"process_event_handler" in payload
-    assert b"handler1" in payload
+    # 3. Verify handler names are in the calls
+    handler_names = [call[0][3] for call in mock_queue.enqueue_job.call_args_list]
+    assert "handler1" in handler_names
+    assert "handler2" in handler_names
+    assert "handler3" in handler_names
 
 
 @pytest.mark.asyncio
-async def test_event_publish_fallback_on_pipeline_failure(caplog):
-    """Verify fallback to sync execution if pipeline fails."""
+async def test_event_publish_fallback_on_queue_failure(caplog):
+    """Verify fallback to sync execution if ARQ enqueue fails."""
     import logging
 
     caplog.set_level(logging.ERROR)
 
     bus = EventBus()
 
+    handler_called = False
+
     async def handler1(data):
-        pass
+        nonlocal handler_called
+        handler_called = True
 
     bus.subscribe("test.fail")(handler1)
 
-    mock_queue = Mock()
-    mock_redis = AsyncMock()
-    mock_pipeline = AsyncMock()
+    mock_queue = AsyncMock()
+    # Make enqueue_job fail
+    mock_queue.enqueue_job.side_effect = Exception("ARQ connection failed")
 
-    # Make execute fail
-    mock_pipeline.execute.side_effect = Exception("Redis went away")
-
-    mock_redis.pipeline = Mock(return_value=mock_pipeline)
-    mock_queue.redis = mock_redis
     bus._arq_queue = mock_queue
 
-    # Mock _publish_sync to verify fallback
-    with patch.object(bus, "_publish_sync", new_callable=AsyncMock) as mock_sync:
-        await bus.publish("test.fail", {})
+    # Should not raise, but should log the error and fall back to sync
+    await bus.publish("test.fail", {})
 
-        # Verify sync fallback called
-        mock_sync.assert_awaited_once()
+    # Handler should have been executed synchronously as fallback
+    assert handler_called, "Handler should have been executed synchronously as fallback"

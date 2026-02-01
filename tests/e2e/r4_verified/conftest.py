@@ -17,6 +17,10 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_session_maker
+from src.app.core.encryption import encrypt_value
+from cryptography.fernet import Fernet
+import json
+import os
 from src.app.core.utils import cache
 from src.app.main import app
 
@@ -74,6 +78,13 @@ async def ensure_tiers():
                 VALUES (1, 'tier_1_default', '/api/v1/users/me', 50, 3600, NOW(), NOW())
             """)
         )
+        # Add rate limit for file uploads for Free tier (for E2E tests)
+        await session.execute(
+            text("""
+                INSERT INTO rate_limit (tier_id, name, path, "limit", period, created_at, updated_at)
+                VALUES (1, 'tier_1_files', '/api/v1/files/upload', 100, 3600, NOW(), NOW())
+            """)
+        )
         # Add rate limit for Pro tier
         await session.execute(
             text("""
@@ -97,6 +108,7 @@ async def ensure_test_tenant(ensure_tiers):
         )
         tenant = result.fetchone()
 
+        tenant_id = None
         if not tenant:
             # Create test tenant - id is SERIAL (auto-increment integer)
             await session.execute(
@@ -108,8 +120,34 @@ async def ensure_test_tenant(ensure_tiers):
             )
             await session.commit()
             logger.info(f"Created test tenant: {TEST_TENANT_SLUG}")
+
+            # Fetch ID
+            result = await session.execute(
+                text("SELECT id FROM tenants WHERE slug = :slug"),
+                {"slug": TEST_TENANT_SLUG},
+            )
+            tenant_id = result.scalar()
         else:
             logger.info(f"Test tenant already exists: {TEST_TENANT_SLUG}")
+            tenant_id = tenant[0]
+
+        # Ensure storage settings exist with valid credentials
+        os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
+        credentials = {"base_path": "./storage_test"}
+        encrypted = encrypt_value(json.dumps(credentials))
+
+        await session.execute(
+            text("""
+                INSERT INTO storage_settings (tenant_id, provider, max_file_size_mb, max_file_count, storage_quota_bytes, credentials_encrypted, created_at, updated_at)
+                VALUES (:tenant_id, 'local', 100, 10000, 10737418240, :encrypted, NOW(), NOW())
+                ON CONFLICT (tenant_id) DO UPDATE 
+                SET credentials_encrypted = EXCLUDED.credentials_encrypted,
+                    provider = 'local'
+            """),
+            {"tenant_id": tenant_id, "encrypted": encrypted},
+        )
+        await session.commit()
+        logger.info(f"Ensured storage settings for test tenant: {TEST_TENANT_SLUG}")
 
 
 @pytest.fixture

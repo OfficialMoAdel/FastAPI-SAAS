@@ -5,9 +5,13 @@ This script validates all API compatibility endpoints created for frontend parit
 Tests complete workflows with detailed logging of requests and responses.
 
 Run with: python -m pytest tests/e2e/test_api_compat_e2e.py -v -s
+
+REQUIRES: A running server at localhost:8000
 """
 
 import logging
+import os
+import uuid
 
 import httpx
 import pytest
@@ -18,6 +22,12 @@ logger = logging.getLogger(__name__)
 
 BASE_URL = "http://localhost:8000"
 TIMEOUT = 30.0
+
+# Skip all tests in this module if server is not running
+pytestmark = pytest.mark.skipif(
+    os.environ.get("RUN_LIVE_E2E") != "1",
+    reason="Live E2E tests require RUN_LIVE_E2E=1 and a running server at localhost:8000",
+)
 
 
 class TestAPICompatibilityE2E:
@@ -33,10 +43,11 @@ class TestAPICompatibilityE2E:
         async with httpx.AsyncClient(base_url=BASE_URL, timeout=TIMEOUT) as client:
             # Step 1: Register new user
             logger.info("\n[Step 1] POST /api/v1/account/register")
+            test_id = str(uuid.uuid4())[:8]
             register_data = {
                 "name": "API Compat Test User",
-                "username": f"compat_test_{pytest.test_id}",
-                "email": f"compat_test_{pytest.test_id}@example.com",
+                "username": f"compat_test_{test_id}",
+                "email": f"compat_test_{test_id}@example.com",
                 "password": "SecurePass123!",
             }
             logger.info(f"Request body: {register_data}")

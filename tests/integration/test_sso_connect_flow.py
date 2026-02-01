@@ -95,9 +95,9 @@ class TestSSOConnectFlowIntegration:
 
     def test_connect_rejects_already_connected_provider(self, client: TestClient):
         """Verify connect rejects if provider is already connected."""
-        # Mock crud_user_sso_connections.exists to return True
+        # Mock exists_for_user to return True (connection exists)
         with patch(
-            "src.app.modules.sso.router.crud_user_sso_connections.exists",
+            "src.app.modules.sso.router.crud_user_sso_connections.exists_for_user",
             new_callable=AsyncMock,
             return_value=True,
         ):
