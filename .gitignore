@@ -204,4 +204,7 @@ MIGRATION_CONSOLIDATION_PLAN.md
 final_failed*
 script_name.py
 baseline*
+unique_failed*
 failed.txt
+anlus.txt
+COMPLETION_SUMMARY.md
