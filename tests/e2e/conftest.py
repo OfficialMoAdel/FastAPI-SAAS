@@ -9,12 +9,12 @@ from dataclasses import dataclass, field
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.app.main import app
-
 
 @pytest.fixture
 async def e2e_client():
     """Create a client for E2E tests pointing to the app."""
+    from src.app.main import app  # Lazy import to avoid global state pollution
+
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://testserver",
