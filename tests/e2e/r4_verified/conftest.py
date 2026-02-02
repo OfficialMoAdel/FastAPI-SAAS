@@ -36,21 +36,13 @@ logger = logging.getLogger(__name__)
 TEST_TENANT_SLUG = "test-tenant-e2e"
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    """Create event loop for session-scoped async fixtures.
-
-    E2E tests use session-scoped fixtures for database setup efficiency.
-    This overrides the default function-scoped event loop from root conftest.
-    """
-    import asyncio
-
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
+# NOTE: event_loop fixture REMOVED - pytest-asyncio 0.23+ handles this via
+# pyproject.toml settings (asyncio_default_fixture_loop_scope = "session").
+# Custom event_loop fixtures conflict with the global config and cause
+# test isolation failures during coverage runs.
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def ensure_tiers():
     """Ensure tiers and rate limits exist in database."""
     async with async_session_maker() as session:
@@ -100,9 +92,9 @@ async def ensure_tiers():
         await session.commit()
 
 
-@pytest.fixture(scope="session")
+@pytest.fixture(scope="function")
 async def ensure_test_tenant(ensure_tiers):
-    """Ensure test tenant exists in database (session-scoped for efficiency)."""
+    """Ensure test tenant exists in database (function-scoped for loop compatibility)."""
     async with async_session_maker() as session:
         # Check if tenant exists
         result = await session.execute(

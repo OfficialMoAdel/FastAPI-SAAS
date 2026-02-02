@@ -116,8 +116,8 @@ def registry_with_circuits(registry, mock_circuit_breaker):
 def test_registry_initialization(registry):
     """Verify empty registry on creation."""
     assert len(registry._breakers) == 0
-    assert registry._lock is not None
-    assert isinstance(registry._lock, asyncio.Lock)
+    # _lock is lazily initialized to avoid event loop binding issues
+    assert registry._lock is None
 
 
 def test_registry_singleton():

@@ -103,20 +103,32 @@ sync_engine = create_engine(
 )
 local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
 
-# Async Engine for tests
+# Async engine for tests - NullPool prevents connection caching across event loops
+# This is the key to avoiding "Task got Future attached to a different loop" errors
 test_async_engine = create_async_engine(
     f"sqlite+aiosqlite://{DATABASE_URI_STR}",
-    poolclass=NullPool,  # Close connections immediately after use
-)
-local_session = sessionmaker(autocommit=False, autoflush=False, bind=sync_engine)
-
-# Async Engine for tests
-test_async_engine = create_async_engine(
-    f"sqlite+aiosqlite://{DATABASE_URI_STR}",
-    poolclass=NullPool,
+    poolclass=NullPool,  # Critical: fresh connection per use = no loop binding issues
     connect_args={"check_same_thread": False},
 )
-TestingSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_async_engine, class_=AsyncSession)
+
+TestingSessionLocal = sessionmaker(
+    autocommit=False,
+    autoflush=False,
+    bind=test_async_engine,
+    class_=AsyncSession,
+    expire_on_commit=False,
+)
+
+
+# Backward compatibility aliases
+def get_test_async_engine():
+    """Get the test async engine."""
+    return test_async_engine
+
+
+def get_testing_session_local():
+    """Get the testing session factory."""
+    return TestingSessionLocal
 
 
 from src.app.core.db.database import Base
@@ -186,6 +198,10 @@ def setup_db():
 
     # Cleanup
     sync_engine.dispose()
+
+    # Reset circuit breaker registry to prevent lock binding issues
+    from src.app.core.resilience.registry import reset_registry
+    reset_registry()
     try:
         if os.path.exists(DATABASE_PATH):
             os.remove(DATABASE_PATH)
@@ -198,6 +214,23 @@ def setup_db():
     #         pass
 
 
+@pytest.fixture(autouse=True)
+def reset_circuit_breaker_registry():
+    """Reset circuit breaker registry and module-level breakers before each test.
+
+    Prevents asyncio.Lock binding issues when event loops change between tests.
+    This is critical for test isolation during coverage runs.
+    """
+    from src.app.core.resilience.registry import reset_registry
+    from src.app.core.utils.circuit_breaker import reset_all_circuit_breakers
+
+    reset_registry()
+    reset_all_circuit_breakers()
+    yield
+    reset_registry()
+    reset_all_circuit_breakers()
+
+
 @pytest.fixture
 def db(setup_db) -> Generator[Session, Any, None]:
     session = local_session()
@@ -207,7 +240,7 @@ def db(setup_db) -> Generator[Session, Any, None]:
 
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
     """Override database dependency to use test async session."""
-    async with TestingSessionLocal() as session:
+    async with get_testing_session_local()() as session:
         yield session
 
 
@@ -498,7 +531,7 @@ async def unauthenticated_mock_context(get_test_app):
 @pytest.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Async database session fixture."""
-    async with TestingSessionLocal() as session:
+    async with get_testing_session_local()() as session:
         yield session
 
 
@@ -941,8 +974,21 @@ class FakeRedis:
 
 
 @pytest.fixture(autouse=True)
-def mock_redis():
-    """Mock Redis client globally with in-memory state."""
+def mock_redis(request):
+    """Mock Redis client with in-memory state.
+
+    Automatically applies to all tests EXCEPT those marked with:
+    - @pytest.mark.integration
+    - @pytest.mark.e2e
+    - @pytest.mark.uses_real_redis
+
+    These markers indicate tests that need real Redis connections.
+    """
+    # Skip mocking for tests that need real Redis
+    markers = [m.name for m in request.node.iter_markers()]
+    if any(m in markers for m in ("integration", "e2e", "uses_real_redis")):
+        yield None
+        return
     fake_redis = FakeRedis()
 
     with (

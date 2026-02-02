@@ -12,6 +12,7 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy import event as sqla_event
 from sqlalchemy import text
+from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -50,9 +51,12 @@ def baseline_metrics() -> dict[str, Any]:
 # -----------------------------------------------------------------------------
 # Database Fixtures
 # -----------------------------------------------------------------------------
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
+@pytest_asyncio.fixture
 async def real_postgres_engine():
-    """Create real PostgreSQL engine for integration tests."""
+    """Create real PostgreSQL engine for integration tests.
+
+    Uses function scope to prevent event loop binding issues.
+    """
     # Build full async URL with scheme prefix
     # Use TEST_POSTGRES_PORT env var if set, otherwise use main POSTGRES_PORT
     import os
@@ -73,18 +77,26 @@ async def real_postgres_engine():
     engine = create_async_engine(
         test_db_url,
         echo=True,  # Log all SQL
-        pool_size=5,
-        max_overflow=10,
+        poolclass=NullPool,  # Critical: prevents connection caching across event loops
     )
 
     yield engine
 
-    await engine.dispose()
+    # Handle event loop closed during teardown
+    try:
+        await engine.dispose()
+    except RuntimeError:
+        # Event loop may be closed during test session teardown
+        pass
 
 
-@pytest_asyncio.fixture(loop_scope="session")
+@pytest_asyncio.fixture
 async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, None]:
-    """Real PostgreSQL session for integration tests."""
+    """Real PostgreSQL session for integration tests.
+
+    Uses function scope (default) to ensure each test gets a fresh session,
+    preventing 'another operation is in progress' errors from shared connections.
+    """
     async_session = sessionmaker(
         real_postgres_engine,
         class_=AsyncSession,
@@ -93,7 +105,7 @@ async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, No
 
     async with async_session() as session:
         yield session
-        await session.rollback()
+        # Session context manager handles cleanup automatically
 
 
 # -----------------------------------------------------------------------------
@@ -208,7 +220,7 @@ def query_logger(real_postgres, query_counter):
     sqla_event.remove(engine.sync_engine, "before_cursor_execute", log_query)
 
 
-@pytest_asyncio.fixture(loop_scope="session")
+@pytest_asyncio.fixture
 async def clean_db(real_postgres):
     """Clean database state between tests."""
     # Truncate relevant tables
@@ -224,9 +236,13 @@ async def clean_db(real_postgres):
 # -----------------------------------------------------------------------------
 # Redis Fixtures
 # -----------------------------------------------------------------------------
-@pytest_asyncio.fixture(scope="session", loop_scope="session")
+@pytest_asyncio.fixture
 async def real_redis() -> AsyncGenerator[Redis, None]:
-    """Real Redis connection for integration tests."""
+    """Real Redis connection for integration tests.
+
+    Uses function scope (default) to create fresh connections per test,
+    preventing 'Future attached to different loop' errors.
+    """
     import os
 
     # Use TEST_REDIS_PORT env var if set, otherwise use main REDIS_CACHE_PORT
@@ -241,17 +257,23 @@ async def real_redis() -> AsyncGenerator[Redis, None]:
         decode_responses=True,
     )
 
+    # Flush before test for isolation
+    try:
+        await redis.flushdb()
+    except Exception:
+        pass
+
     yield redis
 
-    # Handle event loop closed during teardown (common with session-scoped fixtures)
+    # Cleanup after test
     try:
+        await redis.flushdb()
         await redis.aclose()
-    except RuntimeError:
-        # Event loop may be closed during test session teardown
+    except Exception:
         pass
 
 
-@pytest_asyncio.fixture(loop_scope="session")
+@pytest_asyncio.fixture
 async def clean_redis(real_redis):
     """Clean Redis state between tests."""
     await real_redis.flushdb()

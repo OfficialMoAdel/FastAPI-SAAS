@@ -82,16 +82,10 @@ def mock_db_session() -> AsyncMock:
     return mock
 
 
-@pytest.fixture
-def event_loop():
-    """Event loop for async tests.
-
-    Creates a fresh event loop for each test to ensure isolation.
-    """
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    yield loop
-    loop.close()
+# NOTE: event_loop fixture REMOVED - pytest-asyncio 0.23+ handles this via
+# pyproject.toml settings (asyncio_default_fixture_loop_scope = "session").
+# Custom event_loop fixtures conflict with the global config and cause
+# test isolation failures during coverage runs.
 
 
 @pytest.fixture(autouse=True)

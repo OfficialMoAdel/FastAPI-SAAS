@@ -1,6 +1,7 @@
 # Code Improvement Report - Action Items Only
 
 **Generated:** January 26, 2026  
+**Updated:** February 2, 2026  
 **Scope:** FastAPI SaaS Boilerplate - Bottlenecks, Gaps, Issues, and Recommendations
 
 ---
@@ -10,7 +11,7 @@
 ### CRIT-1: Encryption Secrets Without Validation
 | Property | Value |
 |----------|-------|
-| **Location** | `src/app/core/config.py:21-34` |
+| **Location** | `src/app/core/config.py:28-30` |
 | **Category** | Security |
 | **Severity** | HIGH |
 
@@ -26,16 +27,19 @@ ENCRYPTION_SALT: SecretStr | None = None
 
 **Remediation:**
 ```python
-# Add startup validation
+# Add to existing validate_secrets validator in CryptSettings
 @model_validator(mode="after")
-def validate_production_secrets(self) -> "CryptSettings":
-    import logging
-    from pydantic import ValidationError
+def validate_secrets(self) -> "CryptSettings":
+    # ... existing validation code ...
     
-    # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
-    # Example logic:
+    # Add this warning for encryption keys
     if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
-         logging.warning("SECURITY: Encryption keys are missing. Some features may fail.")
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.warning(
+            "SECURITY: ENCRYPTION_KEY or ENCRYPTION_SALT is not set. "
+            "Features requiring encryption (webhooks, etc.) may fail."
+        )
     
     return self
 ```
@@ -45,7 +49,7 @@ def validate_production_secrets(self) -> "CryptSettings":
 ### CRIT-2: Event Handler Parallel Enqueue
 | Property | Value |
 |----------|-------|
-| **Location** | `src/app/core/events.py:389-404` |
+| **Location** | `src/app/core/events.py:390-394` |
 | **Category** | Performance |
 | **Severity** | HIGH |
 | **Impact** | Multiple Redis roundtrips for each handler |
@@ -93,137 +97,36 @@ async def _publish_async(self, event_name, data, handlers, priority):
 ### HIGH-1: Redis Client Duplication
 | Property | Value |
 |----------|-------|
-| **Location** | `src/app/core/utils/cache.py:17-18` + `src/app/core/events.py` |
+| **Location** | `src/app/core/utils/cache.py:17-18` + `src/app/core/redis_factory.py` |
 | **Category** | Architecture |
 | **Severity** | MEDIUM |
 | **Impact** | 100 total Redis connections (50+50) |
 
 **Current State:**
 ```python
-# cache.py:17-18
+# cache.py:17-18 - Separate pool and client
 pool: ConnectionPool | None = None
 client: Redis | None = None
 
-# events.py:60
-self._redis_client = None  # Separate instance
+# redis_factory.py:5-22 - Shared pool exists but not used by cache.py
 ```
 
 **Remediation:**
+Refactor `cache.py` to use the shared factory:
 ```python
-# src/app/core/redis_factory.py
-from redis.asyncio import ConnectionPool, Redis
+# src/app/core/utils/cache.py
+from redis.asyncio import Redis
+from ..redis_factory import get_redis_pool
 
-_redis_client: Redis | None = None
-_redis_pool: ConnectionPool | None = None
+client: Redis | None = None
 
-async def get_redis_client() -> Redis:
-    global _redis_client, _redis_pool
-    
-    if _redis_client is None:
-        _redis_pool = ConnectionPool.from_url(
-            settings.REDIS_CACHE_URL,
-            max_connections=50,
-            decode_responses=True,
-        )
-        _redis_client = Redis(connection_pool=_redis_pool)
-    
-    return _redis_client
-
-# Replace all individual clients with:
-from .redis_factory import get_redis_client
-redis_client = await get_redis_client()
-```
-
----
-
-### HIGH-2: Fail-Open Without Alerting
-| Property | Value |
-|----------|-------|
-| **Location** | Multiple (see below) |
-| **Category** | Security |
-| **Severity** | MEDIUM |
-
-**Affected Files:**
-- `token_blacklist_cache.py:138-139` - Redis unavailable → returns None
-- `session_manager.py:367-377` - Redis unavailable → returns True
-- `rate_limit.py:180-181` - Blacklisted token → treated as anonymous
-
-**Current Pattern:**
-```python
-# session_manager.py:366-377
-if not self._redis_client:
-    logger.critical("redis_unavailable_session_bypass", ...)
-    return True  # No alerting, just logging
-```
-
-**Remediation:**
-```python
-from src.app.core.monitoring.r1_unified_metrics import record_fail_open
-
-async def is_session_valid(self, user_id, session_id):
-    if not self._redis_client:
-        # Alert and track metrics
-        record_fail_open("session_validation")
-        logger.critical(
-            "redis_unavailable_session_bypass",
-            user_id=user_id,
-            session_id=session_id,
-            severity="high",
-        )
-        return True
-    
-    hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
-    exists = await self._redis_client.hexists(hash_key, session_id)
-    return exists
-```
-
-Add to metrics module:
-```python
-def record_fail_open(operation: str):
-    """Track fail-open events for alerting."""
-    _metrics_counter.labels(operation=operation, type="fail_open").inc()
-```
-
----
-
-### HIGH-3: Dashboard Queries Sequential Execution
-| Property | Value |
-|----------|-------|
-| **Location** | `src/app/modules/dashboard/service.py:65-162` |
-| **Category** | Performance |
-| **Severity** | MEDIUM |
-
-**Current Implementation:**
-```python
-# Lines 65-162: 7 sequential db.execute() calls
-total_users_result = await db.execute(total_users_query)      # Wait 1
-new_users_result = await db.execute(new_users_query)          # Wait 2
-active_users_result = await db.execute(active_users_query)    # Wait 3
-deleted_users_result = await db.execute(deleted_users_query)  # Wait 4
-logins_result = await db.execute(logins_query)                # Wait 5
-api_calls_result = await db.execute(api_calls_query)          # Wait 6
-failed_auth_result = await db.execute(failed_auth_query)      # Wait 7
-```
-
-**Remediation:**
-```python
-async def get_dashboard_stats(self, db, tenant_id):
-    # Parallel execution with asyncio.gather
-    total_users, new_users, active_users, deleted_users, logins, api_calls, failed_auth = await asyncio.gather(
-        db.execute(total_users_query),
-        db.execute(new_users_query),
-        db.execute(active_users_query),
-        db.execute(deleted_users_query),
-        db.execute(logins_query),
-        db.execute(api_calls_query),
-        db.execute(failed_auth_query),
-    )
-    
-    return {
-        "total_users": total_users.scalar(),
-        "new_users": new_users.scalar(),
-        # ... rest of mapping
-    }
+async def get_cache_client() -> Redis:
+    """Get or initialize the Redis cache client using shared pool."""
+    global client
+    if client is None:
+        pool = await get_redis_pool()
+        client = Redis(connection_pool=pool)
+    return client
 ```
 
 ---
@@ -234,27 +137,21 @@ async def get_dashboard_stats(self, db, tenant_id):
 
 | Function | Location | Lines | Recommendation |
 |----------|----------|-------|----------------|
-| `_publish_async` | `events.py:313-404` | 92 | Extract `enqueue_handler` to module level |
-| `_evict_sessions_pipelined` | `session_manager.py:188-292` | 105 | Acceptable - well-documented |
-| `_get_existing_credentials` | `passkey/service.py:316-428` | 113 | Extract parallel decryption helper |
+| `_publish_async` | `events.py:313-424` | 111 | Extract `enqueue_handler` to module level |
 
----
-
-### MED-4: RBAC Cache TTL
-| Property | Value |
-|----------|-------|
-| **Location** | `src/app/core/config.py:352` |
-| **Category** | Performance |
-| **Severity** | MEDIUM |
-
-**Current:**
+**Remediation:**
 ```python
-RBAC_CACHE_TTL_SECONDS: int = 3600  # 1 hour
-```
-
-**Recommendation:** Increase to 24 hours (86400) for frequently accessed roles:
-```python
-RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
+# Extract to module level in events.py
+async def _enqueue_single_handler(
+    handler: Callable[..., Coroutine[Any, Any, None]],
+    event_name: str,
+    data: dict[str, Any],
+    priority: EventPriority,
+    arq_queue: ArqRedis,
+    arq_circuit: Any,
+) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
+    """Enqueue a single handler, returning (success, handler, error)."""
+    # ... existing enqueue_handler logic ...
 ```
 
 ---
@@ -265,27 +162,15 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 
 | Task | Priority | Files | Estimated Effort |
 |------|----------|-------|------------------|
-| Add encryption secret validation | CRITICAL | `config.py` | 1 hour |
+| Add encryption secret validation | CRITICAL | `config.py` | 30 min |
 | Batch event handler enqueue | CRITICAL | `events.py` | 2-3 hours |
-| Add fail-open metrics | HIGH | `metrics.py`, `session_manager.py` | 1 hour |
-| Share Redis client factory | HIGH | `redis_factory.py` | 2-3 hours |
+| Share Redis client factory | HIGH | `cache.py`, `redis_factory.py` | 1-2 hours |
 
 ### Short-term (Sprint 2)
 
 | Task | Priority | Files | Estimated Effort |
 |------|----------|-------|------------------|
-| Parallelize dashboard queries | HIGH | `dashboard/service.py` | 1-2 hours |
-| Increase RBAC cache TTL | MEDIUM | `config.py` | 15 min |
-| Refactor long functions | MEDIUM | `events.py`, `passkey/service.py` | 4-6 hours |
-
-### Medium-term (Quarter)
-
-| Task | Priority | Files | Estimated Effort |
-|------|----------|-------|------------------|
-| Add OpenTelemetry tracing | LOW | `main.py`, middleware | 1-2 days |
-| Implement encryption key rotation | LOW | `encryption.py` | 2-3 days |
-| Expand test coverage | MEDIUM | `tests/` | 1-2 weeks |
-| API documentation examples | LOW | `schemas.py` | 1-2 days |
+| Refactor long functions | MEDIUM | `events.py` | 1-2 hours |
 
 ---
 
@@ -295,19 +180,16 @@ RBAC_CACHE_TTL_SECONDS: int = Field(default=86400, ge=60, le=86400)
 | ID | Severity | Issue | Remediation |
 |----|----------|-------|-------------|
 | CRIT-1 | HIGH | Optional secrets without validation | Add startup validation |
-| HIGH-2 | MEDIUM | Fail-open without alerting | Add metrics/alerts |
 
 ### Performance Issues
 | ID | Severity | Issue | Remediation |
 |----|----------|-------|-------------|
 | CRIT-2 | HIGH | Event handler parallel enqueue | Batch with pipeline |
-| HIGH-3 | MEDIUM | Dashboard queries sequential | Parallelize with gather |
-| MED-4 | MEDIUM | RBAC cache TTL too short | Increase to 24h |
 
 ### Architecture Issues
 | ID | Severity | Issue | Remediation |
 |----|----------|-------|-------------|
-| HIGH-1 | MEDIUM | Redis client duplication | Create shared factory |
+| HIGH-1 | MEDIUM | Redis client duplication | Use shared factory |
 
 ### Code Quality Issues
 | ID | Severity | Issue | Remediation |

@@ -71,7 +71,17 @@ class CircuitBreakerRegistry:
 
     def __init__(self) -> None:
         self._breakers: dict[str, CircuitBreakerSpec] = {}
-        self._lock = asyncio.Lock()
+        self._lock: asyncio.Lock | None = None
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Get or create lock in current event loop.
+
+        Lazy initialization prevents lock binding to wrong event loop
+        when registry singleton is created at import time.
+        """
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     def register(
         self,
@@ -246,7 +256,7 @@ class CircuitBreakerRegistry:
         if not spec:
             return False
 
-        async with self._lock:
+        async with self._get_lock():
             spec.breaker.reset()
 
         logger.info(f"Reset circuit breaker: {name}")
@@ -259,7 +269,7 @@ class CircuitBreakerRegistry:
         -------
             Number of circuit breakers reset
         """
-        async with self._lock:
+        async with self._get_lock():
             for spec in self._breakers.values():
                 spec.breaker.reset()
 
@@ -343,6 +353,19 @@ def get_registry() -> CircuitBreakerRegistry:
     if _registry is None:
         _registry = CircuitBreakerRegistry()
     return _registry
+
+
+def reset_registry() -> None:
+    """Reset the global registry (for test isolation).
+
+    Clears the singleton and forces recreation on next access.
+    This prevents asyncio.Lock binding issues when event loops change.
+    """
+    global _registry
+    if _registry is not None:
+        _registry._breakers.clear()
+        _registry._lock = None
+    _registry = None
 
 
 def get_circuit_breaker(name: str) -> CircuitBreaker | None:

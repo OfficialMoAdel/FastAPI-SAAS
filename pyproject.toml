@@ -54,6 +54,12 @@ dependencies = [
     "xxhash>=3.6.0",
     "bitarray>=3.8.0",
     "cachetools>=6.2.4",
+    # MFA (Phase 3)
+    "pyotp>=2.9.0",
+    "qrcode[pil]>=7.4.0",
+    # Multi-Provider AI (Phase 4)
+    "openai>=1.0.0",
+    "anthropic>=0.20.0",
 ]
 
 [project.optional-dependencies]
@@ -135,9 +141,7 @@ filterwarnings = [
     "ignore::PendingDeprecationWarning:starlette.formparsers",
 ]
 asyncio_mode = "auto"
-asyncio_default_fixture_loop_scope = "session"
-asyncio_default_test_loop_scope = "session"
-plugins = ["tests.pytest_plugin"]
+asyncio_default_fixture_loop_scope = "function"
 
 [dependency-groups]
 dev = [
@@ -146,7 +150,7 @@ dev = [
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
     "pre-commit>=4.3.0",
-    "pytest-asyncio>=1.0.0",
+    "pytest-asyncio==0.24.0",  # 0.24.0 supports loop_scope; 0.25+ has event loop bugs
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
     "structlog>=25.5.0",

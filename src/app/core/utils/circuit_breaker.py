@@ -144,6 +144,14 @@ class CircuitBreaker:
         self._success_count = 0
         self._last_failure_time = 0.0
 
+    def reset_lock(self) -> None:
+        """Reset the asyncio lock for new event loop (test isolation).
+
+        Call this when the event loop changes to prevent 'Lock bound to
+        different event loop' errors during test runs.
+        """
+        self._lock = asyncio.Lock()
+
 
 class CircuitBreakerOpen(Exception):
     """Raised when circuit is open and call is rejected."""
@@ -265,3 +273,15 @@ def _register_default_breakers() -> None:
 
 # Auto-register defaults on import
 # _register_default_breakers()
+
+
+def reset_all_circuit_breakers() -> None:
+    """Reset all module-level circuit breakers for test isolation.
+
+    This function resets both the state and the asyncio.Lock for each
+    module-level circuit breaker. Call this in test fixtures to prevent
+    'Lock bound to different event loop' errors during coverage runs.
+    """
+    for breaker in (webhook_circuit, email_circuit, arq_circuit):
+        breaker.reset()
+        breaker.reset_lock()
