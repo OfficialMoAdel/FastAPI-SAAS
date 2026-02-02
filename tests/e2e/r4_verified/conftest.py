@@ -14,9 +14,11 @@ from typing import Any
 import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
+from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
-from src.app.core.db.database import async_session_maker
+from src.app.core.config import settings
 from src.app.core.encryption import encrypt_value
 from cryptography.fernet import Fernet
 import json
@@ -36,8 +38,22 @@ logger = logging.getLogger(__name__)
 TEST_TENANT_SLUG = "test-tenant-e2e"
 
 
+def _get_test_session_maker():
+    """Create a test-specific async session maker with NullPool.
+
+    NullPool prevents connection caching across event loops, which is
+    critical for function-scoped pytest-asyncio tests.
+    """
+    test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
+    engine = create_async_engine(
+        test_db_url,
+        poolclass=NullPool,  # Critical: fresh connection per use
+    )
+    return sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
 # NOTE: event_loop fixture REMOVED - pytest-asyncio 0.23+ handles this via
-# pyproject.toml settings (asyncio_default_fixture_loop_scope = "session").
+# pyproject.toml settings (asyncio_default_fixture_loop_scope = "function").
 # Custom event_loop fixtures conflict with the global config and cause
 # test isolation failures during coverage runs.
 
@@ -45,7 +61,7 @@ TEST_TENANT_SLUG = "test-tenant-e2e"
 @pytest.fixture(scope="function")
 async def ensure_tiers():
     """Ensure tiers and rate limits exist in database."""
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         # Check if tiers exist
         result = await session.execute(text("SELECT id FROM tier WHERE id IN (1, 2)"))
         existing_ids = [row[0] for row in result.fetchall()]
@@ -95,7 +111,7 @@ async def ensure_tiers():
 @pytest.fixture(scope="function")
 async def ensure_test_tenant(ensure_tiers):
     """Ensure test tenant exists in database (function-scoped for loop compatibility)."""
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         # Check if tenant exists
         result = await session.execute(
             text("SELECT id FROM tenants WHERE slug = :slug"),
@@ -148,7 +164,7 @@ async def ensure_test_tenant(ensure_tiers):
 @pytest.fixture
 async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
     """Provide database session for E2E tests."""
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         logger.info("Created database session for E2E test")
         yield session
         logger.info("Closing database session")
@@ -188,7 +204,7 @@ async def authenticated_user(client: AsyncClient) -> dict[str, Any]:
     logger.info(f"Creating test user: {user_data['email']}")
 
     # Clean up existing user if any
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         await session.execute(
             text('DELETE FROM "user" WHERE email = :email'),
             {"email": user_data["email"]},
@@ -201,7 +217,7 @@ async def authenticated_user(client: AsyncClient) -> dict[str, Any]:
     logger.info(f"User registered successfully: {response.json()}")
 
     # Assign to Free tier (tier_id=1) explicitely BEFORE login
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         await session.execute(
             text('UPDATE "user" SET tier_id = 1 WHERE email = :email'),
             {"email": user_data["email"]},
@@ -268,7 +284,7 @@ async def premium_user(client: AsyncClient) -> dict[str, Any]:
     logger.info(f"Creating premium test user: {user_data['email']}")
 
     # Clean up existing user if any
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         await session.execute(
             text('DELETE FROM "user" WHERE email = :email'),
             {"email": user_data["email"]},
@@ -280,7 +296,7 @@ async def premium_user(client: AsyncClient) -> dict[str, Any]:
     assert response.status_code == 201, f"Registration failed: {response.text}"
 
     # Upgrade to premium tier (tier_id=2) BEFORE login
-    async with async_session_maker() as session:
+    async with _get_test_session_maker()() as session:
         await session.execute(
             text('UPDATE "user" SET tier_id = 2 WHERE email = :email'),
             {"email": user_data["email"]},

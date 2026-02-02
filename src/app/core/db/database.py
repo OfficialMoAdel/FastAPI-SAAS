@@ -1,9 +1,11 @@
 from collections.abc import AsyncGenerator
 from typing import Any
+import os
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
+from sqlalchemy.pool import NullPool
 
 from ..config import settings
 
@@ -29,17 +31,33 @@ DATABASE_PREFIX = settings.POSTGRES_ASYNC_PREFIX
 # DATABASE_PREFIX = settings.SQLITE_ASYNC_PREFIX
 DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"
 
-
-async_engine = create_async_engine(
-    DATABASE_URL,
-    echo=False,
-    future=True,
-    pool_size=settings.DB_POOL_SIZE,
-    max_overflow=settings.DB_MAX_OVERFLOW,
-    pool_pre_ping=True,  # Verify connections before use
-    pool_recycle=3600,  # Recycle connections after 1 hour
-    pool_timeout=settings.DB_POOL_TIMEOUT,
+# Use NullPool in test mode to prevent event loop binding issues
+# NullPool creates fresh connections per use, avoiding "Event loop is closed" errors
+_is_testing = (
+    "pytest" in os.environ.get("_", "")
+    or "PYTEST_CURRENT_TEST" in os.environ
+    or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
+    or "pytest" in __import__("sys").modules
 )
+
+if _is_testing:
+    async_engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        future=True,
+        poolclass=NullPool,  # Critical: fresh connection per use in tests
+    )
+else:
+    async_engine = create_async_engine(
+        DATABASE_URL,
+        echo=False,
+        future=True,
+        pool_size=settings.DB_POOL_SIZE,
+        max_overflow=settings.DB_MAX_OVERFLOW,
+        pool_pre_ping=True,  # Verify connections before use
+        pool_recycle=3600,  # Recycle connections after 1 hour
+        pool_timeout=settings.DB_POOL_TIMEOUT,
+    )
 
 local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
 
