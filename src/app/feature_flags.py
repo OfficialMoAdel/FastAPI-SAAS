@@ -5,7 +5,7 @@ from typing import Any
 
 from sqlalchemy import select
 
-from src.app.core.db.session import async_session_maker
+from src.app.core.db.database import async_session_maker
 from src.app.modules.tenants.models import Tenant
 
 logger = logging.getLogger(__name__)
