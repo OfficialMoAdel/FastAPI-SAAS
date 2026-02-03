@@ -14,6 +14,8 @@ import asyncio
 import sys
 from pathlib import Path
 
+from sqlalchemy import text
+
 # Add src to path
 src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
@@ -33,7 +35,7 @@ async def init_test_db():
         EmailTemplateOverride,
         EmailVerificationToken,
         FeatureFlagOverride,
-        File,
+        # File, # Imported via app.models to avoid circular dependency
         MagicLink,
         Notification,
         PasskeyCredential,
@@ -53,6 +55,8 @@ async def init_test_db():
         WebhookDelivery,
         WebhookEndpoint,
     )
+
+    # from app.modules.files.models import File  # noqa: F401
     from app.modules.ai.models import (  # noqa: F401
         AIChatMessage,
         AIChatSession,
@@ -74,9 +78,10 @@ async def init_test_db():
     print(f"Engine URL: {async_engine.url}")
 
     async with async_engine.begin() as conn:
-        # Drop all tables first for clean state
-        await conn.run_sync(Base.metadata.drop_all)
-        print("Dropped existing tables.")
+        # Drop all tables with CASCADE to handle foreign key dependencies
+        await conn.execute(text("DROP SCHEMA IF EXISTS public CASCADE;"))
+        await conn.execute(text("CREATE SCHEMA public;"))
+        print("Dropped existing schema with CASCADE.")
 
         # Create all tables
         await conn.run_sync(Base.metadata.create_all)

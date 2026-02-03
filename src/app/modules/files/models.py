@@ -48,6 +48,7 @@ class File(Base):
         # R2-HYBRID MED-5: Composite index for MIME type filtering
         # Enables O(1) lookup for queries like: WHERE tenant_id=? AND mime_type=?
         Index("ix_files_tenant_mime", "tenant_id", "mime_type"),
+        {"extend_existing": True},
     )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)

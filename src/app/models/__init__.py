@@ -6,7 +6,7 @@ from ..modules.api_keys.models import APIKey
 from ..modules.audit_logs.models import AuditLog
 from ..modules.auth.models import EmailVerificationToken, PasswordResetToken
 from ..modules.feature_flags.models import FeatureFlagOverride
-from ..modules.files.models import File
+# from ..modules.files.models import File
 from ..modules.magic_link.models import MagicLink
 from ..modules.notifications.models import EmailTemplateOverride, Notification
 from ..modules.passkey.models import PasskeyCredential
