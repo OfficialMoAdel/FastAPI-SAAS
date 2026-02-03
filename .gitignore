@@ -200,12 +200,11 @@ PLAN_FOR_ADVANCED_*
 CONTRIBUTING.md
 SECURITY.md
 Phase*
-MIGRATION_CONSOLIDATION_PLAN.md
 final_failed*
-script_name.py
 baseline*
 unique_failed*
 failed.txt
 anlus.txt
-COMPLETION_SUMMARY.md
+CODE_IMPROVEMENTS.md
 storage_test/tenants/1/files/*.txt*
+auto_test_from_report.py
