@@ -14,6 +14,10 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+from arq.connections import ArqRedis
+from arq.constants import default_queue_name, job_key_prefix
+from arq.jobs import serialize_job
+from arq.utils import timestamp_ms
 from structlog import get_logger
 
 from src.app.core.json_utils import json_dumps, json_loads
@@ -57,9 +61,11 @@ class EventBus:
     def __init__(self) -> None:
         """Initialize event bus with handler registry."""
         self._handlers: dict[str, list[Callable[..., Coroutine[Any, Any, None]]]] = defaultdict(list)
-        self._arq_queue = None
+        self._arq_queue: ArqRedis | None = None
         self._redis_client = None  # Set via set_redis_client()
         self._registration_complete = False
+        # P3-2: Semaphore to bound concurrent sync execution
+        self._concurrency_semaphore = asyncio.Semaphore(settings.EVENT_BUS_CONCURRENCY)
 
     @property
     def is_ready(self) -> bool:
@@ -274,34 +280,36 @@ class EventBus:
         """
 
         async def _call_handler(handler: Callable) -> None:
-            try:
-                # Apply timeout protection
-                await asyncio.wait_for(
-                    handler(data),
-                    timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                )
-                logger.debug(
-                    "Event handler success",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                )
-            except TimeoutError:
-                logger.error(
-                    "Event handler timed out",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                    timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                )
-                # We do not re-raise TimeoutError to prevent blocking other handlers
-                # in the gather group (though return_exceptions=True handles that too).
-            except Exception as e:
-                logger.error(
-                    "Event handler failed",
-                    event_name=event_name,
-                    handler=handler.__name__,
-                    error=str(e),
-                    exc_info=True,
-                )
+            # P3-2: Acquire semaphore to bound concurrency
+            async with self._concurrency_semaphore:
+                try:
+                    # Apply timeout protection
+                    await asyncio.wait_for(
+                        handler(data),
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
+                    logger.debug(
+                        "Event handler success",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "Event handler timed out",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
+                    # We do not re-raise TimeoutError to prevent blocking other handlers
+                    # in the gather group (though return_exceptions=True handles that too).
+                except Exception as e:
+                    logger.error(
+                        "Event handler failed",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        error=str(e),
+                        exc_info=True,
+                    )
 
         if not handlers:
             return
@@ -337,6 +345,20 @@ class EventBus:
 
         # P1-4: Parallel enqueue using asyncio.gather for reduced latency
         # Changes Sum(RTT) to Max(RTT) for multiple handlers
+
+        # P3-3: Batch enqueue using Redis pipeline if enabled
+        if settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
+            try:
+                await self._publish_async_batch(event_name, data, handlers, priority)
+                return
+            except Exception as e:
+                logger.warning(
+                    "Batch enqueue failed, falling back to parallel enqueue",
+                    event_name=event_name,
+                    error=str(e),
+                )
+                # Fallback to original parallel enqueue logic below
+
         async def enqueue_handler(
             handler: Callable[..., Coroutine[Any, Any, None]],
         ) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
@@ -360,6 +382,8 @@ class EventBus:
                 return (True, handler, None)  # Handled via fallback
 
             try:
+                # Type assertion: we checked _arq_queue at line 337
+                assert self._arq_queue is not None, "ARQ queue should be set"
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",
                     event_name,
@@ -404,7 +428,8 @@ class EventBus:
                 )
                 continue
 
-            success, handler, error = result
+            # Unpack result tuple (narrowed to tuple by isinstance check above)
+            success, handler, error = result  # type: ignore[misc]
             if not success and error is not None:
                 # Graceful degradation: try sync execution
                 try:
@@ -421,6 +446,75 @@ class EventBus:
                         handler=handler.__name__,
                         error=str(handler_error),
                     )
+
+    async def _publish_async_batch(
+        self,
+        event_name: str,
+        data: dict[str, Any],
+        handlers: list[Callable[..., Coroutine[Any, Any, None]]],
+        priority: EventPriority,
+    ) -> None:
+        """Enqueue multiple handlers in a single Redis roundtrip using pipeline.
+
+        Optimizes N roundtrips -> 1 roundtrip for multiple handlers.
+        """
+        if not self._arq_queue:
+            raise RuntimeError("ARQ queue not configured")
+
+        # Check circuit breaker once for the batch
+        if not arq_circuit.is_closed:
+            logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
+            # Fallback to sync execution for all handlers
+            await self._publish_sync(event_name, data, handlers)
+            return
+
+        queue_name = "default" if priority == EventPriority.NORMAL else "low_priority"
+        queue_prefix = default_queue_name if queue_name == "default" else f"{default_queue_name}_{queue_name}"
+
+        try:
+            # Prepare all jobs
+            pipe = self._arq_queue.pipeline()
+            enqueue_time_ms = timestamp_ms()
+
+            # Constants from arq
+            from uuid import uuid4
+
+            for handler in handlers:
+                job_id = uuid4().hex
+                job_key = job_key_prefix + job_id
+
+                # Serialize job
+                job_data = serialize_job(
+                    function_name="process_event_handler",
+                    args=(event_name, handler.__module__, handler.__name__, data),
+                    kwargs={},
+                    job_try=None,
+                    enqueue_time_ms=enqueue_time_ms,
+                    serializer=self._arq_queue.job_serializer,
+                )
+
+                # Add to pipeline: SETEX job_def, ZADD queue
+                # 24h expiration + extra ms
+                expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 86400000)
+
+                pipe.psetex(job_key, expires_ms, job_data)
+                pipe.zadd(queue_prefix, {job_id: enqueue_time_ms})
+
+            # Execute batch
+            await pipe.execute()
+            await arq_circuit.record_success()
+
+            logger.debug("Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority)
+
+        except Exception as e:
+            await arq_circuit.record_failure(e)
+            logger.error(
+                "Batch event handler queue failed",
+                event_name=event_name,
+                error=str(e),
+                exc_info=True,
+            )
+            raise  # Re-raise to trigger fallback
 
     def get_handlers(self, event_name: str) -> list[Callable[..., Coroutine[Any, Any, None]]]:
         """Get all handlers registered for an event.
