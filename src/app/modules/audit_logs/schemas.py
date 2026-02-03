@@ -18,7 +18,7 @@ class AuditLogBase(BaseModel):
 
     action: str = Field(..., description="Action performed (e.g., user.created)")
     entity_type: str | None = Field(None, description="Type of entity affected")
-    entity_id: UUID | None = Field(None, description="ID of entity affected")
+    entity_id: str | None = Field(None, description="ID of entity affected")
     details: dict[str, Any] = Field(default_factory=dict, description="Additional details")
 
 
@@ -38,7 +38,7 @@ class AuditLogRead(BaseReadUUID):
     user_id: int | None
     action: str
     entity_type: str | None
-    entity_id: UUID | None
+    entity_id: str | None
     details: dict[str, Any]
     ip_address: str | None
     user_agent: str | None
@@ -68,7 +68,7 @@ class AuditLogFilter(BaseModel):
 
     action: str | None = None
     entity_type: str | None = None
-    entity_id: UUID | None = None
+    entity_id: str | None = None
     user_id: int | None = None
     start_date: datetime | None = None
     end_date: datetime | None = None
