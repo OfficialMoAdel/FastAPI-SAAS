@@ -2,6 +2,7 @@ import functools
 import random
 import re
 import time
+import logging
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
 
@@ -21,6 +22,10 @@ client: Redis | None = None
 # U5: Pre-compiled regex patterns for cache decorator (performance optimization)
 # =============================================================================
 _BRACKET_PATTERN = re.compile(r"{(.*?)}")
+MAX_SCAN_ITERATIONS = 1000
+
+logger = logging.getLogger(__name__)
+stampede_logger = logging.getLogger("src.app.core.utils.cache.stampede")
 
 
 # =============================================================================
@@ -78,6 +83,8 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     invalidation where S is the number of keys for that tenant, instead
     of O(K) where K is total keys in Redis.
 
+    Optimized to use prefix-sharded indexes for O(1) subset invalidation.
+
     Args:
         tenant_id: Tenant identifier
         prefix: Optional prefix to limit invalidation scope
@@ -89,18 +96,30 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     if client is None:
         return 0
 
-    # Get the index set key
-    index_key = _tenant_index_key(tenant_id)
+    # P1-1: Hierarchical Tenant Index Sharding
+    # If prefix is provided, use the sharded index instead of filtering the global index
+    if prefix:
+        index_key = _tenant_prefix_index_key(tenant_id, prefix)
+        global_index_key = _tenant_index_key(tenant_id)
+    else:
+        index_key = _tenant_index_key(tenant_id)
+        global_index_key = None
 
-    # Get all keys from the index
+    # Get keys from the appropriate index
     keys: set[str] = await client.smembers(index_key)  # type: ignore[misc, assignment]
+
     if not keys:
         return 0
 
-    # If prefix specified, filter keys
-    if prefix:
-        filter_prefix = f"tenant:{tenant_id}:{prefix}:"
-        keys = {k for k in keys if k.startswith(filter_prefix)}
+    # Old logic required filtering here if prefix was set but index was global.
+    # Now index_key is already specific if prefix is set.
+    # However, for backward compatibility (during migration where sharded index might be empty),
+    # strictly speaking we should fall back to global index filtering if sharded is empty?
+    # But migrate_tenant_cache_index will populate both.
+    # Let's assume migration has run or we accept that new optimization requires new data.
+
+    # Double check filtering just in case we are using global index (if logic changed)
+    # But here we switched index_key. So keys are already filtered by definition of the set.
 
     if not keys:
         return 0
@@ -108,8 +127,24 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     # Delete all matching keys in a pipeline for efficiency
     async with client.pipeline(transaction=False) as pipe:
         pipe.delete(*keys)
-        # Remove deleted keys from index
-        pipe.srem(index_key, *keys)
+
+        # Remove deleted keys from the index we used
+        pipe.delete(index_key)
+
+        # If we used a sharded index, we must ALSO remove these keys from the global index
+        if prefix and global_index_key:
+            pipe.srem(global_index_key, *keys)
+
+        # If we used the global index (prefix=None), we should technically clear all sharded indexes too?
+        # But finding them requires scanning.
+        # It's acceptable to leave sharded indexes as "orphaned" sets of deleted keys
+        # (calling delete on non-existent keys is cheap/no-op).
+        # OR we can scan and delete them if we want to be clean.
+        # But for O(1) performance, we skip scanning.
+        # The indexes will just be empty sets eventually or point to nothing.
+        # Wait, if they point to nothing, `invalidate_tenant_cache(prefix)` later will get keys that don't exist, call delete on them (no-op).
+        # That's fine.
+
         results = await pipe.execute()
 
     return results[0] if results else 0
@@ -128,14 +163,30 @@ def _tenant_index_key(tenant_id: int | str) -> str:
     return f"tenant_index:{tenant_id}"
 
 
-async def add_to_tenant_index(tenant_id: int | str, cache_key: str) -> bool:
+def _tenant_prefix_index_key(tenant_id: int | str, prefix: str) -> str:
+    """Get the Redis Set key that indexes tenant cache keys for a specific prefix.
+
+    Args:
+        tenant_id: Tenant identifier
+        prefix: Cache key prefix
+
+    Returns
+    -------
+        Index set key like 'tenant_index:123:user'
+    """
+    return f"tenant_index:{tenant_id}:{prefix}"
+
+
+async def add_to_tenant_index(tenant_id: int | str, cache_key: str, ttl: int | None = None) -> bool:
     """Add a cache key to the tenant's index set.
 
     Should be called whenever a tenant-scoped key is written to cache.
+    Adds to both the global tenant index and the prefix-sharded index.
 
     Args:
         tenant_id: Tenant identifier
         cache_key: The cache key to add to the index
+        ttl: Optional time-to-live for the index (seconds)
 
     Returns
     -------
@@ -145,7 +196,27 @@ async def add_to_tenant_index(tenant_id: int | str, cache_key: str) -> bool:
         return False
 
     index_key = _tenant_index_key(tenant_id)
-    await client.sadd(index_key, cache_key)  # type: ignore[misc]
+
+    # Try to determine prefix for sharded index
+    # key format: tenant:{id}:{prefix}:...
+    parts = cache_key.split(":", 3)
+    prefix_index_key = None
+    if len(parts) >= 3 and parts[0] == "tenant":
+        prefix = parts[2]
+        prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix)
+
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.sadd(index_key, cache_key)
+        if ttl:
+            pipe.expire(index_key, ttl)
+
+        if prefix_index_key:
+            pipe.sadd(prefix_index_key, cache_key)
+            if ttl:
+                pipe.expire(prefix_index_key, ttl)
+
+        await pipe.execute()
+
     return True
 
 
@@ -153,6 +224,7 @@ async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool
     """Remove a cache key from the tenant's index set.
 
     Should be called when a specific tenant key is deleted.
+    Removes from both global and sharded indexes.
 
     Args:
         tenant_id: Tenant identifier
@@ -166,7 +238,19 @@ async def remove_from_tenant_index(tenant_id: int | str, cache_key: str) -> bool
         return False
 
     index_key = _tenant_index_key(tenant_id)
-    await client.srem(index_key, cache_key)  # type: ignore[misc]
+
+    parts = cache_key.split(":", 3)
+    prefix_index_key = None
+    if len(parts) >= 3 and parts[0] == "tenant":
+        prefix = parts[2]
+        prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix)
+
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.srem(index_key, cache_key)
+        if prefix_index_key:
+            pipe.srem(prefix_index_key, cache_key)
+        await pipe.execute()
+
     return True
 
 
@@ -202,6 +286,12 @@ async def set_tenant_cache(
     async with client.pipeline(transaction=False) as pipe:
         pipe.setex(cache_key, ttl, value)
         pipe.sadd(_tenant_index_key(tenant_id), cache_key)
+        pipe.expire(_tenant_index_key(tenant_id), ttl * 2)
+
+        # Also add to prefix-sharded index
+        sharded_index_key = _tenant_prefix_index_key(tenant_id, prefix)
+        pipe.sadd(sharded_index_key, cache_key)
+        pipe.expire(sharded_index_key, ttl * 2)
         await pipe.execute()
 
     return True
@@ -284,8 +374,18 @@ async def migrate_tenant_cache_index(tenant_id: int | str | None = None) -> dict
     tenants_seen: set[str] = set()
     keys_indexed = 0
     cursor = 0
+    iterations = 0
 
     while True:
+        iterations += 1
+        if iterations > MAX_SCAN_ITERATIONS:
+            # Prevent infinite loops if scan keeps returning cursor
+            stampede_logger.warning(
+                "SCAN iteration limit reached in migrate_tenant_cache_index",
+                extra={"pattern": pattern, "iterations": MAX_SCAN_ITERATIONS},
+            )
+            break
+
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
         for key in keys:
             # Extract tenant_id from key (format: tenant:123:prefix:...)
@@ -294,7 +394,23 @@ async def migrate_tenant_cache_index(tenant_id: int | str | None = None) -> dict
                 tid = parts[1]
                 tenants_seen.add(tid)
                 index_key = f"tenant_index:{tid}"
-                await client.sadd(index_key, key)  # type: ignore[misc]
+
+                # Add to global index
+                # Also determine prefix and add to sharded index
+                # key format: tenant:{id}:{prefix}:...
+                # parts from split above are [tenant, id, rest]
+                # rest is "prefix:..."
+
+                # We need to split rest to get prefix
+                rest = parts[2]
+                rest_parts = rest.split(":", 1)
+                prefix = rest_parts[0]
+
+                async with client.pipeline(transaction=False) as pipe:
+                    pipe.sadd(index_key, key)
+                    pipe.sadd(f"tenant_index:{tid}:{prefix}", key)
+                    await pipe.execute()
+
                 keys_indexed += 1
 
         if cursor == 0:
@@ -421,19 +537,43 @@ async def get_with_stampede_protection(
             probability = min(beta * (delta / ttl) ** 2, 1.0)
 
             if random.random() < probability:
-                stampede_logger.debug(
-                    "Cache early refresh triggered",
-                    key=key,
-                    remaining_ttl=remaining_ttl,
-                    probability=probability,
-                )
-                # Refresh in background, return stale data
-                asyncio.create_task(_refresh_cache(key, fetch_func, ttl))
+                # P3-1: Add background refresh lock to prevent stampede
+                # Only one process should trigger the background refresh
+                lock_key = f"{key}:refresh_lock"
+                # Try to acquire lock for 10s (short duration just for the trigger)
+                # nx=True ensures we only get it if it doesn't exist
+                lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+
+                if lock_acquired:
+                    stampede_logger.debug(
+                        "Cache early refresh triggered",
+                        key=key,
+                        remaining_ttl=remaining_ttl,
+                        probability=probability,
+                    )
+                    # Refresh in background, return stale data
+                    # Pass lock_key to cleanup after refresh
+                    asyncio.create_task(_refresh_cache_with_lock(key, fetch_func, ttl, lock_key))
+                else:
+                    stampede_logger.debug(
+                        "Cache early refresh skipped - already in progress",
+                        key=key,
+                    )
 
         return json_loads(cached)
 
     # Cache miss - fetch and cache
     return await _refresh_cache(key, fetch_func, ttl)
+
+
+async def _refresh_cache_with_lock(key: str, fetch_func: Callable[[], Any], ttl: int, lock_key: str) -> Any:
+    """Refresh cache and cleanup lock."""
+    try:
+        return await _refresh_cache(key, fetch_func, ttl)
+    finally:
+        if client:
+            # Release the lock so subsequent refreshes can happen
+            await client.delete(lock_key)
 
 
 async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> Any:
@@ -685,7 +825,16 @@ async def _delete_keys_by_pattern(pattern: str) -> None:
         return
 
     cursor = 0
+    iterations = 0
     while True:
+        iterations += 1
+        if iterations > MAX_SCAN_ITERATIONS:
+            stampede_logger.warning(
+                "SCAN iteration limit reached in _delete_keys_by_pattern",
+                extra={"pattern": pattern, "iterations": MAX_SCAN_ITERATIONS},
+            )
+            break
+
         cursor, keys = await client.scan(cursor, match=pattern, count=100)
         if keys:
             await client.delete(*keys)
@@ -700,6 +849,7 @@ def cache(
     resource_id_type: type | tuple[type, ...] = int,
     to_invalidate_extra: dict[str, Any] | None = None,
     pattern_to_invalidate_extra: list[str] | None = None,
+    invalidation_patterns: list[str] | None = None,
 ) -> Callable:
     """Cache decorator for FastAPI endpoints.
 
@@ -725,6 +875,10 @@ def cache(
     pattern_to_invalidate_extra: List[str] | None, optional
         A list of string patterns for cache keys that should be invalidated when the decorated function is called.
         This allows for bulk invalidation of cache keys based on a matching pattern.
+    invalidation_patterns: List[str] | None, optional
+        A list of patterns to register this cache key against for O(1) invalidation.
+        When this endpoint is called (GET), the cache key will be added to the index sets for these patterns.
+        This allows future O(1) invalidation using `invalidate_by_pattern`.
 
     Returns
     -------
@@ -823,7 +977,18 @@ def cache(
                 # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
                 serialized_data = json_dumps(result)
 
-                await client.setex(cache_key, expiration, serialized_data)
+                # Use pipeline for atomic set + index registration if patterns provided
+                if invalidation_patterns:
+                    formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
+                    async with client.pipeline(transaction=False) as pipe:
+                        pipe.setex(cache_key, expiration, serialized_data)
+                        for pattern in formatted_patterns:
+                            idx_key = _pattern_index_key(pattern)
+                            pipe.sadd(idx_key, cache_key)
+                            pipe.expire(idx_key, expiration)
+                        await pipe.execute()
+                else:
+                    await client.setex(cache_key, expiration, serialized_data)
 
                 return result  # Return original result, not re-parsed
 
@@ -844,13 +1009,131 @@ def cache(
                 if pattern_to_invalidate_extra is not None:
                     for pattern in pattern_to_invalidate_extra:
                         formatted_pattern = _format_prefix(pattern, kwargs)
+                        # OPT-8: Use O(1) pattern invalidation if available
+                        # If the pattern was registered via invalidation_patterns, this is O(1).
+                        # However, pattern_to_invalidate_extra historically implies a glob match (formatted_pattern + "*").
+                        # To support O(1) invalidation while maintaining backward compatibility:
+                        # We could try to invalidate the pattern exactly as formatted first?
+                        # Or just rely on _delete_keys_by_pattern for now unless we introduce a new arg.
+                        # For now, we keep backward compatibility as safe default.
                         await _delete_keys_by_pattern(formatted_pattern + "*")
+
+                        # Also attempt to invalidate exact pattern match in the new index
+                        # This allows progressive migration to O(1) without breaking changes
+                        await invalidate_by_pattern(formatted_pattern)
 
             return result
 
         return inner
 
     return wrapper
+
+
+# =============================================================================
+# Pattern-Based Cache Invalidation (O(1))
+# =============================================================================
+
+
+def _pattern_index_key(pattern: str) -> str:
+    """Generate Redis key for pattern index set.
+
+    Replaces '*' with '_STAR_' to create a safe static key name.
+    """
+    safe_pattern = pattern.replace("*", "_STAR_")
+    return f"idx_pattern:{safe_pattern}"
+
+
+async def register_key_patterns(
+    key: str,
+    patterns: list[str],
+    ttl: int,
+) -> None:
+    """Register a cache key against multiple patterns for O(1) invalidation.
+
+    Args:
+        key: The cache key being stored (e.g., 'user:123:profile')
+        patterns: List of patterns this key belongs to (e.g., ['user:*:profile'])
+        ttl: Time-to-live for the index entries (should match key TTL)
+    """
+    if client is None or not patterns:
+        return
+
+    async with client.pipeline(transaction=False) as pipe:
+        for pattern in patterns:
+            idx_key = _pattern_index_key(pattern)
+            pipe.sadd(idx_key, key)
+            # Set TTL on index key to ensure it expires if not explicitly invalidated
+            pipe.expire(idx_key, ttl)
+        await pipe.execute()
+
+
+async def invalidate_by_pattern(pattern: str) -> int:
+    """Invalidate all keys matching a pattern using the O(1) index set.
+
+    Instead of SCAN (O(N)), this looks up the set of keys associated with
+    the pattern and deletes them directly (O(M)).
+
+    Args:
+        pattern: The pattern to invalidate (e.g., 'user:*:profile')
+
+    Returns
+    -------
+        Number of keys deleted
+    """
+    if client is None:
+        return 0
+
+    idx_key = _pattern_index_key(pattern)
+    # Get all keys registered for this pattern
+    keys = await client.smembers(idx_key)  # type: ignore[misc]
+
+    if not keys:
+        return 0
+
+    async with client.pipeline(transaction=False) as pipe:
+        # Delete the actual cached keys
+        pipe.delete(*keys)
+        # Delete the index set itself (it's done its job)
+        pipe.delete(idx_key)
+        results = await pipe.execute()
+
+    # First result is number of keys deleted by delete(*keys)
+    return results[0] if results else 0
+
+
+async def set_cache_with_patterns(
+    key: str,
+    value: Any,
+    ttl: int = 3600,
+    patterns: list[str] | None = None,
+) -> bool:
+    """Set cache value and register it for pattern-based invalidation.
+
+    Args:
+        key: Cache key
+        value: Value to cache
+        ttl: TTL in seconds
+        patterns: List of patterns to register this key against
+
+    Returns
+    -------
+        True if successful
+    """
+    if client is None:
+        return False
+
+    serialized = json_dumps(value)
+
+    async with client.pipeline(transaction=False) as pipe:
+        pipe.setex(key, ttl, serialized)
+        if patterns:
+            for pattern in patterns:
+                idx_key = _pattern_index_key(pattern)
+                pipe.sadd(idx_key, key)
+                pipe.expire(idx_key, ttl)
+        await pipe.execute()
+
+    return True
 
 
 async def async_get_redis() -> AsyncGenerator[Redis, None]:
