@@ -1,5 +1,6 @@
 import logging
 import time
+import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,9 +46,16 @@ async def check_database_health(db: AsyncSession) -> HealthResult:
     """
     start = time.perf_counter()
     try:
-        await db.execute(text("SELECT 1"))
+
+        async def _check():
+            await db.execute(text("SELECT 1"))
+
+        await asyncio.wait_for(_check(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
+    except asyncio.TimeoutError:
+        LOGGER.exception("Database health check timed out")
+        return HealthResult(status="unhealthy", error="Database check timed out. Timeout after 5.0s")
     except OperationalError as e:
         LOGGER.exception(f"Database operational error: {e}")
         return HealthResult(status="unhealthy", error=f"OperationalError: {e}")
@@ -65,9 +73,12 @@ async def check_redis_health(redis: Redis) -> HealthResult:
     """
     start = time.perf_counter()
     try:
-        await redis.ping()
+        await asyncio.wait_for(redis.ping(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
+    except asyncio.TimeoutError:
+        LOGGER.exception("Redis health check timed out")
+        return HealthResult(status="unhealthy", error="Redis check timed out. Timeout after 5.0s")
     except Exception as e:
         LOGGER.exception(f"Redis health check failed with error: {e}")
         return HealthResult(status="unhealthy", error=f"{type(e).__name__}: {e}")
@@ -89,9 +100,12 @@ async def check_redis_queue_health() -> HealthResult:
     start = time.perf_counter()
     try:
         # ArqRedis has built-in ping method
-        await pool.ping()
+        await asyncio.wait_for(pool.ping(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
+    except asyncio.TimeoutError:
+        LOGGER.exception("Redis queue health check timed out")
+        return HealthResult(status="unhealthy", error="Redis queue check timed out. Timeout after 5.0s")
     except Exception as e:
         LOGGER.exception(f"Redis queue health check failed with error: {e}")
         return HealthResult(status="unhealthy", error=f"{type(e).__name__}: {e}")
