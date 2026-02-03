@@ -8,11 +8,11 @@ class LoadTestConfig(BaseSettings):
     HOST: str = "http://localhost:8000"
 
     # Test User Credentials (Admin/Superuser for setup)
-    ADMIN_EMAIL: str = "admin@example.com"
+    ADMIN_EMAIL: str = "premium_e2e@example.com"
     ADMIN_PASSWORD: str = "Str1ngst!"
 
     # Default Test Tenant
-    TEST_TENANT_ID: str | None = "1"  # Can be overridden or fetched dynamically
+    TEST_TENANT_ID: str | None = "test-tenant-e2e"  # Can be overridden or fetched dynamically
 
     # Load Test Parameters
     WAIT_TIME_MIN: float = 1.0
