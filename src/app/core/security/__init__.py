@@ -161,7 +161,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
             if exp_timestamp is not None:
-                expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
+                expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC).replace(tzinfo=None)
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
                 tokens_for_cache.append((token, expires_at))
         except JWTError as e:
@@ -181,7 +181,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         if exp_timestamp is not None:
-            expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
+            expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC).replace(tzinfo=None)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
             # Add to Redis cache
             await add_token_to_blacklist(token, expires_at)

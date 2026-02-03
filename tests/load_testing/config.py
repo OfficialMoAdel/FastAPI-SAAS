@@ -12,7 +12,7 @@ class LoadTestConfig(BaseSettings):
     ADMIN_PASSWORD: str = "Str1ngst!"
 
     # Default Test Tenant
-    TEST_TENANT_ID: str | None = None  # Can be overridden or fetched dynamically
+    TEST_TENANT_ID: str | None = "1"  # Can be overridden or fetched dynamically
 
     # Load Test Parameters
     WAIT_TIME_MIN: float = 1.0
