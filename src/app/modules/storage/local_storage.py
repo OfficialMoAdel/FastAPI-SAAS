@@ -91,7 +91,10 @@ class LocalStorage(StorageProvider):
             await aiofiles.os.makedirs(full_path.parent, exist_ok=True)
 
             # Read content and get size
-            content = file.read()
+            # Use asyncio.to_thread to prevent blocking the event loop during file read
+            import asyncio
+
+            content = await asyncio.to_thread(file.read)
             size = len(content)
 
             # Write file
