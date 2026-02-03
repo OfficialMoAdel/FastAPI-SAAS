@@ -72,9 +72,9 @@ async def get_password_hash(password: str) -> str:
 async def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.now(UTC).replace(tzinfo=None) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire, "token_type": TokenType.ACCESS, "aud": JWT_AUDIENCE})
     # Use thread pool for CPU-bound JWT signing to avoid blocking event loop
     encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
@@ -84,9 +84,9 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
 async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
     to_encode = data.copy()
     if expires_delta:
-        expire = datetime.now(UTC).replace(tzinfo=None) + expires_delta
+        expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC).replace(tzinfo=None) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "token_type": TokenType.REFRESH, "aud": JWT_AUDIENCE})
     # Use thread pool for CPU-bound JWT signing to avoid blocking event loop
     encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
@@ -161,7 +161,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
             if exp_timestamp is not None:
-                expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC).replace(tzinfo=None)
+                expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
                 tokens_for_cache.append((token, expires_at))
         except JWTError as e:
@@ -181,7 +181,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         if exp_timestamp is not None:
-            expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC).replace(tzinfo=None)
+            expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
             # Add to Redis cache
             await add_token_to_blacklist(token, expires_at)
