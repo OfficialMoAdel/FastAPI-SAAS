@@ -27,7 +27,7 @@ class CRUDTokenBlacklist(
             List of (token, expires_at) tuples for active tokens
         """
         # DB column is likely naive timestamp (UTC), so we match it
-        now = datetime.now(UTC).replace(tzinfo=None)
+        now = datetime.now(UTC)
         stmt = select(TokenBlacklist.token, TokenBlacklist.expires_at).where(TokenBlacklist.expires_at > now)
         result = await db.execute(stmt)
         return [(row.token, row.expires_at) for row in result.all()]
