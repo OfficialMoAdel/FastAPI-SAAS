@@ -122,57 +122,56 @@ def upgrade() -> None:
         )
 
     # 6. Create indexes for RLS performance
-    # Use autocommit block for CREATE INDEX CONCURRENTLY as it cannot run inside a transaction
-    with op.get_context().autocommit_block():
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_post_tenant_active
-            ON post(tenant_id, created_at DESC)
-            WHERE is_deleted = false
-            """
-        )
+    # Changed to standard index creation to allow running inside transaction block.
+    # CONCURRENTLY is removed as it's not supported in transactions.
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_post_tenant_active
+        ON post(tenant_id, created_at DESC)
+        WHERE is_deleted = false
+        """
+    )
 
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_audit_logs_tenant_recent
-            ON audit_logs(tenant_id, created_at DESC)
-            """
-        )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_audit_logs_tenant_recent
+        ON audit_logs(tenant_id, created_at DESC)
+        """
+    )
 
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_files_tenant_active
-            ON files(tenant_id, created_at DESC)
-            WHERE is_deleted = false
-            """
-        )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_files_tenant_active
+        ON files(tenant_id, created_at DESC)
+        WHERE is_deleted = false
+        """
+    )
 
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_user_tenant_active
-            ON "user"(tenant_id, created_at DESC)
-            WHERE is_deleted = false
-            """
-        )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_user_tenant_active
+        ON "user"(tenant_id, created_at DESC)
+        WHERE is_deleted = false
+        """
+    )
 
-        op.execute(
-            """
-            CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_webhook_deliveries_tenant_recent
-            ON webhook_deliveries(tenant_id, created_at DESC)
-            """
-        )
+    op.execute(
+        """
+        CREATE INDEX IF NOT EXISTS idx_webhook_deliveries_tenant_recent
+        ON webhook_deliveries(tenant_id, created_at DESC)
+        """
+    )
 
 
 def downgrade() -> None:
     """Disable RLS and remove all policies."""
 
-    # 2. Drop indexes created for RLS (outside transaction for CONCURRENTLY)
-    with op.get_context().autocommit_block():
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_post_tenant_active")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_audit_logs_tenant_recent")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_files_tenant_active")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_user_tenant_active")
-        op.execute("DROP INDEX CONCURRENTLY IF EXISTS idx_webhook_deliveries_tenant_recent")
+    # 2. Drop indexes created for RLS
+    op.execute("DROP INDEX IF EXISTS idx_post_tenant_active")
+    op.execute("DROP INDEX IF EXISTS idx_audit_logs_tenant_recent")
+    op.execute("DROP INDEX IF EXISTS idx_files_tenant_active")
+    op.execute("DROP INDEX IF EXISTS idx_user_tenant_active")
+    op.execute("DROP INDEX IF EXISTS idx_webhook_deliveries_tenant_recent")
 
     # 1. Drop policies from all tables
     for table in TENANT_TABLES:
