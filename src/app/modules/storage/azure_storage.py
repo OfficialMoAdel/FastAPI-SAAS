@@ -79,8 +79,10 @@ class AzureBlobStorage(StorageProvider):
             container = await self._get_container_client()
             blob_client = container.get_blob_client(path)
 
-            # Read file content
-            content = file.read()
+            # Read file content in thread pool to prevent blocking
+            import asyncio
+
+            content = await asyncio.to_thread(file.read)
             size = len(content)
 
             # Upload with content type
