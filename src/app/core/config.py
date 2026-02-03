@@ -156,6 +156,8 @@ class RedisCacheSettings(BaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def REDIS_CACHE_URL(self) -> str:
+        if self.REDIS_CACHE_PASSWORD:
+            return f"redis://:{self.REDIS_CACHE_PASSWORD}@{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
         return f"redis://{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
 
 
@@ -323,6 +325,7 @@ class EventSettings(BaseSettings):
 
     EVENT_HANDLER_TIMEOUT_SECONDS: float = 30.0
     EVENT_HANDLER_TIMEOUT_CRITICAL: float = 60.0  # For known slow handlers
+    EVENT_BUS_CONCURRENCY: int = 50  # Max concurrent sync handlers
 
 
 class R1UnifiedSettings(BaseSettings):
@@ -340,6 +343,9 @@ class R1UnifiedSettings(BaseSettings):
     # Set to False via environment variables to disable if issues arise
     EVENT_BUS_USE_LUA_IDEMPOTENCY: bool = True
     """Use Lua script for atomic idempotency check (P1-1)."""
+
+    EVENT_BUS_USE_BATCH_ENQUEUE: bool = True
+    """Use batched Redis pipeline for event handler enqueueing (P3-3)."""
 
     SESSION_USE_PIPELINE_EVICTION: bool = True
     """Use Redis pipeline for session eviction (P2-1)."""
