@@ -23,7 +23,7 @@ class EmailTemplatesService:
 
     def __init__(self):
         """Initialize the email templates service."""
-        from src.app.core.db.session import async_session_maker
+        from src.app.core.db.database import async_session_maker
 
         self._session_maker = async_session_maker
 
