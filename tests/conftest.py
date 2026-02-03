@@ -999,6 +999,8 @@ def mock_redis(request):
         patch("src.app.core.utils.cache.client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
+        patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)), # Add this
+        patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()), # Add this
     ):
         yield fake_redis
 
