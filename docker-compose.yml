@@ -1,6 +1,6 @@
 services:
-  web:
-    build: 
+web:
+    build:
       context: .
       dockerfile: Dockerfile
     # -------- Both of the following commands should be commented to run with nginx --------
@@ -10,6 +10,16 @@ services:
     # command: gunicorn app.main:app -w 4 -k uvicorn.workers.UvicornWorker -b 0.0.0.0:8000
     env_file:
       - ./src/.env
+    environment:
+      # Database pool sizing: pool_size = workers × 10
+      # - 1 worker (uvicorn --reload): DB_POOL_SIZE=10 (default 20 is OK)
+      # - 4 workers (gunicorn -w 4): DB_POOL_SIZE=40 (recommended)
+      # - 8 workers: DB_POOL_SIZE=80
+      # Total max connections = DB_POOL_SIZE + DB_MAX_OVERFLOW
+      # Ensure PostgreSQL max_connections >= total_max_connections
+      # DB_WORKERS: 1  # Set to match uvicorn --workers or gunicorn -w
+      # DB_POOL_SIZE: 40  # Set to workers × 10
+      # POSTGRES_MAX_CONNECTIONS: 100  # PostgreSQL max_connections in postgres.conf
     # -------- replace with expose if you are using nginx --------
     ports:
        - "8000:8000"

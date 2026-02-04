@@ -2,6 +2,7 @@ import os
 from enum import Enum
 
 from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
+from pydantic_core.core_schema import FieldValidationInfo
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -73,9 +74,59 @@ class CryptSettings(BaseSettings):
 
 
 class DatabaseSettings(BaseSettings):
-    DB_POOL_SIZE: int = 20
-    DB_MAX_OVERFLOW: int = 10
+    DB_WORKERS: int = Field(default=1, ge=1, le=32, description="Number of uvicorn workers")
+    DB_POOL_SIZE: int = Field(default=20, ge=5, le=200, description="Base pool size (calculated as workers × 10)")
+    DB_MAX_OVERFLOW: int = Field(default=10, ge=0, le=50, description="Max overflow connections")
     DB_POOL_TIMEOUT: int = Field(default=30, ge=5, le=120)
+    POSTGRES_MAX_CONNECTIONS: int = Field(default=100, ge=20, le=500, description="PostgreSQL max_connections limit")
+
+    @field_validator("DB_POOL_SIZE", mode="after")
+    @classmethod
+    def validate_pool_size(cls, v: int, info: FieldValidationInfo) -> int:
+        workers = info.data.get("DB_WORKERS", 1)
+        expected_pool = workers * 10
+        max_overflow = info.data.get("DB_MAX_OVERFLOW", 10)
+        max_conn = info.data.get("POSTGRES_MAX_CONNECTIONS", 100)
+
+        if v < expected_pool:
+            import logging
+
+            logging.getLogger("app.core.config").warning(
+                f"DB_POOL_SIZE ({v}) is less than recommended ({expected_pool}) for {workers} workers. "
+                f"Recommendation: DB_POOL_SIZE={expected_pool}"
+            )
+
+        total_max = v + max_overflow
+        if total_max > max_conn:
+            import logging
+
+            logging.getLogger("app.core.config").error(
+                f"Total DB connections ({total_max} = pool {v} + overflow {max_overflow}) "
+                f"exceeds PostgreSQL max_connections ({max_conn}). "
+                f"Either reduce pool_size/max_overflow or increase PostgreSQL max_connections."
+            )
+            raise ValueError(
+                f"DB_POOL_SIZE + DB_MAX_OVERFLOW ({total_max}) cannot exceed POSTGRES_MAX_CONNECTIONS ({max_conn})"
+            )
+        return v
+
+    DB_MAX_CONNECTIONS: int = Field(default=100, ge=20, le=500, description="PostgreSQL max_connections limit")
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def EFFECTIVE_POOL_SIZE(self) -> int:
+        """Calculate effective pool size based on worker count.
+
+        Rule of thumb: pool_size = workers × 10
+        - 1 worker: 10-20 connections
+        - 4 workers: 40-80 connections
+        - 8 workers: 80-160 connections
+
+        If DB_POOL_SIZE is explicitly set, use it. Otherwise auto-calculate.
+        """
+        if os.getenv("DB_POOL_SIZE"):
+            return self.DB_POOL_SIZE
+        return self.DB_WORKERS * 10
 
 
 class SQLiteSettings(DatabaseSettings):
