@@ -22,6 +22,7 @@ logger = get_logger(__name__)
 # Audit log batching configuration
 AUDIT_LOG_BUFFER_KEY = "audit_log_buffer"
 AUDIT_LOG_BATCH_SIZE = 100
+AUDIT_LOG_MAX_FLUSH_PER_RUN = 1000
 
 
 class AuditLogService:
@@ -184,11 +185,15 @@ async def _direct_insert_log(log_data: dict[str, Any]) -> None:
             break
 
 
-async def flush_audit_log_buffer() -> int:
+async def flush_audit_log_buffer(max_flush_per_run: int | None = None) -> int:
     """Flush buffered audit logs to database in batch.
 
     Atomically retrieves and removes logs from Redis, then bulk inserts to DB.
     Should be called periodically by a background worker.
+
+    Args:
+        max_flush_per_run: Maximum number of logs to flush in this run.
+                           If None, uses AUDIT_LOG_MAX_FLUSH_PER_RUN config.
 
     Returns:
         Number of logs flushed
@@ -198,10 +203,16 @@ async def flush_audit_log_buffer() -> int:
 
     from ...core.db.database import async_get_db
 
-    # Atomically get and remove up to BATCH_SIZE logs
+    if max_flush_per_run is None:
+        max_flush_per_run = AUDIT_LOG_MAX_FLUSH_PER_RUN
+
+    # Determine how many logs to retrieve (min of batch size and max flush limit)
+    flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
+
+    # Atomically get and remove up to flush_limit logs
     pipe = redis_client.pipeline()
-    pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, AUDIT_LOG_BATCH_SIZE - 1)
-    pipe.ltrim(AUDIT_LOG_BUFFER_KEY, AUDIT_LOG_BATCH_SIZE, -1)
+    pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
+    pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
     results = await pipe.execute()
 
     logs_data = results[0]
@@ -223,7 +234,6 @@ async def flush_audit_log_buffer() -> int:
                 ip_address=data.get("ip_address"),
                 user_agent=data.get("user_agent"),
             )
-            # Set created_at directly on the object (bypassing __init__ since init=False)
             if data.get("created_at"):
                 object.__setattr__(log_entry, "created_at", datetime.fromisoformat(data["created_at"]))
             log_entries.append(log_entry)
@@ -245,6 +255,17 @@ async def flush_audit_log_buffer() -> int:
         finally:
             await db.close()
             break
+
+    # Log if we hit the flush limit
+    if len(log_entries) >= max_flush_per_run:
+        remaining_result = redis_client.llen(AUDIT_LOG_BUFFER_KEY)
+        remaining = await remaining_result if hasattr(remaining_result, "__await__") else remaining_result
+        logger.warning(
+            "audit_log_flush_limit_reached",
+            flushed=len(log_entries),
+            limit=max_flush_per_run,
+            remaining=remaining,
+        )
 
     return len(log_entries)
 

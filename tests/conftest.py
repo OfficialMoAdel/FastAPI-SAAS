@@ -201,6 +201,7 @@ def setup_db():
 
     # Reset circuit breaker registry to prevent lock binding issues
     from src.app.core.resilience.registry import reset_registry
+
     reset_registry()
     try:
         if os.path.exists(DATABASE_PATH):
@@ -342,6 +343,7 @@ def override_dependency(dependency: Callable[..., Any], mocked_response: Any, ap
     """
     if app_instance is None:
         from src.app.main import app
+
         app_instance = app
     app_instance.dependency_overrides[dependency] = lambda: mocked_response
 
@@ -628,6 +630,12 @@ class FakeRedisPipeline:
         self._commands = []
         self._results = []
 
+    def __getattr__(self, name):
+        def method(*args, **kwargs):
+            return self
+
+        return method
+
     def zscore(self, key, member):
         """Queue a zscore command."""
         self._commands.append(("zscore", key, member))
@@ -672,6 +680,12 @@ class FakeRedisPipeline:
         """Queue a ltrim command."""
         self._commands.append(("ltrim", key, start, end))
         return self
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, exc_type, exc_value, traceback):
+        pass
 
     async def execute(self):
         """Execute all queued commands and return results."""
@@ -999,8 +1013,8 @@ def mock_redis(request):
         patch("src.app.core.utils.cache.client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
-        patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)), # Add this
-        patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()), # Add this
+        patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
+        patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()),  # Add this
     ):
         yield fake_redis
 

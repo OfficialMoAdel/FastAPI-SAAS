@@ -19,6 +19,8 @@ import asyncio
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
+from src.app.core.config import settings
+
 from .interfaces import StorageProvider, StorageResult
 
 # Lazy import for boto3 - only needed at runtime, not for testing with mocks
@@ -44,14 +46,6 @@ class S3Storage(StorageProvider):
         region: str = "us-east-1",
         **kwargs: Any,
     ):
-        """Initialize S3 storage.
-
-        Args:
-            s3_client: Optional boto3 client instance (for testing).
-            bucket: S3 bucket name.
-            region: AWS region.
-            **kwargs: Additional arguments for S3 operations.
-        """
         self.bucket = bucket
         self.region = region
 
@@ -87,23 +81,52 @@ class S3Storage(StorageProvider):
             StorageResult with success status and file details.
         """
         try:
-            # Read file content
-            content = file.read()
+            if settings.performance.FEATURE_STREAMING_UPLOADS:
+                # Streaming upload with multipart support
+                # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
+                if hasattr(file, "seek"):
+                    file.seek(0)
 
-            # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
-            await asyncio.to_thread(
-                self.client.put_object,
-                Bucket=self.bucket,
-                Key=path,
-                Body=content,
-                ContentType=mime_type,
-                **self.kwargs,
-            )
+                from botocore.config import TransferConfig
+
+                transfer_config = TransferConfig(
+                    multipart_threshold=5 * 1024 * 1024,  # 5MB threshold for multipart upload
+                    multipart_chunksize=8 * 1024 * 1024,  # 8MB chunks
+                    max_concurrency=10,
+                )
+
+                # Use upload_fileobj for streaming (no full file read into memory)
+                await asyncio.to_thread(
+                    self.client.upload_fileobj,
+                    file,
+                    self.bucket,
+                    path,
+                    ExtraArgs={"ContentType": mime_type},
+                    Config=transfer_config,
+                )
+
+                # Get file size from file object if available
+                size = file.size if hasattr(file, "size") else 0
+            else:
+                # Legacy behavior: read entire file into memory
+                content = file.read()
+
+                # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
+                await asyncio.to_thread(
+                    self.client.put_object,
+                    Bucket=self.bucket,
+                    Key=path,
+                    Body=content,
+                    ContentType=mime_type,
+                    **self.kwargs,
+                )
+
+                size = len(content)
 
             return StorageResult(
                 success=True,
                 path=path,
-                size=len(content),
+                size=size,
             )
         except Exception as e:
             return StorageResult(

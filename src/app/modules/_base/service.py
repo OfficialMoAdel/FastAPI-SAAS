@@ -24,7 +24,11 @@ from __future__ import annotations
 from typing import Any, Callable, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload, selectinload
+
+from src.app.core.config import settings
 
 T = TypeVar("T")
 
@@ -78,13 +82,18 @@ class BaseService(Generic[T]):
         self,
         page: int = 1,
         per_page: int = 20,
+        eager_loads: list[str] | None = None,
         **kwargs: Any,
     ) -> list[T]:
-        """Get multiple records with pagination.
+        """Get multiple records with pagination and optional eager loading.
 
         Args:
             page: Page number (1-indexed).
             per_page: Number of items per page.
+            eager_loads: Optional list of relationship names to eager load.
+                        When FEATURE_EAGER_LOADING flag is enabled, this will
+                        use selectinload for one-to-many and joinedload for many-to-one
+                        relationships to prevent N+1 queries.
             **kwargs: Additional filter parameters passed to the CRUD layer.
 
         Returns:
@@ -92,16 +101,79 @@ class BaseService(Generic[T]):
             records found. FastCRUD's dict response is unwrapped automatically.
         """
         offset = (page - 1) * per_page
-        result = await self.crud.get_multi(
+
+        if settings.performance.FEATURE_EAGER_LOADING and eager_loads:
+            query = select(self.model)
+            for relationship in eager_loads:
+                if hasattr(self.model, relationship):
+                    attr = getattr(self.model, relationship)
+                    query = query.options(selectinload(attr))
+            query = query.offset(offset).limit(per_page)
+            result = await self.db.execute(query)
+            return list(result.scalars().all())
+        else:
+            result = await self.crud.get_multi(
+                db=self.db,
+                offset=offset,
+                limit=per_page,
+                **kwargs,
+            )
+            if isinstance(result, dict):
+                return cast(list[T], result.get("data", []))
+            return cast(list[T], result)
+
+    async def get_multi_joined(
+        self,
+        page: int = 1,
+        per_page: int = 20,
+        joins_config: list[Any] | None = None,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        """Get multiple records with eager-loaded relationships.
+
+        This method uses FastCRUD's get_multi_joined to prevent N+1 queries.
+
+        Args:
+            page: Page number (1-indexed).
+            per_page: Number of items per page.
+            joins_config: List of JoinConfig instances for eager loading relationships.
+                         Each JoinConfig specifies a model to join with, join conditions,
+                         and optional prefix for column names.
+            **kwargs: Additional filter parameters passed to the CRUD layer.
+
+        Returns:
+            List of records with joined data for the requested page.
+
+        Example:
+            ```python
+            from fastcrud import JoinConfig
+
+            # Load users with their tiers
+            users = await service.get_multi_joined(
+                page=1,
+                per_page=10,
+                joins_config=[
+                    JoinConfig(
+                        model=Tier,
+                        join_on=User.tier_id == Tier.id,
+                        join_prefix="tier_",
+                    )
+                ]
+            )
+            ```
+        """
+        offset = (page - 1) * per_page
+        result = await self.crud.get_multi_joined(
             db=self.db,
             offset=offset,
             limit=per_page,
+            joins_config=joins_config,
             **kwargs,
         )
         # FastCRUD returns dict with 'data' key containing the records list
         if isinstance(result, dict):
-            return cast(list[T], result.get("data", []))
-        return cast(list[T], result)
+            return cast(list[dict[str, Any]], result.get("data", []))
+        return cast(list[dict[str, Any]], result)
 
     async def create(self, **kwargs: Any) -> T:
         """Create a new record.

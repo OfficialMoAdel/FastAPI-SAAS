@@ -85,6 +85,7 @@ class UserRead(BaseRead):
     email: EmailStr
     profile_image_url: str
     tier_id: int | None
+    tenant_id: int
 
 
 class UserCreate(UserBase, BaseCreate):

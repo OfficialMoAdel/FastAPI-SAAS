@@ -26,7 +26,7 @@ from src.app.core.db.database import async_engine, local_session
 from src.app.core.db.rls import RLS_TENANT_VAR, RLS_USER_VAR
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import clear_tenant_context, set_tenant_context
+from src.app.core.tenancy.context import clear_tenant_context, set_current_tenant
 from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
@@ -160,7 +160,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     )
 
                 # Set application-level tenant context
-                set_tenant_context(tenant)
+                set_current_tenant(tenant)
 
                 # Set PostgreSQL RLS session variables on this connection
                 # Use set_config for parameterized query safety with asyncpg
@@ -251,7 +251,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 )
 
             # Set application-level tenant context
-            set_tenant_context(tenant)
+            set_current_tenant(tenant)
 
             logger.debug(
                 "Tenant resolved successfully (optimized) | slug=%s | tenant_id=%s | path=%s",

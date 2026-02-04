@@ -11,7 +11,11 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
+from src.app.core.tenancy.context import (
+    clear_tenant_context,
+    get_current_tenant,
+    set_current_tenant,
+)
 
 
 def create_mock_tenant(name: str, slug: str, is_active: bool = True) -> MagicMock:
@@ -28,9 +32,9 @@ class TestTenantContext:
     """Test suite for tenant context operations."""
 
     def test_get_tenant_context_returns_none_when_not_set(self) -> None:
-        """Test that get_tenant_context returns None when no tenant is set."""
+        """Test that get_current_tenant returns None when no tenant is set."""
         clear_tenant_context()
-        result = get_tenant_context()
+        result = get_current_tenant()
         assert result is None
 
     def test_set_and_get_tenant_context(self) -> None:
@@ -38,22 +42,23 @@ class TestTenantContext:
         clear_tenant_context()
         mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
 
-        set_tenant_context(mock_tenant)
-        result = get_tenant_context()
+        set_current_tenant(mock_tenant)
+        result = get_current_tenant()
 
         assert result is not None
-        assert result.slug == "test-tenant"
-        assert result.name == "Test Tenant"
+        assert result.tenant_slug == "test-tenant"
+        assert result.tenant_name == "Test Tenant"
+        assert result.tenant_id == 1
 
         clear_tenant_context()
 
     def test_clear_tenant_context(self) -> None:
         """Test clearing tenant context."""
         mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
-        set_tenant_context(mock_tenant)
+        set_current_tenant(mock_tenant)
 
         clear_tenant_context()
-        result = get_tenant_context()
+        result = get_current_tenant()
 
         assert result is None
 
@@ -65,17 +70,17 @@ class TestTenantContext:
 
         async def task_a() -> None:
             tenant_a = create_mock_tenant("Tenant A", "tenant-a")
-            set_tenant_context(tenant_a)
+            set_current_tenant(tenant_a)
             await asyncio.sleep(0.01)
-            ctx = get_tenant_context()
-            results["task_a"] = ctx.slug if ctx else None
+            ctx = get_current_tenant()
+            results["task_a"] = ctx.tenant_slug if ctx else None
 
         async def task_b() -> None:
             tenant_b = create_mock_tenant("Tenant B", "tenant-b")
-            set_tenant_context(tenant_b)
+            set_current_tenant(tenant_b)
             await asyncio.sleep(0.01)
-            ctx = get_tenant_context()
-            results["task_b"] = ctx.slug if ctx else None
+            ctx = get_current_tenant()
+            results["task_b"] = ctx.tenant_slug if ctx else None
 
         await asyncio.gather(task_a(), task_b())
 
@@ -87,9 +92,52 @@ class TestTenantContext:
     def test_set_tenant_context_with_none(self) -> None:
         """Test setting tenant context to None explicitly."""
         mock_tenant = create_mock_tenant("Test Tenant", "test-tenant")
-        set_tenant_context(mock_tenant)
+        set_current_tenant(mock_tenant)
 
-        set_tenant_context(None)
-        result = get_tenant_context()
+        set_current_tenant(None)
+        result = get_current_tenant()
 
         assert result is None
+
+    def test_get_tenant_context_fields(self) -> None:
+        """Test that tenant context contains all expected fields."""
+        clear_tenant_context()
+        mock_tenant = create_mock_tenant("Test Tenant", "test-tenant", is_active=True)
+
+        set_current_tenant(mock_tenant)
+        result = get_current_tenant()
+
+        assert result is not None
+        assert result.tenant_id == 1
+        assert result.tenant_slug == "test-tenant"
+        assert result.tenant_name == "Test Tenant"
+        assert result.is_active is True
+
+        clear_tenant_context()
+
+    @pytest.mark.asyncio
+    async def test_lightweight_context_isolation(self) -> None:
+        """Test that lightweight context is isolated between async tasks."""
+        clear_tenant_context()
+        results: dict[str, str | None] = {}
+
+        async def task_a() -> None:
+            tenant_a = create_mock_tenant("Tenant A", "tenant-a")
+            set_current_tenant(tenant_a)
+            await asyncio.sleep(0.01)
+            ctx = get_current_tenant()
+            results["task_a"] = ctx.tenant_slug if ctx else None
+
+        async def task_b() -> None:
+            tenant_b = create_mock_tenant("Tenant B", "tenant-b")
+            set_current_tenant(tenant_b)
+            await asyncio.sleep(0.01)
+            ctx = get_current_tenant()
+            results["task_b"] = ctx.tenant_slug if ctx else None
+
+        await asyncio.gather(task_a(), task_b())
+
+        assert results["task_a"] == "tenant-a"
+        assert results["task_b"] == "tenant-b"
+
+        clear_tenant_context()

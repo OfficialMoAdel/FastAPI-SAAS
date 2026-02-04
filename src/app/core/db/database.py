@@ -71,7 +71,7 @@ async_session_maker = local_session
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     async with local_session() as db:
         try:
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             if tenant:
                 # Apply RLS context for the current tenant
                 async with rls_context(db, str(tenant.id)):

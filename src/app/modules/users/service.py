@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.json_utils import json_dumps, json_loads
 from ...core.security import blacklist_token, get_password_hash
-from ...core.tenancy.context import get_tenant_context
+from ...core.tenancy.context import get_current_tenant
 from ...core.utils import cache
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
@@ -190,7 +190,7 @@ class UserService(BaseService[User]):
         del user_dict["password"]
 
         # Inject tenant_id from context
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is not None:
             user_dict["tenant_id"] = tenant.id
 
@@ -362,8 +362,8 @@ class UserService(BaseService[User]):
             db_username = db_user.username
             db_email = db_user.email
 
-        # Ownership check
-        if db_username != current_user["username"]:
+        # Ownership check (superusers bypass)
+        if db_username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException()
 
         # Check for duplicate email if changing
@@ -416,7 +416,7 @@ class UserService(BaseService[User]):
         if not db_user:
             raise ModelNotFoundError("User", username)
 
-        if username != current_user["username"]:
+        if username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException()
 
         # Invalidate cache before delete

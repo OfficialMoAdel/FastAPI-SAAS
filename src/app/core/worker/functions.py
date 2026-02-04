@@ -80,12 +80,13 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     """Periodic task to flush buffered audit logs to database.
 
     Should be scheduled as a cron job (every 10-60 seconds).
-    Drains the Redis buffer completely in batches of 100.
+    Drains the Redis buffer completely in batches of 100, up to MAX_FLUSH_PER_RUN per run.
 
     System task - requires RLS bypass.
     """
     from src.app.modules.audit_logs.service import (
         AUDIT_LOG_BATCH_SIZE,
+        AUDIT_LOG_MAX_FLUSH_PER_RUN,
         flush_audit_log_buffer,
     )
 
@@ -94,9 +95,10 @@ async def flush_audit_logs_task(ctx: dict) -> str:
 
     async with job_bypass_context("Flushing audit logs to database"):
         try:
-            # Drain buffer completely
-            while True:
-                flushed = await flush_audit_log_buffer()
+            # Drain buffer with limit per run to prevent long-running tasks
+            while total < AUDIT_LOG_MAX_FLUSH_PER_RUN:
+                remaining = AUDIT_LOG_MAX_FLUSH_PER_RUN - total
+                flushed = await flush_audit_log_buffer(max_flush_per_run=remaining)
                 total += flushed
                 if flushed < AUDIT_LOG_BATCH_SIZE:
                     break

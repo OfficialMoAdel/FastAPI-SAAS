@@ -8,18 +8,35 @@ from dataclasses import dataclass, field
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from unittest.mock import patch, AsyncMock
 
 
 @pytest.fixture
-async def e2e_client():
-    """Create a client for E2E tests pointing to the app."""
-    from src.app.main import app  # Lazy import to avoid global state pollution
+async def e2e_client(get_test_app):
+    """Async client for E2E tests against the application."""
+    app = get_test_app
 
-    async with AsyncClient(
-        transport=ASGITransport(app=app),
-        base_url="http://testserver",
-    ) as client:
-        yield client
+    # Ensure we use test async engine for everything to match DB setup
+    from tests.conftest import override_get_db, test_async_engine
+    from src.app.core.db.database import async_get_db
+
+    app.dependency_overrides[async_get_db] = override_get_db
+
+    # Patch async_engine in places where it's imported directly
+    with (
+        patch("src.app.middleware.tenant.async_engine", new=test_async_engine),
+        patch("src.app.core.db.database.async_engine", new=test_async_engine),
+        patch(
+            "src.app.core.utils.rate_limit.RateLimiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+    ):
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://testserver",
+        ) as client:
+            yield client
 
 
 @dataclass

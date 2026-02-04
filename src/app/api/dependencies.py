@@ -9,7 +9,7 @@ from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitExcep
 from ..core.logger import get_logger
 from ..core.security import TokenType, oauth2_scheme, verify_token
 from ..core.security.jwt_utils import get_cached_jwt_payload
-from ..core.tenancy.context import get_tenant_context
+from ..core.tenancy.context import get_current_tenant as get_tenant_context
 from ..core.utils.rate_limit import rate_limiter
 from ..modules.rate_limits.crud import crud_rate_limits
 from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
@@ -73,6 +73,16 @@ async def get_current_user(
         user = await user_service.get_user_auth_info(username=username_or_email)
 
     if user:
+        # Verify user belongs to current tenant context
+        current_tenant = get_tenant_context()
+        if current_tenant and user["tenant_id"] != current_tenant.id:
+            if not user.get("is_superuser"):
+                logger.warning(
+                    f"Tenant mismatch: User {user['id']} (tenant {user['tenant_id']}) "
+                    f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
+                )
+                raise ForbiddenException("User does not belong to the current tenant.")
+
         return user
 
     raise UnauthorizedException("User not authenticated.")

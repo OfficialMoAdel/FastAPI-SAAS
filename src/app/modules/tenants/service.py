@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
+from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
 from .crud import crud_tenants
 from .models import Tenant
 from .schemas import TenantCreate, TenantResponse, TenantUpdate
@@ -81,14 +82,20 @@ class TenantService(BaseService[Tenant]):
             schema_to_select=TenantResponse,
         )
 
+        # P2-1: Use optimized dict construction if feature flag is enabled
+        if FEATURE_TENANT_DICT_OPTIMIZATION:
+            result = _tenant_to_dict(created_tenant)
+        else:
+            result = created_tenant
+
         logger.info(
             "Tenant created | id=%s | slug=%s | name=%s",
-            created_tenant["id"],
-            created_tenant["slug"],
-            created_tenant["name"],
+            result["id"],
+            result["slug"],
+            result["name"],
         )
 
-        return created_tenant
+        return result
 
     async def get_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Get a tenant by ID.

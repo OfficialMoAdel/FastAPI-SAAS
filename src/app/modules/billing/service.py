@@ -16,7 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.security.encryption import CredentialEncryption
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 
@@ -68,6 +69,47 @@ from .schemas import (
 )
 
 
+def _pricing_tier_to_dict(pricing: Pricing) -> dict[str, Any]:
+    """Convert Pricing ORM object to response dict directly.
+
+    P2-5: Bypasses Pydantic model construction for faster serialization.
+    Fields match Pricing schema: id, product_id, name, amount_cents, interval,
+    stripe_price_id, currency, features, is_active, created_at, updated_at.
+    """
+    return {
+        "id": pricing.id,
+        "product_id": pricing.product_id,
+        "name": pricing.name,
+        "amount_cents": pricing.amount_cents,
+        "interval": pricing.interval,
+        "stripe_price_id": pricing.stripe_price_id,
+        "currency": pricing.currency,
+        "features": pricing.features,
+        "is_active": pricing.is_active,
+        "created_at": pricing.created_at,
+        "updated_at": pricing.updated_at,
+    }
+
+
+def _product_to_dict(product: Product, pricing_tiers: list[Pricing]) -> dict[str, Any]:
+    """Convert Product ORM object to response dict directly.
+
+    P2-5: Bypasses Pydantic model construction for faster serialization.
+    Fields match Product schema with nested pricing tiers.
+    """
+    return {
+        "id": product.id,
+        "tenant_id": product.tenant_id,
+        "name": product.name,
+        "description": product.description,
+        "stripe_product_id": product.stripe_product_id,
+        "is_active": product.is_active,
+        "created_at": product.created_at,
+        "updated_at": product.updated_at,
+        "pricing_tiers": [_pricing_tier_to_dict(p) for p in pricing_tiers],
+    }
+
+
 class StripeSettingsService(BaseService[StripeSettings]):
     """Service for managing tenant Stripe settings."""
 
@@ -77,7 +119,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
     async def get_settings(self) -> dict[str, Any] | None:
         """Get Stripe settings for the current tenant."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             return None
         result = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
@@ -85,7 +127,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
     async def update_settings(self, data: StripeSettingsUpdate) -> dict[str, Any]:
         """Update Stripe settings for the current tenant."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -124,7 +166,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -193,7 +235,7 @@ class ProductService(BaseService[Product]):
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -254,6 +296,10 @@ class ProductService(BaseService[Product]):
 
         if product is None:
             raise ModelNotFoundError("Product", product_id)
+
+        # P2-5: Use optimized dict construction if feature flag is enabled
+        if FEATURE_BILLING_DICT_OPTIMIZATION:
+            return _product_to_dict(product, product.pricing_tiers)
 
         return {
             "id": product.id,
@@ -370,7 +416,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def create_subscription(self, user_id: int, data: UserSubscriptionCreate) -> dict[str, Any]:
         """Create a user subscription."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -475,7 +521,7 @@ class BillingRecordService(BaseService[BillingRecord]):
 
     async def create_record(self, data: BillingRecordCreate) -> dict[str, Any]:
         """Create a billing record."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -533,7 +579,7 @@ class CheckoutService:
 
     async def create_session(self, user_id: int, user_email: str, data: CheckoutCreate) -> CheckoutSession:
         """Create a Stripe Checkout session."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -609,7 +655,7 @@ class CheckoutService:
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
