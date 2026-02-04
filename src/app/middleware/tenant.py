@@ -106,8 +106,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         # Optimization: P0-1 Remove wasted database connection (R1-UNIFIED)
-        if settings.performance.FEATURE_REMOVE_WASTED_CONNECTION:
-            return await self._dispatch_optimized(request, call_next, path)
+        # Feature flag disabled for now - middleware optimization needs review
+        # if settings.FEATURE_REMOVE_WASTED_CONNECTION:
+        #     return await self._dispatch_optimized(request, call_next, path)
 
         # Legacy path: Acquire a connection from the pool for this request
         async with async_engine.connect() as connection:

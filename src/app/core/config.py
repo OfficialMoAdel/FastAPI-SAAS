@@ -428,151 +428,20 @@ class R1UnifiedSettings(BaseSettings):
     RBAC_USE_REDIS_CACHE: bool = True
     """Use Redis caching for RBAC permission checks (P5)."""
 
-    DLQ_USE_BOUNDED_SIZE: bool = True
-    """Use bounded DLQ with automatic trimming (P3-1)."""
 
-    PASSKEY_USE_COLUMN_SELECT: bool = True
-    """Use column-specific SELECT for passkey queries (P3-2)."""
+class PerformanceSettings(BaseSettings):
+    """Performance optimization feature flags and configuration.
 
-    CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = True
-    """Use double-check pattern for circuit breaker (P4-1)."""
-
-    # Configuration parameters with validation
-    SESSION_MAX_EVICTION_BATCH_SIZE: int = 50
-    """Maximum sessions to evict in a single batch operation."""
-
-    RBAC_CACHE_TTL_SECONDS: int = 86400
-    """TTL for RBAC permission cache entries (24 hours default)."""
-
-    DLQ_MAX_SIZE: int = 10000
-    """Maximum entries in the Dead-Letter Queue."""
-
-    DLQ_ALERT_THRESHOLD_PCT: int = 80
-    """Alert when DLQ reaches this percentage of max size."""
-
-    PASSKEY_MAX_CREDENTIALS_PER_USER: int = 100
-    """Maximum passkey credentials per user."""
-
-    PASSKEY_DECRYPT_CONCURRENCY_LIMIT: int = 10
-    """Maximum concurrent passkey decrypt operations."""
-
-    IDEMPOTENCY_TTL_SECONDS: int = 300
-    """TTL for event idempotency keys (5 minutes default)."""
-
-    TOKEN_NEGATIVE_CACHE_TTL: int = 300
-    """Negative cache TTL for token blacklist checks (5 minutes default).
-
-    Trade-off:
-    - Higher TTL = fewer Redis calls but delayed revocation detection
-    - Lower TTL = faster revocation detection but more Redis calls
-
-    Risk: Revoked token accepted for up to TTL duration.
-    For immediate revocation requirements, set to 60 or lower.
+    These flags enable gradual rollout and easy rollback of optimizations.
     """
 
-    @field_validator("SESSION_MAX_EVICTION_BATCH_SIZE")
-    @classmethod
-    def validate_eviction_batch(cls, v: int) -> int:
-        if not 1 <= v <= 100:
-            raise ValueError("SESSION_MAX_EVICTION_BATCH_SIZE must be 1-100")
-        return v
+    model_config = SettingsConfigDict(env_prefix="PERFORMANCE_")
 
-    @field_validator("RBAC_CACHE_TTL_SECONDS")
-    @classmethod
-    def validate_rbac_ttl(cls, v: int) -> int:
-        if not 60 <= v <= 86400:
-            raise ValueError("RBAC_CACHE_TTL_SECONDS must be 60-86400 (1min-24hr)")
-        return v
+    FEATURE_REMOVE_WASTED_CONNECTION: bool = False
+    """Remove wasted database connection in tenant middleware (P0-1)."""
 
-    @field_validator("DLQ_MAX_SIZE")
-    @classmethod
-    def validate_dlq_size(cls, v: int) -> int:
-        if not 1000 <= v <= 100000:
-            raise ValueError("DLQ_MAX_SIZE must be 1000-100000")
-        return v
-
-    @field_validator("DLQ_ALERT_THRESHOLD_PCT")
-    @classmethod
-    def validate_alert_threshold(cls, v: int) -> int:
-        if not 50 <= v <= 99:
-            raise ValueError("DLQ_ALERT_THRESHOLD_PCT must be 50-99")
-        return v
-
-    @field_validator("PASSKEY_DECRYPT_CONCURRENCY_LIMIT")
-    @classmethod
-    def validate_decrypt_limit(cls, v: int) -> int:
-        if not 1 <= v <= 50:
-            raise ValueError("PASSKEY_DECRYPT_CONCURRENCY_LIMIT must be 1-50")
-        return v
-
-
-class PerformanceOptimizationSettings(BaseSettings):
-    """Performance optimization feature flags for controlled rollout and safe rollback.
-
-    These flags enable/disable specific performance optimizations individually.
-    All flags are readable via environment variables (e.g., FEATURE_REMOVE_WASTED_CONNECTION=false).
-    """
-
-    model_config = SettingsConfigDict(env_prefix="")
-
-    # P0 Critical Optimizations (default True for production safety)
-    FEATURE_REMOVE_WASTED_CONNECTION: bool = Field(
-        default=True,
-        description="P0-1: Remove unused RLS connection from tenant middleware",
-    )
-
-    FEATURE_STREAMING_UPLOADS: bool = Field(
-        default=True,
-        description="P0-2: Use streaming uploads for S3",
-    )
-
-    # P1 High-Priority Optimizations (default True)
-    FEATURE_CONTEXTVAR_OPTIMIZATION: bool = Field(
-        default=True,
-        description="P1-5: Minimal TenantContext in ContextVar",
-    )
-
-    FEATURE_BILLING_DICT_OPTIMIZATION: bool = Field(
-        default=True,
-        description="P1-6: Optimized dict construction",
-    )
-
-    FEATURE_EAGER_LOADING: bool = Field(
-        default=True,
-        description="P1-7: Eager loading in get_multi()",
-    )
-
-    FEATURE_AUDIT_FLUSH_LIMIT: bool = Field(
-        default=True,
-        description="P1-8: Max flush limit per run",
-    )
-
-    # P2 Medium-Priority Optimizations (default False - experimental)
-    FEATURE_CIRCUIT_BREAKER: bool = Field(
-        default=False,
-        description="P2: Circuit breaker for Redis fallback",
-    )
-
-    # P3 Low-Priority/Optimistic Optimizations (default False)
-    FEATURE_EVENT_RETRY_DLQ: bool = Field(
-        default=False,
-        description="P3-13: Retry + DLQ for events",
-    )
-
-    FEATURE_ATOMIC_CACHE_INVALIDATION: bool = Field(
-        default=False,
-        description="P3-14: Lua atomic invalidation",
-    )
-
-    FEATURE_WEBHOOK_CONNECTION_MGMT: bool = Field(
-        default=False,
-        description="P3-15: Separate DB sessions for webhooks",
-    )
-
-    FEATURE_SKIP_RLS_FOR_ADMIN: bool = Field(
-        default=False,
-        description="P3-16: Skip RLS for admin queries",
-    )
+    FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False
+    """Use contextvar for tenant context (P0-2)."""
 
 
 class Settings(
@@ -598,6 +467,8 @@ class Settings(
     EventSettings,
     CORSSettings,
     ArqSettings,
+    R1UnifiedSettings,
+    PerformanceSettings,
 ):
     pass
 
