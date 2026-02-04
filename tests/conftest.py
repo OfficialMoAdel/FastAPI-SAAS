@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 from cryptography.fernet import Fernet
+from dotenv import load_dotenv
 from faker import Faker
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
@@ -17,6 +18,9 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
+
+# Load environment variables from src/.env
+load_dotenv("src/.env")
 
 from src.app.core.config import settings
 
