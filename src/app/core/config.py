@@ -477,7 +477,10 @@ class Settings(
     R1UnifiedSettings,
     PerformanceSettings,
 ):
-    pass
+    # Override model_config to ensure no env_prefix is applied to base fields
+    # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
+    # have env_prefix which would otherwise be inherited and break field resolution
+    model_config = SettingsConfigDict(env_prefix="")
 
 
 settings = Settings()  # type: ignore
