@@ -105,7 +105,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if is_path_exempt(path) or request.method == "OPTIONS":
             return await call_next(request)
 
-        # Acquire a connection from the pool for this request
+        # Optimization: P0-1 Remove wasted database connection (R1-UNIFIED)
+        if settings.performance.FEATURE_REMOVE_WASTED_CONNECTION:
+            return await self._dispatch_optimized(request, call_next, path)
+
+        # Legacy path: Acquire a connection from the pool for this request
         async with async_engine.connect() as connection:
             try:
                 tenant_slug = request.headers.get(TENANT_HEADER)
@@ -188,6 +192,80 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
                 # Clear application-level tenant context
                 clear_tenant_context()
+
+    async def _dispatch_optimized(self, request: Request, call_next: RequestResponseEndpoint, path: str) -> Response:
+        """Optimized dispatch without holding a DB connection for the request duration.
+
+        This implementation:
+        1. Resolves tenant using L1/L2 cache (or short-lived DB session via _get_tenant_by_slug)
+        2. Sets application-level tenant context
+        3. Does NOT hold a connection open during the request
+        4. Does NOT set RLS variables on a connection that won't be used by handlers
+        """
+        try:
+            tenant_slug = request.headers.get(TENANT_HEADER)
+
+            if not tenant_slug or not tenant_slug.strip():
+                logger.warning(
+                    "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    content={"detail": f"Missing required header: {TENANT_HEADER}"},
+                )
+
+            # Normalize slug to ensure case-insensitive lookup
+            tenant_slug = tenant_slug.strip().lower()
+
+            tenant = await self._get_tenant_by_slug(tenant_slug)
+
+            if tenant is None:
+                logger.warning(
+                    "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
+                    tenant_slug,
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Access denied"},
+                )
+
+            if not tenant.is_active:
+                logger.warning(
+                    "Tenant resolution failed: inactive_tenant | slug=%s | "
+                    "tenant_id=%s | path=%s | method=%s | client=%s",
+                    tenant_slug,
+                    tenant.id,
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Tenant inactive. Contact support."},
+                )
+
+            # Set application-level tenant context
+            set_tenant_context(tenant)
+
+            logger.debug(
+                "Tenant resolved successfully (optimized) | slug=%s | tenant_id=%s | path=%s",
+                tenant_slug,
+                tenant.id,
+                path,
+            )
+
+            response = await call_next(request)
+            return response
+
+        finally:
+            # Clear application-level tenant context
+            clear_tenant_context()
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | None:
         """Look up tenant by slug with L1+L2 caching.
