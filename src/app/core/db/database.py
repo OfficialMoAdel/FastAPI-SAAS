@@ -1,11 +1,14 @@
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
-import os
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
 from sqlalchemy.pool import NullPool
+
+from src.app.core.db.rls import rls_context
+from src.app.core.tenancy.context import get_tenant_context
 
 from ..config import settings
 
@@ -67,4 +70,13 @@ async_session_maker = local_session
 
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     async with local_session() as db:
-        yield db
+        try:
+            tenant = get_tenant_context()
+            if tenant:
+                # Apply RLS context for the current tenant
+                async with rls_context(db, str(tenant.id)):
+                    yield db
+            else:
+                yield db
+        except Exception:
+            raise
