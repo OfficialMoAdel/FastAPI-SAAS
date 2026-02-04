@@ -110,8 +110,6 @@ class DatabaseSettings(BaseSettings):
             )
         return v
 
-    DB_MAX_CONNECTIONS: int = Field(default=100, ge=20, le=500, description="PostgreSQL max_connections limit")
-
     @computed_field  # type: ignore[prop-decorator]
     @property
     def EFFECTIVE_POOL_SIZE(self) -> int:
@@ -127,6 +125,29 @@ class DatabaseSettings(BaseSettings):
         if os.getenv("DB_POOL_SIZE"):
             return self.DB_POOL_SIZE
         return self.DB_WORKERS * 10
+
+
+class ArqSettings(BaseSettings):
+    """ARQ worker and job queue settings."""
+
+    ARQ_WORKERS: int = Field(default=1, ge=1, le=8, description="Number of ARQ worker processes")
+    ARQ_MAX_JOBS: int = Field(default=10, ge=1, le=100, description="Max concurrent jobs per worker")
+    ARQ_JOB_TIMEOUT: int = Field(default=300, ge=10, le=3600, description="Default job timeout (seconds)")
+    ARQ_KEEP_RESULT: int = Field(default=3600, ge=0, le=86400, description="Keep job results (seconds)")
+    ARQ_MAX_TRIES: int = Field(default=3, ge=0, le=10, description="Default max job retries")
+    ARQ_QUEUE_MAX_SIZE: int = Field(default=10000, ge=100, le=100000, description="Max queue size per priority")
+
+    @field_validator("ARQ_MAX_JOBS", mode="after")
+    @classmethod
+    def validate_max_jobs(cls, v: int, info: FieldValidationInfo) -> int:
+        workers = info.data.get("ARQ_WORKERS", 1)
+        max_total_jobs = v * workers
+        import logging
+
+        logging.getLogger("app.core.config").info(
+            f"ARQ total capacity: {workers} workers × {v} max_jobs = {max_total_jobs} concurrent jobs"
+        )
+        return v
 
 
 class SQLiteSettings(DatabaseSettings):
@@ -576,19 +597,8 @@ class Settings(
     AISettings,
     EventSettings,
     CORSSettings,
-):
-    # R1-UNIFIED optimization settings (nested for organization)
-    r1_unified: R1UnifiedSettings = R1UnifiedSettings()
-
-    # Performance optimization feature flags
-    performance: PerformanceOptimizationSettings = PerformanceOptimizationSettings()
-
-    model_config = SettingsConfigDict(
-        env_file=os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", ".env"),
-        env_file_encoding="utf-8",
-        case_sensitive=True,
-        extra="ignore",
-    )
+    ArqSettings,
+)
 
 
 settings = Settings()  # type: ignore

@@ -32,13 +32,38 @@ web:
       - ./src/app:/code/app
       - ./src/.env:/code/.env
 
-  worker:
-    build: 
+worker:
+    build:
       context: .
       dockerfile: Dockerfile
     command: arq app.core.worker.settings.WorkerSettings
     env_file:
       - ./src/.env
+    environment:
+      # ARQ worker scaling configuration
+      # ARQ_WORKERS: Number of worker processes (default: 1, scale with `docker-compose up --scale worker=N`)
+      # ARQ_MAX_JOBS: Max concurrent jobs per worker (default: 10, total capacity = ARQ_WORKERS × ARQ_MAX_JOBS)
+      # ARQ_JOB_TIMEOUT: Default job timeout in seconds (default: 300s)
+      # ARQ_MAX_TRIES: Retry failed jobs N times (default: 3)
+      # ARQ_QUEUE_MAX_SIZE: Max queue size per priority (default: 10000, prevents memory issues)
+      #
+      # Scaling recommendations:
+      # - Low load: 1 worker, ARQ_MAX_JOBS=10 (10 concurrent jobs)
+      # - Medium load: 2-3 workers, ARQ_MAX_JOBS=10 (20-30 concurrent jobs)
+      # - High load: 4-5 workers, ARQ_MAX_JOBS=10 (40-50 concurrent jobs)
+      #
+      # Ensure DB_POOL_SIZE >= (workers × ARQ_MAX_JOBS) + (web workers × 10)
+      # ARQ_WORKERS: 1
+      # ARQ_MAX_JOBS: 10
+    environment:
+      # ARQ Worker scaling recommendations:
+      # - Low load: 1 worker (max_jobs=10)
+      # - Medium load: 2-3 workers (each max_jobs=10)
+      # - High load: 4-5 workers (each max_jobs=10)
+      # Scale with: docker-compose up --scale worker=3
+      # - Total concurrent jobs = workers × max_jobs
+      # - Ensure DB_POOL_SIZE ≥ total concurrent jobs
+      # ARQ_MAX_JOBS: 10  # Per-worker concurrency (default in settings.py)
     depends_on:
       - db
       - redis
