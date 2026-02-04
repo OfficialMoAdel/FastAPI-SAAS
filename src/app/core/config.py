@@ -434,6 +434,75 @@ class R1UnifiedSettings(BaseSettings):
         return v
 
 
+class PerformanceOptimizationSettings(BaseSettings):
+    """Performance optimization feature flags for controlled rollout and safe rollback.
+
+    These flags enable/disable specific performance optimizations individually.
+    All flags are readable via environment variables (e.g., FEATURE_REMOVE_WASTED_CONNECTION=false).
+    """
+
+    model_config = SettingsConfigDict(env_prefix="")
+
+    # P0 Critical Optimizations (default True for production safety)
+    FEATURE_REMOVE_WASTED_CONNECTION: bool = Field(
+        default=True,
+        description="P0-1: Remove unused RLS connection from tenant middleware",
+    )
+
+    FEATURE_STREAMING_UPLOADS: bool = Field(
+        default=True,
+        description="P0-2: Use streaming uploads for S3",
+    )
+
+    # P1 High-Priority Optimizations (default True)
+    FEATURE_CONTEXTVAR_OPTIMIZATION: bool = Field(
+        default=True,
+        description="P1-5: Minimal TenantContext in ContextVar",
+    )
+
+    FEATURE_BILLING_DICT_OPTIMIZATION: bool = Field(
+        default=True,
+        description="P1-6: Optimized dict construction",
+    )
+
+    FEATURE_EAGER_LOADING: bool = Field(
+        default=True,
+        description="P1-7: Eager loading in get_multi()",
+    )
+
+    FEATURE_AUDIT_FLUSH_LIMIT: bool = Field(
+        default=True,
+        description="P1-8: Max flush limit per run",
+    )
+
+    # P2 Medium-Priority Optimizations (default False - experimental)
+    FEATURE_CIRCUIT_BREAKER: bool = Field(
+        default=False,
+        description="P2: Circuit breaker for Redis fallback",
+    )
+
+    # P3 Low-Priority/Optimistic Optimizations (default False)
+    FEATURE_EVENT_RETRY_DLQ: bool = Field(
+        default=False,
+        description="P3-13: Retry + DLQ for events",
+    )
+
+    FEATURE_ATOMIC_CACHE_INVALIDATION: bool = Field(
+        default=False,
+        description="P3-14: Lua atomic invalidation",
+    )
+
+    FEATURE_WEBHOOK_CONNECTION_MGMT: bool = Field(
+        default=False,
+        description="P3-15: Separate DB sessions for webhooks",
+    )
+
+    FEATURE_SKIP_RLS_FOR_ADMIN: bool = Field(
+        default=False,
+        description="P3-16: Skip RLS for admin queries",
+    )
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -459,6 +528,9 @@ class Settings(
 ):
     # R1-UNIFIED optimization settings (nested for organization)
     r1_unified: R1UnifiedSettings = R1UnifiedSettings()
+
+    # Performance optimization feature flags
+    performance: PerformanceOptimizationSettings = PerformanceOptimizationSettings()
 
     model_config = SettingsConfigDict(
         env_file=os.path.join(os.path.dirname(os.path.realpath(__file__)), "..", "..", ".env"),
