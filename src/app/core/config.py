@@ -598,7 +598,8 @@ class Settings(
     EventSettings,
     CORSSettings,
     ArqSettings,
-)
+):
+    pass
 
 
 settings = Settings()  # type: ignore
