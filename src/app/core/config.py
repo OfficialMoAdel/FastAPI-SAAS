@@ -75,10 +75,11 @@ class CryptSettings(BaseSettings):
 
 class DatabaseSettings(BaseSettings):
     DB_WORKERS: int = Field(default=1, ge=1, le=32, description="Number of uvicorn workers")
-    DB_POOL_SIZE: int = Field(default=20, ge=5, le=200, description="Base pool size (calculated as workers × 10)")
     DB_MAX_OVERFLOW: int = Field(default=10, ge=0, le=50, description="Max overflow connections")
     DB_POOL_TIMEOUT: int = Field(default=30, ge=5, le=120)
     POSTGRES_MAX_CONNECTIONS: int = Field(default=100, ge=20, le=500, description="PostgreSQL max_connections limit")
+    # DB_POOL_SIZE must be declared AFTER DB_WORKERS, DB_MAX_OVERFLOW, POSTGRES_MAX_CONNECTIONS
+    DB_POOL_SIZE: int = Field(default=20, ge=5, le=200, description="Base pool size (calculated as workers × 10)")
 
     @field_validator("DB_POOL_SIZE", mode="after")
     @classmethod
@@ -442,6 +443,12 @@ class PerformanceSettings(BaseSettings):
 
     FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False
     """Use contextvar for tenant context (P0-2)."""
+
+    FEATURE_STREAMING_UPLOADS: bool = False
+    """Use streaming multipart uploads for S3 storage (P0-3)."""
+
+    FEATURE_EAGER_LOADING: bool = False
+    """Use eager loading for relationships in base service (P0-4)."""
 
 
 class Settings(

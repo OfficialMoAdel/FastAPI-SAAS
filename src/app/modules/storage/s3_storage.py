@@ -81,7 +81,7 @@ class S3Storage(StorageProvider):
             StorageResult with success status and file details.
         """
         try:
-            if settings.performance.FEATURE_STREAMING_UPLOADS:
+            if settings.FEATURE_STREAMING_UPLOADS:
                 # Streaming upload with multipart support
                 # Reset file position to 0 (required for Starlette UploadFile wrapping SpooledTemporaryFile)
                 if hasattr(file, "seek"):

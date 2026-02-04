@@ -16,8 +16,6 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from src.app.core.config import settings
-
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
 
@@ -82,14 +80,8 @@ def get_current_tenant() -> "TenantContext | None":
     Note:
         Returns TenantContext (lightweight dataclass) when optimization is enabled.
         Returns None if optimization is enabled but not set.
-        Returns full Tenant model if optimization is disabled (legacy mode).
     """
-    if settings.performance.FEATURE_CONTEXTVAR_OPTIMIZATION:
-        return _current_tenant.get()
-    else:
-        from src.app.core.tenancy.legacy import get_legacy_tenant_context
-
-        return get_legacy_tenant_context()
+    return _current_tenant.get()
 
 
 def get_tenant_context() -> "TenantContext | None":
@@ -116,15 +108,10 @@ def set_current_tenant(tenant: "Tenant | None") -> None:
     Args:
         tenant: The tenant to set as current, or None to clear.
     """
-    if settings.performance.FEATURE_CONTEXTVAR_OPTIMIZATION:
-        if tenant:
-            _current_tenant.set(TenantContext.from_model(tenant))
-        else:
-            _current_tenant.set(None)
+    if tenant:
+        _current_tenant.set(TenantContext.from_model(tenant))
     else:
-        from src.app.core.tenancy.legacy import set_legacy_tenant_context
-
-        set_legacy_tenant_context(tenant)
+        _current_tenant.set(None)
 
 
 def set_tenant_context(tenant: "Tenant | None") -> None:
@@ -138,9 +125,4 @@ def clear_tenant_context() -> None:
     Should be called in a finally block after request processing
     to prevent context leakage.
     """
-    if settings.performance.FEATURE_CONTEXTVAR_OPTIMIZATION:
-        _current_tenant.set(None)
-    else:
-        from src.app.core.tenancy.legacy import clear_legacy_tenant_context
-
-        clear_legacy_tenant_context()
+    _current_tenant.set(None)

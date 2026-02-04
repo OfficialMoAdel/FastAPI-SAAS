@@ -21,12 +21,13 @@ Usage:
 
 from __future__ import annotations
 
-from typing import Any, Callable, Generic, TypeVar, cast
+from collections.abc import Callable
+from typing import Any, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import joinedload, selectinload
+from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
 
@@ -102,7 +103,7 @@ class BaseService(Generic[T]):
         """
         offset = (page - 1) * per_page
 
-        if settings.performance.FEATURE_EAGER_LOADING and eager_loads:
+        if settings.FEATURE_EAGER_LOADING and eager_loads:
             query = select(self.model)
             for relationship in eager_loads:
                 if hasattr(self.model, relationship):
