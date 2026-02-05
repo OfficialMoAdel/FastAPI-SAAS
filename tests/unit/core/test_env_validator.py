@@ -159,12 +159,12 @@ class TestEnvironmentValidator:
             assert "required" in results[0].message.lower()
             assert results[0].severity == ValidationSeverity.ERROR
 
-    @mock.patch("httpx.AsyncClient")
-    def test_check_ai_providers_ollama_unreachable(self, mock_client, mock_env):
+    @mock.patch("httpx.get")
+    def test_check_ai_providers_ollama_unreachable(self, mock_get, mock_env):
         """Test Ollama validation when server is unreachable."""
         mock_response = mock.Mock()
         mock_response.status_code = 500
-        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+        mock_get.return_value = mock_response
 
         env_vars = {
             "AI_ENABLED": "true",
@@ -179,12 +179,12 @@ class TestEnvironmentValidator:
             assert "not reachable" in results[0].message.lower()
             assert results[0].severity == ValidationSeverity.WARNING
 
-    @mock.patch("httpx.AsyncClient")
-    def test_check_ai_providers_ollama_reachable(self, mock_client, mock_env):
+    @mock.patch("httpx.get")
+    def test_check_ai_providers_ollama_reachable(self, mock_get, mock_env):
         """Test Ollama validation when server is reachable."""
         mock_response = mock.Mock()
         mock_response.status_code = 200
-        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+        mock_get.return_value = mock_response
 
         env_vars = {
             "AI_ENABLED": "true",

@@ -155,21 +155,17 @@ class EnvironmentValidator:
                         ValidationResult(
                             key="OLLAMA_BASE_URL",
                             severity=ValidationSeverity.INFO,
-                            message=f"OLLAMA_BASE_URL is set to {ollama_base_url} (connectivity check skipped - httpx not available)",
+                            message=(
+                                f"OLLAMA_BASE_URL is set to {ollama_base_url} "
+                                "(connectivity check skipped - httpx not available)"
+                            ),
                         )
                     )
                 else:
-                    from httpx import AsyncClient
-
-                    async def check_ollama() -> bool:
-                        async with AsyncClient(timeout=5.0) as client:
-                            response = await client.get(f"{ollama_base_url}/api/tags")
-                            return response.status_code == 200
-
-                    import asyncio
-
+                    # Use sync client to avoid asyncio.run() issues when called from async context
                     try:
-                        is_reachable = asyncio.run(check_ollama())
+                        response = httpx.get(f"{ollama_base_url}/api/tags", timeout=5.0)
+                        is_reachable = response.status_code == 200
                         if not is_reachable:
                             results.append(
                                 ValidationResult(

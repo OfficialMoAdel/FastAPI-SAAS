@@ -8,13 +8,14 @@ from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
-from ...core.cache.warmer import warmer
-from ...core.db.database import async_get_db
-from ...core.json_utils import json_dumps, json_loads
-from ...core.logger import get_logger
-from ...core.utils.cache import client as redis_client
-from ...modules.tenants.models import Tenant
-from .._base import BaseService, ModelNotFoundError
+from src.app.core.cache.warmer import warmer
+from src.app.core.db.database import async_get_db
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
+from src.app.core.utils.cache import client as redis_client
+from src.app.modules._base import BaseService, ModelNotFoundError
+from src.app.modules.tenants.models import Tenant
+
 from .models import FeatureFlag, FeatureFlagOverride
 from .schemas import (
     FeatureFlagCreate,

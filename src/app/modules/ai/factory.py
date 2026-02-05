@@ -4,6 +4,7 @@ Provides a unified interface for accessing different AI providers
 (OpenAI, Anthropic, Ollama) with caching and configuration management.
 """
 
+import hashlib
 import logging
 from typing import Any
 
@@ -35,6 +36,26 @@ class AIProviderFactory:
     _instances: dict[str, AIProvider] = {}
 
     @classmethod
+    def _get_cache_key(cls, provider_name: str, api_key: str | None, base_url: str | None) -> str:
+        """Generate a cache key that includes credentials.
+
+        Args:
+            provider_name: Name of the provider.
+            api_key: Optional API key.
+            base_url: Optional base URL.
+
+        Returns:
+            Cache key string.
+        """
+        key_parts = [provider_name]
+        if api_key:
+            # Hash the API key to avoid storing it in memory as cache key
+            key_parts.append(hashlib.sha256(api_key.encode()).hexdigest()[:16])
+        if base_url:
+            key_parts.append(base_url)
+        return ":".join(key_parts)
+
+    @classmethod
     def get_provider(
         cls,
         provider_name: str | None = None,
@@ -54,6 +75,10 @@ class AIProviderFactory:
 
         Raises:
             AIInvalidRequestError: If provider name is not supported.
+
+        Note:
+            Instances are cached by provider_name + api_key_hash + base_url.
+            Different credentials will create separate cached instances.
         """
         if provider_name is None:
             provider_name = getattr(settings, "AI_PROVIDER", DEFAULT_PROVIDER)
@@ -66,15 +91,18 @@ class AIProviderFactory:
 
         provider_class = SUPPORTED_PROVIDERS[provider_name]
 
-        if provider_name in cls._instances:
+        # Generate cache key that includes credentials
+        cache_key = cls._get_cache_key(provider_name, api_key, base_url)
+
+        if cache_key in cls._instances:
             logger.debug(f"Returning cached provider instance: {provider_name}")
-            return cls._instances[provider_name]
+            return cls._instances[cache_key]
 
         logger.info(f"Creating new provider instance: {provider_name}")
 
         try:
             provider = cls._create_provider(provider_class, provider_name, api_key, base_url)  # type: ignore[arg-type]
-            cls._instances[provider_name] = provider
+            cls._instances[cache_key] = provider
             return provider
         except Exception as e:
             logger.error(f"Failed to create provider {provider_name}: {e}")
@@ -101,14 +129,29 @@ class AIProviderFactory:
 
         Returns:
             Initialized AIProvider instance.
+
+        Raises:
+            AIServerError: If required API key is missing.
         """
         provider_config: dict[str, Any] = {}
 
         if provider_name == "openai":
-            provider_config["api_key"] = api_key or getattr(settings, "OPENAI_API_KEY", None)
+            resolved_api_key = api_key or getattr(settings, "OPENAI_API_KEY", None)
+            if not resolved_api_key:
+                raise AIServerError(
+                    provider=provider_name,
+                    message="Missing API key for OpenAI. Set OPENAI_API_KEY environment variable.",
+                )
+            provider_config["api_key"] = resolved_api_key
             provider_config["base_url"] = base_url or getattr(settings, "OPENAI_BASE_URL", None)
         elif provider_name == "anthropic":
-            provider_config["api_key"] = api_key or getattr(settings, "ANTHROPIC_API_KEY", None)
+            resolved_api_key = api_key or getattr(settings, "ANTHROPIC_API_KEY", None)
+            if not resolved_api_key:
+                raise AIServerError(
+                    provider=provider_name,
+                    message="Missing API key for Anthropic. Set ANTHROPIC_API_KEY environment variable.",
+                )
+            provider_config["api_key"] = resolved_api_key
             provider_config["base_url"] = base_url or getattr(settings, "ANTHROPIC_BASE_URL", None)
         elif provider_name == "ollama":
             provider_config["base_url"] = base_url or settings.OLLAMA_BASE_URL

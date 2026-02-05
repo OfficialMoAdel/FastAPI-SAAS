@@ -6,12 +6,13 @@ Provides business logic for multi-factor authentication including:
 - MFA enable/disable workflows
 """
 
-import hashlib
+import base64
 import secrets
 from datetime import datetime
 from typing import Any
 
 import pyotp
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -25,6 +26,14 @@ from src.app.modules.mfa.schemas import (
 )
 
 logger = get_logger(__name__)
+
+# Constants for MFA configuration - MUST be defined before class usage
+TOTP_INTERVAL = 30  # 30 seconds
+TOTP_DIGITS = 6
+TOTP_SKEW = 1  # Allow 1 interval before/after
+BACKUP_CODE_COUNT = 10
+BACKUP_CODE_LENGTH = 10  # Characters after 'BC-' prefix
+BACKUP_CODE_PREFIX = "BC-"
 
 # Audit log action names
 MFA_ACTION_SETUP = "mfa.setup"
@@ -282,6 +291,8 @@ class MFAService:
         Returns:
             Dict with verification status.
         """
+        from src.app.core.security import verify_password
+
         # Normalize code format
         normalized_code = code.upper().replace("-", "")
         if normalized_code.startswith("BC"):
@@ -292,18 +303,22 @@ class MFAService:
         if not mfa_method_dict or not mfa_method_dict.get("backup_codes"):
             return {"valid": False, "message": "Invalid code", "backup_codes_remaining": None}
 
-        # Reconstruct full code with prefix for hashing
+        # Reconstruct full code with prefix for verification
         formatted_code = f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:]}"
-        # Hash the provided code
-        code_hash = await self._hash_backup_code(formatted_code)
 
-        # Check if hash exists in stored codes
-        if code_hash in mfa_method_dict["backup_codes"]:
+        # Check each stored hash against the provided code (bcrypt requires verification, not comparison)
+        matched_hash = None
+        for stored_hash in mfa_method_dict["backup_codes"]:
+            if await verify_password(formatted_code, stored_hash):
+                matched_hash = stored_hash
+                break
+
+        if matched_hash:
             # Fetch model instance to update
             mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
             if mfa_method and mfa_method.backup_codes:
                 # Remove used backup code
-                mfa_method.backup_codes.remove(code_hash)
+                mfa_method.backup_codes.remove(matched_hash)
                 mfa_method.last_used_at = datetime.now()
                 await db.commit()
 
@@ -566,60 +581,59 @@ class MFAService:
         return codes
 
     async def _hash_backup_code(self, code: str) -> str:
-        """Hash a backup code for secure storage.
+        """Hash a backup code for secure storage using bcrypt.
 
         Args:
             code: The backup code to hash.
 
         Returns:
-            Hashed code string.
+            Hashed code string (bcrypt hash).
         """
-        return hashlib.sha256(code.encode()).hexdigest()
+        from src.app.core.security import get_password_hash
+
+        return await get_password_hash(code)
+
+    def _get_fernet(self) -> Fernet:
+        """Get Fernet instance for encryption/decryption.
+
+        Derives a valid Fernet key from SECRET_KEY using base64 encoding.
+
+        Returns:
+            Fernet instance.
+        """
+        # Fernet requires a 32-byte base64-encoded key
+        # Derive it from SECRET_KEY
+        secret = settings.SECRET_KEY.get_secret_value()[:32].encode()
+        # Pad to 32 bytes if needed
+        padded = secret.ljust(32, b"\0")
+        key = base64.urlsafe_b64encode(padded)
+        return Fernet(key)
 
     async def _encrypt_secret(self, secret: str) -> str:
-        """Encrypt TOTP secret for storage.
-
-        In production, use proper encryption (e.g., Fernet from cryptography).
-        For now, we use a simple approach with environment-based key.
+        """Encrypt TOTP secret for storage using Fernet.
 
         Args:
             secret: The TOTP secret to encrypt.
 
         Returns:
-            Encrypted secret string.
+            Encrypted secret string (base64-encoded).
         """
-        # In a real implementation, use Fernet or similar
-        # For this implementation, we'll use a simple XOR with a key derived from SECRET_KEY
-        key = settings.SECRET_KEY.get_secret_value()[:32]
-        encrypted = bytearray()
-        for i, char in enumerate(secret):
-            encrypted.append(ord(char) ^ ord(key[i % len(key)]))
-        return encrypted.hex()
+        fernet = self._get_fernet()
+        encrypted = fernet.encrypt(secret.encode())
+        return encrypted.decode()
 
     async def _decrypt_secret(self, encrypted: str) -> str:
-        """Decrypt TOTP secret from storage.
+        """Decrypt TOTP secret from storage using Fernet.
 
         Args:
-            encrypted: The encrypted secret.
+            encrypted: The encrypted secret (base64-encoded).
 
         Returns:
             Decrypted secret string.
         """
-        key = settings.SECRET_KEY.get_secret_value()[:32]
-        encrypted_bytes = bytes.fromhex(encrypted)
-        decrypted = ""
-        for i, byte in enumerate(encrypted_bytes):
-            decrypted += chr(byte ^ ord(key[i % len(key)]))
-        return decrypted
-
-
-# Constants for MFA configuration
-TOTP_INTERVAL = 30  # 30 seconds
-TOTP_DIGITS = 6
-TOTP_SKEW = 1  # Allow 1 interval before/after
-BACKUP_CODE_COUNT = 10
-BACKUP_CODE_LENGTH = 10  # Characters after 'BC-' prefix
-BACKUP_CODE_PREFIX = "BC-"
+        fernet = self._get_fernet()
+        decrypted = fernet.decrypt(encrypted.encode())
+        return decrypted.decode()
 
 
 # Dependency injection factory

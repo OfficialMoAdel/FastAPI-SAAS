@@ -103,7 +103,11 @@ class TestEnableMFA:
                 mock_totp_instance.verify.return_value = False
                 mock_totp.return_value = mock_totp_instance
 
-                request = MFAEnableRequest(totp_secret="JBSWY3DPEHPK3PXP", totp_token="000000")
+                # Use 32-char secret to satisfy schema validation
+                request = MFAEnableRequest(
+                    totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+                    totp_token="000000",
+                )
                 with pytest.raises(BadRequestException, match="Invalid TOTP"):
                     await mfa_service.enable_mfa(
                         user_id=mock_user_id,
@@ -123,14 +127,22 @@ class TestEnableMFA:
                 mock_totp_instance.verify.return_value = True
                 mock_totp.return_value = mock_totp_instance
 
-                request = MFAEnableRequest(totp_secret="JBSWY3DPEHPK3PXP", totp_token="123456")
-                result = await mfa_service.enable_mfa(
-                    user_id=mock_user_id,
-                    request=request,
-                    db=mock_db,
-                )
+                # Mock MFAMethod to avoid SQLAlchemy mapper initialization
+                with patch("src.app.modules.mfa.service.MFAMethod") as mock_mfa_model:
+                    mock_mfa_model.return_value = MagicMock()
 
-        assert result["status"] == "enabled"
+                    # Use 32-char secret to satisfy schema validation
+                    request = MFAEnableRequest(
+                        totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+                        totp_token="123456",
+                    )
+                    result = await mfa_service.enable_mfa(
+                        user_id=mock_user_id,
+                        request=request,
+                        db=mock_db,
+                    )
+
+        assert result["message"] == "MFA enabled successfully"
         assert "backup_codes" in result
         assert len(result["backup_codes"]) == BACKUP_CODE_COUNT
         assert mock_db.add.called
@@ -183,8 +195,8 @@ class TestVerifyTotpToken:
                         db=mock_db,
                     )
 
-        assert result["verified"] is True
-        assert result["method"] == "totp"
+        assert result["valid"] is True
+        assert result["message"] == "Verification successful"
 
     @pytest.mark.asyncio
     async def test_verify_totp_token_invalid(self, mfa_service, mock_db, mock_user_id):
@@ -235,7 +247,7 @@ class TestGenerateBackupCodes:
         codes = await mfa_service._generate_backup_codes()
         for code in codes:
             assert code.startswith(BACKUP_CODE_PREFIX)
-            assert len(code) == 13  # BC- + 5 chars + - + 5 chars
+            assert len(code) == 14  # BC- + 5 chars + - + 5 chars = 3 + 5 + 1 + 5 = 14
             assert code.count("-") == 2
 
     @pytest.mark.asyncio
@@ -253,7 +265,7 @@ class TestVerifyBackupCode:
         """Test valid backup code verification."""
         from src.app.modules.mfa.crud import crud_mfa_methods
 
-        # Create a test backup code
+        # Create a test backup code and its hash
         test_code = "BC-ABCDE-FGHIJ"
         code_hash = await mfa_service._hash_backup_code(test_code)
 
@@ -269,14 +281,16 @@ class TestVerifyBackupCode:
             mock_model.backup_codes = [code_hash]
             mock_db.get = AsyncMock(return_value=mock_model)
 
-            result = await mfa_service._verify_backup_code(
-                user_id=mock_user_id,
-                code=test_code,
-                db=mock_db,
-            )
+            # Patch verify_password in the core.security module where it's imported from
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
+                result = await mfa_service._verify_backup_code(
+                    user_id=mock_user_id,
+                    code=test_code,
+                    db=mock_db,
+                )
 
-        assert result["verified"] is True
-        assert result["method"] == "backup_code"
+        assert result["valid"] is True
+        assert result["message"] == "Verification successful"
 
     @pytest.mark.asyncio
     async def test_verify_backup_code_invalid(self, mfa_service, mock_db, mock_user_id):
@@ -285,7 +299,7 @@ class TestVerifyBackupCode:
 
         # Create a test backup code with different hash
         test_code = "BC-ABCDE-FGHIJ"
-        wrong_hash = "wrong_hash_value"
+        wrong_hash = "$2b$12$wronghashvalue1234567890"
 
         mfa_method = {
             "id": "test-id",
@@ -294,13 +308,15 @@ class TestVerifyBackupCode:
         }
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
-            result = await mfa_service._verify_backup_code(
-                user_id=mock_user_id,
-                code=test_code,
-                db=mock_db,
-            )
+            # Patch verify_password in the core.security module where it's imported from
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=False):
+                result = await mfa_service._verify_backup_code(
+                    user_id=mock_user_id,
+                    code=test_code,
+                    db=mock_db,
+                )
 
-        assert result["verified"] is False
+        assert result["valid"] is False
 
     @pytest.mark.asyncio
     async def test_verify_backup_code_code_removed_after_use(self, mfa_service, mock_db, mock_user_id):
@@ -322,11 +338,13 @@ class TestVerifyBackupCode:
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
             mock_db.get = AsyncMock(return_value=mock_model)
 
-            await mfa_service._verify_backup_code(
-                user_id=mock_user_id,
-                code=test_code,
-                db=mock_db,
-            )
+            # Patch verify_password in the core.security module where it's imported from
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
+                await mfa_service._verify_backup_code(
+                    user_id=mock_user_id,
+                    code=test_code,
+                    db=mock_db,
+                )
 
         assert code_hash not in mock_model.backup_codes
         assert mock_db.commit.called
@@ -341,13 +359,19 @@ class TestDisableMFA:
         from src.app.core.exceptions.http_exceptions import BadRequestException
         from src.app.modules.mfa.crud import crud_mfa_methods
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
-            with pytest.raises(BadRequestException, match="not enabled"):
-                await mfa_service.disable_mfa(
-                    user_id=mock_user_id,
-                    token="123456",
-                    db=mock_db,
-                )
+        mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
+
+        with patch("src.app.modules.users.crud.crud_users") as mock_crud:
+            mock_crud.get = AsyncMock(return_value=mock_user)
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
+                with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
+                    with pytest.raises(BadRequestException, match="not enabled"):
+                        await mfa_service.disable_mfa(
+                            user_id=mock_user_id,
+                            password="valid_password",
+                            totp_token="123456",
+                            db=mock_db,
+                        )
 
     @pytest.mark.asyncio
     async def test_disable_mfa_invalid_token_raises_error(self, mfa_service, mock_db, mock_user_id):
@@ -360,23 +384,25 @@ class TestDisableMFA:
             "user_id": mock_user_id,
             "secret": "encrypted_secret",
         }
+        mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
-            with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):
-                with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
-                    mock_totp_instance = Mock()
-                    mock_totp_instance.verify.return_value = False
-                    mock_totp.return_value = mock_totp_instance
+        with patch("src.app.modules.users.crud.crud_users") as mock_crud:
+            mock_crud.get = AsyncMock(return_value=mock_user)
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
+                with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
+                    with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):
+                        with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
+                            mock_totp_instance = Mock()
+                            mock_totp_instance.verify.return_value = False
+                            mock_totp.return_value = mock_totp_instance
 
-                    with patch.object(
-                        mfa_service, "_verify_backup_code", new_callable=AsyncMock, return_value={"verified": False}
-                    ):
-                        with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
-                            await mfa_service.disable_mfa(
-                                user_id=mock_user_id,
-                                token="000000",
-                                db=mock_db,
-                            )
+                            with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
+                                await mfa_service.disable_mfa(
+                                    user_id=mock_user_id,
+                                    password="valid_password",
+                                    totp_token="000000",
+                                    db=mock_db,
+                                )
 
     @pytest.mark.asyncio
     async def test_disable_mfa_success(self, mfa_service, mock_db, mock_user_id):
@@ -388,19 +414,25 @@ class TestDisableMFA:
             "user_id": mock_user_id,
             "secret": "encrypted_secret",
         }
+        mock_user = {"id": mock_user_id, "hashed_password": "hashed", "tenant_id": 1}
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
-            with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):
-                with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
-                    mock_totp_instance = Mock()
-                    mock_totp_instance.verify.return_value = True
-                    mock_totp.return_value = mock_totp_instance
+        with patch("src.app.modules.users.crud.crud_users") as mock_crud:
+            mock_crud.get = AsyncMock(return_value=mock_user)
+            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
+                with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
+                    with patch.object(crud_mfa_methods, "delete", new_callable=AsyncMock):
+                        with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):
+                            with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
+                                mock_totp_instance = Mock()
+                                mock_totp_instance.verify.return_value = True
+                                mock_totp.return_value = mock_totp_instance
 
-                    result = await mfa_service.disable_mfa(
-                        user_id=mock_user_id,
-                        token="123456",
-                        db=mock_db,
-                    )
+                                result = await mfa_service.disable_mfa(
+                                    user_id=mock_user_id,
+                                    password="valid_password",
+                                    totp_token="123456",
+                                    db=mock_db,
+                                )
 
         assert result["message"] == "MFA disabled successfully"
 
@@ -440,14 +472,14 @@ class TestGetMFAStatus:
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=None):
             result = await mfa_service.get_mfa_status(mock_user_id, mock_db)
 
-        assert result["enabled"] is False
-        assert result["method"] is None
-        assert result["backup_codes_remaining"] == 0
+        assert result["is_enabled"] is False
+        assert result["backup_codes_remaining"] is None
+        assert result["last_used"] is None
 
     @pytest.mark.asyncio
     async def test_get_mfa_status_enabled(self, mfa_service, mock_db, mock_user_id):
         """Test MFA status when enabled."""
-        from app.modules.mfa.crud import crud_mfa_methods
+        from src.app.modules.mfa.crud import crud_mfa_methods
 
         mfa_method = {
             "id": "test-id",
@@ -460,10 +492,9 @@ class TestGetMFAStatus:
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
             result = await mfa_service.get_mfa_status(mock_user_id, mock_db)
 
-        assert result["enabled"] is True
-        assert result["method"] == "totp"
+        assert result["is_enabled"] is True
         assert result["backup_codes_remaining"] == 3
-        assert result["last_used_at"] is not None
+        assert result["last_used"] is not None
 
 
 class TestEncryptDecryptSecret:
@@ -494,15 +525,26 @@ class TestHashBackupCode:
     """Test backup code hashing."""
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_consistency(self, mfa_service):
-        """Test that same code produces same hash."""
+    async def test_hash_backup_code_produces_bcrypt_hash(self, mfa_service):
+        """Test that hashing produces a bcrypt hash."""
+        code = "BC-ABCDE-FGHIJ"
+
+        hash1 = await mfa_service._hash_backup_code(code)
+
+        # bcrypt hashes start with $2b$ and are 60 chars
+        assert hash1.startswith("$2b$")
+        assert len(hash1) == 60
+
+    @pytest.mark.asyncio
+    async def test_hash_backup_code_different_calls_different_hashes(self, mfa_service):
+        """Test that bcrypt produces unique hashes (due to salt)."""
         code = "BC-ABCDE-FGHIJ"
 
         hash1 = await mfa_service._hash_backup_code(code)
         hash2 = await mfa_service._hash_backup_code(code)
 
-        assert hash1 == hash2
-        assert hash1 == hashlib.sha256(code.encode()).hexdigest()
+        # bcrypt includes unique salt, so hashes should differ
+        assert hash1 != hash2
 
     @pytest.mark.asyncio
     async def test_hash_backup_code_different_codes_different_hashes(self, mfa_service):
@@ -520,10 +562,15 @@ class TestMFALockout:
     """Test MFA lockout mechanism after failed attempts."""
 
     @pytest.mark.asyncio
-    async def test_verify_totp_token_rate_limit_enforced(self, mfa_service, mock_db, mock_user_id):
-        """Test that rate limit is enforced after 5 failed attempts."""
-        from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
-        from src.app.core.utils.rate_limit import rate_limiter
+    async def test_verify_totp_token_multiple_failures_raise_unauthorized(
+        self, mfa_service, mock_db, mock_user_id
+    ):
+        """Test that multiple failed TOTP attempts raise UnauthorizedException.
+
+        Note: Rate limiting is enforced at the router layer, not in the service.
+        This test verifies the service correctly rejects invalid tokens.
+        """
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
         from src.app.modules.mfa.crud import crud_mfa_methods
         from src.app.modules.mfa.schemas import MFAVerifyRequest
 
@@ -541,33 +588,15 @@ class TestMFALockout:
                     mock_totp_instance.verify.return_value = False
                     mock_totp.return_value = mock_totp_instance
 
-                    # Mock rate limiter to enforce limit after 5 attempts
-                    with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
-                        # First 5 attempts: not rate limited, 6th: rate limited
-                        mock_rate_check.side_effect = [
-                            (False, 1),  # Attempt 1
-                            (False, 2),  # Attempt 2
-                            (False, 3),  # Attempt 3
-                            (False, 4),  # Attempt 4
-                            (False, 5),  # Attempt 5
-                            (True, 6),  # Attempt 6 - rate limited!
-                        ]
-
-                        # First 5 attempts should fail with UnauthorizedException
-                        for i in range(5):
-                            request = MFAVerifyRequest(totp_token="000000", backup_code=None)
-                            with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
-                                await mfa_service.verify_totp_token(
-                                    user_id=mock_user_id,
-                                    request=request,
-                                    db=mock_db,
-                                )
-
-                        # 6th attempt should be rate limited (in router, not service)
-                        # This test verifies the service correctly handles invalid tokens
-
-                        assert mock_rate_check.call_count == 6
-                        # The actual rate limiting happens in the router layer
+                    # Each failed attempt should raise UnauthorizedException
+                    for _ in range(5):
+                        request = MFAVerifyRequest(totp_token="000000", backup_code=None)
+                        with pytest.raises(UnauthorizedException, match="Invalid MFA token"):
+                            await mfa_service.verify_totp_token(
+                                user_id=mock_user_id,
+                                request=request,
+                                db=mock_db,
+                            )
 
 
 class TestBackupCodeUsage:
