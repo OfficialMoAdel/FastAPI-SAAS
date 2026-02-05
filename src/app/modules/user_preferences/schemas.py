@@ -128,6 +128,21 @@ class UserPreferencesUpdate(BaseUpdate):
         # Additional validation for logical consistency could be added
         return v
 
+    @field_validator("quiet_hours_end")
+    @classmethod
+    def validate_quiet_hours_range(cls, v: str | None, info) -> str | None:
+        """Validate quiet hours start and end are not equal."""
+        if v is None:
+            return v
+
+        # Get quiet_hours_start value if it exists
+        start = info.data.get("quiet_hours_start")
+        if start and v:
+            if start == v:
+                raise ValueError("quiet_hours_start and quiet_hours_end cannot be equal")
+
+        return v
+
 
 # ============================================================================
 # Response Schemas
