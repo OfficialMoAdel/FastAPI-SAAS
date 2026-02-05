@@ -11,6 +11,7 @@ Schemas for:
 from datetime import datetime
 from enum import Enum
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -109,14 +110,33 @@ class UserPreferencesUpdate(BaseUpdate):
     @field_validator("timezone")
     @classmethod
     def validate_timezone(cls, v: str | None) -> str | None:
-        """Validate timezone string."""
+        """Validate timezone string is a valid IANA timezone.
+
+        Args:
+            v: Timezone string to validate.
+
+        Returns:
+            Validated timezone string.
+
+        Raises:
+            ValueError: If timezone is invalid.
+        """
         if v is None:
             return v
-        # Basic validation - could use pytz for stricter validation
-        # For now, just ensure it's not empty and has reasonable format
         if not v or len(v.strip()) == 0:
             raise ValueError("Timezone cannot be empty")
-        return v.strip()
+
+        timezone_str = v.strip()
+
+        try:
+            ZoneInfo(timezone_str)
+            return timezone_str
+        except ZoneInfoNotFoundError:
+            valid_examples = ["UTC", "America/New_York", "Europe/London", "Asia/Tokyo", "Australia/Sydney"]
+            raise ValueError(
+                f"Invalid timezone: '{timezone_str}'. "
+                f"Must be a valid IANA timezone (e.g., {', '.join(valid_examples[:3])})"
+            )
 
     @field_validator("quiet_hours_start", "quiet_hours_end")
     @classmethod

@@ -1,15 +1,19 @@
 """Tier service layer - encapsulates all tier business logic."""
 
+import logging
 from typing import Any
 
 from fastcrud import paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from ...core.cache.warmer import warmer
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
 from .crud import crud_tiers
 from .models import Tier
 from .schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class TierService(BaseService[Tier]):
@@ -202,3 +206,47 @@ def _register_tier_service() -> None:
     from src.app.core.service_registry import register_service
 
     register_service("tier", lambda db: TierService(db))
+
+
+# ============================================================================
+# Cache Warming
+# ============================================================================
+
+
+@warmer.register("tiers")
+async def warm_tiers(session: AsyncSession) -> int:
+    """Warm tiers cache.
+
+    Fetches all tiers and stores them in Redis cache.
+    Low-cardinality, high-read data perfect for caching.
+
+    Args:
+        session: Database session
+
+    Returns:
+        Number of tiers cached
+    """
+    from src.app.core.cache.redis import redis_client
+    from src.app.core.json_utils import json_dumps
+
+    tiers_data: dict[str, Any] | int = await crud_tiers.get_multi(db=session, schema_to_select=TierRead)
+
+    cached_count = 0
+    if redis_client:
+        try:
+            if isinstance(tiers_data, dict):
+                data: list[dict[str, Any]] = tiers_data.get("data", [])
+            else:
+                data = []
+
+            for tier in data:
+                cache_key = f"tier:{tier.get('name', 'unknown')}"
+                await redis_client.setex(cache_key, 300, json_dumps(tier, as_str=True))
+                cached_count += 1
+
+            logger.info(f"Warmed cache for {cached_count} tiers")
+        except Exception as e:
+            logger.error(f"Failed to warm tiers cache: {e}")
+            return 0
+
+    return cached_count

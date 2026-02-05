@@ -7,7 +7,7 @@ All models follow row-level multi-tenancy via tenant_id foreign key.
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -103,3 +103,40 @@ class AISettings(Base):
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="ai_settings", init=False)
+
+
+class AITokenUsage(Base):
+    """AI token usage tracking for cost monitoring and analytics.
+
+    Tracks token usage per API call with cost estimation and user/tenant
+    attribution for billing and analytics purposes.
+    """
+
+    __tablename__ = "ai_token_usage"
+
+    id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=True)
+    user_id: Mapped[str | None] = mapped_column(ForeignKey("user.id"), index=True, nullable=True)
+    session_id: Mapped[str | None] = mapped_column(ForeignKey("ai_chat_sessions.id"), index=True, nullable=True)
+
+    provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
+    model: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+
+    prompt_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    completion_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
+    cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
+
+    usage_metadata: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default_factory=dict)
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default_factory=lambda: datetime.now(UTC),
+        nullable=False,
+        index=True,
+    )
+
+    # Relationships
+    tenant: Mapped["Tenant"] = relationship(back_populates="ai_token_usage", init=False)
+    user: Mapped["User"] = relationship(back_populates="ai_token_usage", init=False)
+    session: Mapped["AIChatSession"] = relationship(back_populates="ai_token_usage", init=False)

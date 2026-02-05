@@ -98,7 +98,7 @@ class AIProvider(ABC):
         pass
 
     @abstractmethod
-    async def generate_text_stream(
+    def generate_text_stream(
         self,
         prompt: str,
         model: str,

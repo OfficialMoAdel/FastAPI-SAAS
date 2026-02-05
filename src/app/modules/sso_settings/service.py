@@ -1,9 +1,14 @@
+import logging
 from typing import Any
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.cache.redis import redis_client
+from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
+
+logger = logging.getLogger(__name__)
 from src.app.core.exceptions.http_exceptions import (
     DuplicateValueException,
     NotFoundException,
@@ -190,3 +195,51 @@ def get_sso_settings_service(db: AsyncSession = Depends(async_get_db)) -> "SSOSe
 
 # Legacy singleton for backward compatibility - will be removed
 sso_settings_service = SSOSettingsService()
+
+
+# ============================================================================
+# Cache Warming
+# ============================================================================
+
+
+@warmer.register("sso_settings")
+async def warm_sso_settings(session: AsyncSession) -> int:
+    """Warm SSO settings cache.
+
+    Fetches active SSO providers and stores them in Redis cache.
+    Low-cardinality, high-read data perfect for caching.
+
+    Args:
+        session: Database session
+
+    Returns:
+        Number of SSO settings cached
+    """
+    from sqlalchemy import select
+
+    from src.app.core.json_utils import json_dumps
+
+    query = select(SSOSettings).where(SSOSettings.is_enabled)
+    result = await session.execute(query)
+    settings = result.scalars().all()
+
+    cached_count = 0
+    if redis_client:
+        try:
+            for setting in settings:
+                cache_key = f"sso_settings:{setting.provider}"
+                setting_data = {
+                    "id": setting.id,
+                    "provider": setting.provider,
+                    "is_enabled": setting.is_enabled,
+                    "additional_config": setting.additional_config or {},
+                }
+                await redis_client.setex(cache_key, 300, json_dumps(setting_data, as_str=True))
+                cached_count += 1
+
+            logger.info(f"Warmed cache for {cached_count} SSO settings")
+        except Exception as e:
+            logger.error(f"Failed to warm SSO settings cache: {e}")
+            return 0
+
+    return cached_count

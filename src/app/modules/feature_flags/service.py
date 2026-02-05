@@ -8,6 +8,7 @@ from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
+from ...core.cache.warmer import warmer
 from ...core.db.database import async_get_db
 from ...core.json_utils import json_dumps, json_loads
 from ...core.logger import get_logger
@@ -396,3 +397,53 @@ class _LegacyFeatureFlagsService:
 
 # Legacy singleton for backward compatibility
 feature_flags_service = _LegacyFeatureFlagsService()
+
+
+# ============================================================================
+# Cache Warming
+# ============================================================================
+
+
+@warmer.register("feature_flags")
+async def warm_feature_flags(session: AsyncSession) -> int:
+    """Warm feature flags cache.
+
+    Fetches all feature flags and stores them in Redis cache.
+    Low-cardinality, high-read data perfect for caching.
+
+    Args:
+        session: Database session
+
+    Returns:
+        Number of flags cached
+    """
+    from sqlalchemy import select
+
+    from .models import FeatureFlag
+
+    query = select(FeatureFlag)
+    result = await session.execute(query)
+    flags = result.scalars().all()
+
+    cached_count = 0
+    if redis_client:
+        try:
+            for flag in flags:
+                cache_key = f"feature_flag:{flag.key}"
+                flag_data = {
+                    "id": flag.id,
+                    "key": flag.key,
+                    "description": flag.description,
+                    "default_value": flag.default_value,
+                    "value_type": flag.value_type,
+                    "is_system": flag.is_system,
+                }
+                await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flag_data, as_str=True))
+                cached_count += 1
+
+            logger.info(f"Warmed cache for {cached_count} feature flags")
+        except Exception as e:
+            logger.error(f"Failed to warm feature flags cache: {e}")
+            return 0
+
+    return cached_count
