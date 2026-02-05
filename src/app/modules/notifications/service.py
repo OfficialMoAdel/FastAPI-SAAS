@@ -1,7 +1,7 @@
 """Notification service for sending emails with template support."""
 
 import asyncio
-from datetime import UTC, datetime
+from datetime import UTC, datetime, time
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from pathlib import Path
@@ -158,6 +158,30 @@ class NotificationService:
         -------
             Notification record
         """
+        # Check user preferences if user_id is provided
+        if user_id:
+            should_send = await self.should_send_notification(user_id, template_name)
+            if not should_send:
+                logger.info(
+                    "notification_skipped_by_user_preferences",
+                    user_id=user_id,
+                    template_name=template_name,
+                )
+                # Create notification record with skipped status
+                notification = Notification(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    template_name=template_name,
+                    to_email=to_email,
+                    subject="",
+                    status=NotificationStatus.FAILED,
+                )
+                notification.error_message = "Skipped by user preferences"
+                self.db.add(notification)
+                await self.db.commit()
+                await self.db.refresh(notification)
+                return notification
+
         # Rate limiting check (T105)
         # 100 emails/minute per tenant
         is_limited_min, _ = await rate_limiter.check_rate_limit(f"notif:min:{tenant_id}", 100, 60)
@@ -265,6 +289,89 @@ class NotificationService:
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    async def should_send_notification(
+        self,
+        user_id: int,
+        notification_type: str,
+        current_time: datetime | None = None,
+    ) -> bool:
+        """Check if a notification should be sent based on user preferences.
+
+        Args:
+            user_id: User ID to check preferences for
+            notification_type: Type of notification (e.g., "welcome", "password_reset")
+            current_time: Current time for quiet hours check (defaults to now)
+
+        Returns
+        -------
+            True if notification should be sent, False otherwise
+        """
+        from ...modules.user_preferences.models import UserPreferences
+
+        now = current_time or datetime.now(UTC)
+
+        # Fetch user preferences
+        query = select(UserPreferences).where(UserPreferences.user_id == user_id)
+        result = await self.db.execute(query)
+        prefs = result.scalar_one_or_none()
+
+        # If no preferences exist, default to sending
+        if not prefs:
+            return True
+
+        # Check if email notifications are enabled
+        if not prefs.email_notifications_enabled:
+            logger.debug(
+                "email_notifications_disabled",
+                user_id=user_id,
+                notification_type=notification_type,
+            )
+            return False
+
+        # Check if this notification type is disabled
+        if notification_type in prefs.disabled_notification_types:
+            logger.debug(
+                "notification_type_disabled",
+                user_id=user_id,
+                notification_type=notification_type,
+            )
+            return False
+
+        # Check quiet hours
+        if prefs.quiet_hours_enabled:
+            if prefs.quiet_hours_start and prefs.quiet_hours_end:
+                try:
+                    start_time = time.fromisoformat(prefs.quiet_hours_start)
+                    end_time = time.fromisoformat(prefs.quiet_hours_end)
+                    current_time_only = now.time()
+
+                    if start_time < end_time:
+                        # Same day range (e.g., 22:00 - 07:00)
+                        in_quiet_hours = start_time <= current_time_only < end_time
+                    else:
+                        # Cross-day range (e.g., 22:00 - 07:00)
+                        in_quiet_hours = current_time_only >= start_time or current_time_only < end_time
+
+                    if in_quiet_hours:
+                        logger.debug(
+                            "quiet_hours_active",
+                            user_id=user_id,
+                            notification_type=notification_type,
+                            quiet_hours_start=prefs.quiet_hours_start,
+                            quiet_hours_end=prefs.quiet_hours_end,
+                        )
+                        return False
+                except ValueError as e:
+                    logger.warning(
+                        "invalid_quiet_hours_format",
+                        user_id=user_id,
+                        start=prefs.quiet_hours_start,
+                        end=prefs.quiet_hours_end,
+                        error=str(e),
+                    )
+
+        return True
 
 
 # ARQ task for actual email delivery
