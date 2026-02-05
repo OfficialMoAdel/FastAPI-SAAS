@@ -78,6 +78,33 @@ class UserPreferencesUpdate(BaseUpdate):
         pattern=r"^[A-Z]{3}$",
         description="ISO 4217 currency code (e.g., 'USD', 'EUR', 'GBP')",
     )
+    # Notification preference fields (added per mdl1.2.3)
+    email_notifications_enabled: bool | None = Field(
+        None,
+        description="Enable email notifications delivery",
+    )
+    push_notifications_enabled: bool | None = Field(
+        None,
+        description="Enable push notifications delivery",
+    )
+    disabled_notification_types: list[str] | None = Field(
+        None,
+        description="List of notification type keys to disable (e.g., ['marketing', 'newsletter'])",
+    )
+    quiet_hours_enabled: bool | None = Field(
+        None,
+        description="Enable quiet hours - suppress notifications during specified hours",
+    )
+    quiet_hours_start: str | None = Field(
+        None,
+        pattern=r"^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$",
+        description="Quiet hours start time in HH:MM format (e.g., '22:00')",
+    )
+    quiet_hours_end: str | None = Field(
+        None,
+        pattern=r"^(0[0-9]|1[0-9]|2[0-3]):[0-5][0-9]$",
+        description="Quiet hours end time in HH:MM format (e.g., '08:00')",
+    )
 
     @field_validator("timezone")
     @classmethod
@@ -90,6 +117,16 @@ class UserPreferencesUpdate(BaseUpdate):
         if not v or len(v.strip()) == 0:
             raise ValueError("Timezone cannot be empty")
         return v.strip()
+
+    @field_validator("quiet_hours_start", "quiet_hours_end")
+    @classmethod
+    def validate_quiet_hours_format(cls, v: str | None) -> str | None:
+        """Validate quiet hours time format."""
+        if v is None:
+            return v
+        # Field pattern already validates HH:MM format
+        # Additional validation for logical consistency could be added
+        return v
 
 
 # ============================================================================
@@ -109,6 +146,31 @@ class UserPreferencesResponse(BaseModel):
     timezone: str = Field(..., description="User timezone")
     date_format: str = Field(..., description="Date format preference")
     currency: str = Field(..., description="Currency code")
+    # Notification preference fields (added per mdl1.2.3)
+    email_notifications_enabled: bool = Field(
+        default=True,
+        description="Email notifications delivery enabled",
+    )
+    push_notifications_enabled: bool = Field(
+        default=True,
+        description="Push notifications delivery enabled",
+    )
+    disabled_notification_types: list[str] = Field(
+        default_factory=list,
+        description="List of disabled notification type keys",
+    )
+    quiet_hours_enabled: bool = Field(
+        default=False,
+        description="Quiet hours enabled",
+    )
+    quiet_hours_start: str | None = Field(
+        default=None,
+        description="Quiet hours start time (HH:MM)",
+    )
+    quiet_hours_end: str | None = Field(
+        default=None,
+        description="Quiet hours end time (HH:MM)",
+    )
     updated_at: datetime = Field(..., description="Last update timestamp")
 
 

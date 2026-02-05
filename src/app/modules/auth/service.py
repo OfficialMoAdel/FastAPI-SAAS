@@ -15,6 +15,8 @@ from ...core.events import EventPriority, event_bus
 from ...core.exceptions.http_exceptions import UnauthorizedException
 from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
+    MFA_PENDING_EXPIRY_SECONDS,
+    MFAPendingTokenManager,
     TokenType,
     blacklist_token,
     blacklist_tokens,
@@ -23,6 +25,7 @@ from ...core.security import (
     verify_password,
     verify_token,
 )
+from ...modules.mfa.service import MFAService
 from ...modules.users.crud import crud_users
 from ...modules.users.service import get_user_service
 
@@ -166,6 +169,34 @@ class AuthService:
 
         # Clear failed attempts on success
         await redis.delete(login_attempts_key)
+
+        # Check if MFA is enabled for this user
+        mfa_service = MFAService()
+        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
+
+        if mfa_enabled:
+            # Generate MFA pending token
+            mfa_token_manager = MFAPendingTokenManager(redis)
+            mfa_token = await mfa_token_manager.create_token(
+                user_id=user["id"],
+                username=user["username"],
+            )
+
+            # Return partial authentication response
+            await self._publish_login_audit(
+                request,
+                username,
+                True,
+                tenant_id=user["tenant_id"],
+                user_id=user["id"],
+            )
+
+            return {
+                "mfa_required": "true",
+                "mfa_token": mfa_token,
+                "expires_in": str(MFA_PENDING_EXPIRY_SECONDS),
+                "message": "MFA verification required",
+            }
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         # tier_name allows middleware to apply correct limits without DB lookup

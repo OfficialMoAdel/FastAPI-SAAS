@@ -1,4 +1,5 @@
 import os
+import sys
 from unittest import mock
 
 import pytest
@@ -129,6 +130,7 @@ class TestEnvironmentValidator:
             "POSTGRES_PASSWORD": "StrongDBPassword123!",
             "ENVIRONMENT": "production",
             "DEBUG": "false",
+            "AI_ENABLED": "false",  # Disable AI to avoid Ollama connectivity check
         }
 
         with mock.patch.dict(os.environ, env_vars):
@@ -137,3 +139,59 @@ class TestEnvironmentValidator:
             assert success is True
             # Should not log errors
             mock_logger.error.assert_not_called()
+
+    def test_check_ai_providers_disabled(self, mock_env):
+        """Test AI provider validation when AI is disabled."""
+        env_vars = {"AI_ENABLED": "false"}
+
+        with mock.patch.dict(os.environ, env_vars):
+            results = EnvironmentValidator._check_ai_providers()
+            assert len(results) == 0
+
+    def test_check_ai_providers_ollama_missing_url(self, mock_env):
+        """Test Ollama validation when base URL is missing."""
+        env_vars = {"AI_ENABLED": "true", "AI_ACTIVE_PROVIDER": "ollama"}
+
+        with mock.patch.dict(os.environ, env_vars):
+            results = EnvironmentValidator._check_ai_providers()
+            assert len(results) == 1
+            assert results[0].key == "OLLAMA_BASE_URL"
+            assert "required" in results[0].message.lower()
+            assert results[0].severity == ValidationSeverity.ERROR
+
+    @mock.patch("httpx.AsyncClient")
+    def test_check_ai_providers_ollama_unreachable(self, mock_client, mock_env):
+        """Test Ollama validation when server is unreachable."""
+        mock_response = mock.Mock()
+        mock_response.status_code = 500
+        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+
+        env_vars = {
+            "AI_ENABLED": "true",
+            "AI_ACTIVE_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://localhost:11434",
+        }
+
+        with mock.patch.dict(os.environ, env_vars):
+            results = EnvironmentValidator._check_ai_providers()
+            assert len(results) == 1
+            assert results[0].key == "OLLAMA_BASE_URL"
+            assert "not reachable" in results[0].message.lower()
+            assert results[0].severity == ValidationSeverity.WARNING
+
+    @mock.patch("httpx.AsyncClient")
+    def test_check_ai_providers_ollama_reachable(self, mock_client, mock_env):
+        """Test Ollama validation when server is reachable."""
+        mock_response = mock.Mock()
+        mock_response.status_code = 200
+        mock_client.return_value.__aenter__.return_value.get.return_value = mock_response
+
+        env_vars = {
+            "AI_ENABLED": "true",
+            "AI_ACTIVE_PROVIDER": "ollama",
+            "OLLAMA_BASE_URL": "http://localhost:11434",
+        }
+
+        with mock.patch.dict(os.environ, env_vars):
+            results = EnvironmentValidator._check_ai_providers()
+            assert len(results) == 0

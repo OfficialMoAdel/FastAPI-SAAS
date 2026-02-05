@@ -67,6 +67,9 @@ class EnvironmentValidator:
         # Check production settings
         results.extend(cls._check_production_settings())
 
+        # Check AI provider configuration
+        results.extend(cls._check_ai_providers())
+
         return results
 
     @classmethod
@@ -120,6 +123,69 @@ class EnvironmentValidator:
                         message="DEBUG should not be enabled in production",
                     )
                 )
+
+        return results
+
+    @classmethod
+    def _check_ai_providers(cls) -> list[ValidationResult]:
+        """Check AI provider configuration."""
+        results: list[ValidationResult] = []
+
+        ai_enabled = os.getenv("AI_ENABLED", "true").lower() in ["true", "1"]
+        if not ai_enabled:
+            return results
+
+        active_provider = os.getenv("AI_ACTIVE_PROVIDER", "ollama").lower()
+
+        if active_provider == "ollama":
+            ollama_base_url = os.getenv("OLLAMA_BASE_URL")
+            if not ollama_base_url:
+                results.append(
+                    ValidationResult(
+                        key="OLLAMA_BASE_URL",
+                        severity=ValidationSeverity.ERROR,
+                        message="OLLAMA_BASE_URL is required when AI_ACTIVE_PROVIDER is 'ollama'",
+                    )
+                )
+            else:
+                try:
+                    import httpx
+                except ImportError:
+                    results.append(
+                        ValidationResult(
+                            key="OLLAMA_BASE_URL",
+                            severity=ValidationSeverity.INFO,
+                            message=f"OLLAMA_BASE_URL is set to {ollama_base_url} (connectivity check skipped - httpx not available)",
+                        )
+                    )
+                else:
+                    from httpx import AsyncClient
+
+                    async def check_ollama() -> bool:
+                        async with AsyncClient(timeout=5.0) as client:
+                            response = await client.get(f"{ollama_base_url}/api/tags")
+                            return response.status_code == 200
+
+                    import asyncio
+
+                    try:
+                        is_reachable = asyncio.run(check_ollama())
+                        if not is_reachable:
+                            results.append(
+                                ValidationResult(
+                                    key="OLLAMA_BASE_URL",
+                                    severity=ValidationSeverity.WARNING,
+                                    message=f"Ollama at {ollama_base_url} is not reachable",
+                                )
+                            )
+                    except Exception:
+                        results.append(
+                            ValidationResult(
+                                key="OLLAMA_BASE_URL",
+                                severity=ValidationSeverity.WARNING,
+                                message=f"Could not verify Ollama connectivity at {ollama_base_url}",
+                            )
+                        )
 
         return results
 

@@ -16,6 +16,7 @@ from ...modules.feature_flags.router import router as feature_flags_router
 from ...modules.files.router import router as files_router
 from ...modules.health.router import router as health_router
 from ...modules.magic_link.router import router as magic_link_router
+from ...modules.mfa.router import router as mfa_router
 from ...modules.notifications.router import router as notifications_router
 from ...modules.passkey.router import router as passkey_router
 from ...modules.posts.router import router as posts_router
@@ -42,6 +43,7 @@ router.include_router(auth_router)
 router.include_router(magic_link_router)
 router.include_router(passkey_router)
 router.include_router(security_router)  # Passkey convenience wrapper
+router.include_router(mfa_router)  # MFA routes (requires auth)
 router.include_router(users_router)
 router.include_router(user_preferences_router)
 router.include_router(posts_router)

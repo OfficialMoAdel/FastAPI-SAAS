@@ -154,6 +154,7 @@ from src.app.modules.billing.models import (
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
 from src.app.modules.files.models import File
 from src.app.modules.magic_link.models import MagicLink
+from src.app.modules.mfa.models import MFAMethod
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification
 from src.app.modules.passkey.models import PasskeyCredential
 from src.app.modules.posts.models import Post

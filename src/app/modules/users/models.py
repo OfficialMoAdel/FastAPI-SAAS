@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AISettings
     from src.app.modules.billing.models import BillingRecord, UserSubscription
     from src.app.modules.files.models import File
+    from src.app.modules.mfa.models import MFAMethod
     from src.app.modules.notifications.models import Notification
     from src.app.modules.rbac.models import Role
     from src.app.modules.tenants.models import Tenant
@@ -70,6 +71,7 @@ class User(Base):
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
     files: Mapped[list["File"]] = relationship(back_populates="user", init=False)
     # Note: api_keys relationship is defined in APIKey model using back_populates="user"
+    mfa_methods: Mapped[list["MFAMethod"]] = relationship(back_populates="user", init=False)
     # Billing & AI relationships (Phase 3/5)
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="user", init=False)
     billing_records: Mapped[list["BillingRecord"]] = relationship(back_populates="user", init=False)

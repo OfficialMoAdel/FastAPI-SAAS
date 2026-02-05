@@ -7,7 +7,7 @@ intentional exception to Constitution VII, similar to host-level sso_settings.
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, text
+from sqlalchemy import Boolean, DateTime, ForeignKey, String, text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -27,6 +27,9 @@ DEFAULT_PREFERENCES = {
     "date_format": "YYYY-MM-DD",
     "currency": "USD",
 }
+
+# Default notification preferences
+DEFAULT_NOTIFICATION_PREFERENCES: list[str] = []  # No types disabled by default
 
 
 class UserPreferences(Base):
@@ -57,6 +60,42 @@ class UserPreferences(Base):
         JSONB,
         nullable=False,
         default_factory=lambda: DEFAULT_PREFERENCES.copy(),
+    )
+
+    # Notification preferences (added per mdl1.2.1)
+    email_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+        init=False,
+    )
+    push_notifications_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=True,
+        nullable=False,
+        init=False,
+    )
+    disabled_notification_types: Mapped[list[str]] = mapped_column(
+        JSONB,
+        default_factory=lambda: DEFAULT_NOTIFICATION_PREFERENCES.copy(),
+        nullable=False,
+        init=False,
+    )
+    quiet_hours_enabled: Mapped[bool] = mapped_column(
+        Boolean,
+        default=False,
+        nullable=False,
+        init=False,
+    )
+    quiet_hours_start: Mapped[str | None] = mapped_column(
+        String(5),
+        nullable=True,
+        init=False,
+    )
+    quiet_hours_end: Mapped[str | None] = mapped_column(
+        String(5),
+        nullable=True,
+        init=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),

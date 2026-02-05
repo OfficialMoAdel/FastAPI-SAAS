@@ -1,24 +1,28 @@
 import asyncio
+import json
 import logging
 from datetime import UTC, datetime, timedelta
 from enum import Enum
-from typing import Any
+from typing import Any, cast
 
 import bcrypt
 import jwt
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
+from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..config import settings
 from ..db.crud_token_blacklist import crud_token_blacklist
+from ..json_utils import json_dumps, json_loads
 from ..schemas import TokenBlacklistCreate, TokenData
 from .token_blacklist_cache import (
     add_token_to_blacklist,
     add_tokens_to_blacklist,
     is_token_blacklisted,
 )
+from .tokens import TokenGenerator
 
 SECRET_KEY: SecretStr = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
@@ -187,3 +191,96 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
             await add_token_to_blacklist(token, expires_at)
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
+
+
+# MFA pending token constants
+MFA_PENDING_EXPIRY_SECONDS = 300  # 5 minutes
+
+
+class MFAPendingTokenManager:
+    """Manager for MFA pending tokens.
+
+    These tokens are issued after successful password authentication
+    when MFA is enabled. They allow completion of the login flow
+    with MFA verification.
+
+    Features:
+    - 5-minute expiration
+    - One-time use
+    - Limited scope (only valid for MFA verification)
+    """
+
+    def __init__(self, redis: Redis):
+        """Initialize MFA pending token manager.
+
+        Args:
+            redis: Async Redis client instance.
+        """
+        self._redis = redis
+
+    async def create_token(self, user_id: int, username: str) -> str:
+        """Create MFA pending token.
+
+        Args:
+            user_id: User ID for the pending login.
+            username: Username for the pending login.
+
+        Returns:
+            Generated MFA pending token.
+        """
+        token = TokenGenerator.generate_magic_link_token()
+
+        # Build token data
+        token_data = {
+            "user_id": user_id,
+            "username": username,
+            "scope": "mfa_pending",
+        }
+
+        # Store in Redis with expiration
+        key = f"mfa_pending:{token}"
+        await self._redis.setex(
+            key,
+            MFA_PENDING_EXPIRY_SECONDS,
+            json_dumps(token_data, as_str=True),
+        )
+
+        return token
+
+    async def validate_token(self, token: str) -> dict[str, Any] | None:
+        """Validate MFA pending token (one-time use, 5-min expiry).
+
+        Args:
+            token: The MFA pending token to validate.
+
+        Returns:
+            Token metadata dict if valid, None if expired/used/invalid.
+        """
+        key = f"mfa_pending:{token}"
+
+        # Get token data
+        data = await self._redis.get(key)
+
+        if data is None:
+            return None
+
+        # Delete immediately (one-time use)
+        await self._redis.delete(key)
+
+        try:
+            token_data = cast(dict[str, Any], json_loads(data))
+            return token_data
+        except json.JSONDecodeError:
+            return None
+
+
+def get_mfa_pending_token_manager(redis: Redis) -> MFAPendingTokenManager:
+    """Get MFAPendingTokenManager instance for dependency injection.
+
+    Args:
+        redis: Async Redis client from dependency.
+
+    Returns:
+        MFAPendingTokenManager instance.
+    """
+    return MFAPendingTokenManager(redis=redis)
