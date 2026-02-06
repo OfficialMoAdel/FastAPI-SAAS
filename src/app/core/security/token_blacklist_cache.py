@@ -48,9 +48,9 @@ def _get_negative_cache_ttl() -> int:
     Default: 300 seconds (5 minutes) - acceptable for most SaaS applications
     where immediate revocation is not critical.
 
-    Override via environment: R1_UNIFIED__TOKEN_NEGATIVE_CACHE_TTL=60
+    Override via environment: R1_TOKEN_NEGATIVE_CACHE_TTL=60
     """
-    return settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL
+    return settings.TOKEN_NEGATIVE_CACHE_TTL
 
 
 def _token_cache_key(token: str) -> str:

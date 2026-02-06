@@ -140,10 +140,12 @@ class TestAuthServiceLockout:
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
             patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_access,
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
+            patch("src.app.modules.auth.service.MFAService.is_mfa_enabled", new_callable=AsyncMock) as mock_mfa_check,
         ):
             mock_auth.return_value = mock_user
             mock_access.return_value = "access_token"
             mock_refresh.return_value = "refresh_token"
+            mock_mfa_check.return_value = False
 
             await auth_service.login("testuser", "correct_password", mock_response, mock_request, mock_db, mock_redis)
 

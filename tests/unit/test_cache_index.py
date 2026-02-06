@@ -68,13 +68,13 @@ class TestAddToTenantIndex:
     @pytest.mark.asyncio
     async def test_calls_sadd_with_correct_args(self) -> None:
         """Verify SADD is called with index key and cache key."""
-        mock_redis = AsyncMock()
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await add_to_tenant_index(1, "tenant:1:user:42")
 
             assert result is True
-            mock_redis.sadd.assert_called_once_with(
+            mock_pipeline.sadd.assert_called_once_with(
                 "tenant_index:1", "tenant:1:user:42"
             )
 
@@ -92,13 +92,13 @@ class TestRemoveFromTenantIndex:
     @pytest.mark.asyncio
     async def test_calls_srem_with_correct_args(self) -> None:
         """Verify SREM is called with index key and cache key."""
-        mock_redis = AsyncMock()
+        mock_redis, mock_pipeline = create_mock_redis_with_pipeline()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await remove_from_tenant_index(1, "tenant:1:user:42")
 
             assert result is True
-            mock_redis.srem.assert_called_once_with(
+            mock_pipeline.srem.assert_called_once_with(
                 "tenant_index:1", "tenant:1:user:42"
             )
 
@@ -269,7 +269,7 @@ class TestInvalidateTenantCache:
     @pytest.mark.asyncio
     async def test_prefix_no_match_returns_zero(self) -> None:
         """Should return 0 when prefix doesn't match any keys."""
-        mock_redis = AsyncMock()
+        mock_redis, _ = create_mock_redis_with_pipeline()
         keys = {"tenant:1:user:42", "tenant:1:user:43"}
         mock_redis.smembers.return_value = keys
 

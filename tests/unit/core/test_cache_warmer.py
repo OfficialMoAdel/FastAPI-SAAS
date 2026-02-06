@@ -24,16 +24,16 @@ class TestCacheWarmerRegister:
         """Test that registering same name overwrites existing warmer."""
         test_warmer = CacheWarmer()
 
-        @test_warmer.register("test_warmer")
+        @test_warmer.register("tenant")
         async def first_warm(session):
             return 1
 
-        @test_warmer.register("test_warmer")
+        @test_warmer.register("tenant")
         async def second_warm(session):
             return 2
 
         assert len(test_warmer.list_warmers()) == 1
-        result = await test_warmer.warm_specific("test_warmer", MagicMock())
+        result = await test_warmer.warm_specific("tenant", MagicMock())
         assert result.tenants_cached == 2
 
     async def test_singleton_warmer_instance(self):
@@ -119,8 +119,8 @@ class TestWarmAllExecution:
         with caplog.at_level("INFO"):
             await test_warmer.warm_all(mock_session)
 
-        assert any("Starting cache warming" in record.message for record in caplog.records)
-        assert any("Cache warming complete" in record.message for record in caplog.records)
+        assert any("[START]" in record.message for record in caplog.records)
+        assert any("[COMPLETE]" in record.message for record in caplog.records)
 
     async def test_warm_all_returns_empty_result_when_no_warmers(self):
         """Test that warm_all returns empty result when no warmers registered."""
@@ -237,7 +237,7 @@ class TestWarmingObservability:
         with caplog.at_level("INFO"):
             await test_warmer.warm_all(mock_session)
 
-        assert any("15 items" in record.message for record in caplog.records)
+        assert any("items=15" in record.message for record in caplog.records)
 
     async def test_warm_all_logs_error_count(self, caplog):
         """Test that warm_all logs error count when errors occur."""
@@ -265,7 +265,7 @@ class TestWarmingObservability:
         with caplog.at_level("INFO"):
             await test_warmer.warm_all(mock_session)
 
-        assert any("Starting cache warming" in record.message for record in caplog.records)
+        assert any("[START]" in record.message for record in caplog.records)
 
     async def test_warm_all_logs_end_time(self, caplog):
         """Test that warm_all logs end time."""
@@ -279,4 +279,4 @@ class TestWarmingObservability:
         with caplog.at_level("INFO"):
             await test_warmer.warm_all(mock_session)
 
-        assert any("Cache warming complete" in record.message for record in caplog.records)
+        assert any("[COMPLETE]" in record.message for record in caplog.records)

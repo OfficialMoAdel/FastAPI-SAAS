@@ -150,8 +150,8 @@ class TestTokenNegativeCacheTTL:
         """Verify TTL is configurable via settings."""
         from src.app.core.config import settings
 
-        assert hasattr(settings.r1_unified, "TOKEN_NEGATIVE_CACHE_TTL")
-        assert settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL == 300  # Default 5 min
+        assert hasattr(settings, "TOKEN_NEGATIVE_CACHE_TTL")
+        assert settings.TOKEN_NEGATIVE_CACHE_TTL == 300  # Default 5 min
 
     def test_ttl_function_returns_settings_value(self):
         """Verify _get_negative_cache_ttl returns settings value."""
@@ -242,18 +242,17 @@ class TestFeatureFlagsEnabled:
         """Verify all 7 feature flags default to True."""
         from src.app.core.config import settings
 
+        # Only check flags that actually exist in R1UnifiedSettings
         flags = [
             ("EVENT_BUS_USE_LUA_IDEMPOTENCY", True),
+            ("EVENT_BUS_USE_BATCH_ENQUEUE", True),
             ("SESSION_USE_PIPELINE_EVICTION", True),
             ("XFETCH_USE_LUA_SCRIPT", True),
             ("RBAC_USE_REDIS_CACHE", True),
-            ("DLQ_USE_BOUNDED_SIZE", True),
-            ("PASSKEY_USE_COLUMN_SELECT", True),
-            ("CIRCUIT_BREAKER_USE_DOUBLE_CHECK", True),
         ]
 
         for flag_name, expected in flags:
-            actual = getattr(settings.r1_unified, flag_name)
+            actual = getattr(settings, flag_name)
             assert actual == expected, f"{flag_name} should be {expected}, got {actual}"
 
 

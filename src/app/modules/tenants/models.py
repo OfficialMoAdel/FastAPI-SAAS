@@ -8,7 +8,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from ...core.db.database import Base
 
 if TYPE_CHECKING:
-    from src.app.modules.ai.models import AIChatSession
+    from src.app.modules.ai.models import AIChatSession, AITokenUsage
     from src.app.modules.audit_logs.models import AuditLog
     from src.app.modules.billing.models import Product, StripeSettings, SubscriptionPlan
     from src.app.modules.feature_flags.models import FeatureFlagOverride
@@ -64,3 +64,4 @@ class Tenant(Base):
     subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(back_populates="tenant", init=False)
     products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False)
     ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False)
+    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="tenant", init=False)

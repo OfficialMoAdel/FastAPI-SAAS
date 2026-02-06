@@ -40,6 +40,7 @@ class AIChatSession(Base):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_sessions", init=False)
     user: Mapped["User"] = relationship(back_populates="ai_chat_sessions", init=False)
+    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="session", init=False)
     messages: Mapped[list["AIChatMessage"]] = relationship(
         back_populates="session",
         init=False,
