@@ -435,6 +435,34 @@ class R1UnifiedSettings(BaseSettings):
     RBAC_CACHE_TTL_SECONDS: int = 86400
     """TTL in seconds for RBAC permission cache. Default 24 hours (86400 seconds)."""
 
+    # Circuit breaker settings
+    CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = True
+    """Use double-check pattern for TOCTOU race prevention in circuit breaker (P4-1)."""
+
+    # DLQ (Dead Letter Queue) settings
+    DLQ_USE_BOUNDED_SIZE: bool = True
+    """Use bounded size for DLQ with LTRIM (P3-1)."""
+
+    DLQ_MAX_SIZE: int = 10000
+    """Maximum size of the DLQ. Default 10000 entries."""
+
+    DLQ_ALERT_THRESHOLD_PCT: float = 80.0
+    """Alert when DLQ reaches this percentage of max size. Default 80%."""
+
+    # Session management settings
+    SESSION_MAX_EVICTION_BATCH_SIZE: int = 100
+    """Maximum number of sessions to evict in a single batch."""
+
+    # Passkey settings
+    PASSKEY_DECRYPT_CONCURRENCY_LIMIT: int = 10
+    """Maximum concurrent passkey decryption operations."""
+
+    PASSKEY_USE_COLUMN_SELECT: bool = True
+    """Use column-specific SELECT for credential_id only (P3-2)."""
+
+    PASSKEY_MAX_CREDENTIALS_PER_USER: int = 10
+    """Maximum number of passkey credentials per user."""
+
 
 class PerformanceSettings(BaseSettings):
     """Performance optimization feature flags and configuration.

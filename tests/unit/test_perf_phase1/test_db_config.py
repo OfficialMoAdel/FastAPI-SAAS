@@ -1,4 +1,5 @@
 import pytest
+from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_engine
@@ -9,6 +10,10 @@ async def test_db_pool_timeout_config():
     """Test that database engine has correct pool timeout configuration."""
     # Access the underlying pool
     pool = async_engine.pool
+
+    # Skip if using NullPool (SQLite in tests)
+    if isinstance(pool, NullPool):
+        pytest.skip("NullPool does not support pool configuration (SQLite test mode)")
 
     # Verify pool settings
     assert pool.size() == settings.DB_POOL_SIZE

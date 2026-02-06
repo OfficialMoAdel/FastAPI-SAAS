@@ -1,4 +1,4 @@
-from unittest.mock import ANY, AsyncMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -59,7 +59,15 @@ class TestTenantSlugNormalization:
 
         with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.exists.return_value = False
-            mock_crud.create.return_value = {"id": 1, "slug": "myslug", "name": "Test"}
+            # Return a mock Tenant object, not a dict
+            mock_tenant = MagicMock()
+            mock_tenant.id = 1
+            mock_tenant.slug = "myslug"
+            mock_tenant.name = "Test"
+            mock_tenant.is_active = True
+            mock_tenant.created_at = None
+            mock_tenant.updated_at = None
+            mock_crud.create.return_value = mock_tenant
 
             await service.create_tenant(tenant_data)
 

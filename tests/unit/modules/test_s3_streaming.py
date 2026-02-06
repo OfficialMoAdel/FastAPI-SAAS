@@ -66,7 +66,7 @@ def mock_botocore():
 async def test_streaming_upload_with_feature_flag(s3_storage, mock_s3_client):
     """Test streaming upload when FEATURE_STREAMING_UPLOADS is True."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"test file content" * 100
         mock_file = MockUploadFile(content, len(content))
@@ -101,7 +101,7 @@ async def test_streaming_upload_with_feature_flag(s3_storage, mock_s3_client):
 async def test_streaming_upload_resets_file_position(s3_storage, mock_s3_client):
     """Test that streaming upload resets file position to 0 before upload."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"test content"
         mock_file = MockUploadFile(content, len(content))
@@ -123,7 +123,7 @@ async def test_streaming_upload_resets_file_position(s3_storage, mock_s3_client)
 async def test_streaming_upload_without_size_attribute(s3_storage, mock_s3_client):
     """Test streaming upload when file has no size attribute."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"test content"
         mock_file = BytesIO(content)
@@ -145,7 +145,7 @@ async def test_streaming_upload_without_size_attribute(s3_storage, mock_s3_clien
 async def test_legacy_upload_when_feature_flag_false(s3_storage, mock_s3_client):
     """Test legacy upload (read into memory) when FEATURE_STREAMING_UPLOADS is False."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
+        mock_settings.FEATURE_STREAMING_UPLOADS = False
 
         content = b"test content" * 100
         mock_file = BytesIO(content)
@@ -176,7 +176,7 @@ async def test_legacy_upload_when_feature_flag_false(s3_storage, mock_s3_client)
 async def test_streaming_upload_error_handling(s3_storage, mock_s3_client):
     """Test error handling in streaming upload."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"test content"
         mock_file = BytesIO(content)
@@ -199,7 +199,7 @@ async def test_streaming_upload_error_handling(s3_storage, mock_s3_client):
 async def test_legacy_upload_error_handling(s3_storage, mock_s3_client):
     """Test error handling in legacy upload."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = False
+        mock_settings.FEATURE_STREAMING_UPLOADS = False
 
         content = b"test content"
         mock_file = BytesIO(content)
@@ -222,7 +222,7 @@ async def test_legacy_upload_error_handling(s3_storage, mock_s3_client):
 async def test_large_file_uses_multipart(s3_storage, mock_s3_client):
     """Test that large files trigger multipart upload."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"x" * (10 * 1024 * 1024)
         mock_file = MockUploadFile(content, len(content))
@@ -245,7 +245,7 @@ async def test_large_file_uses_multipart(s3_storage, mock_s3_client):
 async def test_small_file_uses_multipart_config(s3_storage, mock_s3_client):
     """Test that small files still get TransferConfig (multipart is automatic)."""
     with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
-        mock_settings.performance.FEATURE_STREAMING_UPLOADS = True
+        mock_settings.FEATURE_STREAMING_UPLOADS = True
 
         content = b"x" * 1000
         mock_file = MockUploadFile(content, len(content))

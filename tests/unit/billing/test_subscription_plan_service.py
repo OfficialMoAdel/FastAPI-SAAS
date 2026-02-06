@@ -41,20 +41,20 @@ async def test_get_plans_sorted(db_session, tenant):
     )
 
     # Create plans (assuming create_plan works from previous tasks)
-    # We need to mock get_tenant_context or rely on contextvar if set by fixture?
+    # We need to mock get_current_tenant or rely on contextvar if set by fixture?
     # db_session fixture doesn't set tenant context automatically in service logic?
-    # Service calls `get_tenant_context()`.
+    # Service calls `get_current_tenant()`.
     # We need to ensure that returns the tenant.
     # tests/conftest.py might handle this?
     # Usually integration/unit tests need to set the token or mock the context.
 
-    # For this test, we can mock `get_tenant_context` or just insert directly via crud
+    # For this test, we can mock `get_current_tenant` or just insert directly via crud
     # to avoid context issues if possible, but we are testing Service which calls crud.
 
-    # Let's try to mock get_tenant_context in the test using patch.
+    # Let's try to mock get_current_tenant in the test using patch.
     from unittest.mock import patch
 
-    with patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant):
+    with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
         await service.create_plan(plan1_in)
         await service.create_plan(plan2_in)
         await service.create_plan(plan3_in)
@@ -91,10 +91,10 @@ async def test_create_update_delete_plan(db_session, tenant):
         name="Lifecycle Plan", price_monthly_cents=500, price_yearly_cents=5000, currency="usd", is_active=True
     )
 
-    # We need to mock get_tenant_context because service calls it
+    # We need to mock get_current_tenant because service calls it
     from unittest.mock import patch
 
-    with patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant):
+    with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
         plan = await service.create_plan(plan_in)
         # FastCRUD v0.20.0 returns dict when schema_to_select is provided
         plan_id = plan["id"]

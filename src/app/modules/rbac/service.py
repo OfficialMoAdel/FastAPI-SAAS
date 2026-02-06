@@ -14,7 +14,7 @@ from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_tenant
+from ...core.tenancy.context import get_current_tenant
 from ...core.config import settings
 from ...core.db.database import async_get_db
 from ...core.json_utils import json_dumps, json_loads

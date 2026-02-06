@@ -346,6 +346,7 @@ class TestPydanticOptimization:
             "email": "test@example.com",
             "profile_image_url": "https://example.com/img.png",
             "tier_id": 1,
+            "tenant_id": 1,
         }
         iterations = 5000
 
@@ -387,6 +388,7 @@ class TestPydanticOptimization:
             email = "test@example.com"
             profile_image_url = "https://example.com/img.png"
             tier_id = 1
+            tenant_id = 1
 
         mock_user = MockUser()
 
@@ -402,6 +404,7 @@ class TestPydanticOptimization:
                     "email": mock_user.email,
                     "profile_image_url": mock_user.profile_image_url,
                     "tier_id": mock_user.tier_id,
+                    "tenant_id": mock_user.tenant_id,
                 }
             )
             return validated.model_dump()
@@ -417,6 +420,7 @@ class TestPydanticOptimization:
                 "email": mock_user.email,
                 "profile_image_url": mock_user.profile_image_url,
                 "tier_id": mock_user.tier_id,
+                "tenant_id": mock_user.tenant_id,
             }
 
         # Measure baseline
@@ -452,6 +456,7 @@ class TestPydanticOptimization:
             email = "test@example.com"
             profile_image_url = "https://example.com/img.png"
             tier_id = 1
+            tenant_id = 1
 
         mock_user = MockUser()
 
@@ -465,6 +470,7 @@ class TestPydanticOptimization:
             "email": mock_user.email,
             "profile_image_url": mock_user.profile_image_url,
             "tier_id": mock_user.tier_id,
+            "tenant_id": mock_user.tenant_id,
         }
 
         # Verify all UserRead fields are present
@@ -574,6 +580,7 @@ class TestBenchmarkSummary:
             "email": "test@example.com",
             "profile_image_url": "https://example.com/img.png",
             "tier_id": 1,
+            "tenant_id": 1,
         }
 
         start = time.perf_counter_ns()

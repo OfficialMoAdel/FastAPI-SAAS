@@ -162,14 +162,16 @@ class TestRateLimitMiddlewareTenantIntegration:
         premium_tenant = MagicMock()
         premium_tenant.id = 1
         premium_tenant.slug = "premium-co"
-        premium_tenant.tier_id = 2  # Premium tier
+        premium_tenant.name = "Premium Company"
+        premium_tenant.is_active = True
 
         set_tenant_context(premium_tenant)
 
         tenant = get_tenant_context()
 
-        # Rate limiter could now use tenant.tier_id for limit lookup
-        assert tenant.tier_id == 2
+        # Verify tenant context was set correctly
+        assert tenant.id == 1
+        assert tenant.slug == "premium-co"
 
     @pytest.mark.asyncio
     async def test_rate_limit_falls_back_without_tenant(self):

@@ -10,24 +10,6 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
-from fastapi import FastAPI
-from fastapi.testclient import TestClient
-
-from src.app.modules.audit_logs.router import router
-
-
-@pytest.fixture
-def app():
-    """FastAPI app with audit logs router."""
-    app = FastAPI()
-    app.include_router(router)
-    return app
-
-
-@pytest.fixture
-def client(app):
-    """Test client."""
-    return TestClient(app)
 
 
 @pytest.fixture

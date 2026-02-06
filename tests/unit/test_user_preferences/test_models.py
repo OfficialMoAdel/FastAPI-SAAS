@@ -168,6 +168,12 @@ class TestUserPreferencesSchemas:
             "timezone",
             "date_format",
             "currency",
+            "email_notifications_enabled",
+            "push_notifications_enabled",
+            "disabled_notification_types",
+            "quiet_hours_enabled",
+            "quiet_hours_start",
+            "quiet_hours_end",
             "updated_at",
         }
         assert set(fields.keys()) == expected

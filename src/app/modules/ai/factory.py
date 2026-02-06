@@ -143,7 +143,9 @@ class AIProviderFactory:
                     message="Missing API key for OpenAI. Set OPENAI_API_KEY environment variable.",
                 )
             provider_config["api_key"] = resolved_api_key
-            provider_config["base_url"] = base_url or getattr(settings, "OPENAI_BASE_URL", None)
+            resolved_base_url = base_url or getattr(settings, "OPENAI_BASE_URL", None)
+            if resolved_base_url:
+                provider_config["base_url"] = resolved_base_url
         elif provider_name == "anthropic":
             resolved_api_key = api_key or getattr(settings, "ANTHROPIC_API_KEY", None)
             if not resolved_api_key:
@@ -152,7 +154,9 @@ class AIProviderFactory:
                     message="Missing API key for Anthropic. Set ANTHROPIC_API_KEY environment variable.",
                 )
             provider_config["api_key"] = resolved_api_key
-            provider_config["base_url"] = base_url or getattr(settings, "ANTHROPIC_BASE_URL", None)
+            resolved_base_url = base_url or getattr(settings, "ANTHROPIC_BASE_URL", None)
+            if resolved_base_url:
+                provider_config["base_url"] = resolved_base_url
         elif provider_name == "ollama":
             provider_config["base_url"] = base_url or settings.OLLAMA_BASE_URL
 

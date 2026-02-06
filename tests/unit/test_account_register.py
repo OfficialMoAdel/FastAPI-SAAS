@@ -6,13 +6,13 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from src.app.modules.auth.router import _get_user_service
-from src.app.modules.auth.router import router as account_router
-
 
 @pytest.fixture
 def app():
     """Create a FastAPI app instance with the account router."""
+    # Lazy import to avoid circular import at collection time
+    from src.app.modules.auth.router import router as account_router
+
     app = FastAPI()
     app.include_router(account_router, prefix="/api/v1")
     return app
@@ -22,6 +22,22 @@ def app():
 def client(app):
     """Create a test client."""
     return TestClient(app)
+
+
+@pytest.fixture
+def account_router():
+    """Lazily import the account router."""
+    from src.app.modules.auth.router import router as account_router
+
+    return account_router
+
+
+@pytest.fixture
+def get_user_service_dep():
+    """Lazily import _get_user_service dependency."""
+    from src.app.modules.auth.router import _get_user_service
+
+    return _get_user_service
 
 
 @pytest.fixture
@@ -42,7 +58,7 @@ def mock_user_service():
     return service
 
 
-def test_register_endpoint_exists(client, app):
+def test_register_endpoint_exists(client, app, get_user_service_dep):
     """Test that /register endpoint exists on /account router."""
     # Create a user registration payload
     user_data = {
@@ -64,12 +80,13 @@ def test_register_endpoint_exists(client, app):
             "is_superuser": False,
             "tier_id": None,
             "tier_name": None,
+            "tenant_id": 1,
             "created_at": "2024-01-01T00:00:00Z",
             "profile_image_url": "https://profileimageurl.com",
         }
     )
 
-    app.dependency_overrides[_get_user_service] = lambda: mock_service
+    app.dependency_overrides[get_user_service_dep] = lambda: mock_service
 
     try:
         # Make the request
@@ -83,13 +100,13 @@ def test_register_endpoint_exists(client, app):
         app.dependency_overrides.clear()
 
 
-def test_account_prefix_changed():
+def test_account_prefix_changed(account_router):
     """Test that the router uses /account prefix instead of /auth."""
     assert account_router.prefix == "/account"
     assert "account" in account_router.tags
 
 
-def test_all_endpoints_on_account_prefix(client):
+def test_all_endpoints_on_account_prefix(client, account_router):
     """Test that all auth endpoints are now under /account."""
     # Get all routes from the router
     routes = [route.path for route in account_router.routes]

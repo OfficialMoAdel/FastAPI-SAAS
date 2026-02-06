@@ -130,7 +130,7 @@ class TestUserServiceCreate:
         with patch.object(user_service.crud, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = created_user
 
-            with patch("src.app.modules.users.service.get_tenant_context") as mock_tenant:
+            with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant:
                 mock_tenant.return_value = MagicMock(id=1)
 
                 with patch("src.app.modules.users.service.get_password_hash", new_callable=AsyncMock) as mock_hash:

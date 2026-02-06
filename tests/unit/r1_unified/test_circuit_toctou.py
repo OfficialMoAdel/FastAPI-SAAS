@@ -276,7 +276,7 @@ async def test_monitoring_metrics_recorded():
     mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
-        with patch("src.app.core.monitoring_metrics.record_circuit_breaker_transition") as mock_record:
+        with patch("src.app.core.monitoring.r1_unified_metrics.record_circuit_breaker_transition") as mock_record:
             # Cause failure to open circuit
             breaker._failure_count = breaker.failure_threshold
             await breaker.record_failure(ValueError("Test error"))

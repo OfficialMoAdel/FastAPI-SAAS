@@ -255,7 +255,7 @@ async def test_monitoring_metrics_recorded(mock_db_session, mock_settings):
         mock_enc.return_value = mock_encryption
 
         with patch("src.app.core.config.settings", mock_settings):
-            with patch("src.app.core.monitoring_metrics.record_passkey_query") as mock_record:
+            with patch("src.app.core.monitoring.r1_unified_metrics.record_passkey_query") as mock_record:
                 await service._get_existing_credentials(mock_db_session, user_id=1)
 
                 # Verify monitoring was called

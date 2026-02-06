@@ -15,7 +15,7 @@ async def test_create_session_success(db_session, tenant):
 
         # Mock dependencies
         with (
-            patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant),
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 return_value={"stripe_customer_id": "cus_123"},
@@ -54,7 +54,7 @@ async def test_create_session_no_api_key(db_session, tenant):
     """Test error when API key is missing."""
     with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", None):
         service = CheckoutService(db_session)
-        with patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant):
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
             data = CheckoutCreate(plan_id=1, billing_interval="monthly", success_url="x", cancel_url="x")
             with pytest.raises(HTTPException) as exc:
                 await service.create_session(1, "x", data)
@@ -68,7 +68,7 @@ async def test_create_portal_session_success(db_session, tenant):
         service = CheckoutService(db_session)
 
         with (
-            patch("src.app.modules.billing.service.get_tenant_context", return_value=tenant),
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 return_value={"stripe_customer_id": "cus_123"},

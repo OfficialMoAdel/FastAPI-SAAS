@@ -66,7 +66,7 @@ class TestTenantServiceCreate:
     """Tests for tenant creation."""
 
     @pytest.mark.asyncio
-    async def test_create_tenant_success(self, mock_db, tenant_create, mock_tenant):
+    async def test_create_tenant_success(self, mock_db, tenant_create, mock_tenant_orm):
         """Test successful tenant creation."""
         from src.app.modules.tenants.service import TenantService
 
@@ -75,7 +75,7 @@ class TestTenantServiceCreate:
 
         with patch.object(tenant_service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.exists.return_value = False
-            mock_crud.create.return_value = mock_tenant
+            mock_crud.create.return_value = mock_tenant_orm
 
             result = await tenant_service.create_tenant(tenant_create)
 

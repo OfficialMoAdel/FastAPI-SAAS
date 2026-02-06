@@ -73,7 +73,7 @@ class TestProductService:
         }
 
         with patch(
-            "src.app.modules.billing.service.get_tenant_context",
+            "src.app.modules.billing.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -385,7 +385,7 @@ class TestProductServiceValidation:
         }
 
         with patch(
-            "src.app.modules.billing.service.get_tenant_context",
+            "src.app.modules.billing.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
