@@ -237,8 +237,8 @@ class TestCriticalEventWithRedis:
         # Disable Lua optimization to ensure we hit the mocked get() path
         from src.app.core.config import settings
 
-        original_val = settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY
-        settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
+        original_val = settings.EVENT_BUS_USE_LUA_IDEMPOTENCY
+        settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
 
         try:
             start = time.perf_counter()
@@ -259,4 +259,4 @@ class TestCriticalEventWithRedis:
             # Handler should NOT have been called
             assert not handler_called, "Handler was called for duplicate event!"
         finally:
-            settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = original_val
+            settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = original_val

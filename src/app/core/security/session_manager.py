@@ -130,10 +130,10 @@ class SessionManager:
             sessions_to_remove = current_count - self._max_sessions + 1
 
             # Cap batch size to prevent memory exhaustion
-            max_batch = settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE
+            max_batch = settings.SESSION_MAX_EVICTION_BATCH_SIZE
             sessions_to_remove = min(sessions_to_remove, max_batch)
 
-            if settings.r1_unified.SESSION_USE_PIPELINE_EVICTION:
+            if settings.SESSION_USE_PIPELINE_EVICTION:
                 # Optimized path: Use ZRANGE + Pipeline (P2-1 optimization)
                 roundtrips = await self._evict_sessions_pipelined(
                     hash_key=hash_key,

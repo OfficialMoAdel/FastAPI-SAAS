@@ -92,7 +92,7 @@ class CircuitBreaker:
                         self.success_threshold,
                     )
                     # Record state transition for monitoring
-                    if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                    if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                         record_circuit_breaker_transition("closed")
 
     async def record_failure(self, error: Exception | None = None) -> None:
@@ -112,7 +112,7 @@ class CircuitBreaker:
                     str(error),
                 )
                 # Record state transition for monitoring
-                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                     record_circuit_breaker_transition("open")
             elif self._failure_count >= self.failure_threshold:
                 self._open()
@@ -123,7 +123,7 @@ class CircuitBreaker:
                     str(error),
                 )
                 # Record state transition for monitoring
-                if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+                if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                     record_circuit_breaker_transition("open")
 
     def _open(self) -> None:
@@ -189,7 +189,7 @@ def circuit_breaker(
             state = breaker.state  # Fast path: no lock
 
             # P4-1 Optimization: Double-check pattern for TOCTOU race prevention
-            if settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
+            if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                 # Optimized path with double-check pattern
                 if state == CircuitState.OPEN:
                     async with breaker._lock:

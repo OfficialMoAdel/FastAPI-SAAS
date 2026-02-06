@@ -27,7 +27,7 @@ async def test_batch_enqueue_pipeline():
     bus._arq_queue = mock_queue
 
     # Enable batching
-    with patch.object(settings.r1_unified, "EVENT_BUS_USE_BATCH_ENQUEUE", True):
+    with patch.object(settings, "EVENT_BUS_USE_BATCH_ENQUEUE", True):
         # We need >1 handlers to trigger batch
         h1 = AsyncMock()
         h2 = AsyncMock()

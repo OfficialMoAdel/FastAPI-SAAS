@@ -487,7 +487,7 @@ async def get_with_stampede_protection(
     # Get cached value with TTL info
     start_time = time.perf_counter()
 
-    if settings.r1_unified.XFETCH_USE_LUA_SCRIPT:
+    if settings.XFETCH_USE_LUA_SCRIPT:
         # Optimized path: Single Lua script for GET + TTL (1 roundtrip)
         try:
             lua_manager = get_lua_manager()

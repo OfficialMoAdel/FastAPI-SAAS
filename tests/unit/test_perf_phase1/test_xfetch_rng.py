@@ -21,7 +21,7 @@ async def test_xfetch_uses_random_not_secrets():
 
     with patch("src.app.core.utils.cache.client", mock_redis):
         # Disable Lua script to use the get/ttl path
-        with patch("src.app.core.utils.cache.settings.r1_unified.XFETCH_USE_LUA_SCRIPT", False):
+        with patch("src.app.core.utils.cache.settings.XFETCH_USE_LUA_SCRIPT", False):
             # We only expect random to be present and used now
             with patch("src.app.core.utils.cache.random.random") as mock_random:
                 mock_random.return_value = 0.0  # Force trigger if used

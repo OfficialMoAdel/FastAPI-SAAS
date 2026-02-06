@@ -156,7 +156,7 @@ class EventBus:
 
         idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
 
-        if settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+        if settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
             # Optimized path: Atomic Lua script (no race condition)
             try:
                 lua_manager = get_lua_manager()
@@ -347,7 +347,7 @@ class EventBus:
         # Changes Sum(RTT) to Max(RTT) for multiple handlers
 
         # P3-3: Batch enqueue using Redis pipeline if enabled
-        if settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
+        if settings.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
             try:
                 await self._publish_async_batch(event_name, data, handlers, priority)
                 return
@@ -570,10 +570,10 @@ class EventBus:
 
         if self._redis_client:
             try:
-                if settings.r1_unified.DLQ_USE_BOUNDED_SIZE:
+                if settings.DLQ_USE_BOUNDED_SIZE:
                     # P3-1 Optimized: Pipeline with LTRIM for bounded size
-                    max_size = settings.r1_unified.DLQ_MAX_SIZE
-                    alert_threshold = settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT
+                    max_size = settings.DLQ_MAX_SIZE
+                    alert_threshold = settings.DLQ_ALERT_THRESHOLD_PCT
 
                     pipe = self._redis_client.pipeline()
                     pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))

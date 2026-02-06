@@ -190,7 +190,7 @@ async def test_concurrency_limited_with_semaphore(mock_db_session, mock_settings
             await service._get_existing_credentials(mock_db_session, user_id=1)
 
     # Max concurrent should be limited by semaphore (10)
-    assert max_concurrent <= mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
+    assert max_concurrent <= mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
 
 
 @pytest.mark.asyncio
@@ -213,7 +213,7 @@ async def test_large_credential_count_handled(mock_db_session, mock_settings):
             result = await service._get_existing_credentials(mock_db_session, user_id=1)
 
     # Should be limited to max credentials per user
-    assert len(result) <= mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER
+    assert len(result) <= mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER
 
 
 @pytest.mark.asyncio
@@ -223,8 +223,8 @@ async def test_feature_flag_toggles_behavior(mock_db_session):
 
     # Test with feature flag disabled
     mock_settings_disabled = MagicMock()
-    mock_settings_disabled.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-    mock_settings_disabled.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+    mock_settings_disabled.PASSKEY_USE_COLUMN_SELECT = False
+    mock_settings_disabled.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
 
     # Mock CRUD method for fallback path
     with patch("src.app.modules.passkey.service.crud_passkey_credentials") as mock_crud:
@@ -255,7 +255,7 @@ async def test_monitoring_metrics_recorded(mock_db_session, mock_settings):
         mock_enc.return_value = mock_encryption
 
         with patch("src.app.core.config.settings", mock_settings):
-            with patch("src.app.core.monitoring.r1_unified_metrics.record_passkey_query") as mock_record:
+            with patch("src.app.core.monitoring_metrics.record_passkey_query") as mock_record:
                 await service._get_existing_credentials(mock_db_session, user_id=1)
 
                 # Verify monitoring was called

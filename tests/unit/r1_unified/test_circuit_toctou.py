@@ -31,7 +31,7 @@ async def test_open_state_checked_under_lock():
 
     # Mock settings with feature flag enabled
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
         # Should raise CircuitBreakerOpen
@@ -62,7 +62,7 @@ async def test_state_transition_during_check_handled():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
         # Should allow probe request in HALF_OPEN
@@ -85,7 +85,7 @@ async def test_closed_state_no_lock_overhead():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
         # Multiple calls should succeed without lock overhead
@@ -114,7 +114,7 @@ async def test_half_open_allows_probe_request():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
         result = await test_func()
@@ -137,7 +137,7 @@ async def test_concurrent_state_checks_safe():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     # Run 100 concurrent checks
     async def check():
@@ -176,7 +176,7 @@ async def test_half_open_race_condition_prevented():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     # Try to execute multiple probes concurrently
     async def try_probe():
@@ -210,7 +210,7 @@ async def test_feature_flag_toggles_behavior():
 
     # Test with feature flag disabled (default behavior)
     mock_settings_disabled = MagicMock()
-    mock_settings_disabled.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = False
+    mock_settings_disabled.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = False
 
     with patch("src.app.core.config.settings", mock_settings_disabled):
         with pytest.raises(CircuitBreakerOpen):
@@ -218,7 +218,7 @@ async def test_feature_flag_toggles_behavior():
 
     # Test with feature flag enabled (optimized behavior)
     mock_settings_enabled = MagicMock()
-    mock_settings_enabled.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings_enabled.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings_enabled):
         with pytest.raises(CircuitBreakerOpen):
@@ -243,7 +243,7 @@ async def test_fallback_path_works():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = False
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = False
 
     with patch("src.app.core.config.settings", mock_settings):
         # First two calls fail
@@ -273,10 +273,10 @@ async def test_monitoring_metrics_recorded():
         return "success"
 
     mock_settings = MagicMock()
-    mock_settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    mock_settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
     with patch("src.app.core.config.settings", mock_settings):
-        with patch("src.app.core.monitoring.r1_unified_metrics.record_circuit_breaker_transition") as mock_record:
+        with patch("src.app.core.monitoring_metrics.record_circuit_breaker_transition") as mock_record:
             # Cause failure to open circuit
             breaker._failure_count = breaker.failure_threshold
             await breaker.record_failure(ValueError("Test error"))

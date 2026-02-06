@@ -109,7 +109,7 @@ class TestL1CacheE2E:
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
             with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+                mock_settings.RBAC_USE_REDIS_CACHE = True
                 service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
 
                 # First call - should hit Redis
@@ -140,7 +140,7 @@ class TestTokenBlacklistE2E:
         ttl = _get_negative_cache_ttl()
         logger.info(f"Configured negative cache TTL: {ttl} seconds")
 
-        assert ttl == settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL
+        assert ttl == settings.TOKEN_NEGATIVE_CACHE_TTL
         assert ttl == 300, "Default TTL should be 300 seconds (5 minutes)"
 
         logger.info("✅ PASSED: Token blacklist TTL is 300 seconds")
@@ -156,13 +156,13 @@ class TestFeatureFlagsE2E:
         from src.app.core.config import settings
 
         flags = {
-            "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY,
-            "SESSION_USE_PIPELINE_EVICTION": settings.r1_unified.SESSION_USE_PIPELINE_EVICTION,
-            "XFETCH_USE_LUA_SCRIPT": settings.r1_unified.XFETCH_USE_LUA_SCRIPT,
-            "RBAC_USE_REDIS_CACHE": settings.r1_unified.RBAC_USE_REDIS_CACHE,
-            "DLQ_USE_BOUNDED_SIZE": settings.r1_unified.DLQ_USE_BOUNDED_SIZE,
-            "PASSKEY_USE_COLUMN_SELECT": settings.r1_unified.PASSKEY_USE_COLUMN_SELECT,
-            "CIRCUIT_BREAKER_USE_DOUBLE_CHECK": settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK,
+            "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.EVENT_BUS_USE_LUA_IDEMPOTENCY,
+            "SESSION_USE_PIPELINE_EVICTION": settings.SESSION_USE_PIPELINE_EVICTION,
+            "XFETCH_USE_LUA_SCRIPT": settings.XFETCH_USE_LUA_SCRIPT,
+            "RBAC_USE_REDIS_CACHE": settings.RBAC_USE_REDIS_CACHE,
+            "DLQ_USE_BOUNDED_SIZE": settings.DLQ_USE_BOUNDED_SIZE,
+            "PASSKEY_USE_COLUMN_SELECT": settings.PASSKEY_USE_COLUMN_SELECT,
+            "CIRCUIT_BREAKER_USE_DOUBLE_CHECK": settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK,
         }
 
         for flag_name, value in flags.items():
@@ -211,7 +211,7 @@ class TestSessionPipelineE2E:
 
         from src.app.core.config import settings
 
-        flag_value = settings.r1_unified.SESSION_USE_PIPELINE_EVICTION
+        flag_value = settings.SESSION_USE_PIPELINE_EVICTION
         logger.info(f"SESSION_USE_PIPELINE_EVICTION: {flag_value}")
 
         assert flag_value is True, "Pipeline eviction should be enabled"

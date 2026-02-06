@@ -28,7 +28,7 @@ async def test_refresh_lock_logic():
     mock_client.ttl.return_value = 10
 
     # Disable Lua script for easier testing of python logic
-    with patch.object(settings.r1_unified, "XFETCH_USE_LUA_SCRIPT", False):
+    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
         with patch.object(cache, "client", mock_client):
             # Force random to trigger refresh (return 0.0)
             with patch("random.random", return_value=0.0):
@@ -63,7 +63,7 @@ async def test_refresh_lock_denied():
     mock_client.ttl.return_value = 10
     mock_client.set.return_value = False  # Lock denied
 
-    with patch.object(settings.r1_unified, "XFETCH_USE_LUA_SCRIPT", False):
+    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
         with patch.object(cache, "client", mock_client):
             with patch("random.random", return_value=0.0):
                 result = await cache.get_with_stampede_protection(key, mock_fetch_func, ttl=ttl, beta=100.0)

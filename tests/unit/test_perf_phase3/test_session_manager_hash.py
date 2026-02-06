@@ -149,8 +149,8 @@ async def test_eviction_uses_zpopmin(mock_redis, mock_pipeline):
     from unittest.mock import patch
 
     with patch("src.app.core.security.session_manager.settings") as mock_settings:
-        mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
-        mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+        mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+        mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=2)
         user_id = 456

@@ -174,7 +174,7 @@ class RoleService:
             logger.warning("RBAC L1 cache read error: %s", e)
 
         # L2: Check Redis cache (if enabled)
-        if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client:
+        if settings.RBAC_USE_REDIS_CACHE and self._redis_client:
             cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
             try:
                 cached = await self._redis_client.get(cache_key)
@@ -233,12 +233,12 @@ class RoleService:
             logger.warning("RBAC L1 cache write error: %s", e)
 
         # Populate L2 Redis cache (if enabled)
-        if settings.r1_unified.RBAC_USE_REDIS_CACHE and self._redis_client and permissions:
+        if settings.RBAC_USE_REDIS_CACHE and self._redis_client and permissions:
             cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
             try:
                 await self._redis_client.setex(
                     cache_key,
-                    settings.r1_unified.RBAC_CACHE_TTL_SECONDS,
+                    settings.RBAC_CACHE_TTL_SECONDS,
                     json_dumps(perm_dicts, as_str=True),
                 )
                 logger.debug(
@@ -246,7 +246,7 @@ class RoleService:
                     role_id=role_id,
                     tenant_id=self.tenant_id,
                     permission_count=len(permissions),
-                    ttl=settings.r1_unified.RBAC_CACHE_TTL_SECONDS,
+                    ttl=settings.RBAC_CACHE_TTL_SECONDS,
                 )
             except Exception as e:
                 logger.warning(

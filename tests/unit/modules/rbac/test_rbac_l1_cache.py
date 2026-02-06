@@ -70,7 +70,7 @@ class TestL1CacheHit:
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
             with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+                mock_settings.RBAC_USE_REDIS_CACHE = True
 
                 service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
 
@@ -103,7 +103,7 @@ class TestL1CacheMissL2Hit:
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
             with patch("src.app.modules.rbac.service.record_rbac_cache_hit"):
-                mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = True
+                mock_settings.RBAC_USE_REDIS_CACHE = True
 
                 service = RoleService(db=mock_db, tenant_id=tenant_id, redis_client=mock_redis)
 

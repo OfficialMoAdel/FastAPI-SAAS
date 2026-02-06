@@ -55,8 +55,8 @@ class TestSessionPipelineOptimization:
     async def test_pipelined_eviction_reduces_roundtrips(self, session_manager: Any, mock_redis: AsyncMock) -> None:
         """Test that pipelined eviction uses O(1) roundtrips instead of O(n)."""
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
                 result = await session_manager.register_session(
@@ -79,8 +79,8 @@ class TestSessionPipelineOptimization:
         mock_redis.hget = AsyncMock(return_value=b'{"session_id": "old_session"}')
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
                 result = await session_manager.register_session(
@@ -103,8 +103,8 @@ class TestSessionPipelineOptimization:
         mock_redis.zpopmin = AsyncMock()  # Should NOT be called
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 await session_manager.register_session(
@@ -124,8 +124,8 @@ class TestSessionPipelineOptimization:
         mock_redis.hget = AsyncMock(return_value=b'{"session_id": "old_session"}')
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 await session_manager.register_session(
@@ -144,8 +144,8 @@ class TestSessionPipelineOptimization:
         mock_redis.zcard = AsyncMock(return_value=105)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 10  # Cap at 10
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 10  # Cap at 10
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 await session_manager.register_session(
@@ -182,8 +182,8 @@ class TestSessionPipelineOptimization:
         mock_redis.pipeline = MagicMock(return_value=pipe)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 with patch("src.app.core.security.session_manager.logger") as mock_logger:
@@ -224,8 +224,8 @@ class TestSessionEvictionMetrics:
         manager._redis_client = mock_redis_at_limit
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
                 await manager.register_session(
@@ -267,8 +267,8 @@ class TestSessionFeatureFlagToggle:
         manager._redis_client = mock_redis_simple
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = True
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 await manager.register_session(user_id=1, session_id="new")
@@ -285,8 +285,8 @@ class TestSessionFeatureFlagToggle:
         manager._redis_client = mock_redis_simple
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
-            mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
-            mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+            mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction"):
                 await manager.register_session(user_id=1, session_id="new")

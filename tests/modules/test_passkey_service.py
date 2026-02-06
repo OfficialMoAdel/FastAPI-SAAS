@@ -54,7 +54,7 @@ async def test_get_existing_credentials_optimized(mock_db_session):
 
     # Mock settings to enable optimization
     with (
-        patch("src.app.core.config.settings.r1_unified.PASSKEY_USE_COLUMN_SELECT", True),
+        patch("src.app.core.config.settings.PASSKEY_USE_COLUMN_SELECT", True),
         patch.object(service, "_decrypt_credentials_parallel", new_callable=AsyncMock) as mock_helper,
     ):
         await service._get_existing_credentials(mock_db_session, 1)
@@ -81,7 +81,7 @@ async def test_get_existing_credentials_fallback(mock_db_session):
     mock_cred.transports = "usb"
 
     with (
-        patch("src.app.core.config.settings.r1_unified.PASSKEY_USE_COLUMN_SELECT", False),
+        patch("src.app.core.config.settings.PASSKEY_USE_COLUMN_SELECT", False),
         patch("src.app.modules.passkey.crud.crud_passkey_credentials.get_by_user", new_callable=AsyncMock) as mock_get,
         patch.object(service, "_decrypt_credentials_parallel", new_callable=AsyncMock) as mock_helper,
     ):

@@ -211,7 +211,7 @@ async def test_cache_ttl_configured(mock_redis_client, mock_db_session, mock_set
     mock_db_session.execute = AsyncMock(return_value=mock_result)
 
     # Set custom TTL
-    mock_settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 7200
+    mock_settings.RBAC_CACHE_TTL_SECONDS = 7200
 
     with patch("src.app.modules.rbac.service.settings", mock_settings):
         await service.get_role_permissions(role_id=1)
@@ -228,7 +228,7 @@ async def test_feature_flag_disables_cache(mock_redis_client, mock_db_session, m
     service = RoleService(db=mock_db_session, tenant_id=1, redis_client=mock_redis_client)
 
     # Disable cache
-    mock_settings.r1_unified.RBAC_USE_REDIS_CACHE = False
+    mock_settings.RBAC_USE_REDIS_CACHE = False
 
     # Mock database
     mock_role = MagicMock()

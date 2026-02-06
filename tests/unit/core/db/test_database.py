@@ -28,7 +28,7 @@ async def test_async_get_db_applies_rls_when_tenant_present():
     mock_rls_cm.__aexit__.return_value = None
 
     with patch("src.app.core.db.database.local_session", return_value=mock_local_session_cm):
-        with patch("src.app.core.db.database.get_tenant_context", return_value=mock_tenant):
+        with patch("src.app.core.db.database.get_current_tenant", return_value=mock_tenant):
             with patch("src.app.core.db.database.rls_context", return_value=mock_rls_cm) as mock_rls_factory:
                 # Consume the generator
                 gen = async_get_db()
@@ -54,7 +54,7 @@ async def test_async_get_db_no_rls_when_no_tenant():
     mock_local_session_cm.__aexit__.return_value = None
 
     with patch("src.app.core.db.database.local_session", return_value=mock_local_session_cm):
-        with patch("src.app.core.db.database.get_tenant_context", return_value=None):
+        with patch("src.app.core.db.database.get_current_tenant", return_value=None):
             with patch("src.app.core.db.database.rls_context") as mock_rls_factory:
                 # Consume the generator
                 gen = async_get_db()

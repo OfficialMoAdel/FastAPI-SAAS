@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.app.core.monitoring.r1_unified_metrics import (
+from src.app.core.monitoring_metrics import (
     R1UnifiedMetrics,
     get_r1_metrics,
     measure_latency,

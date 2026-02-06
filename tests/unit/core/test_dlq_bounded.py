@@ -52,16 +52,16 @@ class TestDLQBoundedSize:
     def mock_r1_settings_enabled(self) -> MagicMock:
         """Create mock R1 settings with bounded DLQ enabled."""
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
         return settings_mock
 
     @pytest.fixture
     def mock_r1_settings_disabled(self) -> MagicMock:
         """Create mock R1 settings with bounded DLQ disabled."""
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = False
+        settings_mock.DLQ_USE_BOUNDED_SIZE = False
         return settings_mock
 
     @pytest.mark.asyncio
@@ -70,7 +70,7 @@ class TestDLQBoundedSize:
     ) -> None:
         """Test that bounded DLQ uses LPUSH + LTRIM + LLEN pipeline."""
         with patch("src.app.core.config.settings", mock_r1_settings_enabled):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="send_welcome_email",
@@ -90,7 +90,7 @@ class TestDLQBoundedSize:
     ) -> None:
         """Test that legacy path uses single LPUSH."""
         with patch("src.app.core.config.settings", mock_r1_settings_disabled):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="send_welcome_email",
@@ -136,12 +136,12 @@ class TestDLQBoundedSize:
         mock_redis.pipeline = MagicMock(return_value=pipe)
 
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 with patch("src.app.core.events.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
@@ -167,12 +167,12 @@ class TestDLQBoundedSize:
         mock_redis.pipeline = MagicMock(return_value=pipe)
 
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 with patch("src.app.core.events.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
@@ -190,12 +190,12 @@ class TestDLQBoundedSize:
     async def test_ltrim_caps_at_max_size(self, event_bus: Any, mock_redis: AsyncMock) -> None:
         """Test that LTRIM is called with correct max size index."""
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 5000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 5000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="handler",
@@ -236,12 +236,12 @@ class TestDLQFeatureFlagToggle:
         bus._redis_client = mock_redis
 
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 await bus.add_to_dlq("event", "handler", {}, "error", 1)
 
                 mock_redis.pipeline.assert_called()
@@ -256,10 +256,10 @@ class TestDLQFeatureFlagToggle:
         bus._redis_client = mock_redis
 
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = False
+        settings_mock.DLQ_USE_BOUNDED_SIZE = False
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring.r1_unified_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
                 await bus.add_to_dlq("event", "handler", {}, "error", 1)
 
                 mock_redis.lpush.assert_called()
@@ -290,9 +290,9 @@ class TestDLQErrorHandling:
         bus._redis_client = mock_redis_failing
 
         settings_mock = MagicMock()
-        settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-        settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-        settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+        settings_mock.DLQ_USE_BOUNDED_SIZE = True
+        settings_mock.DLQ_MAX_SIZE = 10000
+        settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
             with pytest.raises(Exception, match="Redis connection lost"):

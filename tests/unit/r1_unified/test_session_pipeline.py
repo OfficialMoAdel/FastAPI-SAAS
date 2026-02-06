@@ -70,7 +70,7 @@ async def test_legacy_eviction_uses_more_roundtrips(mock_redis_client, mock_sett
     mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
 
     # Disable pipeline optimization
-    mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
+    mock_settings.SESSION_USE_PIPELINE_EVICTION = False
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(
@@ -159,7 +159,7 @@ async def test_batch_size_limit_enforced(mock_redis_client, mock_settings):
     mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
 
     # Set batch limit to 50
-    mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+    mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(
@@ -359,7 +359,7 @@ async def test_feature_flag_controls_optimization(mock_redis_client, mock_settin
     mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
 
     # Disable pipeline optimization
-    mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
+    mock_settings.SESSION_USE_PIPELINE_EVICTION = False
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(

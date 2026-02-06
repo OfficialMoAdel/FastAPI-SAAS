@@ -94,7 +94,7 @@ def reset_metrics():
 
     Ensures metrics don't leak between tests.
     """
-    from src.app.core.monitoring.r1_unified_metrics import reset_r1_metrics
+    from src.app.core.monitoring_metrics import reset_r1_metrics
 
     reset_r1_metrics()
     yield
@@ -110,17 +110,17 @@ def mock_settings():
     from unittest.mock import MagicMock
 
     settings = MagicMock()
-    settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = True
-    settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-    settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
-    settings.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
-    settings.r1_unified.RBAC_USE_REDIS_CACHE = True
-    settings.r1_unified.RBAC_CACHE_TTL_SECONDS = 3600
-    settings.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-    settings.r1_unified.DLQ_MAX_SIZE = 10000
-    settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
-    settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
-    settings.r1_unified.IDEMPOTENCY_TTL_SECONDS = 300
-    settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+    settings.PASSKEY_USE_COLUMN_SELECT = True
+    settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+    settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+    settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+    settings.RBAC_USE_REDIS_CACHE = True
+    settings.RBAC_CACHE_TTL_SECONDS = 3600
+    settings.DLQ_USE_BOUNDED_SIZE = True
+    settings.DLQ_MAX_SIZE = 10000
+    settings.DLQ_ALERT_THRESHOLD_PCT = 80
+    settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+    settings.IDEMPOTENCY_TTL_SECONDS = 300
+    settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
     settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
     return settings

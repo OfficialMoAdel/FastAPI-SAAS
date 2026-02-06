@@ -55,7 +55,7 @@ async def test_unbounded_dlq_uses_separate_calls(mock_redis_client, mock_setting
     event_bus.set_redis_client(mock_redis_client)
 
     # Disable bounded size
-    mock_settings.r1_unified.DLQ_USE_BOUNDED_SIZE = False
+    mock_settings.DLQ_USE_BOUNDED_SIZE = False
 
     mock_redis_client.lpush = AsyncMock(return_value=1)
     mock_redis_client.llen = AsyncMock(return_value=50)
@@ -86,7 +86,7 @@ async def test_dlq_max_size_enforced(mock_redis_client, mock_settings):
     event_bus.set_redis_client(mock_redis_client)
 
     # Set custom max size
-    mock_settings.r1_unified.DLQ_MAX_SIZE = 100
+    mock_settings.DLQ_MAX_SIZE = 100
 
     # Mock pipeline
     mock_pipeline = MagicMock()
@@ -118,8 +118,8 @@ async def test_dlq_alert_threshold_warning(mock_redis_client, mock_settings):
     event_bus.set_redis_client(mock_redis_client)
 
     # Set max size and alert threshold
-    mock_settings.r1_unified.DLQ_MAX_SIZE = 1000
-    mock_settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+    mock_settings.DLQ_MAX_SIZE = 1000
+    mock_settings.DLQ_ALERT_THRESHOLD_PCT = 80
 
     # Mock pipeline returning size above threshold (850 > 800)
     mock_pipeline = MagicMock()
@@ -163,8 +163,8 @@ async def test_dlq_no_alert_below_threshold(mock_redis_client, mock_settings):
     event_bus.set_redis_client(mock_redis_client)
 
     # Set max size and alert threshold
-    mock_settings.r1_unified.DLQ_MAX_SIZE = 1000
-    mock_settings.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+    mock_settings.DLQ_MAX_SIZE = 1000
+    mock_settings.DLQ_ALERT_THRESHOLD_PCT = 80
 
     # Mock pipeline returning size below threshold (500 < 800)
     mock_pipeline = MagicMock()
@@ -276,7 +276,7 @@ async def test_feature_flag_controls_optimization(mock_redis_client, mock_settin
     event_bus.set_redis_client(mock_redis_client)
 
     # Test with flag enabled (bounded)
-    mock_settings.r1_unified.DLQ_USE_BOUNDED_SIZE = True
+    mock_settings.DLQ_USE_BOUNDED_SIZE = True
     mock_pipeline = MagicMock()
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
@@ -303,7 +303,7 @@ async def test_feature_flag_controls_optimization(mock_redis_client, mock_settin
     mock_redis_client.llen = AsyncMock(return_value=50)
 
     # Test with flag disabled (unbounded)
-    mock_settings.r1_unified.DLQ_USE_BOUNDED_SIZE = False
+    mock_settings.DLQ_USE_BOUNDED_SIZE = False
 
     with patch("src.app.core.config.settings", mock_settings):
         with patch("src.app.core.monitoring.update_dlq_size"):

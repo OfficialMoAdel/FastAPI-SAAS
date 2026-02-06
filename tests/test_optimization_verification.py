@@ -41,7 +41,7 @@ async def test_batch_enqueue():
     bus._handlers["test.event"] = [handler1, handler2]
 
     # Enable batch enqueue
-    settings.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = True
+    settings.EVENT_BUS_USE_BATCH_ENQUEUE = True
 
     # Execute
     await bus.publish("test.event", {"id": 1}, priority=EventPriority.NORMAL)
@@ -95,7 +95,7 @@ async def test_stampede_protection_lock():
     cache_module.client = mock_client
     
     # Mock settings to disable LUA script for simpler path
-    settings.r1_unified.XFETCH_USE_LUA_SCRIPT = False
+    settings.XFETCH_USE_LUA_SCRIPT = False
 
     # Mock get/ttl/set results
     mock_client.get.return_value = b'{"data": "stale"}'

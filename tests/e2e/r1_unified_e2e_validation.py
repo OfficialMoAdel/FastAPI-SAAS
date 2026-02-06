@@ -175,7 +175,7 @@ class R1UnifiedE2EValidator:
 
             # Test idempotency check
             settings_mock = MagicMock()
-            settings_mock.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+            settings_mock.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
 
             with patch("src.app.core.config.settings", settings_mock):
                 # The idempotency check should use Lua script
@@ -242,8 +242,8 @@ class R1UnifiedE2EValidator:
             manager._redis_client = mock_redis
 
             settings_mock = MagicMock()
-            settings_mock.r1_unified.SESSION_USE_PIPELINE_EVICTION = True
-            settings_mock.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+            settings_mock.SESSION_USE_PIPELINE_EVICTION = True
+            settings_mock.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.settings", settings_mock):
                 with patch("src.app.core.security.session_manager.record_session_eviction"):
@@ -296,8 +296,8 @@ class R1UnifiedE2EValidator:
             has_xfetch_func = hasattr(cache_module, "get_with_stampede_protection")
 
             settings_mock = MagicMock()
-            settings_mock.r1_unified.XFETCH_USE_LUA_SCRIPT = True
-            settings_mock.r1_unified.XFETCH_EARLY_EXPIRY_FRACTION = 0.5
+            settings_mock.XFETCH_USE_LUA_SCRIPT = True
+            settings_mock.XFETCH_EARLY_EXPIRY_FRACTION = 0.5
 
             with patch("src.app.core.config.settings", settings_mock):
                 details = {
@@ -349,9 +349,9 @@ class R1UnifiedE2EValidator:
             bus._redis_client = mock_redis
 
             settings_mock = MagicMock()
-            settings_mock.r1_unified.DLQ_USE_BOUNDED_SIZE = True
-            settings_mock.r1_unified.DLQ_MAX_SIZE = 10000
-            settings_mock.r1_unified.DLQ_ALERT_THRESHOLD_PCT = 80
+            settings_mock.DLQ_USE_BOUNDED_SIZE = True
+            settings_mock.DLQ_MAX_SIZE = 10000
+            settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
             with patch("src.app.core.config.settings", settings_mock):
                 with patch("src.app.core.monitoring.update_dlq_size"):
@@ -456,9 +456,9 @@ class R1UnifiedE2EValidator:
             mock_db.execute = AsyncMock(return_value=mock_result)
 
             settings_mock = MagicMock()
-            settings_mock.r1_unified.PASSKEY_USE_COLUMN_SELECT = True
-            settings_mock.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-            settings_mock.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+            settings_mock.PASSKEY_USE_COLUMN_SELECT = True
+            settings_mock.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+            settings_mock.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
             service = PasskeyService()
 
@@ -468,7 +468,7 @@ class R1UnifiedE2EValidator:
                 mock_enc.return_value = mock_encryption
 
                 with patch("src.app.core.config.settings", settings_mock):
-                    with patch("src.app.core.monitoring.r1_unified_metrics.record_passkey_query"):
+                    with patch("src.app.core.monitoring_metrics.record_passkey_query"):
                         result = await service._get_existing_credentials(mock_db, user_id=1)
 
             details = {
@@ -532,7 +532,7 @@ class R1UnifiedE2EValidator:
                 return "success"
 
             settings_mock = MagicMock()
-            settings_mock.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
+            settings_mock.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = True
 
             with patch("src.app.core.config.settings", settings_mock):
                 # CLOSED state should allow calls

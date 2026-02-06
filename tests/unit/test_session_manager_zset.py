@@ -22,8 +22,8 @@ class TestZSETEvictionOrder:
     async def test_zset_eviction_oldest_first(self, mock_settings):
         """Verify oldest session is evicted when at limit (legacy path)."""
         # Arrange - force legacy path
-        mock_settings.r1_unified.SESSION_USE_PIPELINE_EVICTION = False
-        mock_settings.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+        mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+        mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
         mock_redis = AsyncMock()
         mock_redis.hexists = AsyncMock(return_value=False)

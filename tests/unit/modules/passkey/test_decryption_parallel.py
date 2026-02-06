@@ -58,9 +58,9 @@ class TestParallelDecryption:
     ):
         """Verify asyncio.to_thread is called for each credential decryption."""
         # Arrange - disable optimized path to test the crud_passkey_credentials code path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -100,9 +100,9 @@ class TestParallelDecryption:
     ):
         """Verify parallel decryption is faster than sequential for 5 credentials."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -147,9 +147,9 @@ class TestParallelDecryption:
     ):
         """Verify parallel decryption produces same results as sequential."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -186,9 +186,9 @@ class TestParallelDecryption:
     ):
         """Verify one failed decryption doesn't break others."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -223,9 +223,9 @@ class TestParallelDecryption:
     ):
         """Verify empty credential list is handled gracefully."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = []
 
@@ -250,9 +250,9 @@ class TestParallelDecryption:
     ):
         """Verify event loop can process other tasks during decryption."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_get_by_user.return_value = mock_credentials
         mock_encryption = MagicMock()
@@ -306,9 +306,9 @@ class TestParallelDecryptionForEmail:
     ):
         """Verify _get_credentials_for_email uses thread pool."""
         # Arrange - disable optimized path
-        mock_settings.r1_unified.PASSKEY_USE_COLUMN_SELECT = False
-        mock_settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
-        mock_settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
+        mock_settings.PASSKEY_USE_COLUMN_SELECT = False
+        mock_settings.PASSKEY_MAX_CREDENTIALS_PER_USER = 100
+        mock_settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = 10
 
         mock_user = MagicMock()
         mock_user.id = 123

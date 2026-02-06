@@ -355,7 +355,7 @@ class PasskeyService:
         start_time = time.perf_counter()
 
         # Parallel decryption with concurrency limit
-        semaphore = asyncio.Semaphore(settings.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
+        semaphore = asyncio.Semaphore(settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
 
         async def decrypt_one(cred_id: bytes, transports: Any | None) -> PublicKeyCredentialDescriptor | None:
             async with semaphore:
@@ -400,12 +400,12 @@ class PasskeyService:
         # P3-2 Optimization: Column-specific SELECT for credential_id only
 
         creds_to_decrypt: list[tuple[bytes, list[str] | None]]
-        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
+        if settings.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id)
                 .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
-                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
+                .limit(settings.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
             result = await db.execute(stmt)
             # Format: list of (id, None)
@@ -413,8 +413,8 @@ class PasskeyService:
         else:
             # Fallback path
             creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
-            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
-                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
+            if len(creds) > settings.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.PASSKEY_MAX_CREDENTIALS_PER_USER]
 
             # Format: list of (id, transports)
             creds_to_decrypt = [(c.credential_id, c.transports if c.transports else None) for c in creds]
@@ -499,12 +499,12 @@ class PasskeyService:
 
         # P3-2 Optimization: Column-specific SELECT for credential_id and transports only
 
-        if settings.r1_unified.PASSKEY_USE_COLUMN_SELECT:
+        if settings.PASSKEY_USE_COLUMN_SELECT:
             stmt = (
                 select(PasskeyCredential.credential_id, PasskeyCredential.transports)
                 .where(PasskeyCredential.user_id == user_id)
                 .order_by(PasskeyCredential.created_at.desc())
-                .limit(settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER)
+                .limit(settings.PASSKEY_MAX_CREDENTIALS_PER_USER)
             )
             result = await db.execute(stmt)
             # Format: list of (id, transports)
@@ -512,8 +512,8 @@ class PasskeyService:
         else:
             # Fallback path
             creds = await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
-            if len(creds) > settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER:
-                creds = creds[: settings.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER]
+            if len(creds) > settings.PASSKEY_MAX_CREDENTIALS_PER_USER:
+                creds = creds[: settings.PASSKEY_MAX_CREDENTIALS_PER_USER]
 
             # Format: list of (id, transports)
             creds_to_decrypt = [(c.credential_id, c.transports if c.transports else None) for c in creds]

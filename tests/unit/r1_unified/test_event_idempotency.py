@@ -294,7 +294,7 @@ async def test_redis_failure_uses_fallback():
             processed = True
 
         mock_settings = MagicMock()
-        mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
+        mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = True
         mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
 
         with patch("src.app.core.events.settings", mock_settings):
@@ -333,7 +333,7 @@ async def test_feature_flag_disables_lua_optimization(mock_redis_client):
 
     # Mock settings with feature flag disabled
     mock_settings = MagicMock()
-    mock_settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
+    mock_settings.EVENT_BUS_USE_LUA_IDEMPOTENCY = False
     mock_settings.EVENT_HANDLER_TIMEOUT_SECONDS = 30
 
     with patch("src.app.core.events.get_lua_manager") as mock_lua_mgr:
