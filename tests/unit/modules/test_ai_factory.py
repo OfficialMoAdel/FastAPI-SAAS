@@ -3,7 +3,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from src.app.core.cache.redis import redis_client
+from src.app.core.utils.cache import client as redis_client
 from src.app.modules.ai.anthropic_provider import AnthropicProvider
 from src.app.modules.ai.exceptions import AIServerError
 from src.app.modules.ai.factory import AIProviderFactory, get_provider

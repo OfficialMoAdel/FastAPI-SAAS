@@ -4,8 +4,8 @@ from typing import Any
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.cache.redis import redis_client
 from src.app.core.cache.warmer import warmer
+from src.app.core.utils.cache import client as redis_client
 from src.app.core.db.database import async_get_db
 
 logger = logging.getLogger(__name__)
