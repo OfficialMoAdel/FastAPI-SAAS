@@ -1,0 +1,72 @@
+# {{ ModelName }} Module AGENTS.md
+
+## Package Identity
+{{ description or ModelName + ' management module.' }}
+
+## Setup & Run
+```bash
+# Run tests
+uv run pytest tests/unit/{{ module_name }}/ -v
+
+# Type check
+uv run mypy src/app/modules/{{ module_name }}/
+
+# Lint
+uv run ruff check src/app/modules/{{ module_name }}/
+```
+
+## Patterns & Conventions
+
+### Code Organization
+- ✅ DO: Inherit from `BaseService[T]` in `src/app/modules/_base/service.py`
+- ✅ DO: Use `FastCRUD` for database operations via `crud_{{ module_name }}`
+- ✅ DO: Return schema objects (e.g., `{{ ModelName }}Read`) from service methods
+- ✅ DO: Raise `ModelNotFoundError`, `DuplicateError`, `ForbiddenException` for errors
+- ❌ DON'T: Return raw SQLAlchemy models from service methods
+- ❌ DON'T: Access CRUD directly from routers - always use service layer
+
+### Service Pattern
+```python
+# Example from src/app/modules/{{ module_name }}/service.py:
+class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
+    async def create_{{ module_name }}(self, data: {{ ModelName }}Create, user_id: int, tenant_id: int) -> {{ ModelName }}Read:
+        # Check for duplicates
+        existing = await self.crud.get(db=self.db, name=data.name, tenant_id=tenant_id)
+        if existing:
+            raise DuplicateError("name", data.name)
+        
+        # Create with tenant context
+        create_data = data.model_dump()
+        create_data["user_id"] = user_id
+        create_data["tenant_id"] = tenant_id
+        
+        result = await self.crud.create(db=self.db, object=create_data)
+        return {{ ModelName }}Read.model_validate(result)
+```
+
+## Touch Points / Key Files
+
+- Service: `src/app/modules/{{ module_name }}/service.py` - Business logic and orchestration
+- CRUD: `src/app/modules/{{ module_name }}/crud.py` - FastCRUD wrapper
+- Schemas: `src/app/modules/{{ module_name }}/schemas.py` - Pydantic request/response models
+- Router: `src/app/modules/{{ module_name }}/router.py` - FastAPI endpoints
+- Model: `src/app/modules/{{ module_name }}/models.py` - SQLAlchemy database model
+
+## JIT Index Hints
+
+- Find service methods: `rg -n "async def.*{{ module_name }}" src/app/modules/{{ module_name }}/`
+- Find CRUD usage: `rg -n "crud_{{ module_name }}\." src/app/modules/{{ module_name }}/`
+- Find tests: `find tests -name "*{{ module_name }}*"`
+
+## Common Gotchas
+
+- All queries must include `tenant_id` for multi-tenancy
+- Service methods should validate ownership before updates/deletes
+- Use `model_dump(exclude_unset=True)` for partial updates
+- Response schemas use `ConfigDict(from_attributes=True)`
+
+## Pre-PR Checks
+
+```bash
+uv run mypy src/app/modules/{{ module_name }}/ && uv run ruff check src/app/modules/{{ module_name }}/ && uv run pytest tests/unit/{{ module_name }}/ -v
+```

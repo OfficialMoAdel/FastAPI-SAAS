@@ -16,6 +16,7 @@ from .core.config import settings
 from .core.setup import create_application, lifespan_factory
 from .middleware.body_limit import RequestBodyLimitMiddleware
 from .middleware.ip_filter import IPFilterMiddleware
+from .middleware.query_profiler import QueryProfilerMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.request_id import RequestIDMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware

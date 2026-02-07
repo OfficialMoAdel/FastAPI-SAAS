@@ -7,10 +7,10 @@ from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
 from sqlalchemy.pool import NullPool
 
+from src.app.core.config import settings
+from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import rls_context
 from src.app.core.tenancy.context import get_current_tenant
-
-from ..config import settings
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
@@ -60,6 +60,15 @@ else:
         pool_pre_ping=True,
         pool_recycle=3600,
         pool_timeout=settings.DB_POOL_TIMEOUT,
+    )
+
+# Setup query profiler in development mode
+if settings.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.ENVIRONMENT.value):
+    setup_query_profiler(
+        async_engine,
+        slow_query_threshold_ms=settings.QUERY_PROFILER_SLOW_THRESHOLD_MS,
+        n_plus_1_threshold=settings.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
+        detailed_logs=settings.QUERY_PROFILER_DETAILED_LOGS,
     )
 
 local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)

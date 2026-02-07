@@ -552,6 +552,46 @@ class PerformanceSettings(BaseSettings):
     """Use eager loading for relationships in base service (P0-4)."""
 
 
+class QueryProfilerSettings(BaseSettings):
+    """Development mode SQL query profiler configuration.
+
+    Only active in non-production environments. Helps identify:
+    - Slow queries (> threshold ms)
+    - N+1 query issues
+    - Inefficient database access patterns
+    """
+
+    model_config = SettingsConfigDict(env_prefix="QUERY_PROFILER_")
+
+    QUERY_PROFILER_ENABLED: bool = Field(
+        default=True,
+        description="Enable query profiler middleware in dev/staging",
+    )
+    """Enable query profiling (auto-disabled in production)."""
+
+    QUERY_PROFILER_SLOW_THRESHOLD_MS: int = Field(
+        default=100,
+        ge=10,
+        le=5000,
+        description="Threshold in ms for logging 'slow' queries",
+    )
+    """Queries taking longer than this are flagged as slow."""
+
+    QUERY_PROFILER_N_PLUS_1_THRESHOLD: int = Field(
+        default=3,
+        ge=2,
+        le=100,
+        description="Warn if same query executed more than N times",
+    )
+    """Detect potential N+1 issues when query repeats."""
+
+    QUERY_PROFILER_DETAILED_LOGS: bool = Field(
+        default=False,
+        description="Log detailed query analysis including repeated query samples",
+    )
+    """Enable verbose logging of N+1 detection details."""
+
+
 class Settings(
     AppSettings,
     SQLiteSettings,
@@ -577,6 +617,7 @@ class Settings(
     ArqSettings,
     R1UnifiedSettings,
     PerformanceSettings,
+    QueryProfilerSettings,
 ):
     # Override model_config to ensure no env_prefix is applied to base fields
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)

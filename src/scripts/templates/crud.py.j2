@@ -1,0 +1,10 @@
+"""{{ ModelName }} CRUD operations."""
+
+from fastcrud import FastCRUD
+
+from .models import {{ ModelName }}
+from .schemas import {{ ModelName }}Read
+
+# Use type: ignore for FastCRUD generics since the library's type stubs
+# don't properly support SQLAlchemy models as first argument.
+crud_{{ module_name }}: FastCRUD[{{ ModelName }}, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read] = FastCRUD({{ ModelName }})  # type: ignore[type-var]

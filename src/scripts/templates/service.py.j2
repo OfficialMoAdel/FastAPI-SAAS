@@ -1,0 +1,203 @@
+"""{{ ModelName }} service layer - business logic."""
+
+from typing import Any
+
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from ...core.exceptions.http_exceptions import ForbiddenException
+from .._base.exceptions import DuplicateError, ModelNotFoundError
+from .._base.service import BaseService
+from .crud import crud_{{ module_name }}
+from .models import {{ ModelName }}
+from .schemas import {{ ModelName }}Create, {{ ModelName }}Read, {{ ModelName }}Update
+
+
+class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
+    """Service class for {{ module_name }}-related business logic."""
+
+    def __init__(self, db: AsyncSession):
+        """Initialize {{ ModelName }}Service.
+
+        Parameters
+        ----------
+        db : AsyncSession
+            Database session
+        """
+        super().__init__({{ ModelName }}, db)
+
+    async def create_{{ module_name }}(
+        self,
+        data: {{ ModelName }}Create,
+        user_id: int,
+        tenant_id: int,
+    ) -> {{ ModelName }}Read:
+        """Create a new {{ module_name }}.
+
+        Parameters
+        ----------
+        data : {{ ModelName }}Create
+            Creation data
+        user_id : int
+            ID of creating user
+        tenant_id : int
+            ID of tenant
+
+        Returns
+        -------
+        {{ ModelName }}Read
+            Created {{ module_name }}
+
+        Raises
+        ------
+        DuplicateError
+            If {{ fields[0].name if fields else 'name' }} already exists
+        """
+        # Check for duplicates
+{%- if fields %}
+        existing = await self.crud.get(
+            db=self.db,
+            {{ fields[0].name }}=data.{{ fields[0].name }},
+            tenant_id=tenant_id,
+        )
+        if existing:
+            raise DuplicateError("{{ fields[0].name }}", data.{{ fields[0].name }})
+{%- endif %}
+
+        # Create object
+        create_data = data.model_dump()
+        create_data["user_id"] = user_id
+        create_data["tenant_id"] = tenant_id
+
+        result = await self.crud.create(
+            db=self.db,
+            object=create_data,
+        )
+        return {{ ModelName }}Read.model_validate(result)
+
+    async def list_{{ module_name }}s(
+        self,
+        tenant_id: int,
+        page: int = 1,
+        items_per_page: int = 20,
+    ) -> dict[str, Any]:
+        """List {{ module_name }}s for a tenant.
+
+        Parameters
+        ----------
+        tenant_id : int
+            Tenant ID
+        page : int
+            Page number
+        items_per_page : int
+            Items per page
+
+        Returns
+        -------
+        dict
+            Paginated list
+        """
+        return await self.crud.get_multi(
+            db=self.db,
+            tenant_id=tenant_id,
+            offset=(page - 1) * items_per_page,
+            limit=items_per_page,
+            schema_to_select={{ ModelName }}Read,  # type: ignore[arg-type]
+        )
+
+    async def update_{{ module_name }}(
+        self,
+        id: int,
+        data: {{ ModelName }}Update,
+        user_id: int,
+        tenant_id: int,
+    ) -> {{ ModelName }}Read:
+        """Update a {{ module_name }}.
+
+        Parameters
+        ----------
+        id : int
+            {{ ModelName }} ID
+        data : {{ ModelName }}Update
+            Update data
+        user_id : int
+            ID of requesting user
+        tenant_id : int
+            Tenant ID
+
+        Returns
+        -------
+        {{ ModelName }}Read
+            Updated {{ module_name }}
+
+        Raises
+        ------
+        ModelNotFoundError
+            If not found
+        ForbiddenException
+            If user doesn't have permission
+        """
+        # Get existing
+        existing = await self.crud.get(
+            db=self.db,
+            id=id,
+            tenant_id=tenant_id,
+        )
+        if not existing:
+            raise ModelNotFoundError("{{ ModelName }}", id)
+
+        # Check ownership
+        if existing.user_id != user_id:
+            raise ForbiddenException("You don't have permission to update this")
+
+        # Update
+        update_data = data.model_dump(exclude_unset=True, exclude_none=True)
+        result = await self.crud.update(
+            db=self.db,
+            id=id,
+            object=update_data,
+        )
+        return {{ ModelName }}Read.model_validate(result)
+
+    async def delete_{{ module_name }}(
+        self,
+        id: int,
+        user_id: int,
+        tenant_id: int,
+    ) -> None:
+        """Delete a {{ module_name }}.
+
+        Parameters
+        ----------
+        id : int
+            {{ ModelName }} ID
+        user_id : int
+            ID of requesting user
+        tenant_id : int
+            Tenant ID
+
+        Raises
+        ------
+        ModelNotFoundError
+            If not found
+        ForbiddenException
+            If user doesn't have permission
+        """
+        # Get existing
+        existing = await self.crud.get(
+            db=self.db,
+            id=id,
+            tenant_id=tenant_id,
+        )
+        if not existing:
+            raise ModelNotFoundError("{{ ModelName }}", id)
+
+        # Check ownership
+        if existing.user_id != user_id:
+            raise ForbiddenException("You don't have permission to delete this")
+
+        await self.crud.delete(db=self.db, id=id)
+
+
+def get_{{ module_name }}_service(db: AsyncSession) -> {{ ModelName }}Service:
+    """Dependency injection factory for {{ ModelName }}Service."""
+    return {{ ModelName }}Service(db)

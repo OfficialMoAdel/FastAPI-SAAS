@@ -1,0 +1,103 @@
+"""{{ ModelName }} SQLAlchemy model."""
+
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING
+
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from ...core.db.database import Base
+
+if TYPE_CHECKING:
+    from ...modules.users.models import User
+{%- if not no_tenant %}
+    from ...modules.tenants.models import Tenant
+{%- endif %}
+
+
+class {{ ModelName }}(Base):
+    """{{ description }}.
+
+    Attributes:
+        id: Primary key (auto-increment).
+{%- for field in fields %}
+        {{ field.name }}: {{ field.description or field.name.title() }}.
+{%- endfor %}
+    """
+
+    __tablename__ = "{{ table_name }}"
+
+    # Primary Key
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
+
+    # Core Fields
+{%- for field in fields %}
+{%- if field.type == 'str' %}
+    {{ field.name }}: Mapped[str] = mapped_column(String({{ field.max_length or 100 }}), nullable={{ 'False' if field.required else 'True' }})
+{%- elif field.type == 'int' %}
+    {{ field.name }}: Mapped[int] = mapped_column(nullable={{ 'False' if field.required else 'True' }})
+{%- elif field.type == 'bool' %}
+    {{ field.name }}: Mapped[bool] = mapped_column(default={{ field.default or 'True' }}, nullable=False)
+{%- elif field.type == 'text' %}
+    {{ field.name }}: Mapped[str | None] = mapped_column(Text, default=None)
+{%- elif field.type == 'jsonb' %}
+    {{ field.name }}: Mapped[dict] = mapped_column(JSONB, default_factory=dict)
+{%- elif field.type == 'datetime' %}
+    {{ field.name }}: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+{%- elif field.type == 'Decimal' %}
+    {{ field.name }}: Mapped[float] = mapped_column(nullable={{ 'False' if field.required else 'True' }})
+{%- else %}
+    {{ field.name }}: Mapped[str] = mapped_column(String(100), nullable={{ 'False' if field.required else 'True' }})
+{%- endif %}
+{%- endfor %}
+
+{%- if not no_tenant %}
+    # Foreign Keys
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"),
+        index=True,
+        nullable=False,
+    )
+    tenant_id: Mapped[int] = mapped_column(
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+{%- endif %}
+
+    # Status Fields
+    is_active: Mapped[bool] = mapped_column(default=True, nullable=False)
+
+    # Timestamps (MUST have init=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default_factory=lambda: datetime.now(UTC),
+        init=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default_factory=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+        init=False,
+    )
+
+    # Composite Indexes
+    __table_args__ = (
+{%- if not no_tenant %}
+        Index("idx_{{ table_name }}_tenant_active", "tenant_id", "is_active"),
+{%- endif %}
+{%- for field in fields %}
+{%- if field.indexed %}
+        Index("idx_{{ table_name }}_{{ field.name }}", "{{ field.name }}"),
+{%- endif %}
+{%- endfor %}
+    )
+
+    # Relationships
+{%- if not no_tenant %}
+    user: Mapped["User"] = relationship(init=False)
+    tenant: Mapped["Tenant"] = relationship(init=False)
+{%- endif %}
+
+    def __repr__(self) -> str:
+        return f"{{ ModelName }}(id={self.id}{% for field in fields[:1] %}, {{ field.name }}='{self.{{ field.name }}}'{% endfor %})"

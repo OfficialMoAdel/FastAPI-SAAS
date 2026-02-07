@@ -111,6 +111,27 @@ uv run pytest
 uv run alembic upgrade head
 ```
 
+## Module Generator CLI
+
+Generate complete modules with all 6 files pre-configured:
+
+```bash
+# Generate a module with fields
+uv run python -m src.scripts.create_module products --fields 'name:str,price:Decimal,quantity:int'
+
+# Preview without writing files
+uv run python -m src.scripts.create_module products --fields 'name:str,price:Decimal' --dry-run
+
+# Generate without tenant awareness (rare)
+uv run python -m src.scripts.create_module tags --fields 'name:str,color:str' --no-tenant
+
+# Overwrite existing files
+uv run python -m src.scripts.create_module products --force
+```
+
+**Field Types:** `str`, `int`, `bool`, `float`, `Decimal`, `datetime`, `text`, `json`, `uuid`  
+**Optional fields:** Add `?` suffix (e.g., `description:text?`)
+
 ## Universal Conventions
 
 - **Code Style**: ruff for formatting, mypy for strict type checking
