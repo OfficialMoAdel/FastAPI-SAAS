@@ -15,6 +15,7 @@ from .core.cache.warmer import warmer
 from .core.config import settings
 from .core.setup import create_application, lifespan_factory
 from .middleware.body_limit import RequestBodyLimitMiddleware
+from .middleware.ip_filter import IPFilterMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.request_id import RequestIDMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware
@@ -139,8 +140,8 @@ app = create_application(
 )
 
 # Middleware stack (LIFO - last added runs first on request)
-# Request flow:  GZip → Security → BodyLimit → Tenant → RateLimit → RequestID → Handler
-# Response flow: Handler → RequestID → RateLimit → Tenant → BodyLimit → Security → GZip
+# Request flow:  GZip → IPFilter → Security → BodyLimit → Tenant → RateLimit → RequestID → Handler
+# Response flow: Handler → RequestID → RateLimit → Tenant → BodyLimit → Security → IPFilter → GZip
 #
 # Key ordering decisions:
 # - RequestID: Added first = innermost (closest to handler for accurate tracing)
@@ -148,6 +149,7 @@ app = create_application(
 # - Tenant: Extract tenant context for multi-tenant features
 # - BodyLimit: Reject oversized requests early
 # - Security: Add security headers to all responses
+# - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
 from fastapi.middleware.gzip import GZipMiddleware
@@ -157,6 +159,7 @@ app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
 
 # Mount admin interface if enabled

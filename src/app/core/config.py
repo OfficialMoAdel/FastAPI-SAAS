@@ -249,6 +249,67 @@ class SecuritySettings(BaseSettings):
         description="Use xxhash for bloom filter (10-20x faster) vs SHA256 (legacy)",
     )
 
+    # IP Filtering Configuration
+    # Enable/disable IP whitelist checking. When enabled, only IPs in the whitelist are allowed.
+    IP_WHITELIST_ENABLED: bool = Field(
+        default=False,
+        description="Enable IP whitelist filtering. Only allows requests from whitelisted IPs.",
+    )
+    # Enable/disable IP blacklist checking. When enabled, IPs in the blacklist are blocked.
+    IP_BLACKLIST_ENABLED: bool = Field(
+        default=True,
+        description="Enable IP blacklist filtering. Blocks requests from blacklisted IPs.",
+    )
+    # When enabled, whitelisted IPs bypass rate limiting restrictions.
+    IP_WHITELIST_BYPASS_RATE_LIMIT: bool = Field(
+        default=False,
+        description="Allow whitelisted IPs to bypass rate limiting checks.",
+    )
+
+    # Auto-ban configuration
+    # Automatically ban repeat offenders after threshold violations
+    AUTO_BAN_ENABLED: bool = Field(
+        default=True,
+        description="Enable auto-ban for repeat rate limit offenders",
+    )
+    AUTO_BAN_THRESHOLD: int = Field(
+        default=10,
+        ge=1,
+        le=1000,
+        description="Number of violations before auto-ban (1-1000)",
+    )
+    AUTO_BAN_DURATION: int = Field(
+        default=3600,
+        ge=60,
+        le=86400,
+        description="Ban duration in seconds (60-86400 = 1 min to 24 hours)",
+    )
+    AUTO_BAN_ESCALATION: bool = Field(
+        default=True,
+        description="Double ban duration on repeat offenses",
+    )
+
+    # Bad Bot Filtering Configuration
+    BAD_BOT_FILTER_ENABLED: bool = Field(
+        default=True,
+        description="Enable blocking of known malicious scanners and bots",
+    )
+    BAD_BOT_USER_AGENTS: list[str] = Field(
+        default=[
+            "sqlmap",  # SQL injection tool
+            "nikto",  # Web scanner
+            "nmap",  # Network scanner
+            "masscan",  # Port scanner
+            "zgrab",  # Go-based scanner
+            "gobuster",  # Directory bruteforcer
+            "dirbuster",  # Java directory bruteforcer
+            "wpscan",  # WordPress scanner
+            "nuclei",  # Vulnerability scanner
+            "httpx",  # Probe tool
+        ],
+        description="List of user-agent substrings to block as bad bots",
+    )
+
 
 class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_ENABLED: bool = True
