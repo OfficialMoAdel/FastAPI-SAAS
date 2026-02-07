@@ -24,8 +24,16 @@ VIOLATIONS_KEY_PREFIX = "security:violations:{ip}"
 BAN_KEY_PREFIX = "security:ban:{ip}"
 BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
 
-# Default TTL for violations counter (should be longer than ban duration)
-VIOLATIONS_TTL = 86400  # 24 hours
+
+# TTL for violations counter - configurable via settings
+# Uses AUTO_BAN_VIOLATION_WINDOW (default 24 hours, configurable 1 hour to 7 days)
+def get_violations_ttl() -> int:
+    """Get the TTL for violation counters from settings."""
+    return getattr(settings, "AUTO_BAN_VIOLATION_WINDOW", 86400)
+
+
+# Keep constant for backward compatibility with existing code
+VIOLATIONS_TTL = 86400  # Will be deprecated in favor of get_violations_ttl()
 
 
 @dataclass

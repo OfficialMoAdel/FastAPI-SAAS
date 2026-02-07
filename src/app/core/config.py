@@ -288,6 +288,12 @@ class SecuritySettings(BaseSettings):
         default=True,
         description="Double ban duration on repeat offenses",
     )
+    AUTO_BAN_VIOLATION_WINDOW: int = Field(
+        default=86400,
+        ge=3600,
+        le=604800,
+        description="Time window in seconds for counting violations (3600-604800 = 1 hour to 7 days)",
+    )
 
     # Bad Bot Filtering Configuration
     BAD_BOT_FILTER_ENABLED: bool = Field(
