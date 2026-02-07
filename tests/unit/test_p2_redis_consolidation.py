@@ -1,8 +1,11 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from src.app.core import redis_factory, setup
 from redis.asyncio import ConnectionPool
+
+from src.app.core import redis_factory, setup
 from src.app.core.config import settings
+
 
 @pytest.mark.uses_real_redis
 @pytest.mark.asyncio

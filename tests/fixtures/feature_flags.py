@@ -24,7 +24,6 @@ Examples:
 from __future__ import annotations
 
 from contextlib import contextmanager
-from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -222,29 +221,11 @@ def parametrize_flags():
     combinations = [
         {
             "name": "all_enabled",
-            "flags": {
-                flag: True
-                for flag in [
-                    "FEATURE_REMOVE_WASTED_CONNECTION",
-                    "FEATURE_STREAMING_UPLOADS",
-                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
-                    "FEATURE_EAGER_LOADING",
-                    "FEATURE_AUDIT_FLUSH_LIMIT",
-                ]
-            },
+            "flags": dict.fromkeys(["FEATURE_REMOVE_WASTED_CONNECTION", "FEATURE_STREAMING_UPLOADS", "FEATURE_CONTEXTVAR_OPTIMIZATION", "FEATURE_EAGER_LOADING", "FEATURE_AUDIT_FLUSH_LIMIT"], True),
         },
         {
             "name": "all_disabled",
-            "flags": {
-                flag: False
-                for flag in [
-                    "FEATURE_REMOVE_WASTED_CONNECTION",
-                    "FEATURE_STREAMING_UPLOADS",
-                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
-                    "FEATURE_EAGER_LOADING",
-                    "FEATURE_AUDIT_FLUSH_LIMIT",
-                ]
-            },
+            "flags": dict.fromkeys(["FEATURE_REMOVE_WASTED_CONNECTION", "FEATURE_STREAMING_UPLOADS", "FEATURE_CONTEXTVAR_OPTIMIZATION", "FEATURE_EAGER_LOADING", "FEATURE_AUDIT_FLUSH_LIMIT"], False),
         },
         {
             "name": "streaming_only",

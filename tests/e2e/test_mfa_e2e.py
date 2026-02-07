@@ -10,10 +10,8 @@ Tests the complete MFA flow from setup through verification, including:
 6. Regenerate backup codes
 """
 
+
 import pytest
-import asyncio
-from datetime import datetime, timedelta
-from unittest.mock import patch, Mock
 
 
 @pytest.mark.asyncio

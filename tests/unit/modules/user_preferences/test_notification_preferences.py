@@ -4,8 +4,7 @@ Tests verify notification preference columns, quiet hours validation,
 and user preference behavior.
 """
 
-from datetime import UTC, datetime, time
-from uuid import uuid4
+from datetime import time
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession

@@ -1,7 +1,8 @@
 """Unit tests for AI Provider Factory."""
 
-import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from src.app.modules.ai.anthropic_provider import AnthropicProvider
 from src.app.modules.ai.exceptions import AIServerError

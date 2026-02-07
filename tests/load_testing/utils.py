@@ -1,6 +1,7 @@
+import io
 import random
 import string
-import io
+
 from faker import Faker
 
 fake = Faker()

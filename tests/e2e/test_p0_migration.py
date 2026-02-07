@@ -1,11 +1,9 @@
-import pytest
 import logging
-from sqlalchemy import text, create_engine, inspect
-from alembic import command
-from alembic.config import Config
 import os
 import tempfile
-from unittest.mock import patch
+
+import pytest
+from alembic.config import Config
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -73,7 +71,7 @@ class TestMigrationFix:
         migration_file = os.path.join("src", "migrations", "versions", "08_enable_rls_policies.py")
         logger.info(f"Checking file content: {migration_file}")
 
-        with open(migration_file, "r", encoding="utf-8") as f:
+        with open(migration_file, encoding="utf-8") as f:
             content = f.read()
 
         # Check that we are looking at the right file

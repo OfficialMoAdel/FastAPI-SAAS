@@ -139,35 +139,8 @@ from src.app.core.db.database import Base
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
-from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
-from src.app.modules.api_keys.models import APIKey
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
-from src.app.modules.billing.models import (
-    BillingRecord,
-    Pricing,
-    Product,
-    StripeSettings,
-    SubscriptionPlan,
-    UserSubscription,
-)
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
-from src.app.modules.files.models import File
-from src.app.modules.magic_link.models import MagicLink
-from src.app.modules.mfa.models import MFAMethod
-from src.app.modules.notifications.models import EmailTemplateOverride, Notification
-from src.app.modules.passkey.models import PasskeyCredential
-from src.app.modules.posts.models import Post
-from src.app.modules.rate_limits.models import RateLimit
-from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
-from src.app.modules.sso.models import UserSSOConnection
-from src.app.modules.sso_settings.models import SSOSettings
-from src.app.modules.storage_settings.models import StorageSettings
 from src.app.modules.tenants.models import Tenant
-from src.app.modules.tiers.models import Tier
-from src.app.modules.user_preferences.models import UserPreferences
 from src.app.modules.users.models import User
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")

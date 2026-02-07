@@ -1,6 +1,6 @@
+import asyncio
 import logging
 import time
-import asyncio
 from dataclasses import dataclass
 from typing import Any
 
@@ -53,7 +53,7 @@ async def check_database_health(db: AsyncSession) -> HealthResult:
         await asyncio.wait_for(_check(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         LOGGER.exception("Database health check timed out")
         return HealthResult(status="unhealthy", error="Database check timed out. Timeout after 5.0s")
     except OperationalError as e:
@@ -76,7 +76,7 @@ async def check_redis_health(redis: Redis) -> HealthResult:
         await asyncio.wait_for(redis.ping(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         LOGGER.exception("Redis health check timed out")
         return HealthResult(status="unhealthy", error="Redis check timed out. Timeout after 5.0s")
     except Exception as e:
@@ -103,7 +103,7 @@ async def check_redis_queue_health() -> HealthResult:
         await asyncio.wait_for(pool.ping(), timeout=5.0)
         latency_ms = (time.perf_counter() - start) * 1000
         return HealthResult(status="healthy", latency_ms=latency_ms)
-    except asyncio.TimeoutError:
+    except TimeoutError:
         LOGGER.exception("Redis queue health check timed out")
         return HealthResult(status="unhealthy", error="Redis queue check timed out. Timeout after 5.0s")
     except Exception as e:

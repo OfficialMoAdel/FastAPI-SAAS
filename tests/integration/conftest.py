@@ -12,9 +12,9 @@ import structlog
 from redis.asyncio import Redis
 from sqlalchemy import event as sqla_event
 from sqlalchemy import text
-from sqlalchemy.pool import NullPool
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
 
@@ -151,7 +151,7 @@ async def test_post(real_postgres, test_user):
 @pytest_asyncio.fixture
 async def test_posts(real_postgres, test_user):
     """Create multiple test posts for RLS testing (2 posts in 2 tenants)."""
-    from tests.factories import TenantFactory, UserFactory, PostFactory
+    from tests.factories import PostFactory, TenantFactory, UserFactory
 
     # Create second tenant and user
     tenant_b = await TenantFactory.create_async(real_postgres, name="Tenant B", slug="tenant-b")

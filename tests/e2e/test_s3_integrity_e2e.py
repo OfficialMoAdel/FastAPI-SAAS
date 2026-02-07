@@ -7,7 +7,6 @@ Tests small files, large files, binary types, and multipart uploads.
 import hashlib
 import io
 import os
-import tempfile
 import zipfile
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +14,6 @@ import pytest
 from PIL import Image
 
 from src.app.modules.storage.s3_storage import S3Storage
-from src.app.modules.storage.interfaces import StorageResult
 
 
 class MockUploadFile:

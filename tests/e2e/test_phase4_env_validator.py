@@ -7,7 +7,6 @@ properly blocks unsafe configurations and allows safe ones.
 
 import pytest
 
-from src.app.core.config import settings
 from src.app.core.env_validator import EnvironmentValidator
 
 

@@ -7,8 +7,8 @@ sys.path.insert(0, str(src_path))
 
 import asyncio
 import uuid
+
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
 
 # Project Imports
 from app.core.db.database import async_session_maker

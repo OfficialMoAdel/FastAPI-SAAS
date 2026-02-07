@@ -105,7 +105,7 @@ async def e2e_test_client(get_test_app, setup_tenants_and_users):
 
     # Override database dependency
     from src.app.core.db.database import async_get_db
-    from tests.conftest import override_get_db, get_testing_session_local
+    from tests.conftest import get_testing_session_local, override_get_db
 
     app.dependency_overrides[async_get_db] = override_get_db
 
@@ -241,8 +241,8 @@ class TestTenantIsolationE2E:
 
         # Mock authentication
         from src.app.api.dependencies import get_current_user
-        from tests.conftest import MockUser
         from src.app.main import app
+        from tests.conftest import MockUser
 
         fake_user = MockUser(
             id=999,
@@ -351,8 +351,8 @@ class TestTenantIsolationE2E:
 
         # Mock authentication
         from src.app.api.dependencies import get_current_user
-        from tests.conftest import MockUser
         from src.app.main import app
+        from tests.conftest import MockUser
 
         # Request 1: Tenant A
         logger.info(f"Request 1: Listing users as Tenant A (slug={tenant_a.slug})")
@@ -451,8 +451,8 @@ class TestTenantIsolationE2E:
 
         # Mock authentication
         from src.app.api.dependencies import get_current_user
-        from tests.conftest import MockUser
         from src.app.main import app
+        from tests.conftest import MockUser
 
         results: list[dict[str, Any]] = []
 
@@ -575,7 +575,7 @@ class TestTenantIsolationE2E:
         # Set up client
         app = get_test_app
         from src.app.core.db.database import async_get_db
-        from tests.conftest import override_get_db, get_testing_session_local
+        from tests.conftest import get_testing_session_local, override_get_db
 
         app.dependency_overrides[async_get_db] = override_get_db
 

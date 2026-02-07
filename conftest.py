@@ -5,7 +5,6 @@ because pydantic-settings validates env vars at import time.
 """
 
 import os
-import sys
 from pathlib import Path
 
 # ============================================================================

@@ -6,9 +6,10 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
+
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
-from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
 from .crud import crud_tenants
 from .models import Tenant
 from .schemas import TenantCreate, TenantResponse, TenantUpdate

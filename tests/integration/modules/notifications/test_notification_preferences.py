@@ -3,13 +3,12 @@
 Tests verify that user preferences are respected when sending notifications.
 """
 
-from datetime import UTC, datetime, time
-from uuid import uuid4
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.modules.notifications.models import Notification, NotificationStatus
+from src.app.modules.notifications.models import NotificationStatus
 from src.app.modules.notifications.service import NotificationService
 from src.app.modules.user_preferences.models import UserPreferences
 

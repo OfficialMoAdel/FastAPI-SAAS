@@ -4,9 +4,9 @@ MFA Router Tests
 Unit tests for the MFA router endpoints, including rate limiting.
 """
 
+from unittest.mock import AsyncMock, Mock, patch
+
 import pytest
-from unittest.mock import Mock, AsyncMock, patch
-from fastapi import status
 
 
 class TestMFARateLimitingFunction:
@@ -15,9 +15,10 @@ class TestMFARateLimitingFunction:
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_not_exceeded(self, mock_redis):
         """Test that rate limit is not exceeded when under limit."""
-        from src.app.modules.mfa.router import check_mfa_rate_limit
-        from src.app.core.utils.rate_limit import rate_limiter
         from fastapi import Request
+
+        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.modules.mfa.router import check_mfa_rate_limit
 
         # Mock request object
         request = Mock(spec=Request)
@@ -36,10 +37,11 @@ class TestMFARateLimitingFunction:
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_exceeded(self, mock_redis):
         """Test that rate limit exception is raised when over limit."""
-        from src.app.modules.mfa.router import check_mfa_rate_limit, MFA_VERIFY_LIMIT, MFA_VERIFY_PERIOD
+        from fastapi import Request
+
         from src.app.core.exceptions.http_exceptions import RateLimitException
         from src.app.core.utils.rate_limit import rate_limiter
-        from fastapi import Request
+        from src.app.modules.mfa.router import MFA_VERIFY_PERIOD, check_mfa_rate_limit
 
         # Mock request object
         request = Mock(spec=Request)
@@ -54,15 +56,16 @@ class TestMFARateLimitingFunction:
             with pytest.raises(RateLimitException) as exc_info:
                 await check_mfa_rate_limit(request, identifier="user_123")
 
-            assert f"Too many MFA verification attempts" in str(exc_info.value)
+            assert "Too many MFA verification attempts" in str(exc_info.value)
             assert str(MFA_VERIFY_PERIOD) in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_uses_client_ip(self, mock_redis):
         """Test that rate limit uses client IP when no identifier provided."""
-        from src.app.modules.mfa.router import check_mfa_rate_limit
-        from src.app.core.utils.rate_limit import rate_limiter
         from fastapi import Request
+
+        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.modules.mfa.router import check_mfa_rate_limit
 
         # Mock request object with X-Forwarded-For header
         request = Mock(spec=Request)
@@ -81,9 +84,10 @@ class TestMFARateLimitingFunction:
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_uses_client_host(self, mock_redis):
         """Test that rate limit uses client host when no X-Forwarded-For."""
-        from src.app.modules.mfa.router import check_mfa_rate_limit
-        from src.app.core.utils.rate_limit import rate_limiter
         from fastapi import Request
+
+        from src.app.core.utils.rate_limit import rate_limiter
+        from src.app.modules.mfa.router import check_mfa_rate_limit
 
         # Mock request object without X-Forwarded-For header
         request = Mock(spec=Request)

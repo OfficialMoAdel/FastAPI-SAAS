@@ -7,11 +7,14 @@ Provides fixtures for:
 - Cleanup after tests
 """
 
+import json
 import logging
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
 import pytest
+from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
@@ -20,9 +23,6 @@ from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
 from src.app.core.encryption import encrypt_value
-from cryptography.fernet import Fernet
-import json
-import os
 from src.app.core.utils import cache
 
 # Configure detailed logging for E2E tests

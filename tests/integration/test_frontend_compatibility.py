@@ -10,6 +10,7 @@ Skip reason: Frontend API migration not yet complete.
 """
 
 import os
+
 import pytest
 from fastapi.testclient import TestClient
 

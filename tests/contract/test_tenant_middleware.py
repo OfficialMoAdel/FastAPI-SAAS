@@ -6,7 +6,6 @@ Tests the middleware behavior for X-Tenant-ID header:
 - 200 response for valid tenant slug
 """
 
-import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,7 +14,6 @@ from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from src.app.middleware.tenant import TenantMiddleware
-
 
 # Skip tests that require real database connection unless explicitly enabled
 pytestmark = pytest.mark.skipif(

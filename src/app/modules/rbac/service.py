@@ -14,12 +14,12 @@ from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.tenancy.context import get_current_tenant
 from ...core.config import settings
 from ...core.db.database import async_get_db
 from ...core.json_utils import json_dumps, json_loads
 from ...core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from ...core.rbac.dependencies import invalidate_user_permissions_cache
+from ...core.tenancy.context import get_current_tenant
 from ...modules.tenants.models import Tenant
 from .._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from .models import Permission, Role, RolePermission, UserRole

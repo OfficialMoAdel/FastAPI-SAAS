@@ -1,10 +1,13 @@
 import asyncio
 from unittest.mock import AsyncMock, patch
+
 import pytest
-from src.app.core.events import EventBus, EventPriority
-from src.app.core.config import settings
-from src.app.core.utils.cache import get_with_stampede_protection, _refresh_cache_with_lock
+
 import src.app.core.utils.cache as cache_module
+from src.app.core.config import settings
+from src.app.core.events import EventBus, EventPriority
+from src.app.core.utils.cache import _refresh_cache_with_lock, get_with_stampede_protection
+
 
 @pytest.mark.asyncio
 async def test_batch_enqueue():
@@ -14,24 +17,24 @@ async def test_batch_enqueue():
     # Mock pipeline to return a mock object, not a coroutine
     mock_pipe = AsyncMock()
     mock_arq.pipeline = lambda: mock_pipe
-    
+
     # We need to ensure pipe is an async context manager if it's used with `async with`
     # or just a regular object if used directly. In ArqRedis.pipeline(), it returns a Pipeline object.
     # The real pipeline() method is not async, it returns a pipeline object.
     # In src/app/core/events.py we use: pipe = self._arq_queue.pipeline() (not awaited)
-    
+
     # But wait, ArqRedis inherits from Redis[bytes], so pipeline() is synchronous and returns a Pipeline.
     # However, Redis-py async pipeline IS async context manager usually?
     # Let's check the code in events.py:
     # pipe = self._arq_queue.pipeline()
     # pipe.psetex(...)
     # await pipe.execute()
-    
+
     # So pipeline() is NOT awaited. It returns a Pipeline object.
-    
+
     mock_arq.pipeline = lambda: mock_pipe
     mock_pipe.execute = AsyncMock(return_value=[])
-    
+
     bus.set_arq_queue(mock_arq)
 
     # Mock handlers
@@ -93,14 +96,14 @@ async def test_stampede_protection_lock():
     # Mock cache_module.client
     mock_client = AsyncMock()
     cache_module.client = mock_client
-    
+
     # Mock settings to disable LUA script for simpler path
     settings.XFETCH_USE_LUA_SCRIPT = False
 
     # Mock get/ttl/set results
     mock_client.get.return_value = b'{"data": "stale"}'
     mock_client.ttl.return_value = 100 # TTL 100s left, Total 3600 -> delta=3500 -> prob ~ 1.0 if beta=1
-    
+
     # Mock set (lock acquisition) - returns True (lock acquired)
     mock_client.set.return_value = True
 
@@ -122,14 +125,14 @@ async def test_stampede_protection_lock():
 
         # Check if lock was attempted
         mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
-        
+
         # Check if background task was created
         mock_create_task.assert_called_once()
-        
+
         # Now verify what happens inside _refresh_cache_with_lock
         # We can call it manually to verify it releases lock
         await _refresh_cache_with_lock("test:key", fetch_func, 3600, "test:key:refresh_lock")
-        
+
         # Verify lock was deleted
         mock_client.delete.assert_called_with("test:key:refresh_lock")
         assert fetch_called
@@ -137,14 +140,14 @@ async def test_stampede_protection_lock():
     # Test lock contention (lock not acquired)
     mock_client.set.return_value = False
     mock_create_task.reset_mock()
-    
+
     await get_with_stampede_protection(
         "test:key",
         fetch_func,
         ttl=3600,
         beta=100.0
     )
-    
+
     # Lock attempt made
     mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
     # But no background task created

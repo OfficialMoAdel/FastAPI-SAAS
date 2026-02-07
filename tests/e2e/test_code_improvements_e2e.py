@@ -1,16 +1,12 @@
 import asyncio
 import logging
-import subprocess
-import time
-import pytest
-import os
 import sys
-from unittest.mock import Mock, AsyncMock, MagicMock, patch
-from sqlalchemy.ext.asyncio import AsyncSession
-from redis.asyncio import Redis
+import time
+from unittest.mock import AsyncMock, MagicMock, Mock
+
+import pytest
 
 # Use absolute imports
-from src.app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -190,13 +186,13 @@ class TestCodeImprovementsE2E:
     @pytest.mark.asyncio
     async def test_health_check_timeout(self):
         """6. Health Check Validation: Verify timeouts."""
-        from src.app.core.health import check_database_health, HealthResult
-        from sqlalchemy.exc import OperationalError
+
+        from src.app.core.health import check_database_health
 
         # Mock a slow DB
         mock_db = Mock()
         mock_db.execute = AsyncMock()
-        mock_db.execute.side_effect = asyncio.TimeoutError("Mock timeout")
+        mock_db.execute.side_effect = TimeoutError("Mock timeout")
 
         # We need to patch asyncio.wait_for to actually raise TimeoutError
         # or rely on the function's internal wait_for.

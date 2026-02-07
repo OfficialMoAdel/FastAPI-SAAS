@@ -4,7 +4,6 @@ Tests the streaming upload feature that uses upload_fileobj instead of
 reading the entire file into memory.
 """
 
-import asyncio
 import sys
 from io import BytesIO
 from unittest.mock import MagicMock, patch
@@ -12,7 +11,6 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from src.app.modules.storage.s3_storage import S3Storage
-from src.app.modules.storage.interfaces import StorageResult
 
 
 class MockUploadFile:

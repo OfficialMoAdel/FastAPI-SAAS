@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field
+
 
 class LoadTestConfig(BaseSettings):
     """Configuration for Locust load tests."""

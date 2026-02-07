@@ -1,8 +1,11 @@
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
+
+import pytest
 from sqlalchemy.exc import OperationalError
+
 from src.app.core import health
+
 
 @pytest.mark.asyncio
 async def test_check_database_health_timeout():

@@ -5,8 +5,8 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.warmer import warmer
-from src.app.core.utils.cache import client as redis_client
 from src.app.core.db.database import async_get_db
+from src.app.core.utils.cache import client as redis_client
 
 logger = logging.getLogger(__name__)
 from src.app.core.exceptions.http_exceptions import (

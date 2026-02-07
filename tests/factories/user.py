@@ -6,8 +6,8 @@ Creates User model instances for testing with automatic relationship handling.
 
 from uuid import uuid4
 
-from tests.factories.base import AsyncFactory, random_email, random_string
 from src.app.modules.users.models import User
+from tests.factories.base import AsyncFactory, random_email, random_string
 
 
 class UserFactory(AsyncFactory):

@@ -8,8 +8,8 @@ import secrets
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-from tests.factories.base import AsyncFactory, random_string
 from src.app.modules.api_keys.models import APIKey
+from tests.factories.base import AsyncFactory, random_string
 
 
 class APIKeyFactory(AsyncFactory):
@@ -46,8 +46,8 @@ class APIKeyFactory(AsyncFactory):
         Returns:
             APIKey instance
         """
-        from tests.factories.user import UserFactory
         from tests.factories.tenant import TenantFactory
+        from tests.factories.user import UserFactory
 
         if user is None:
             tenant = await TenantFactory.create_async(db)

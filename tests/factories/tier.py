@@ -4,8 +4,8 @@ Tier Factory
 Creates Tier model instances for testing.
 """
 
-from tests.factories.base import AsyncFactory, random_string
 from src.app.modules.tiers.models import Tier
+from tests.factories.base import AsyncFactory, random_string
 
 
 class TierFactory(AsyncFactory):

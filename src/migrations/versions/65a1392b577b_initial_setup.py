@@ -5,10 +5,11 @@ Revises: 08_enable_rls_policies
 Create Date: 2026-02-01 17:38:54.586594
 
 """
-from typing import Sequence, Union
+from collections.abc import Sequence
+from typing import Union
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.

@@ -15,9 +15,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 

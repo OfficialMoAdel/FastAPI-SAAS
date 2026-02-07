@@ -4,8 +4,8 @@ Tenant Factory
 Creates Tenant model instances for testing with automatic slug generation.
 """
 
-from tests.factories.base import AsyncFactory, random_string
 from src.app.modules.tenants.models import Tenant
+from tests.factories.base import AsyncFactory, random_string
 
 
 class TenantFactory(AsyncFactory):

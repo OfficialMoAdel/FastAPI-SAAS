@@ -6,13 +6,12 @@ src_path = Path(__file__).parent.parent / "src"
 sys.path.insert(0, str(src_path))
 
 import asyncio
-import random
 import logging
+import random
 import uuid
-from datetime import datetime, timezone
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession
+
 from faker import Faker
+from sqlalchemy import text
 
 # Project Imports
 from app.core.db.database import async_session_maker

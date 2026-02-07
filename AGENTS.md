@@ -343,38 +343,44 @@ Usage notes:
 <available_skills>
 
 <skill>
+<name>agent-architecture-analysis</name>
+<description>Perform 12-Factor Agents compliance analysis on any codebase. Use when evaluating agent architecture, reviewing LLM-powered systems, or auditing agentic applications against the 12-Factor methodology.</description>
+<location>project</location>
+</skill>
+
+<skill>
+<name>fastapi-code-review</name>
+<description>Reviews FastAPI code for routing patterns, dependency injection, validation, and async handlers. Use when reviewing FastAPI apps, checking APIRouter setup, Depends() usage, or response models.</description>
+<location>project</location>
+</skill>
+
+<skill>
+<name>postgres-code-review</name>
+<description>Reviews PostgreSQL code for indexing strategies, JSONB operations, connection pooling, and transaction safety. Use when reviewing SQL queries, database schemas, JSONB usage, or connection management.</description>
+<location>project</location>
+</skill>
+
+<skill>
+<name>python-code-review</name>
+<description>Reviews Python code for type safety, async patterns, error handling, and common mistakes. Use when reviewing .py files, checking type hints, async/await usage, or exception handling.</description>
+<location>project</location>
+</skill>
+
+<skill>
+<name>sqlalchemy-code-review</name>
+<description>Reviews SQLAlchemy code for session management, relationships, N+1 queries, and migration patterns. Use when reviewing SQLAlchemy 2.0 code, checking session lifecycle, relationship() usage, or Alembic migrations.</description>
+<location>project</location>
+</skill>
+
+<skill>
 <name>api-design-principles</name>
 <description>Master REST and GraphQL API design principles to build intuitive, scalable, and maintainable APIs that delight developers. Use when designing new APIs, reviewing API specifications, or establishing API design standards.</description>
 <location>global</location>
 </skill>
 
 <skill>
-<name>async-python-patterns</name>
-<description>Master Python asyncio, concurrent programming, and async/await patterns for high-performance applications. Use when building async APIs, concurrent systems, or I/O-bound applications requiring non-blocking operations.</description>
-<location>global</location>
-</skill>
-
-<skill>
-<name>postgresql</name>
-<description>Design a PostgreSQL-specific schema. Covers best-practices, data types, indexing, constraints, performance patterns, and advanced features</description>
-<location>global</location>
-</skill>
-
-<skill>
-<name>python-packaging</name>
-<description>Create distributable Python packages with proper project structure, setup.py/pyproject.toml, and publishing to PyPI. Use when packaging Python libraries, creating CLI tools, or distributing Python code.</description>
-<location>global</location>
-</skill>
-
-<skill>
-<name>python-performance-optimization</name>
-<description>Profile and optimize Python code using cProfile, memory profilers, and performance best practices. Use when debugging slow Python code, optimizing bottlenecks, or improving application performance.</description>
-<location>global</location>
-</skill>
-
-<skill>
-<name>python-testing-patterns</name>
-<description>Implement comprehensive testing strategies with pytest, fixtures, mocking, and test-driven development. Use when writing Python tests, setting up test suites, or implementing testing best practices.</description>
+<name>find-skills</name>
+<description>Helps users discover and install agent skills when they ask questions like "how do I do X", "find a skill for X", "is there a skill that can...", or express interest in extending capabilities. This skill should be used when the user is looking for functionality that might exist as an installable skill.</description>
 <location>global</location>
 </skill>
 

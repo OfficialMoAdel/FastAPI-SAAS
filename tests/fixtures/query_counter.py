@@ -18,9 +18,10 @@ from __future__ import annotations
 import logging
 import re
 from collections import Counter
+from collections.abc import Callable
 from contextlib import contextmanager
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
 
 from sqlalchemy import event
 from sqlalchemy.engine import Engine

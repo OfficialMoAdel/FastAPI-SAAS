@@ -4,9 +4,7 @@ MFA Router Tests
 Unit tests for the MFA router endpoints, focusing on rate limiting and lockout mechanism.
 """
 
-import pytest
 from fastapi import status
-from unittest.mock import AsyncMock, patch, Mock
 
 
 class TestMFARateLimiting:

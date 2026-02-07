@@ -6,8 +6,8 @@ Creates Post model instances for testing.
 
 from uuid import uuid4
 
-from tests.factories.base import AsyncFactory, random_string
 from src.app.modules.posts.models import Post
+from tests.factories.base import AsyncFactory, random_string
 
 
 class PostFactory(AsyncFactory):
@@ -43,8 +43,8 @@ class PostFactory(AsyncFactory):
         Returns:
             Post instance
         """
-        from tests.factories.user import UserFactory
         from tests.factories.tenant import TenantFactory
+        from tests.factories.user import UserFactory
 
         if user is None:
             tenant = await TenantFactory.create_async(db)

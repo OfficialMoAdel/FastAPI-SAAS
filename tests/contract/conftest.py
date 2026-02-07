@@ -5,7 +5,6 @@ and unauthenticated clients for testing auth requirements.
 """
 
 from collections.abc import AsyncGenerator
-from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
@@ -15,8 +14,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 # Re-export fixtures from root conftest
 from tests.conftest import (
     MockUser,
-    override_get_db,
     get_testing_session_local,
+    override_get_db,
 )
 
 

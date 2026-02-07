@@ -3,7 +3,6 @@
 Tests the MFAService class with mocked dependencies.
 """
 
-import hashlib
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
@@ -679,6 +678,7 @@ class TestBackupCodeUsage:
     async def test_backup_code_usage_updates_last_used_at(self, mfa_service, mock_db, mock_user_id):
         """Test that using a backup code updates last_used_at timestamp."""
         from datetime import datetime
+
         from src.app.modules.mfa.crud import crud_mfa_methods
 
         test_code = "BC-ABCDE-FGHIJ"

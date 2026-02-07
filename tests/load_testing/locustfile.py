@@ -1,7 +1,6 @@
 import logging
-import time
-from locust import HttpUser, task, between, events
-from locust.exception import StopUser
+
+from locust import HttpUser, between, task
 
 from tests.load_testing.config import config
 from tests.load_testing.utils import generate_dummy_file
@@ -79,7 +78,7 @@ class SaaSUser(HttpUser):
         # Note: In this system, login requires tenant header. So this method is only useful
         # if we somehow logged in without tenant (impossible) OR if we want to switch tenants.
         # Or maybe there's a default/public tenant.
-        
+
         # In this specific issue, we failed login because of missing tenant.
         # So fetch_tenant is never reached if login fails.
         pass
@@ -107,7 +106,7 @@ class SaaSUser(HttpUser):
         if not self.refresh_token:
             return
 
-        # Explicitly set cookie for refresh if needed by framework, 
+        # Explicitly set cookie for refresh if needed by framework,
         # though Requests/Locust usually handles cookies automatically
         cookies = None
         if self.refresh_token:
@@ -124,7 +123,7 @@ class SaaSUser(HttpUser):
         """Get tenant details."""
         if not self.tenant_id:
             return
-        self.client.get(f"/api/v1/tenants/1", name="/api/v1/tenants/{id}") # Use ID 1 assuming it matches test tenant
+        self.client.get("/api/v1/tenants/1", name="/api/v1/tenants/{id}") # Use ID 1 assuming it matches test tenant
 
     @task(1)
     def file_operations(self):

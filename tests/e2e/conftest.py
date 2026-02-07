@@ -5,10 +5,10 @@ import statistics
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
-from unittest.mock import patch, AsyncMock
 
 
 @pytest.fixture
@@ -17,8 +17,8 @@ async def e2e_client(get_test_app):
     app = get_test_app
 
     # Ensure we use test async engine for everything to match DB setup
-    from tests.conftest import override_get_db, test_async_engine
     from src.app.core.db.database import async_get_db
+    from tests.conftest import override_get_db, test_async_engine
 
     app.dependency_overrides[async_get_db] = override_get_db
 

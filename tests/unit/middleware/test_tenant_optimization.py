@@ -1,6 +1,7 @@
-import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 from fastapi import FastAPI, Request
 from starlette.types import Scope
 

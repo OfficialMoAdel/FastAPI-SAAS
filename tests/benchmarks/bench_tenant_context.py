@@ -74,7 +74,7 @@ def test_memory_reduction_1000_concurrent() -> None:
 
 def test_memory_contextvar_efficiency(sample_tenant: Tenant) -> None:
     """Test that storing TenantContext in ContextVar is memory efficient."""
-    from src.app.core.tenancy.context import set_current_tenant, clear_tenant_context
+    from src.app.core.tenancy.context import clear_tenant_context, set_current_tenant
 
     tracemalloc.start()
     baseline, _ = tracemalloc.get_traced_memory()
@@ -149,7 +149,8 @@ def test_memory_dict_usage_with_id_keys() -> None:
 def test_memory_concurrent_contextvars() -> None:
     """Test memory efficiency with multiple concurrent ContextVars."""
     import asyncio
-    from src.app.core.tenancy.context import set_current_tenant, get_current_tenant, clear_tenant_context
+
+    from src.app.core.tenancy.context import clear_tenant_context, set_current_tenant
 
     async def worker(worker_id: int) -> None:
         """Worker that sets tenant context."""

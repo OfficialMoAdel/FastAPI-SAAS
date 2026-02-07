@@ -1,8 +1,9 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock, call
-from src.app.core.events import EventBus
+
 from src.app.core.config import settings
+from src.app.core.events import EventBus
 
 
 @pytest.mark.asyncio
