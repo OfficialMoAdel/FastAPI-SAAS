@@ -66,6 +66,9 @@ def _hash_api_key(self, api_key: str) -> str:
 - Keys are tenant-scoped via `tenant_id`
 - Revoked keys cannot be reactivated - create new instead
 - Rate limiting applies to API key authentication
+- **Grace Period**: During rotation, both old and new keys work for the grace period (default 7 days)
+- **valid_from column**: New keys have valid_from = now + grace_period, allowing overlap
+- **Audit Logging**: All key operations (create, revoke, rotate) are logged to audit trail
 
 ## Pre-PR Checks
 

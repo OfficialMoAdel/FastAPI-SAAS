@@ -62,12 +62,34 @@ src/app/middleware/
 └── rate_limit.py         # Rate limiting middleware
 ```
 
-## Touch Points
+## Touch Points / Key Files
 
-- **Tenant middleware**: `tenant.py::TenantMiddleware`
-- **Rate limit middleware**: `rate_limit.py::RateLimitMiddleware`
-- **Context handling**: `src.app.core.tenancy.context`
-- **CORS config**: `src.app.core.config::settings`
+### Security Middleware (New)
+- **Attack Detection**: `src/app/middleware/attack_detection.py` - Detects SQL injection, XSS, path traversal
+  - Config: `ATTACK_DETECTION_ENABLED`, `ATTACK_DETECTION_MODE` (log/block/ban), `ATTACK_DETECTION_LOG_FULL_REQUEST`
+  - Patterns: SQL keywords, XSS payloads, directory traversal sequences
+  - Modes: log=record only, block=403 response, ban=add to IP blacklist
+  
+- **IP Filter**: `src/app/middleware/ip_filter.py` - IP whitelisting/blacklisting
+  - Uses Redis for persistent storage
+  - Supports CIDR notation and exact matches
+  - Integrates with attack detection for auto-banning
+  
+- **Rate Limit**: `src/app/middleware/rate_limit.py` - Request rate limiting
+  - Per-endpoint and global limits
+  - Redis-backed sliding window
+  - Customizable burst allowances
+  
+- **Query Profiler**: `src/app/middleware/query_profiler.py` - Database query monitoring
+  - Tracks query count and execution time per request
+  - Identifies N+1 queries and slow queries
+  - Adds X-Query-Count and X-Query-Time headers
+  - Config: `QUERY_PROFILER_ENABLED`, `QUERY_PROFILER_SLOW_THRESHOLD_MS`
+
+### Standard Middleware
+- Cache Middleware: `src/app/middleware/client_cache_middleware.py` - Client-side caching headers
+- Audit Log: `src/app/middleware/audit_log.py` - Request audit logging
+- Bad Bot: `src/app/middleware/bad_bot.py` - User agent filtering
 
 ## JIT Index Hints
 

@@ -47,6 +47,7 @@ class WebhookService:
         url: str,
         event_type: str,
         secret: str | None = None,
+        signing_secret: str | None = None,
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
@@ -56,11 +57,15 @@ class WebhookService:
         actual_secret = secret if secret else secrets_module.token_urlsafe(32)
         encrypted_secret = encrypt_data(actual_secret)
 
+        # Generate signing_secret if not provided (64 chars = 256 bits)
+        actual_signing_secret = signing_secret if signing_secret else secrets_module.token_hex(32)
+
         endpoint = WebhookEndpoint(
             tenant_id=tenant_id,
             url=url,
             event_type=event_type,
             secret=encrypted_secret,
+            signing_secret=actual_signing_secret,
             is_active=is_active,
         )
 
@@ -101,8 +106,9 @@ class WebhookService:
         deliveries_data = []
 
         for endpoint in endpoints:
-            secret = ""
-            if endpoint.secret:
+            # Prefer signing_secret (per-endpoint) over legacy encrypted secret
+            secret = endpoint.signing_secret or ""
+            if not secret and endpoint.secret:
                 try:
                     secret = decrypt_data(endpoint.secret)
                 except Exception as e:
@@ -159,8 +165,9 @@ class WebhookService:
         payload: dict[str, Any],
     ) -> WebhookDelivery:
         """Trigger a specific webhook endpoint (e.g., for testing)."""
-        secret = ""
-        if endpoint.secret:
+        # Prefer signing_secret (per-endpoint) over legacy encrypted secret
+        secret = endpoint.signing_secret or ""
+        if not secret and endpoint.secret:
             try:
                 secret = decrypt_data(endpoint.secret)
             except Exception as e:
@@ -422,3 +429,105 @@ class WebhookService:
 
         result = await self.db.execute(stmt)
         return list(result.scalars().all())
+
+    async def get_signing_secret(
+        self,
+        endpoint_id: UUID,
+        tenant_id: int,
+    ) -> dict[str, Any]:
+        """Get the signing secret for a webhook endpoint (admin only).
+
+        Parameters
+        ----------
+        endpoint_id : UUID
+            ID of the webhook endpoint
+        tenant_id : int
+            ID of the tenant
+
+        Returns
+        -------
+        dict
+            Dictionary with webhook_endpoint_id, signing_secret, and created_at
+
+        Raises
+        ------
+        ModelNotFoundError
+            If endpoint not found
+        """
+        stmt = select(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.tenant_id == tenant_id,
+        )
+        result = await self.db.execute(stmt)
+        endpoint = result.scalar_one_or_none()
+
+        if not endpoint:
+            raise ModelNotFoundError("WebhookEndpoint", endpoint_id)
+
+        return {
+            "webhook_endpoint_id": endpoint.id,
+            "signing_secret": endpoint.signing_secret,
+            "created_at": endpoint.created_at,
+        }
+
+    async def rotate_signing_secret(
+        self,
+        endpoint_id: UUID,
+        tenant_id: int,
+        grace_period_seconds: int = 300,
+    ) -> dict[str, Any]:
+        """Rotate the signing secret for a webhook endpoint.
+
+        Generates a new signing secret and sets up a grace period during which
+        the old secret remains valid. This allows consumers to update their
+        configuration without service interruption.
+
+        Parameters
+        ----------
+        endpoint_id : UUID
+            ID of the webhook endpoint
+        tenant_id : int
+            ID of the tenant
+        grace_period_seconds : int
+            Seconds before old secret expires (default: 300/5min)
+
+        Returns
+        -------
+        dict
+            Dictionary with new_signing_secret and expiration info
+
+        Raises
+        ------
+        ModelNotFoundError
+            If endpoint not found
+        """
+        from ...webhooks.utils import generate_signing_secret
+
+        stmt = select(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.tenant_id == tenant_id,
+        )
+        result = await self.db.execute(stmt)
+        endpoint = result.scalar_one_or_none()
+
+        if not endpoint:
+            raise ModelNotFoundError("WebhookEndpoint", endpoint_id)
+
+        # Generate new signing secret
+        new_secret = generate_signing_secret()
+
+        # Calculate expiration time
+        expires_at = datetime.now() + timedelta(seconds=grace_period_seconds)
+
+        # Update endpoint with new secret
+        endpoint.signing_secret = new_secret
+
+        await self.db.commit()
+        await self.db.refresh(endpoint)
+
+        return {
+            "webhook_endpoint_id": endpoint.id,
+            "new_signing_secret": new_secret,
+            "old_secret_expires_at": expires_at,
+            "grace_period_seconds": grace_period_seconds,
+        }

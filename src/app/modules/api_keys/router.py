@@ -7,7 +7,13 @@ from fastapi import APIRouter, Depends
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_tenant_context
-from .schemas import APIKeyCreate, APIKeyList, APIKeyResponse, APIKeyRevokeResponse
+from .schemas import (
+    APIKeyCreate,
+    APIKeyList,
+    APIKeyResponse,
+    APIKeyRevokeResponse,
+    APIKeyRotateResponse,
+)
 from .service import APIKeyService, get_api_key_service
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
@@ -92,3 +98,49 @@ async def revoke_api_key(
         tenant_id=tenant_id,
     )
     return APIKeyRevokeResponse(message=result["message"])
+
+
+@router.post("/{key_id}/rotate", response_model=APIKeyRotateResponse)
+async def rotate_api_key(
+    key_id: int,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    tenant_id: Annotated[int, Depends(_get_tenant_id)],
+    service: APIKeyServiceDep,
+    grace_period_days: int = 7,
+) -> APIKeyRotateResponse:
+    """Rotate an API key with grace period for zero-downtime rotation.
+
+    Creates a new key that becomes valid after the grace period.
+    The old key remains valid during the grace period, allowing
+    seamless transition without service interruption.
+
+    After the grace period expires, only the new key will work.
+    Both keys can be used during the grace period.
+
+    Parameters
+    ----------
+    key_id : int
+        ID of the API key to rotate
+    grace_period_days : int
+        Days before new key becomes valid (default: 7)
+
+    Returns
+    -------
+    APIKeyRotateResponse
+        New API key with grace period information
+    """
+    result = await service.rotate_api_key(
+        key_id=key_id,
+        user_id=current_user["id"],
+        tenant_id=tenant_id,
+        grace_period_days=grace_period_days,
+    )
+    return APIKeyRotateResponse(
+        id=result.id,
+        name=result.name,
+        key=result.key,
+        key_prefix=result.key_prefix,
+        expires_at=result.expires_at,
+        created_at=result.created_at,
+        message=result.message,
+    )

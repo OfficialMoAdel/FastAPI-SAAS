@@ -73,3 +73,17 @@ class APIKeyRevokeResponse(BaseModel):
     """Schema for API key revocation response."""
 
     message: str = "API key revoked successfully"
+
+
+class APIKeyRotateResponse(APIKeyResponse):
+    """Schema for API key rotation response.
+
+    Extends APIKeyResponse to include grace period info.
+    """
+
+    valid_from: datetime | None = None
+    grace_period_days: int = 7
+    message: str = (
+        "Key rotated successfully. Old key remains valid for grace period. "
+        "Store new key securely - it will not be shown again."
+    )

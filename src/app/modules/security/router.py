@@ -454,8 +454,7 @@ async def manually_ban_ip(
     """
     success = await ban_ip(
         request.ip_address,
-        request.reason or f"Manual ban by admin {current_user.get('id')}",
-        None,
+        reason=request.reason or f"Manual ban by admin {current_user.get('id')}",
     )
 
     return BanActionResponse(

@@ -13,6 +13,9 @@ from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
 from .models import WebhookDelivery, WebhookEndpoint
 from .schemas import (
+    SigningSecretRotateRequest,
+    SigningSecretRotateResponse,
+    SigningSecretViewResponse,
     WebhookDeliveryList,
     WebhookDeliveryResponse,
     WebhookEndpointCreate,
@@ -326,3 +329,77 @@ async def test_webhook_endpoint(
     )
 
     return WebhookDeliveryResponse.model_validate(delivery)
+
+
+@router.get("/{endpoint_id}/signing-secret", response_model=SigningSecretViewResponse)
+async def get_signing_secret(
+    endpoint_id: UUID,
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> SigningSecretViewResponse:
+    """Get the signing secret for a webhook endpoint (admin only).
+
+    This endpoint allows administrators to view the signing secret
+    for verification purposes. The secret should be stored securely
+    and never exposed to end users.
+    """
+    service = WebhookService(db)
+    result = await service.get_signing_secret(
+        endpoint_id=endpoint_id,
+        tenant_id=current_tenant.id,
+    )
+
+    if not result["signing_secret"]:
+        raise HTTPException(
+            status_code=404,
+            detail="No signing secret found for this endpoint"
+        )
+
+    return SigningSecretViewResponse(
+        webhook_endpoint_id=result["webhook_endpoint_id"],
+        signing_secret=result["signing_secret"],
+        created_at=result["created_at"],
+    )
+
+
+@router.post("/{endpoint_id}/signing-secret/rotate", response_model=SigningSecretRotateResponse)
+async def rotate_signing_secret(
+    endpoint_id: UUID,
+    request: SigningSecretRotateRequest,
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> SigningSecretRotateResponse:
+    """Rotate the signing secret for a webhook endpoint.
+
+    Generates a new signing secret with a grace period during which
+    the old secret remains valid. This allows webhook consumers to
+    update their configuration without service interruption.
+
+    The grace period defaults to 5 minutes but can be customized.
+    During the grace period, both old and new secrets will be accepted.
+
+    Parameters
+    ----------
+    grace_period_seconds : int
+        Seconds before old secret expires (0-86400, default: 300/5min)
+
+    Returns
+    -------
+    SigningSecretRotateResponse
+        New signing secret and expiration information
+    """
+    service = WebhookService(db)
+    result = await service.rotate_signing_secret(
+        endpoint_id=endpoint_id,
+        tenant_id=current_tenant.id,
+        grace_period_seconds=request.grace_period_seconds,
+    )
+
+    return SigningSecretRotateResponse(
+        webhook_endpoint_id=result["webhook_endpoint_id"],
+        new_signing_secret=result["new_signing_secret"],
+        old_secret_expires_at=result["old_secret_expires_at"],
+        grace_period_seconds=result["grace_period_seconds"],
+    )

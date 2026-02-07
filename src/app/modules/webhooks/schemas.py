@@ -36,6 +36,9 @@ class WebhookEndpointCreate(WebhookEndpointBase, BaseCreate):
     secret: str | None = Field(
         None, description="Optional custom secret for signature (auto-generated if not provided)"
     )
+    signing_secret: str | None = Field(
+        None, description="Per-endpoint signing secret (auto-generated if not provided)"
+    )
 
 
 class WebhookEndpointUpdate(BaseUpdate):
@@ -45,6 +48,7 @@ class WebhookEndpointUpdate(BaseUpdate):
     event_type: str | None = None
     is_active: bool | None = None
     secret: str | None = Field(None, description="New secret (regenerates signature)")
+    signing_secret: str | None = Field(None, description="New signing secret")
 
 
 class WebhookEndpointRead(BaseReadUUID):
@@ -54,7 +58,17 @@ class WebhookEndpointRead(BaseReadUUID):
     url: str
     event_type: str
     is_active: bool
-    # Note: secret is NOT included for security
+    # Note: secret and signing_secret NOT included for security
+
+
+class WebhookEndpointAdminRead(BaseReadUUID):
+    """Schema for webhook endpoint admin response (includes signing_secret)."""
+
+    tenant_id: UUID
+    url: str
+    event_type: str
+    is_active: bool
+    signing_secret: str | None = None  # Included for admin management
 
 
 # Backward compatibility alias
@@ -125,3 +139,41 @@ class WebhookTestRequest(BaseModel):
 
     event_type: str = Field(..., description="Event type to simulate")
     payload: dict[str, Any] = Field(default_factory=dict, description="Test payload")
+
+
+# =============================================================================
+# Signing Secret Schemas
+# =============================================================================
+
+
+class SigningSecretViewResponse(BaseModel):
+    """Schema for viewing webhook signing secret (admin only)."""
+
+    webhook_endpoint_id: UUID
+    signing_secret: str
+    created_at: datetime
+    message: str = "Store this secret securely. It will not be shown again."
+
+
+class SigningSecretRotateRequest(BaseModel):
+    """Schema for rotating webhook signing secret."""
+
+    grace_period_seconds: int = Field(
+        default=300,
+        ge=0,
+        le=86400,
+        description="Grace period in seconds before old secret expires (0-86400, default: 300s/5min)",
+    )
+
+
+class SigningSecretRotateResponse(BaseModel):
+    """Schema for signing secret rotation response."""
+
+    webhook_endpoint_id: UUID
+    new_signing_secret: str
+    old_secret_expires_at: datetime
+    grace_period_seconds: int
+    message: str = (
+        "Secret rotated successfully. Old secret remains valid during grace period. "
+        "Update your webhook consumer immediately."
+    )

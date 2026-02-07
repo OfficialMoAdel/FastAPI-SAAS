@@ -15,6 +15,10 @@ from .._base.service import BaseService
 from .crud import crud_api_keys
 from .models import APIKey
 from .schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
+from src.app.modules.audit_logs.service import AuditLogService
+import logging
+
+logger = logging.getLogger(__name__)
 
 # Cache configuration for API key validation
 API_KEY_CACHE_PREFIX = "api_key"
@@ -102,6 +106,27 @@ class APIKeyService(BaseService[APIKey]):
         self.db.add(key_record)
         await self.db.commit()
         await self.db.refresh(key_record)
+
+        # Audit log the creation
+        audit_service = AuditLogService(self.db)
+        await audit_service.create_log(
+            tenant_id=tenant_id,
+            action="api_key.created",
+            entity_type="api_key",
+            entity_id=key_record.id,
+            user_id=user_id,
+            details={
+                "key_name": key_record.name,
+                "key_prefix": key_record.key_prefix,
+                "expires_at": key_record.expires_at.isoformat() if key_record.expires_at else None,
+                "scopes": api_key_data.scopes,
+            },
+        )
+
+        logger.info(
+            f"API key created | user={user_id} | tenant={tenant_id} | "
+            f"key_id={key_record.id} | key_name={key_record.name}"
+        )
 
         return APIKeyResponse(
             id=key_record.id,
@@ -203,6 +228,26 @@ class APIKeyService(BaseService[APIKey]):
             db=self.db,
             id=key_id,
             object={"is_active": False},
+        )
+
+        # Audit log the revocation
+        audit_service = AuditLogService(self.db)
+        await audit_service.create_log(
+            tenant_id=tenant_id,
+            action="api_key.revoked",
+            entity_type="api_key",
+            entity_id=str(key_id),
+            user_id=user_id,
+            details={
+                "key_name": api_key.name,
+                "key_prefix": api_key.key_prefix,
+                "was_active": api_key.is_active,
+            },
+        )
+
+        logger.info(
+            f"API key revoked | user={user_id} | tenant={tenant_id} | "
+            f"key_id={key_id} | key_name={api_key.name}"
         )
 
         return {"message": "API key revoked successfully"}
@@ -314,6 +359,11 @@ class APIKeyService(BaseService[APIKey]):
         if not key:
             return None
 
+        # Check valid_from (grace period rotation support)
+        # Key is not valid before this timestamp
+        if key.valid_from and key.valid_from > datetime.now(UTC):
+            return None
+
         # Check expiration
         if key.expires_at and key.expires_at < datetime.now(UTC):
             return None
@@ -332,6 +382,128 @@ class APIKeyService(BaseService[APIKey]):
             "key_id": key.id,
             "expires_at": key.expires_at,
         }
+
+    async def rotate_api_key(
+        self,
+        key_id: int,
+        user_id: int,
+        tenant_id: int,
+        grace_period_days: int = 7,
+    ) -> APIKeyResponse:
+        """Rotate an API key with grace period for zero-downtime rotation.
+
+        Flow:
+        1. Create new key immediately with valid_from set to future timestamp
+        2. Old key remains valid for grace_period_days
+        3. New key becomes valid after grace period expires
+        4. Both keys work during grace period (seamless transition)
+
+        Security: Revoking the old key automatically invalidates it.
+        Users should update their applications within the grace period.
+
+        Parameters
+        ----------
+        key_id : int
+            ID of the API key to rotate
+        user_id : int
+            ID of the user making the request
+        tenant_id : int
+            ID of the tenant
+        grace_period_days : int
+            Days before new key becomes valid (default: 7)
+
+        Returns
+        -------
+        APIKeyResponse
+            New API key (only shown once)
+
+        Raises
+        ------
+        ModelNotFoundError
+            If key not found
+        ForbiddenException
+            If user doesn't own the key
+        """
+        from datetime import timedelta
+
+        # Get the existing key
+        old_key = await crud_api_keys.get(
+            db=self.db,
+            id=key_id,
+            is_deleted=False,
+            return_as_model=True,
+        )
+
+        if not old_key:
+            raise ModelNotFoundError("APIKey", key_id)
+
+        # Cast to APIKey
+        api_key = old_key if isinstance(old_key, APIKey) else None
+        if api_key is None:
+            raise ModelNotFoundError("APIKey", key_id)
+
+        if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
+            raise ForbiddenException("You don't have permission to rotate this key")
+
+        if not api_key.is_active:
+            raise ForbiddenException("Cannot rotate a revoked key")
+
+        # Calculate valid_from timestamp (now + grace period)
+        valid_from = datetime.now(UTC) + timedelta(days=grace_period_days)
+
+        # Generate new key with grace period
+        full_key, prefix, hashed_key = self._generate_key()
+
+        # Create new key record with valid_from in the future
+        new_key_record = APIKey(
+            name=f"{api_key.name} (Rotated)",
+            key_prefix=prefix,
+            hashed_key=hashed_key,
+            user_id=user_id,
+            tenant_id=tenant_id,
+            scopes=api_key.scopes,  # Copy scopes as JSON string
+            expires_at=api_key.expires_at,  # Copy expiration
+            is_active=True,
+            valid_from=valid_from,
+        )
+        self.db.add(new_key_record)
+        await self.db.commit()
+        await self.db.refresh(new_key_record)
+
+        # Audit log the rotation
+        audit_service = AuditLogService(self.db)
+        await audit_service.create_log(
+            tenant_id=tenant_id,
+            action="api_key.rotated",
+            entity_type="api_key",
+            entity_id=new_key_record.id,
+            user_id=user_id,
+            details={
+                "old_key_id": api_key.id,
+                "old_key_name": api_key.name,
+                "old_key_prefix": api_key.key_prefix,
+                "new_key_id": new_key_record.id,
+                "new_key_name": new_key_record.name,
+                "new_key_prefix": new_key_record.key_prefix,
+                "grace_period_days": grace_period_days,
+                "valid_from": valid_from.isoformat(),
+            },
+        )
+
+        logger.info(
+            f"API key rotated | user={user_id} | tenant={tenant_id} | "
+            f"old_key_id={api_key.id} | new_key_id={new_key_record.id} | "
+            f"grace_period={grace_period_days}d | valid_from={valid_from.isoformat()}"
+        )
+
+        return APIKeyResponse(
+            id=new_key_record.id,
+            name=new_key_record.name,
+            key=full_key,  # Only returned on creation!
+            key_prefix=prefix,
+            expires_at=new_key_record.expires_at,
+            created_at=new_key_record.created_at,
+        )
 
 
 def get_api_key_service(db: AsyncSession) -> APIKeyService:

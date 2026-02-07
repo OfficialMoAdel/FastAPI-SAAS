@@ -136,7 +136,7 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
             total_time_ms = (time.perf_counter() - start_time) * 1000
 
             # Detach listener
-            self._detach_listener(engine)
+            self._detach_listener(engine, stats)
 
             # Log profiling results
             self._log_results(request, stats, total_time_ms)
@@ -165,11 +165,12 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
         stats._before_listener = before_execute
         stats._after_listener = after_execute
 
-    def _detach_listener(self, engine: Engine) -> None:
+    def _detach_listener(self, engine: Engine, stats: QueryStats) -> None:
         """Remove SQL execution event listeners."""
-        # Listeners are automatically cleaned up by SQLAlchemy's event system
-        # when the connection is closed, but we can explicitly remove them if needed
-        pass
+        if stats._before_listener is not None:
+            event.remove(engine, "before_cursor_execute", stats._before_listener)
+        if stats._after_listener is not None:
+            event.remove(engine, "after_cursor_execute", stats._after_listener)
 
     def _log_results(self, request: Request, stats: QueryStats, total_time_ms: float) -> None:
         """Log query profiling results."""

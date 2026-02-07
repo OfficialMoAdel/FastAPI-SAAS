@@ -1,0 +1,350 @@
+r"""Attack Detection Middleware for detecting and blocking malicious requests.
+
+This middleware inspects incoming requests for attack patterns including:
+- SQL Injection (UNION SELECT, OR 1=1, etc.)
+- XSS attacks (script tags, javascript: URIs, event handlers)
+- Path Traversal (../, ..\, encoded variants)
+
+Three operation modes:
+- log: Log attacks but allow request to continue (default)
+- block: Block attacks with 400 Bad Request
+- ban: Block attacks and add IP to blacklist (403 Forbidden)
+
+Whitelist bypass: IPs in whitelist skip attack detection entirely.
+"""
+
+import logging
+import re
+from enum import Enum
+from typing import cast
+
+from fastapi import Request, Response
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.types import ASGIApp
+
+from src.app.core.config import settings
+from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
+from src.app.modules.security.service import IPFilterService
+
+logger = logging.getLogger(__name__)
+
+
+class AttackType(str, Enum):
+    """Enumeration of attack types for categorization.
+
+    Using str as base class for JSON serialization compatibility.
+    """
+
+    SQL_INJECTION = "sql_injection"
+    XSS = "xss"
+    PATH_TRAVERSAL = "path_traversal"
+
+
+# Paths exempt from attack detection (health checks, metrics, etc.)
+EXEMPT_PATHS: frozenset[str] = frozenset(
+    [
+        "/health",
+        "/health/live",
+        "/health/ready",
+        "/metrics",
+        "/docs",
+        "/redoc",
+        "/openapi.json",
+    ]
+)
+
+# Pre-compiled regex patterns for SQL injection detection
+# These patterns are compiled at module load for optimal performance
+SQL_INJECTION_PATTERNS: list[re.Pattern] = [
+    # UNION SELECT pattern - classic SQL injection
+    re.compile(r"(\bunion\b.*\bselect\b)", re.IGNORECASE),
+    # OR 1=1 pattern - boolean-based blind injection
+    re.compile(r"(\bor\b\s+1\s*=\s*1)", re.IGNORECASE),
+    # DROP TABLE pattern - destructive SQL injection
+    re.compile(r"(\bdrop\b.*\btable\b)", re.IGNORECASE),
+    # DELETE FROM pattern - destructive SQL injection
+    re.compile(r"(\bdelete\b.*\bfrom\b)", re.IGNORECASE),
+    # Comment at end of line - comment injection
+    re.compile(r"(--\s*$)", re.IGNORECASE),
+    # Semicolon followed by comment - query termination
+    re.compile(r"(;\s*--)", re.IGNORECASE),
+    # EXEC xp_ pattern - stored procedure execution (SQL Server)
+    re.compile(r"(\bexec\b.*\bxp_)", re.IGNORECASE),
+]
+
+# Pre-compiled regex patterns for XSS detection
+XSS_PATTERNS: list[re.Pattern] = [
+    # Script tag start - inline script injection
+    re.compile(r"(<script[\s>])", re.IGNORECASE),
+    # JavaScript protocol - protocol-based XSS
+    re.compile(r"(javascript\s*:)", re.IGNORECASE),
+    # Event handler pattern - onerror, onclick, etc.
+    re.compile(r"(\bon\w+\s*=)", re.IGNORECASE),
+    # Iframe tag - iframe injection
+    re.compile(r"(<iframe[\s>])", re.IGNORECASE),
+    # Object tag - object embedding
+    re.compile(r"(<object[\s>])", re.IGNORECASE),
+]
+
+# Pre-compiled regex patterns for path traversal detection
+PATH_TRAVERSAL_PATTERNS: list[re.Pattern] = [
+    # Dot-dot-slash pattern - basic directory traversal
+    re.compile(r"(\.\.\/)", re.IGNORECASE),
+    # Triple dot pattern - some filter bypasses
+    re.compile(r"(\.\.\.)", re.IGNORECASE),
+    # URL-encoded dot-dot-slash - encoding bypass
+    re.compile(r"(%2e%2e%2f)", re.IGNORECASE),
+    # Partially-encoded dot-dot-slash - mixed encoding bypass
+    re.compile(r"(%2e%2e\/)", re.IGNORECASE),
+]
+
+# Combined attack patterns dictionary for backward compatibility and type grouping
+# Maps pattern names to (compiled_pattern, attack_type) tuples
+ATTACK_PATTERNS: dict[str, tuple[re.Pattern, AttackType]] = {
+    # SQL Injection patterns
+    "sql_union_select": (SQL_INJECTION_PATTERNS[0], AttackType.SQL_INJECTION),
+    "sql_or_1_equals_1": (SQL_INJECTION_PATTERNS[1], AttackType.SQL_INJECTION),
+    "sql_drop_table": (SQL_INJECTION_PATTERNS[2], AttackType.SQL_INJECTION),
+    "sql_delete_from": (SQL_INJECTION_PATTERNS[3], AttackType.SQL_INJECTION),
+    "sql_comment_end": (SQL_INJECTION_PATTERNS[4], AttackType.SQL_INJECTION),
+    "sql_semicolon_comment": (SQL_INJECTION_PATTERNS[5], AttackType.SQL_INJECTION),
+    "sql_exec_xp": (SQL_INJECTION_PATTERNS[6], AttackType.SQL_INJECTION),
+    # XSS patterns
+    "xss_script_tag": (XSS_PATTERNS[0], AttackType.XSS),
+    "xss_javascript_uri": (XSS_PATTERNS[1], AttackType.XSS),
+    "xss_event_handler": (XSS_PATTERNS[2], AttackType.XSS),
+    "xss_iframe": (XSS_PATTERNS[3], AttackType.XSS),
+    "xss_object": (XSS_PATTERNS[4], AttackType.XSS),
+    # Path Traversal patterns
+    "path_dotdot_slash": (PATH_TRAVERSAL_PATTERNS[0], AttackType.PATH_TRAVERSAL),
+    "path_triple_dot": (PATH_TRAVERSAL_PATTERNS[1], AttackType.PATH_TRAVERSAL),
+    "path_encoded": (PATH_TRAVERSAL_PATTERNS[2], AttackType.PATH_TRAVERSAL),
+    "path_partial_encoded": (PATH_TRAVERSAL_PATTERNS[3], AttackType.PATH_TRAVERSAL),
+}
+
+
+class AttackDetectionMiddleware(BaseHTTPMiddleware):
+    """Middleware to detect and handle malicious attack patterns.
+
+    Execution order (in relation to other middleware):
+    1. IPFilterMiddleware (whitelist check - if whitelisted, skip attack detection)
+    2. AttackDetectionMiddleware (this middleware)
+    3. RateLimitMiddleware
+
+    Operation modes:
+    - log: Detect attacks, log them, but allow request to continue
+    - block: Detect attacks, log them, return 400 Bad Request
+    - ban: Detect attacks, log them, add IP to blacklist, return 403 Forbidden
+
+    Whitelist bypass: If request.state.ip_whitelisted is True, skip all detection.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        super().__init__(app)
+        self._filter_service = IPFilterService()
+        self._mode = getattr(settings, "ATTACK_DETECTION_MODE", "log")
+        self._log_full_request = getattr(settings, "ATTACK_DETECTION_LOG_FULL_REQUEST", False)
+        self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
+
+    def _is_exempt_path(self, path: str) -> bool:
+        """Check if path is exempt from attack detection."""
+        return any(path.startswith(exempt) for exempt in EXEMPT_PATHS)
+
+    def _get_client_ip(self, request: Request) -> str:
+        """Extract client IP with trusted proxy support."""
+        forwarded_for = request.headers.get("x-forwarded-for")
+        if forwarded_for:
+            return forwarded_for.split(",")[0].strip()
+
+        real_ip = request.headers.get("x-real-ip")
+        if real_ip:
+            return real_ip
+
+        if request.client:
+            return request.client.host
+
+        return "unknown"
+
+    async def _detect_attack_patterns(self, request: Request) -> list[dict]:
+        """Scan request for attack patterns.
+
+        Checks:
+        - URL path and query parameters
+        - Request body (if applicable and not too large)
+        - Headers (User-Agent, Referer, etc.)
+
+        Returns:
+            List of detected attacks, each with pattern_type and location
+        """
+        detected_attacks: list[dict] = []
+        path = request.url.path
+        query = str(request.query_params)
+
+        # Check URL path
+        self._check_for_patterns(path, "url_path", detected_attacks)
+
+        # Check query string
+        if query:
+            self._check_for_patterns(query, "query_string", detected_attacks)
+
+        # Check specific headers that might contain attacks
+        headers_to_check = ["user-agent", "referer", "x-requested-with"]
+        for header_name in headers_to_check:
+            header_value = request.headers.get(header_name, "")
+            if header_value:
+                self._check_for_patterns(header_value, f"header:{header_name}", detected_attacks)
+
+        # Check request body if it's a POST/PUT/PATCH with content
+        if request.method in ("POST", "PUT", "PATCH"):
+            content_type = request.headers.get("content-type", "")
+            # Only check text-based content types
+            text_content_types = ["application/json", "application/x-www-form-urlencoded", "text/"]
+            if any(ct in content_type.lower() for ct in text_content_types):
+                try:
+                    # Read body (limited to prevent memory issues)
+                    body = await request.body()
+                    if body and len(body) < 1024 * 1024:  # Max 1MB
+                        body_text = body.decode("utf-8", errors="replace")
+                        if body_text:
+                            self._check_for_patterns(body_text, "request_body", detected_attacks)
+                except Exception:
+                    # If we can't read the body, skip it
+                    pass
+
+        return detected_attacks
+
+    def _check_for_patterns(self, content: str, location: str, attacks: list[dict]) -> None:
+        """Check content against all attack patterns.
+
+        Uses the ATTACK_PATTERNS dict which maps pattern names to
+        (compiled_regex, attack_type) tuples for efficient categorization.
+        """
+        for pattern_name, (pattern, attack_type) in ATTACK_PATTERNS.items():
+            if pattern.search(content):
+                attacks.append(
+                    {
+                        "attack_type": attack_type.value,
+                        "pattern_name": pattern_name,
+                        "location": location,
+                        "matched_content": content[:100] if self._log_full_request else "[redacted]",
+                    }
+                )
+
+    def _get_attack_type(self, pattern_name: str) -> str:
+        """Map pattern name to attack type category.
+
+        NOTE: This method is kept for backward compatibility.
+        The AttackType is now directly available from ATTACK_PATTERNS tuples.
+        """
+        attack_type_map = {
+            "sql_": AttackType.SQL_INJECTION.value,
+            "xss_": AttackType.XSS.value,
+            "path_": AttackType.PATH_TRAVERSAL.value,
+        }
+        for prefix, attack_type in attack_type_map.items():
+            if pattern_name.startswith(prefix):
+                return attack_type
+        return AttackType.SQL_INJECTION.value  # Default fallback
+
+    async def _handle_attack_detection(
+        self,
+        request: Request,
+        client_ip: str,
+        detected_attacks: list[dict],
+    ) -> Response | None:
+        """Handle detected attacks based on configured mode.
+
+        Returns:
+            Response if attack should be blocked/banned, None if request should continue
+        """
+        path = request.url.path
+
+        # Log the attack
+        for attack in detected_attacks:
+            event = create_security_event(
+                event_type=SecurityEventType.ATTACK_DETECTED,
+                client_ip=client_ip,
+                request_path=path,
+                reason=f"{attack['attack_type']} detected via {attack['pattern_name']}",
+                extra={
+                    "attack_type": attack["attack_type"],
+                    "pattern_name": attack["pattern_name"],
+                    "location": attack["location"],
+                    "matched_content": attack.get("matched_content", "[redacted]"),
+                    "mode": self._mode,
+                },
+            )
+            log_security_event(event)
+
+            logger.warning(
+                f"Attack detected | type={attack['attack_type']} | "
+                f"pattern={attack['pattern_name']} | location={attack['location']} | "
+                f"ip={client_ip} | path={path} | mode={self._mode}"
+            )
+
+        # Mode: log - allow request to continue
+        if self._mode == "log":
+            return None
+
+        # Mode: block - return 400 Bad Request
+        if self._mode == "block":
+            return Response(
+                content='{"detail":"Bad Request - Attack pattern detected"}',
+                status_code=400,
+                media_type="application/json",
+            )
+
+        # Mode: ban - add to blacklist and return 403 Forbidden
+        if self._mode == "ban":
+            # Add IP to blacklist
+            await self._filter_service.add_to_blacklist(
+                ip_address=client_ip,
+                reason=f"Auto-banned for {detected_attacks[0]['attack_type']} attack",
+            )
+
+            logger.warning(f"IP auto-banned | ip={client_ip} | attack={detected_attacks[0]['attack_type']} | mode=ban")
+
+            return Response(
+                content='{"detail":"Forbidden - Attack detected and IP banned"}',
+                status_code=403,
+                media_type="application/json",
+            )
+
+        return None
+
+    async def dispatch(self, request: Request, call_next) -> Response:
+        """Process request through attack detection."""
+        path = request.url.path
+
+        # Skip if attack detection is disabled
+        if not self._enabled:
+            response = await call_next(request)
+            return cast(Response, response)
+
+        # Skip exempt paths
+        if self._is_exempt_path(path):
+            response = await call_next(request)
+            return cast(Response, response)
+
+        # Skip if IP is whitelisted (set by IPFilterMiddleware)
+        is_whitelisted = getattr(request.state, "ip_whitelisted", False)
+        if is_whitelisted:
+            logger.debug(f"Attack detection skipped for whitelisted IP | path={path}")
+            response = await call_next(request)
+            return cast(Response, response)
+
+        client_ip = self._get_client_ip(request)
+
+        # Detect attack patterns
+        detected_attacks = await self._detect_attack_patterns(request)
+
+        if detected_attacks:
+            # Handle based on mode
+            block_response = await self._handle_attack_detection(request, client_ip, detected_attacks)
+
+            if block_response is not None:
+                return block_response
+
+        # Allow request to continue
+        response = await call_next(request)
+        return cast(Response, response)

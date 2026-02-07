@@ -1,5 +1,6 @@
 import os
 from enum import Enum
+from typing import Literal
 
 from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
 from pydantic_core.core_schema import FieldValidationInfo
@@ -317,6 +318,30 @@ class SecuritySettings(BaseSettings):
     )
 
 
+class AttackDetectionSettings(BaseSettings):
+    """Attack pattern detection configuration.
+
+    Detects SQL injection, XSS, and path traversal attacks.
+    Modes:
+    - 'log': Log attack and continue (monitoring mode)
+    - 'block': Return 400 Bad Request
+    - 'ban': Add to blacklist and return 403
+    """
+
+    ATTACK_DETECTION_ENABLED: bool = Field(
+        default=True,
+        description="Enable attack pattern detection middleware",
+    )
+    ATTACK_DETECTION_MODE: Literal["log", "block", "ban"] = Field(
+        default="log",
+        description="Attack detection mode: 'log' (monitor), 'block' (400), 'ban' (403 + blacklist)",
+    )
+    ATTACK_DETECTION_LOG_FULL_REQUEST: bool = Field(
+        default=False,
+        description="Log full request URL (True) or just matched pattern (False). Privacy consideration.",
+    )
+
+
 class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_ENABLED: bool = True
     REDIS_QUEUE_HOST: str = "localhost"  # Override via REDIS_QUEUE_HOST in .env
@@ -603,6 +628,7 @@ class Settings(
     RedisCacheSettings,
     ClientSideCacheSettings,
     SecuritySettings,
+    AttackDetectionSettings,
     RedisQueueSettings,
     DefaultRateLimitSettings,
     CRUDAdminSettings,
@@ -623,6 +649,5 @@ class Settings(
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
     # have env_prefix which would otherwise be inherited and break field resolution
     model_config = SettingsConfigDict(env_prefix="")
-
 
 settings = Settings()  # type: ignore

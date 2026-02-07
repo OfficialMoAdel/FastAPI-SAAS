@@ -1,11 +1,15 @@
 """API Key SQLAlchemy model."""
 
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text
-from sqlalchemy.orm import Mapped, mapped_column
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
+
+if TYPE_CHECKING:
+    pass
 
 
 class APIKey(Base):
@@ -35,6 +39,13 @@ class APIKey(Base):
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 
+    # Grace period rotation support - key not valid before this timestamp
+    valid_from: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        default=None,
+        doc="Timestamp when key becomes valid (for grace period rotation)",
+    )
+
     # Permissions (optional scopes)
     scopes: Mapped[str | None] = mapped_column(Text, default=None)  # JSON array of scopes
 
@@ -42,6 +53,10 @@ class APIKey(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), init=False
     )
+
+    # Relationships
+    user = relationship("User", back_populates="api_keys")
+    tenant = relationship("Tenant", back_populates="api_keys")
 
     def __repr__(self) -> str:
         return f"APIKey(id={self.id}, name='{self.name}', prefix='{self.key_prefix}')"
