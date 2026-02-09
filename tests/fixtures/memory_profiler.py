@@ -31,6 +31,8 @@ class MemorySnapshot:
 
     current: int  # Current memory in bytes
     peak: int  # Peak memory in bytes
+    timestamp: float | None = None
+    top_stats: list[str] | None = None
 
     @property
     def current_mb(self) -> float:
@@ -46,24 +48,42 @@ class MemorySnapshot:
         return f"MemorySnapshot(current={self.current_mb:.2f}MB, peak={self.peak_mb:.2f}MB)"
 
 
+@dataclass
+class MemoryContext:
+    """Context object yielded by measure_memory."""
+    snapshot: MemorySnapshot | None = None
+
+
 @contextmanager
-def measure_memory():
+def measure_memory(detailed: bool = False, limit: int = 10):
     """Context manager to measure memory usage during operation.
 
-    Yields a MemorySnapshot after the context exits with memory metrics.
+    Args:
+        detailed: If True, captures top memory allocations (slower)
+        limit: Number of top allocations to capture if detailed=True
+
+    Yields a MemoryContext object which will contain the snapshot after exit.
 
     Example:
-        with measure_memory() as snapshot:
+        with measure_memory() as ctx:
             await heavy_operation()
-        logger.info(f"Peak memory: {snapshot.peak_mb:.2f}MB")
+        if ctx.snapshot:
+            logger.info(f"Peak memory: {ctx.snapshot.peak_mb:.2f}MB")
     """
     tracemalloc.start()
+    ctx = MemoryContext()
     try:
-        yield None
+        yield ctx
     finally:
         current, peak = tracemalloc.get_traced_memory()
+        
+        top_stats = None
+        if detailed:
+            snapshot = tracemalloc.take_snapshot()
+            top_stats = [str(stat) for stat in snapshot.statistics("lineno")[:limit]]
+            
         tracemalloc.stop()
-        return MemorySnapshot(current=current, peak=peak)
+        ctx.snapshot = MemorySnapshot(current=current, peak=peak, top_stats=top_stats)
 
 
 @contextmanager

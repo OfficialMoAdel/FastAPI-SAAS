@@ -18,6 +18,13 @@ class LoadTestConfig(BaseSettings):
     WAIT_TIME_MIN: float = 1.0
     WAIT_TIME_MAX: float = 3.0
 
+    # Profiles: smoke, load, stress
+    PROFILE: str = "smoke"
+    
+    # Stress Profile Defaults (override via env vars)
+    STRESS_USERS: int = 1000
+    STRESS_SPAWN_RATE: int = 50
+
     # File Upload Testing
     UPLOAD_FILE_SIZE_KB: int = 100
 

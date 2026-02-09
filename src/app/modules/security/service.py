@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src.app.core.config import settings
-from src.app.core.utils.cache import redis_client
+from src.app.core.utils.cache import client as redis_client
 
 
 class IPFilterService:

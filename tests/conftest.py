@@ -140,6 +140,7 @@ from src.app.core.db.database import Base
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
 from src.app.modules.tenants.models import Tenant
+from src.app.modules.tiers.models import Tier
 from src.app.modules.users.models import User
 
 # Debug: Print registered tables to verify imports
@@ -982,6 +983,13 @@ def mock_redis(request):
         yield None
         return
     fake_redis = FakeRedis()
+
+    # Ensure setup module is imported for patching
+    import src.app.core.setup
+    import src.app.core
+    # Force attribute to exist for pkgutil.resolve_name used by mock.patch
+    if not hasattr(src.app.core, "setup"):
+        src.app.core.setup = src.app.core.setup
 
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),

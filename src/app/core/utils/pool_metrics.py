@@ -32,6 +32,19 @@ class PoolMetrics:
     total_connections: int = 0
     total_invalidations: int = 0
 
+    def get_snapshot(self) -> dict[str, int]:
+        """Get a dictionary snapshot of current metrics."""
+        return {
+            "pool_size": self.pool_size,
+            "checked_out": self.checked_out,
+            "checked_in": self.checked_in,
+            "overflow": self.overflow,
+            "total_checkouts": self.total_checkouts,
+            "total_checkins": self.total_checkins,
+            "total_connections": self.total_connections,
+            "total_invalidations": self.total_invalidations,
+        }
+
 
 # Global metrics instance
 _metrics = PoolMetrics()
@@ -112,16 +125,14 @@ def log_pool_status(engine: Any) -> dict[str, int]:
         Dictionary with pool status
     """
     pool = engine.pool
-    status = {
-        "pool_size": pool.size(),
-        "checked_out": pool.checkedout(),
-        "checked_in": pool.checkedin(),
-        "overflow": pool.overflow(),
-        "total_checkouts": _metrics.total_checkouts,
-        "total_checkins": _metrics.total_checkins,
-        "total_connections": _metrics.total_connections,
-        "total_invalidations": _metrics.total_invalidations,
-    }
+    
+    # Update current pool state metrics before returning
+    _metrics.pool_size = pool.size()
+    _metrics.checked_out = pool.checkedout()
+    _metrics.checked_in = pool.checkedin()
+    _metrics.overflow = pool.overflow()
+    
+    status = _metrics.get_snapshot()
 
     logger.info(
         "Pool status | size=%d | checked_out=%d | checked_in=%d | overflow=%d",

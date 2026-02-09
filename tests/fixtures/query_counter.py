@@ -36,6 +36,7 @@ class QueryLog:
     count: int = 0
     statements: list[str] = field(default_factory=list)
     query_types: Counter = field(default_factory=Counter)
+    max_statements: int = 1000
 
     def reset(self) -> None:
         """Reset the query log."""
@@ -43,10 +44,15 @@ class QueryLog:
         self.statements.clear()
         self.query_types.clear()
 
+    def clear(self) -> None:
+        """Alias for reset."""
+        self.reset()
+
     def add_query(self, statement: str) -> None:
         """Add a query to the log."""
         self.count += 1
-        self.statements.append(statement[:500])  # Truncate long queries
+        if len(self.statements) < self.max_statements:
+            self.statements.append(statement[:500])  # Truncate long queries
         self.query_types[self._get_query_type(statement)] += 1
 
     @staticmethod

@@ -9,6 +9,17 @@ from tests.load_testing.utils import generate_dummy_file
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Cache for dummy file to avoid regeneration cpu cost
+_DUMMY_FILE_CACHE = {}
+
+def get_cached_dummy_file(size_kb: int):
+    if size_kb not in _DUMMY_FILE_CACHE:
+        _DUMMY_FILE_CACHE[size_kb] = generate_dummy_file(size_kb)
+    # Return a fresh IO object but reuse content
+    filename, content, mime = _DUMMY_FILE_CACHE[size_kb]
+    from io import BytesIO
+    return filename, BytesIO(content.getvalue()), mime
+
 class SaaSUser(HttpUser):
     wait_time = between(config.WAIT_TIME_MIN, config.WAIT_TIME_MAX)
 
@@ -25,11 +36,15 @@ class SaaSUser(HttpUser):
 
         # Set tenant header if configured
         if self.tenant_id:
-            logger.info(f"Using configured Tenant ID: {self.tenant_id}")
+            # logger.info(f"Using configured Tenant ID: {self.tenant_id}")
             self.client.headers.update({"X-Tenant-ID": str(self.tenant_id)})
 
-        # Authenticate
-        self.login()
+        # Authenticate with retries
+        for i in range(3):
+            if self.login():
+                break
+            import time
+            time.sleep(1)
 
         # If tenant ID isn't provided, try to fetch the first available tenant
         if not self.tenant_id:
@@ -59,14 +74,15 @@ class SaaSUser(HttpUser):
                 self.client.headers.update({
                     "Authorization": f"Bearer {self.access_token}"
                 })
-                logger.info(f"User {self.email} logged in successfully")
+                # logger.info(f"User {self.email} logged in successfully")
+                return True
             else:
                 logger.error(f"Login failed for {self.email}: {response.text}")
-                self.stop(force=True)
+                return False
 
         except Exception as e:
             logger.error(f"Login exception: {e}")
-            self.stop(force=True)
+            return False
 
     def fetch_tenant(self):
         """Fetch a tenant ID if not configured."""
@@ -131,8 +147,8 @@ class SaaSUser(HttpUser):
         if not self.access_token:
             return
 
-        # 1. Upload
-        filename, file_io, mime_type = generate_dummy_file(config.UPLOAD_FILE_SIZE_KB)
+        # 1. Upload - use cached file generation
+        filename, file_io, mime_type = get_cached_dummy_file(config.UPLOAD_FILE_SIZE_KB)
         files = {"file": (filename, file_io, mime_type)}
 
         # Depending on API, we might need tenant_id in query or path
