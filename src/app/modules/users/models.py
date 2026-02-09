@@ -23,6 +23,7 @@ from ...core.db.database import Base
 
 if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AISettings, AITokenUsage
+    from src.app.modules.api_keys.models import APIKey
     from src.app.modules.billing.models import BillingRecord, UserSubscription
     from src.app.modules.files.models import File
     from src.app.modules.mfa.models import MFAMethod
@@ -70,7 +71,7 @@ class User(Base):
     )
     notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
     files: Mapped[list["File"]] = relationship(back_populates="user", init=False)
-    # Note: api_keys relationship is defined in APIKey model using back_populates="user"
+    api_keys: Mapped[list["APIKey"]] = relationship(back_populates="user", init=False)
     mfa_methods: Mapped[list["MFAMethod"]] = relationship(back_populates="user", init=False)
     # Billing & AI relationships (Phase 3/5)
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="user", init=False)

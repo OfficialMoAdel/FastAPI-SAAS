@@ -478,9 +478,13 @@ class WebhookService:
     ) -> dict[str, Any]:
         """Rotate the signing secret for a webhook endpoint.
 
-        Generates a new signing secret and sets up a grace period during which
-        the old secret remains valid. This allows consumers to update their
-        configuration without service interruption.
+        Generates a new signing secret that takes effect immediately.
+        The old secret is invalidated upon rotation.
+
+        NOTE: The grace_period_seconds parameter is included for future
+        grace period support but is not currently implemented. The old
+        secret is replaced immediately. Update your webhook consumers
+        before calling this endpoint.
 
         Parameters
         ----------
@@ -489,19 +493,19 @@ class WebhookService:
         tenant_id : int
             ID of the tenant
         grace_period_seconds : int
-            Seconds before old secret expires (default: 300/5min)
+            Reserved for future grace period support (default: 300/5min)
 
         Returns
         -------
         dict
-            Dictionary with new_signing_secret and expiration info
+            Dictionary with new_signing_secret and rotation timestamp
 
         Raises
         ------
         ModelNotFoundError
             If endpoint not found
         """
-        from ...webhooks.utils import generate_signing_secret
+        from .utils import generate_signing_secret
 
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,
@@ -516,10 +520,10 @@ class WebhookService:
         # Generate new signing secret
         new_secret = generate_signing_secret()
 
-        # Calculate expiration time
-        expires_at = datetime.now() + timedelta(seconds=grace_period_seconds)
+        # Record rotation timestamp
+        rotated_at = datetime.now(UTC)
 
-        # Update endpoint with new secret
+        # Update endpoint with new secret (immediate effect, no grace period)
         endpoint.signing_secret = new_secret
 
         await self.db.commit()
@@ -528,6 +532,7 @@ class WebhookService:
         return {
             "webhook_endpoint_id": endpoint.id,
             "new_signing_secret": new_secret,
-            "old_secret_expires_at": expires_at,
+            "rotated_at": rotated_at,
+            "old_secret_expires_at": rotated_at,  # Immediate - no grace period
             "grace_period_seconds": grace_period_seconds,
         }

@@ -373,22 +373,21 @@ async def rotate_signing_secret(
 ) -> SigningSecretRotateResponse:
     """Rotate the signing secret for a webhook endpoint.
 
-    Generates a new signing secret with a grace period during which
-    the old secret remains valid. This allows webhook consumers to
-    update their configuration without service interruption.
+    Generates a new signing secret that takes effect immediately.
+    The old secret is invalidated upon rotation.
 
-    The grace period defaults to 5 minutes but can be customized.
-    During the grace period, both old and new secrets will be accepted.
+    NOTE: The grace_period_seconds parameter is reserved for future
+    grace period support but is not currently implemented.
 
     Parameters
     ----------
     grace_period_seconds : int
-        Seconds before old secret expires (0-86400, default: 300/5min)
+        Reserved for future grace period support (0-86400, default: 300/5min)
 
     Returns
     -------
     SigningSecretRotateResponse
-        New signing secret and expiration information
+        New signing secret and rotation timestamp
     """
     service = WebhookService(db)
     result = await service.rotate_signing_secret(
@@ -400,6 +399,7 @@ async def rotate_signing_secret(
     return SigningSecretRotateResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],
         new_signing_secret=result["new_signing_secret"],
+        rotated_at=result.get("rotated_at"),
         old_secret_expires_at=result["old_secret_expires_at"],
         grace_period_seconds=result["grace_period_seconds"],
     )

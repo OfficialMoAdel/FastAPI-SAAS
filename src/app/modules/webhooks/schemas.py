@@ -171,9 +171,10 @@ class SigningSecretRotateResponse(BaseModel):
 
     webhook_endpoint_id: UUID
     new_signing_secret: str
+    rotated_at: datetime | None = None
     old_secret_expires_at: datetime
     grace_period_seconds: int
     message: str = (
-        "Secret rotated successfully. Old secret remains valid during grace period. "
-        "Update your webhook consumer immediately."
+        "Secret rotated successfully. Old secret is invalidated immediately. "
+        "Update your webhook consumer before rotating."
     )
