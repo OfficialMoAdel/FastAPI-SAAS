@@ -1,6 +1,6 @@
 {
   "metadata": {
-    "generated_at": "2026-01-15T17:14:02.798378+00:00",
+    "generated_at": "2026-02-09T18:45:33.846043+00:00",
     "python_version": "3.13.7",
     "platform": "Windows",
     "machine": "AMD64",
@@ -12,350 +12,350 @@
       "name": "frozenset_membership",
       "category": "path_exemption",
       "iterations": 100,
-      "mean_us": 1.426,
-      "p50_us": 1.4,
-      "p95_us": 1.6,
-      "p99_us": 2.5,
-      "min_us": 1.1,
-      "max_us": 2.5,
-      "stdev_us": 0.1474
+      "mean_us": 0.349,
+      "p50_us": 0.3,
+      "p95_us": 0.4,
+      "p99_us": 0.7,
+      "min_us": 0.3,
+      "max_us": 0.7,
+      "stdev_us": 0.0659
     },
     {
       "name": "prefix_iteration",
       "category": "path_exemption",
       "iterations": 100,
-      "mean_us": 1.831,
-      "p50_us": 1.8,
-      "p95_us": 1.9,
-      "p99_us": 2.1,
-      "min_us": 1.7,
-      "max_us": 2.1,
-      "stdev_us": 0.0662
+      "mean_us": 0.433,
+      "p50_us": 0.4,
+      "p95_us": 0.5,
+      "p99_us": 0.6,
+      "min_us": 0.4,
+      "max_us": 0.6,
+      "stdev_us": 0.0493
     },
     {
       "name": "is_path_exempt_match",
       "category": "path_exemption",
       "iterations": 100,
-      "mean_us": 1.366,
-      "p50_us": 1.4,
-      "p95_us": 1.6,
-      "p99_us": 1.7,
-      "min_us": 1.3,
-      "max_us": 1.7,
-      "stdev_us": 0.0781
+      "mean_us": 0.344,
+      "p50_us": 0.3,
+      "p95_us": 0.4,
+      "p99_us": 0.5,
+      "min_us": 0.3,
+      "max_us": 0.5,
+      "stdev_us": 0.0519
     },
     {
       "name": "is_path_exempt_prefix",
       "category": "path_exemption",
       "iterations": 100,
-      "mean_us": 1.606,
-      "p50_us": 1.3,
-      "p95_us": 2.3,
-      "p99_us": 14.0,
-      "min_us": 0.6,
-      "max_us": 14.0,
-      "stdev_us": 1.4405
+      "mean_us": 0.462,
+      "p50_us": 0.5,
+      "p95_us": 0.5,
+      "p99_us": 0.6,
+      "min_us": 0.4,
+      "max_us": 0.6,
+      "stdev_us": 0.0508
     },
     {
       "name": "is_path_exempt_no_match",
       "category": "path_exemption",
       "iterations": 100,
-      "mean_us": 0.641,
-      "p50_us": 0.6,
-      "p95_us": 0.7,
-      "p99_us": 0.8,
-      "min_us": 0.6,
-      "max_us": 0.8,
-      "stdev_us": 0.0514
+      "mean_us": 0.445,
+      "p50_us": 0.4,
+      "p95_us": 0.5,
+      "p99_us": 0.6,
+      "min_us": 0.4,
+      "max_us": 0.6,
+      "stdev_us": 0.052
     },
     {
       "name": "trusted_proxy_set_hit",
       "category": "ip_parsing",
       "iterations": 100,
-      "mean_us": 0.997,
-      "p50_us": 0.6,
-      "p95_us": 1.6,
-      "p99_us": 6.7,
-      "min_us": 0.5,
-      "max_us": 6.7,
-      "stdev_us": 0.8228
+      "mean_us": 0.376,
+      "p50_us": 0.4,
+      "p95_us": 0.5,
+      "p99_us": 0.5,
+      "min_us": 0.3,
+      "max_us": 0.5,
+      "stdev_us": 0.0534
     },
     {
       "name": "trusted_proxy_network_check",
       "category": "ip_parsing",
       "iterations": 100,
-      "mean_us": 16.442,
-      "p50_us": 13.85,
-      "p95_us": 39.9,
-      "p99_us": 50.1,
-      "min_us": 5.7,
-      "max_us": 50.1,
-      "stdev_us": 11.0079
+      "mean_us": 7.876,
+      "p50_us": 5.6,
+      "p95_us": 18.1,
+      "p99_us": 24.0,
+      "min_us": 5.0,
+      "max_us": 24.0,
+      "stdev_us": 3.9937
     },
     {
       "name": "trusted_proxy_external",
       "category": "ip_parsing",
       "iterations": 100,
-      "mean_us": 17.747,
-      "p50_us": 16.55,
-      "p95_us": 29.9,
-      "p99_us": 45.3,
-      "min_us": 12.5,
-      "max_us": 45.3,
-      "stdev_us": 5.716
+      "mean_us": 6.113,
+      "p50_us": 6.0,
+      "p95_us": 6.6,
+      "p99_us": 10.9,
+      "min_us": 5.8,
+      "max_us": 10.9,
+      "stdev_us": 0.5116
     },
     {
       "name": "ip_address_parse",
       "category": "ip_parsing",
       "iterations": 100,
-      "mean_us": 11.657,
-      "p50_us": 11.35,
-      "p95_us": 12.9,
-      "p99_us": 22.1,
-      "min_us": 9.6,
-      "max_us": 22.1,
-      "stdev_us": 1.502
+      "mean_us": 4.216,
+      "p50_us": 4.1,
+      "p95_us": 4.6,
+      "p99_us": 12.2,
+      "min_us": 3.9,
+      "max_us": 12.2,
+      "stdev_us": 0.8665
     },
     {
       "name": "extract_bearer_token",
       "category": "jwt",
       "iterations": 100,
-      "mean_us": 2.156,
-      "p50_us": 2.1,
-      "p95_us": 2.4,
-      "p99_us": 2.7,
-      "min_us": 2.0,
-      "max_us": 2.7,
-      "stdev_us": 0.1149
+      "mean_us": 0.807,
+      "p50_us": 0.8,
+      "p95_us": 0.9,
+      "p99_us": 1.0,
+      "min_us": 0.7,
+      "max_us": 1.0,
+      "stdev_us": 0.0477
     },
     {
       "name": "extract_invalid_header",
       "category": "jwt",
       "iterations": 100,
-      "mean_us": 1.766,
-      "p50_us": 1.7,
-      "p95_us": 2.0,
-      "p99_us": 3.3,
-      "min_us": 1.6,
-      "max_us": 3.3,
-      "stdev_us": 0.208
+      "mean_us": 0.665,
+      "p50_us": 0.7,
+      "p95_us": 0.7,
+      "p99_us": 0.8,
+      "min_us": 0.6,
+      "max_us": 0.8,
+      "stdev_us": 0.0539
     },
     {
       "name": "jwt_decode_invalid_sig",
       "category": "jwt",
       "iterations": 100,
-      "mean_us": 91.915,
-      "p50_us": 96.7,
-      "p95_us": 134.9,
-      "p99_us": 250.3,
-      "min_us": 45.9,
-      "max_us": 250.3,
-      "stdev_us": 30.5652
+      "mean_us": 30.267,
+      "p50_us": 30.2,
+      "p95_us": 30.9,
+      "p99_us": 35.6,
+      "min_us": 29.5,
+      "max_us": 35.6,
+      "stdev_us": 0.7179
     },
     {
       "name": "uuid4_generation",
       "category": "request_id",
       "iterations": 100,
-      "mean_us": 11.791,
-      "p50_us": 11.3,
-      "p95_us": 14.6,
-      "p99_us": 19.7,
-      "min_us": 9.9,
-      "max_us": 19.7,
-      "stdev_us": 1.3737
+      "mean_us": 3.11,
+      "p50_us": 3.0,
+      "p95_us": 3.4,
+      "p99_us": 8.5,
+      "min_us": 2.9,
+      "max_us": 8.5,
+      "stdev_us": 0.5704
     },
     {
       "name": "uuid4_to_string",
       "category": "request_id",
       "iterations": 100,
-      "mean_us": 17.463,
-      "p50_us": 17.5,
-      "p95_us": 18.4,
-      "p99_us": 25.2,
-      "min_us": 16.2,
-      "max_us": 25.2,
-      "stdev_us": 0.9773
+      "mean_us": 4.472,
+      "p50_us": 4.4,
+      "p95_us": 4.9,
+      "p99_us": 6.5,
+      "min_us": 4.2,
+      "max_us": 6.5,
+      "stdev_us": 0.2917
     },
     {
       "name": "add_security_headers",
       "category": "security_headers",
       "iterations": 100,
-      "mean_us": 2.98,
-      "p50_us": 3.0,
-      "p95_us": 3.1,
-      "p99_us": 3.3,
-      "min_us": 2.8,
-      "max_us": 3.3,
-      "stdev_us": 0.0765
+      "mean_us": 0.752,
+      "p50_us": 0.7,
+      "p95_us": 0.9,
+      "p99_us": 0.9,
+      "min_us": 0.7,
+      "max_us": 0.9,
+      "stdev_us": 0.0594
     },
     {
       "name": "tenant_cache_key",
       "category": "cache_keys",
       "iterations": 100,
-      "mean_us": 1.503,
-      "p50_us": 1.5,
-      "p95_us": 1.6,
-      "p99_us": 1.9,
-      "min_us": 1.4,
-      "max_us": 1.9,
-      "stdev_us": 0.0643
+      "mean_us": 0.364,
+      "p50_us": 0.4,
+      "p95_us": 0.4,
+      "p99_us": 0.5,
+      "min_us": 0.3,
+      "max_us": 0.5,
+      "stdev_us": 0.0503
     },
     {
       "name": "rate_limit_key",
       "category": "cache_keys",
       "iterations": 100,
-      "mean_us": 2.507,
-      "p50_us": 2.5,
-      "p95_us": 2.6,
-      "p99_us": 2.7,
-      "min_us": 2.4,
-      "max_us": 2.7,
-      "stdev_us": 0.0655
+      "mean_us": 0.636,
+      "p50_us": 0.6,
+      "p95_us": 0.7,
+      "p99_us": 1.0,
+      "min_us": 0.6,
+      "max_us": 1.0,
+      "stdev_us": 0.0612
     },
     {
       "name": "session_key",
       "category": "cache_keys",
       "iterations": 100,
-      "mean_us": 1.885,
-      "p50_us": 1.9,
-      "p95_us": 2.0,
-      "p99_us": 2.1,
-      "min_us": 1.8,
-      "max_us": 2.1,
-      "stdev_us": 0.0609
+      "mean_us": 0.487,
+      "p50_us": 0.5,
+      "p95_us": 0.6,
+      "p99_us": 0.9,
+      "min_us": 0.4,
+      "max_us": 0.9,
+      "stdev_us": 0.0661
     },
     {
       "name": "tenant_json_dumps",
       "category": "json_cache",
       "iterations": 100,
-      "mean_us": 11.912,
-      "p50_us": 10.1,
-      "p95_us": 16.5,
-      "p99_us": 84.0,
-      "min_us": 8.7,
-      "max_us": 84.0,
-      "stdev_us": 7.6358
+      "mean_us": 7.479,
+      "p50_us": 5.9,
+      "p95_us": 14.1,
+      "p99_us": 34.8,
+      "min_us": 3.6,
+      "max_us": 34.8,
+      "stdev_us": 4.561
     },
     {
       "name": "tenant_json_loads",
       "category": "json_cache",
       "iterations": 100,
-      "mean_us": 8.281,
-      "p50_us": 7.9,
-      "p95_us": 11.2,
-      "p99_us": 17.9,
-      "min_us": 6.7,
-      "max_us": 17.9,
-      "stdev_us": 1.4891
+      "mean_us": 8.264,
+      "p50_us": 8.1,
+      "p95_us": 8.7,
+      "p99_us": 16.6,
+      "min_us": 7.8,
+      "max_us": 16.6,
+      "stdev_us": 0.8672
     },
     {
       "name": "session_json_dumps",
       "category": "json_cache",
       "iterations": 100,
-      "mean_us": 11.696,
-      "p50_us": 11.2,
-      "p95_us": 14.7,
-      "p99_us": 19.9,
-      "min_us": 10.0,
-      "max_us": 19.9,
-      "stdev_us": 1.4656
+      "mean_us": 6.13,
+      "p50_us": 4.75,
+      "p95_us": 11.8,
+      "p99_us": 15.7,
+      "min_us": 4.1,
+      "max_us": 15.7,
+      "stdev_us": 2.6344
     },
     {
       "name": "session_list_json_dumps",
       "category": "json_cache",
       "iterations": 100,
-      "mean_us": 20.697,
-      "p50_us": 19.9,
-      "p95_us": 24.7,
-      "p99_us": 33.2,
-      "min_us": 16.9,
-      "max_us": 33.2,
-      "stdev_us": 2.4428
+      "mean_us": 7.988,
+      "p50_us": 7.7,
+      "p95_us": 8.9,
+      "p99_us": 17.4,
+      "min_us": 7.2,
+      "max_us": 17.4,
+      "stdev_us": 1.2624
     },
     {
       "name": "session_list_json_loads",
       "category": "json_cache",
       "iterations": 100,
-      "mean_us": 17.662,
-      "p50_us": 14.0,
-      "p95_us": 27.3,
-      "p99_us": 74.9,
-      "min_us": 7.0,
-      "max_us": 74.9,
-      "stdev_us": 8.9241
+      "mean_us": 5.963,
+      "p50_us": 5.9,
+      "p95_us": 6.3,
+      "p99_us": 12.5,
+      "min_us": 5.8,
+      "max_us": 12.5,
+      "stdev_us": 0.6713
     },
     {
       "name": "rate_limit_window_calc",
       "category": "timestamp",
       "iterations": 100,
-      "mean_us": 4.592,
-      "p50_us": 4.3,
-      "p95_us": 6.5,
-      "p99_us": 14.6,
-      "min_us": 3.7,
-      "max_us": 14.6,
-      "stdev_us": 1.2069
+      "mean_us": 1.937,
+      "p50_us": 1.9,
+      "p95_us": 2.1,
+      "p99_us": 2.6,
+      "min_us": 1.8,
+      "max_us": 2.6,
+      "stdev_us": 0.0895
     },
     {
       "name": "iso_timestamp",
       "category": "timestamp",
       "iterations": 100,
-      "mean_us": 6.59,
-      "p50_us": 4.4,
-      "p95_us": 12.9,
-      "p99_us": 18.2,
-      "min_us": 4.3,
-      "max_us": 18.2,
-      "stdev_us": 3.1317
+      "mean_us": 3.824,
+      "p50_us": 3.7,
+      "p95_us": 4.2,
+      "p99_us": 7.9,
+      "min_us": 3.5,
+      "max_us": 7.9,
+      "stdev_us": 0.4729
     }
   ],
   "summary": {
     "by_category": {
       "path_exemption": {
         "count": 5,
-        "total_mean_us": 6.869999999999999,
-        "max_p99_us": 14.0
+        "total_mean_us": 2.033,
+        "max_p99_us": 0.7
       },
       "ip_parsing": {
         "count": 4,
-        "total_mean_us": 46.843,
-        "max_p99_us": 50.1
+        "total_mean_us": 18.581,
+        "max_p99_us": 24.0
       },
       "jwt": {
         "count": 3,
-        "total_mean_us": 95.837,
-        "max_p99_us": 250.3
+        "total_mean_us": 31.739,
+        "max_p99_us": 35.6
       },
       "request_id": {
         "count": 2,
-        "total_mean_us": 29.254,
-        "max_p99_us": 25.2
+        "total_mean_us": 7.582000000000001,
+        "max_p99_us": 8.5
       },
       "security_headers": {
         "count": 1,
-        "total_mean_us": 2.98,
-        "max_p99_us": 3.3
+        "total_mean_us": 0.752,
+        "max_p99_us": 0.9
       },
       "cache_keys": {
         "count": 3,
-        "total_mean_us": 5.895,
-        "max_p99_us": 2.7
+        "total_mean_us": 1.487,
+        "max_p99_us": 1.0
       },
       "json_cache": {
         "count": 5,
-        "total_mean_us": 70.24799999999999,
-        "max_p99_us": 84.0
+        "total_mean_us": 35.824,
+        "max_p99_us": 34.8
       },
       "timestamp": {
         "count": 2,
-        "total_mean_us": 11.181999999999999,
-        "max_p99_us": 18.2
+        "total_mean_us": 5.760999999999999,
+        "max_p99_us": 7.9
       }
     },
     "overall": {
       "total_operations": 25,
-      "avg_mean_us": 10.7644,
-      "max_p99_us": 250.3
+      "avg_mean_us": 4.1504,
+      "max_p99_us": 35.6
     }
   }
 }

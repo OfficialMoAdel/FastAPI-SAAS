@@ -10,7 +10,7 @@ from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
 from .admin.initialize import create_admin_interface
-from .api import router
+from .api import get_router
 from .core.cache.warmer import warmer
 from .core.config import settings
 from .core.setup import create_application, lifespan_factory
@@ -134,7 +134,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 app = create_application(
-    router=router,
+    router=get_router(),
     settings=settings,
     lifespan=lifespan_with_admin,
     default_response_class=ORJSONResponse,

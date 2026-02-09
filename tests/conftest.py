@@ -139,9 +139,34 @@ from src.app.core.db.database import Base
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
-from src.app.modules.tenants.models import Tenant
+
+# 1. Independent / Leaf models (or close to leaf)
 from src.app.modules.tiers.models import Tier
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.files.models import File
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.notifications.models import Notification, EmailTemplateOverride
+from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage
+from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
+from src.app.modules.billing.models import StripeSettings, SubscriptionPlan, Product, Pricing, UserSubscription, BillingRecord
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.magic_link.models import MagicLink
+from src.app.modules.mfa.models import MFAMethod
+from src.app.modules.passkey.models import PasskeyCredential
+from src.app.modules.posts.models import Post
+from src.app.modules.sso.models import UserSSOConnection
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.storage_settings.models import StorageSettings
+from src.app.modules.user_preferences.models import UserPreferences
+
+# 2. Models that depend on above
 from src.app.modules.users.models import User
+
+# 3. Models that depend on User/Others (Root)
+from src.app.modules.tenants.models import Tenant
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")
