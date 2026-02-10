@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Annotated
@@ -41,11 +42,14 @@ async def ready(
     from ...core.events import event_bus
     from ...core.health import check_redis_queue_health
 
-    database_result = await check_database_health(db=db)
+    # R2 #12: Run independent health checks in parallel
+    database_result, redis_result, queue_result = await asyncio.gather(
+        check_database_health(db=db),
+        check_redis_health(redis=redis),
+        check_redis_queue_health(),
+    )
     LOGGER.debug(f"Database health check status: {database_result}")
-    redis_result = await check_redis_health(redis=redis)
     LOGGER.debug(f"Redis health check status: {redis_result}")
-    queue_result = await check_redis_queue_health()
     LOGGER.debug(f"Redis queue health check status: {queue_result}")
     events_status = event_bus.is_ready
     LOGGER.debug(f"Event bus readiness status: {events_status}")

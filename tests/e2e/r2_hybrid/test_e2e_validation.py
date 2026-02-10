@@ -135,9 +135,9 @@ class TestTokenBlacklistE2E:
         log_section("Token Blacklist Negative Cache TTL")
 
         from src.app.core.config import settings
-        from src.app.core.security.token_blacklist_cache import _get_negative_cache_ttl
+        from src.app.core.security.token_blacklist_cache import NEGATIVE_CACHE_TTL
 
-        ttl = _get_negative_cache_ttl()
+        ttl = NEGATIVE_CACHE_TTL
         logger.info(f"Configured negative cache TTL: {ttl} seconds")
 
         assert ttl == settings.TOKEN_NEGATIVE_CACHE_TTL

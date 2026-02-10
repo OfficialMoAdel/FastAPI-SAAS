@@ -223,7 +223,7 @@ class PasskeyService:
         db: AsyncSession,
         redis: Redis | None = None,
         email: str | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str]:
         """Generate WebAuthn authentication options (challenge) for login.
 
         Args:
@@ -232,8 +232,10 @@ class PasskeyService:
             email: Optional email hint to filter allowed credentials (for discoverable credentials).
 
         Returns:
-            dict: WebAuthn authentication options (PublicKeyCredentialRequestOptions).
+            tuple: (WebAuthn authentication options dict, challenge_id for verification).
         """
+        import uuid
+
         # 1. Get allowed credentials if email provided
         allowed_credentials: list[PublicKeyCredentialDescriptor] = []
         if email:
@@ -246,18 +248,20 @@ class PasskeyService:
             allow_credentials=allowed_credentials if allowed_credentials else None,
         )
 
-        # 3. Store challenge in Redis for verification
+        # 3. Store challenge in Redis with unique challenge_id
+        challenge_id = str(uuid.uuid4())
         if redis:
-            await self._store_auth_challenge(redis, options.challenge)
+            await self._store_auth_challenge(redis, challenge_id, options.challenge)
 
         result: dict[str, Any] = json_loads(options_to_json(options))
-        return result
+        return result, challenge_id
 
     async def verify_authentication(
         self,
         db: AsyncSession,
         redis: Redis | None = None,
         credential: dict[str, Any] | None = None,
+        challenge_id: str | None = None,
     ) -> dict[str, Any]:
         """Verify WebAuthn authentication response and return JWT tokens.
 
@@ -265,6 +269,7 @@ class PasskeyService:
             db: Database session.
             redis: Redis client.
             credential: The WebAuthn assertion response from the client.
+            challenge_id: The challenge_id returned from generate_authentication_challenge.
 
         Returns:
             dict: Authentication tokens (access_token, refresh_token, etc.).
@@ -275,8 +280,11 @@ class PasskeyService:
         if not credential:
             raise BadRequestException(detail="Credential is required.")
 
+        if not challenge_id:
+            raise BadRequestException(detail="challenge_id is required.")
+
         # 1. Retrieve stored challenge
-        stored_challenge = await self._get_stored_auth_challenge(redis) if redis else None
+        stored_challenge = await self._get_stored_auth_challenge(redis, challenge_id) if redis else None
         if not stored_challenge:
             raise BadRequestException(detail="Authentication challenge expired or invalid.")
 
@@ -322,7 +330,7 @@ class PasskeyService:
 
         # 7. Cleanup
         if redis:
-            await self._delete_auth_challenge(redis)
+            await self._delete_auth_challenge(redis, challenge_id)
 
         return tokens
 
@@ -521,22 +529,22 @@ class PasskeyService:
         # Use shared helper
         return await self._decrypt_credentials_parallel(creds_to_decrypt, email)
 
-    async def _store_auth_challenge(self, redis: Redis, challenge: bytes) -> None:
-        """Store authentication challenge in Redis."""
-        key = "passkey:auth_challenge"
+    async def _store_auth_challenge(self, redis: Redis, challenge_id: str, challenge: bytes) -> None:
+        """Store authentication challenge in Redis, keyed by unique challenge_id."""
+        key = f"passkey:auth_challenge:{challenge_id}"
         await redis.setex(key, AUTH_CHALLENGE_TTL, bytes_to_base64url(challenge))
 
-    async def _get_stored_auth_challenge(self, redis: Redis) -> bytes | None:
-        """Retrieve authentication challenge from Redis."""
-        key = "passkey:auth_challenge"
+    async def _get_stored_auth_challenge(self, redis: Redis, challenge_id: str) -> bytes | None:
+        """Retrieve authentication challenge from Redis by challenge_id."""
+        key = f"passkey:auth_challenge:{challenge_id}"
         data = await redis.get(key)
         if not data:
             return None
         return base64url_to_bytes(data)
 
-    async def _delete_auth_challenge(self, redis: Redis) -> None:
-        """Delete authentication challenge from Redis."""
-        key = "passkey:auth_challenge"
+    async def _delete_auth_challenge(self, redis: Redis, challenge_id: str) -> None:
+        """Delete authentication challenge from Redis by challenge_id."""
+        key = f"passkey:auth_challenge:{challenge_id}"
         await redis.delete(key)
 
     async def _find_credential_by_id(self, db: AsyncSession, raw_id: str) -> Any | None:

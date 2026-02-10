@@ -18,7 +18,9 @@ blacklist update. Relying on Redis + negative cache instead.
 """
 
 import logging
+import time
 from datetime import UTC, datetime
+from functools import lru_cache
 
 import xxhash
 
@@ -36,23 +38,11 @@ NEGATIVE_CACHE_KEY = "token:verified:"
 # Import settings for configurable TTL
 from src.app.core.config import settings
 
-
-def _get_negative_cache_ttl() -> int:
-    """Get negative cache TTL from settings.
-
-    Trade-off:
-    - Higher TTL (300s): 80-90% fewer Redis calls for hot tokens
-    - Lower TTL (60s): Faster revocation detection
-    - Risk: Revoked token accepted for up to TTL duration
-
-    Default: 300 seconds (5 minutes) - acceptable for most SaaS applications
-    where immediate revocation is not critical.
-
-    Override via environment: R1_TOKEN_NEGATIVE_CACHE_TTL=60
-    """
-    return settings.TOKEN_NEGATIVE_CACHE_TTL
+# R2 #11b: Module-level constant avoids repeated settings access per call
+NEGATIVE_CACHE_TTL: int = settings.TOKEN_NEGATIVE_CACHE_TTL
 
 
+@lru_cache(maxsize=4096)
 def _token_cache_key(token: str) -> str:
     """Generate collision-resistant cache key for a token.
 
@@ -149,7 +139,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
             return await _is_token_blacklisted_fallback(token)
 
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"  # Hash for collision resistance
-        now = int(datetime.now(UTC).timestamp())
+        now = int(time.time())
 
         try:
             # Execute Lua script with EVALSHA
@@ -160,7 +150,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                 BLACKLIST_KEY,
                 token,
                 str(now),
-                str(_get_negative_cache_ttl()),
+                str(NEGATIVE_CACHE_TTL),
             )
             return bool(int(result))
         except Exception as script_error:
@@ -177,7 +167,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                         BLACKLIST_KEY,
                         token,
                         str(now),
-                        str(_get_negative_cache_ttl()),
+                        str(NEGATIVE_CACHE_TTL),
                     )
                     return bool(int(retry_result))
             raise  # Re-raise if not a NOSCRIPT error
@@ -208,11 +198,11 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         score = await redis_client.zscore(BLACKLIST_KEY, token)
         if score is None:
             # Cache the negative result to avoid repeated lookups
-            await redis_client.set(negative_key, "1", ex=_get_negative_cache_ttl())
+            await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
             return False
 
         # Check if token has expired (score is expiry timestamp)
-        now = datetime.now(UTC).timestamp()
+        now = time.time()
         if score < now:
             # Token expired, remove from set
             await redis_client.zrem(BLACKLIST_KEY, token)
@@ -288,7 +278,7 @@ async def remove_expired_tokens() -> int:
         return 0
 
     try:
-        now = datetime.now(UTC).timestamp()
+        now = time.time()
         # ZREMRANGEBYSCORE removes all members with score <= now
         removed = await redis_client.zremrangebyscore(BLACKLIST_KEY, "-inf", now)
         return removed if isinstance(removed, int) else 0

@@ -461,9 +461,10 @@ class TestPasskeyServiceAuthentication:
         mock_redis = AsyncMock()
 
         with patch.object(service, "_store_auth_challenge", new_callable=AsyncMock) as mock_store:
-            result = await service.generate_authentication_challenge(db=mock_db, redis=mock_redis)
+            result, challenge_id = await service.generate_authentication_challenge(db=mock_db, redis=mock_redis)
 
             assert "challenge" in result
+            assert isinstance(challenge_id, str)
             mock_store.assert_called_once()
 
     @pytest.mark.asyncio
@@ -519,7 +520,8 @@ class TestPasskeyServiceAuthentication:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     result = await service.verify_authentication(
-                                        db=mock_db, redis=mock_redis, credential=mock_cred_payload
+                                        db=mock_db, redis=mock_redis, credential=mock_cred_payload,
+                                        challenge_id="test-challenge-id",
                                     )
 
                                     assert result["access_token"] == "token"
@@ -548,7 +550,7 @@ class TestPasskeyServiceAuthentication:
                     mock_verify.return_value = MagicMock(new_sign_count=10)
 
                     with pytest.raises(BadRequestException) as exc:
-                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"})
+                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id")
 
                     assert "replay" in str(exc.value.detail).lower()
 
@@ -564,7 +566,7 @@ class TestPasskeyServiceAuthentication:
             mock_get_challenge.return_value = None
 
             with pytest.raises(BadRequestException) as exc:
-                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"})
+                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")
 
             assert "challenge" in str(exc.value.detail).lower()
 
@@ -583,6 +585,6 @@ class TestPasskeyServiceAuthentication:
                 mock_find.return_value = None
 
                 with pytest.raises(BadRequestException) as exc:
-                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"})
+                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")
 
                 assert "credential not found" in str(exc.value.detail).lower()

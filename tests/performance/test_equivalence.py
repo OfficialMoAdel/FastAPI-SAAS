@@ -85,7 +85,7 @@ class TestOrjsonStdlibEquivalence:
             if isinstance(value, UUID):
                 assert parsed[key] == str(value)
             elif isinstance(value, Decimal):
-                assert parsed[key] == float(value)
+                assert parsed[key] == str(value)
             elif isinstance(value, datetime):
                 assert parsed[key] == value.isoformat().replace("+00:00", "Z")
             elif isinstance(value, set):

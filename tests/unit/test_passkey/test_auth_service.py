@@ -109,7 +109,7 @@ class TestPasskeyAuthenticationChallengeGeneration:
                 # Should store challenge
                 mock_store.assert_called_once()
                 # Verify it was called with our mocked challenge
-                assert mock_store.call_args[0][1] == b"test-challenge"
+                assert mock_store.call_args[0][2] == b"test-challenge"
 
     @pytest.mark.asyncio
     async def test_generate_authentication_challenge_includes_allowed_credentials(self):
@@ -176,6 +176,7 @@ class TestPasskeyAuthenticationVerification:
                     db=mock_db,
                     redis=mock_redis,
                     credential={"response": {}},
+                    challenge_id="test-challenge-id",
                 )
 
             assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(exc_info.value.detail).lower()
@@ -210,6 +211,7 @@ class TestPasskeyAuthenticationVerification:
                             "response": {},
                             "type": "public-key",
                         },
+                        challenge_id="test-challenge-id",
                     )
 
                 assert (
@@ -266,6 +268,7 @@ class TestPasskeyAuthenticationVerification:
                                 },
                                 "type": "public-key",
                             },
+                            challenge_id="test-challenge-id",
                         )
 
                     # Should reject replay attack
@@ -335,6 +338,7 @@ class TestPasskeyAuthenticationVerification:
                                             },
                                             "type": "public-key",
                                         },
+                                        challenge_id="test-challenge-id",
                                     )
 
                                     # Should update counter
@@ -398,6 +402,7 @@ class TestPasskeyAuthenticationVerification:
                                             },
                                             "type": "public-key",
                                         },
+                                        challenge_id="test-challenge-id",
                                     )
 
                                     # Should return auth tokens
@@ -461,6 +466,7 @@ class TestPasskeyAuthenticationVerification:
                                             },
                                             "type": "public-key",
                                         },
+                                        challenge_id="test-challenge-id",
                                     )
 
                                     # Update should be called (includes last_used_at)

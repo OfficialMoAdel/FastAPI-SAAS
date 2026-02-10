@@ -3,6 +3,7 @@ import json
 import logging
 from datetime import UTC, datetime, timedelta
 from enum import Enum
+from functools import lru_cache
 from typing import Any, cast
 
 import bcrypt
@@ -35,6 +36,7 @@ JWT_AUDIENCE = "fastapi-saas-api"
 _jwt_logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=1)
 def _get_signing_key() -> str:
     """Get the key for signing tokens (private key for RS256, secret for HS256)."""
     if ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
@@ -42,6 +44,7 @@ def _get_signing_key() -> str:
     return SECRET_KEY.get_secret_value()
 
 
+@lru_cache(maxsize=1)
 def _get_verification_key() -> str:
     """Get the key for verifying tokens (public key for RS256, secret for HS256)."""
     if ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
@@ -80,8 +83,12 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
     else:
         expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
     to_encode.update({"exp": expire, "token_type": TokenType.ACCESS, "aud": JWT_AUDIENCE})
-    # Use thread pool for CPU-bound JWT signing to avoid blocking event loop
-    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    # HS256 is fast (~10-50us) — to_thread overhead (~50-200us) exceeds the operation itself.
+    # Only use to_thread for CPU-heavy RS256 signing.
+    if ALGORITHM == "RS256":
+        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    else:
+        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), ALGORITHM)
     return encoded_jwt
 
 
@@ -92,8 +99,10 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     else:
         expire = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
     to_encode.update({"exp": expire, "token_type": TokenType.REFRESH, "aud": JWT_AUDIENCE})
-    # Use thread pool for CPU-bound JWT signing to avoid blocking event loop
-    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    if ALGORITHM == "RS256":
+        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    else:
+        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), ALGORITHM)
     return encoded_jwt
 
 

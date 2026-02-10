@@ -26,7 +26,8 @@ from src.app.core.db.database import async_engine, local_session
 from src.app.core.db.rls import RLS_TENANT_VAR, RLS_USER_VAR
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import clear_tenant_context, set_current_tenant
+from src.app.core.utils.cache import client as redis_client
+from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
@@ -269,7 +270,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
             # Clear application-level tenant context
             clear_tenant_context()
 
-    async def _get_tenant_by_slug(self, slug: str) -> Tenant | None:
+    async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching.
 
         Cache hierarchy (R2-HYBRID MED-1):
@@ -302,8 +303,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 return None
         except Exception as e:
             logger.warning("Tenant L1 cache read error: %s", e)
-
-        from src.app.core.utils.cache import client as redis_client
 
         cache_key = f"tenant:slug:{slug}"
 
@@ -372,23 +371,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             return tenant
 
-    async def _get_tenant_from_cache_data(self, data: dict) -> Tenant | None:
-        """Create a minimal Tenant object from cached data for validation.
+    async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext | None:
+        """Create a TenantContext directly from cached data, skipping ORM overhead.
 
         Args:
             data: Cached tenant data dict with id, slug, is_active.
 
         Returns
         -------
-            Tenant object with cached fields populated.
+            TenantContext with cached fields populated.
         """
-        # For middleware validation, we only need id, slug, and is_active
-        # Create minimal Tenant without triggering SQLAlchemy state tracking
-        tenant = Tenant(
-            name=data.get("name", "cached"),  # Name required by model
-            slug=data["slug"],
+        return TenantContext(
+            tenant_id=data["id"],
+            tenant_slug=data["slug"],
+            tenant_name=data.get("name", "cached"),
             is_active=data["is_active"],
         )
-        # Override id after creation (since init=False on id field)
-        object.__setattr__(tenant, "id", data["id"])
-        return tenant

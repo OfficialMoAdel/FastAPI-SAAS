@@ -103,6 +103,10 @@ class PasskeyLoginVerifyRequest(BaseModel):
         ...,
         description="WebAuthn PublicKeyCredential (assertion) from browser",
     )
+    challenge_id: str = Field(
+        ...,
+        description="The challenge_id returned from the /login endpoint",
+    )
 
 
 class PasskeyAuthenticationOptionsResponse(BaseModel):
@@ -111,6 +115,10 @@ class PasskeyAuthenticationOptionsResponse(BaseModel):
     publicKey: dict[str, Any] = Field(
         ...,
         description="WebAuthn PublicKeyCredentialRequestOptions",
+    )
+    challenge_id: str = Field(
+        ...,
+        description="Unique identifier to pass back during /login/verify",
     )
 
 

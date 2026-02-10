@@ -102,7 +102,24 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         if token_data is None:
             return None
 
-        return await get_current_user(request, token_value, db=db)
+        # Use token_data directly instead of calling get_current_user
+        # which would re-verify the token (2nd Redis + JWT decode)
+        user_service = UserService(db)
+        if "@" in token_data.username_or_email:
+            user = await user_service.get_user_auth_info(email=token_data.username_or_email)
+        else:
+            user = await user_service.get_user_auth_info(username=token_data.username_or_email)
+
+        if not user:
+            return None
+
+        # Verify tenant context
+        current_tenant = get_tenant_context()
+        if current_tenant and user["tenant_id"] != current_tenant.id:
+            if not user.get("is_superuser"):
+                return None
+
+        return user
 
     except HTTPException as http_exc:
         if http_exc.status_code != 401:

@@ -35,17 +35,17 @@ class TestOrjsonDumpsDefault:
         assert isinstance(result, str)
 
     def test_decimal_serialization(self):
-        """Test Decimal is serialized to float."""
+        """Test Decimal is serialized to string for precision."""
         test_decimal = Decimal("123.45")
         result = orjson_dumps_default(test_decimal)
-        assert result == 123.45
-        assert isinstance(result, float)
+        assert result == "123.45"
+        assert isinstance(result, str)
 
     def test_decimal_precision(self):
-        """Test Decimal maintains reasonable precision."""
+        """Test Decimal maintains exact precision via string."""
         test_decimal = Decimal("0.1234567890123456")
         result = orjson_dumps_default(test_decimal)
-        assert abs(result - 0.1234567890123456) < 1e-10
+        assert result == "0.1234567890123456"
 
     def test_datetime_serialization(self):
         """Test datetime is serialized to ISO format."""
@@ -135,7 +135,7 @@ class TestJsonDumps:
         data = {"price": Decimal("99.99")}
         result = json_dumps(data, as_str=True)
         parsed = json_loads(result)
-        assert parsed["price"] == 99.99
+        assert parsed["price"] == "99.99"
 
     def test_pydantic_model_in_dict(self):
         """Test Pydantic model in dictionary is serialized."""

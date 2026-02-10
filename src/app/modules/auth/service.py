@@ -46,6 +46,21 @@ def get_auth_service() -> "AuthService":
 class AuthService:
     """Service class for authentication-related business logic."""
 
+    # Atomic Lua script for login attempt checking.
+    # Combines lockout check + increment + expire into single Redis roundtrip.
+    # Returns -1 if locked out, otherwise the new attempt count.
+    _LOGIN_CHECK_LUA = """
+local attempts = redis.call('GET', KEYS[1])
+if attempts and tonumber(attempts) >= tonumber(ARGV[1]) then
+    return -1
+end
+local new_attempts = redis.call('INCR', KEYS[1])
+if new_attempts == 1 then
+    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
+end
+return new_attempts
+"""
+
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
 
@@ -147,10 +162,19 @@ class AuthService:
         UnauthorizedException
             If credentials are invalid or account is locked
         """
-        # Check for account lockout
         login_attempts_key = f"login_attempts:{username}"
-        attempts = await redis.get(login_attempts_key)
-        if attempts and int(attempts) >= settings.AUTH_MAX_LOGIN_ATTEMPTS:
+
+        # Atomic Lua script: check lockout + increment in single roundtrip
+        # Returns: -1 if locked out, otherwise the new attempt count
+        result = await redis.eval(  # type: ignore[misc]
+            self._LOGIN_CHECK_LUA,
+            1,
+            login_attempts_key,
+            str(settings.AUTH_MAX_LOGIN_ATTEMPTS),
+            str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
+        )
+
+        if result == -1:
             lockout_minutes = settings.AUTH_LOCKOUT_DURATION_SECONDS // 60
             await self._publish_login_audit(request, username, False, reason="account_locked")
             raise UnauthorizedException(
@@ -159,15 +183,10 @@ class AuthService:
 
         user = await self.authenticate_user(username_or_email=username, password=password, db=db)
         if not user:
-            # Increment failed attempts
-            new_attempts = await redis.incr(login_attempts_key)
-            if new_attempts == 1:
-                await redis.expire(login_attempts_key, settings.AUTH_LOCKOUT_DURATION_SECONDS)
-
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")
             raise UnauthorizedException("Wrong username, email or password.")
 
-        # Clear failed attempts on success
+        # Clear failed attempts on success (single roundtrip)
         await redis.delete(login_attempts_key)
 
         # Check if MFA is enabled for this user

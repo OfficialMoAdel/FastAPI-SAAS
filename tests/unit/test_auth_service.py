@@ -33,9 +33,7 @@ def mock_db():
 def mock_redis():
     """Mock Redis client."""
     redis = AsyncMock()
-    redis.get = AsyncMock(return_value=None)
-    redis.incr = AsyncMock(return_value=1)
-    redis.expire = AsyncMock()
+    redis.eval = AsyncMock(return_value=1)  # Default: first attempt, not locked
     redis.delete = AsyncMock()
     return redis
 
@@ -79,8 +77,8 @@ class TestAuthServiceLockout:
         """Test that account is locked after 5 failed login attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
-        # Simulate 5 failed attempts already recorded
-        mock_redis.get = AsyncMock(return_value=b"5")
+        # Lua script returns -1 when account is locked
+        mock_redis.eval = AsyncMock(return_value=-1)
 
         with pytest.raises(UnauthorizedException) as exc_info:
             await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
@@ -92,11 +90,11 @@ class TestAuthServiceLockout:
     async def test_failed_attempt_increments_counter(
         self, auth_service, mock_db, mock_redis, mock_response, mock_request
     ):
-        """Test that failed login increments the attempt counter."""
+        """Test that failed login calls Lua script for atomic increment."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
-        mock_redis.get = AsyncMock(return_value=None)  # No previous attempts
-        mock_redis.incr = AsyncMock(return_value=1)  # First attempt
+        # Lua script returns 1 (first attempt, not locked)
+        mock_redis.eval = AsyncMock(return_value=1)
 
         with (
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
@@ -106,19 +104,17 @@ class TestAuthServiceLockout:
             with pytest.raises(UnauthorizedException):
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
 
-            mock_redis.incr.assert_called_once()
-            # First attempt sets expiration
-            mock_redis.expire.assert_called_once()
+            # Lua script was called (handles check + increment + expire atomically)
+            mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_lockout_counter_expires_after_15_minutes(
         self, auth_service, mock_db, mock_redis, mock_response, mock_request
     ):
-        """Test that lockout counter expiration is set to 15 minutes (900 seconds)."""
+        """Test that Lua script receives correct lockout duration (900 seconds)."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
-        mock_redis.get = AsyncMock(return_value=None)
-        mock_redis.incr = AsyncMock(return_value=1)
+        mock_redis.eval = AsyncMock(return_value=1)
 
         with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
             mock_auth.return_value = None
@@ -126,15 +122,17 @@ class TestAuthServiceLockout:
             with pytest.raises(UnauthorizedException):
                 await auth_service.login("testuser", "wrong", mock_response, mock_request, mock_db, mock_redis)
 
-            # Check 900 seconds (15 minutes) expiration
-            mock_redis.expire.assert_called_with("login_attempts:testuser", 900)
+            # Check Lua script received 900 seconds as lockout duration arg
+            call_args = mock_redis.eval.call_args
+            assert call_args[0][4] == "900"  # ARGV[2] = lockout duration (str)
 
     @pytest.mark.asyncio
     async def test_successful_login_clears_lockout_counter(
         self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_user
     ):
         """Test that successful login clears the failed attempt counter."""
-        mock_redis.get = AsyncMock(return_value=b"3")  # 3 previous failed attempts
+        # Lua script returns 3 (not locked)
+        mock_redis.eval = AsyncMock(return_value=3)
 
         with (
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
@@ -157,8 +155,8 @@ class TestAuthServiceLockout:
         """Test that lockout triggers at exactly 5 attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
-        # 4 previous attempts - should NOT be locked
-        mock_redis.get = AsyncMock(return_value=b"4")
+        # Lua script returns 5 (5th attempt just recorded, not yet locked)
+        mock_redis.eval = AsyncMock(return_value=5)
 
         with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
             mock_auth.return_value = None  # Auth fails

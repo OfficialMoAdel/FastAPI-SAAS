@@ -116,18 +116,31 @@ class LogSanitizer:
         ),
     ]
 
+    # Combined pre-check regex: single search to detect if ANY sensitive data
+    # might be present. >99% of log strings contain nothing sensitive, so this
+    # avoids running 15 individual patterns on the common no-match path.
+    # Uses re.IGNORECASE since this is a pre-check — false positives just trigger
+    # the individual patterns which do their own precise matching.
+    _ANY_SENSITIVE: re.Pattern[str] = re.compile(
+        r"eyJ[A-Za-z0-9\-_]+\."                              # JWT prefix
+        r"|(?:api[_-]?key|secret|token|password|passwd|pwd|bearer|authorization)"  # key-value secrets
+        r"|(?:postgresql|mysql|redis|mongodb)(?:\+\w+)?://"   # DB connection strings
+        r"|AKIA[0-9A-Z]{16}"                                  # AWS access keys
+        r"|[sprk]k_(?:live|test)_"                            # Stripe keys
+        r"|\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b"                  # SSN
+        r"|\b(?:\d{4}[\s-]?){3}\d{4}\b"                      # Credit card
+        r"|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",  # Email
+        re.IGNORECASE,
+    )
+
     @classmethod
     def sanitize_message(cls, message: str) -> str:
-        """
-        Sanitize a log message by removing sensitive data.
-
-        Args:
-            message: The log message to sanitize
-
-        Returns:
-            Sanitized message with sensitive data replaced
-        """
+        """Sanitize a log message by removing sensitive data."""
         if not isinstance(message, str):
+            return message
+
+        # Fast path: skip individual patterns if no sensitive data possible
+        if not cls._ANY_SENSITIVE.search(message):
             return message
 
         sanitized = message
@@ -135,7 +148,6 @@ class LogSanitizer:
             try:
                 sanitized = pattern.sub(replacement, sanitized)
             except Exception as e:
-                # Log warning but continue with remaining patterns
                 logging.warning(
                     f"Error applying sanitization pattern: {e}", exc_info=True
                 )
@@ -234,18 +246,15 @@ class SanitizingProcessor:
     def __call__(
         self, logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
     ) -> dict[str, Any]:
-        """
-        Process log event by sanitizing all values.
-
-        Args:
-            logger: Logger instance (unused but required by protocol)
-            method_name: Log method name (info, debug, etc.)
-            event_dict: Event dictionary to sanitize
-
-        Returns:
-            Sanitized event dictionary
-        """
-        return LogSanitizer.sanitize_dict(dict(event_dict), _max_depth=self._max_depth)
+        """Process log event by sanitizing all values in-place."""
+        for key, value in event_dict.items():
+            if isinstance(value, str):
+                event_dict[key] = LogSanitizer.sanitize_message(value)
+            elif isinstance(value, dict):
+                event_dict[key] = LogSanitizer.sanitize_dict(value, _max_depth=self._max_depth)
+            elif isinstance(value, list):
+                event_dict[key] = [LogSanitizer.sanitize_value(item) for item in value]
+        return event_dict  # type: ignore[return-value]
 
 
 class SecureFormatter(logging.Formatter):

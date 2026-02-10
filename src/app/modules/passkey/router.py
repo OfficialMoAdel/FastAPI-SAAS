@@ -132,12 +132,12 @@ async def login_begin(
     Rate limited: 10 requests per minute per IP.
     """
     email = request.email if request else None
-    options = await passkey_service.generate_authentication_challenge(
+    options, challenge_id = await passkey_service.generate_authentication_challenge(
         db=db,
         redis=redis,
         email=email,
     )
-    return PasskeyAuthenticationOptionsResponse(publicKey=options)
+    return PasskeyAuthenticationOptionsResponse(publicKey=options, challenge_id=challenge_id)
 
 
 @router.post(
@@ -159,5 +159,6 @@ async def login_complete(
         db=db,
         redis=redis,
         credential=request.credential,
+        challenge_id=request.challenge_id,
     )
     return AuthTokenResponse(**result)

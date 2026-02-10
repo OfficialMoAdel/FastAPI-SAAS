@@ -122,6 +122,48 @@ ATTACK_PATTERNS: dict[str, tuple[re.Pattern, AttackType]] = {
     "path_partial_encoded": (PATH_TRAVERSAL_PATTERNS[3], AttackType.PATH_TRAVERSAL),
 }
 
+# Named group → (pattern_name, AttackType) mapping for combined regex matches
+_GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
+    "sql_union": ("sql_union_select", AttackType.SQL_INJECTION),
+    "sql_or": ("sql_or_1_equals_1", AttackType.SQL_INJECTION),
+    "sql_drop": ("sql_drop_table", AttackType.SQL_INJECTION),
+    "sql_delete": ("sql_delete_from", AttackType.SQL_INJECTION),
+    "sql_comment": ("sql_comment_end", AttackType.SQL_INJECTION),
+    "sql_semicomment": ("sql_semicolon_comment", AttackType.SQL_INJECTION),
+    "sql_exec": ("sql_exec_xp", AttackType.SQL_INJECTION),
+    "xss_script": ("xss_script_tag", AttackType.XSS),
+    "xss_jsuri": ("xss_javascript_uri", AttackType.XSS),
+    "xss_event": ("xss_event_handler", AttackType.XSS),
+    "xss_iframe_tag": ("xss_iframe", AttackType.XSS),
+    "xss_object_tag": ("xss_object", AttackType.XSS),
+    "path_dotdot": ("path_dotdot_slash", AttackType.PATH_TRAVERSAL),
+    "path_triple": ("path_triple_dot", AttackType.PATH_TRAVERSAL),
+    "path_enc": ("path_encoded", AttackType.PATH_TRAVERSAL),
+    "path_penc": ("path_partial_encoded", AttackType.PATH_TRAVERSAL),
+}
+
+# Combined bytes regex: single search() replaces 16 sequential pattern checks.
+# Compiled as bytes pattern for zero-copy scanning of request body.
+COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
+    rb"(?P<sql_union>\bunion\b.*?\bselect\b)"
+    rb"|(?P<sql_or>\bor\b\s+1\s*=\s*1)"
+    rb"|(?P<sql_drop>\bdrop\b.*?\btable\b)"
+    rb"|(?P<sql_delete>\bdelete\b.*?\bfrom\b)"
+    rb"|(?P<sql_comment>--\s*$)"
+    rb"|(?P<sql_semicomment>;\s*--)"
+    rb"|(?P<sql_exec>\bexec\b.*?\bxp_)"
+    rb"|(?P<xss_script><script[\s>])"
+    rb"|(?P<xss_jsuri>javascript\s*:)"
+    rb"|(?P<xss_event>\bon\w+\s*=)"
+    rb"|(?P<xss_iframe_tag><iframe[\s>])"
+    rb"|(?P<xss_object_tag><object[\s>])"
+    rb"|(?P<path_dotdot>\.\.\/)"
+    rb"|(?P<path_triple>\.\.\.)"
+    rb"|(?P<path_enc>%2e%2e%2f)"
+    rb"|(?P<path_penc>%2e%2e\/)",
+    re.IGNORECASE | re.MULTILINE,
+)
+
 
 class AttackDetectionMiddleware(BaseHTTPMiddleware):
     """Middleware to detect and handle malicious attack patterns.
@@ -166,67 +208,77 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         return "unknown"
 
     async def _detect_attack_patterns(self, request: Request) -> list[dict]:
-        """Scan request for attack patterns.
+        """Scan request for attack patterns using zero-copy bytes scanning.
 
         Checks:
-        - URL path and query parameters
-        - Request body (if applicable and not too large)
-        - Headers (User-Agent, Referer, etc.)
+        - URL path and query parameters (encoded to bytes)
+        - Request body (scanned as raw bytes without UTF-8 decode)
+        - Headers (encoded to bytes)
 
         Returns:
             List of detected attacks, each with pattern_type and location
         """
         detected_attacks: list[dict] = []
-        path = request.url.path
+
+        # Encode small strings to bytes (fast) instead of decoding large body (slow)
+        path_bytes = request.url.path.encode("utf-8", errors="replace")
+        self._check_for_patterns(path_bytes, "url_path", detected_attacks)
+
         query = str(request.query_params)
-
-        # Check URL path
-        self._check_for_patterns(path, "url_path", detected_attacks)
-
-        # Check query string
         if query:
-            self._check_for_patterns(query, "query_string", detected_attacks)
+            self._check_for_patterns(query.encode("utf-8", errors="replace"), "query_string", detected_attacks)
 
-        # Check specific headers that might contain attacks
+        # Check specific headers
         headers_to_check = ["user-agent", "referer", "x-requested-with"]
         for header_name in headers_to_check:
             header_value = request.headers.get(header_name, "")
             if header_value:
-                self._check_for_patterns(header_value, f"header:{header_name}", detected_attacks)
+                self._check_for_patterns(
+                    header_value.encode("utf-8", errors="replace"),
+                    f"header:{header_name}",
+                    detected_attacks,
+                )
 
         # Check request body if it's a POST/PUT/PATCH with content
         if request.method in ("POST", "PUT", "PATCH"):
             content_type = request.headers.get("content-type", "")
-            # Only check text-based content types
             text_content_types = ["application/json", "application/x-www-form-urlencoded", "text/"]
             if any(ct in content_type.lower() for ct in text_content_types):
-                try:
-                    # Read body (limited to prevent memory issues)
-                    body = await request.body()
-                    if body and len(body) < 1024 * 1024:  # Max 1MB
-                        body_text = body.decode("utf-8", errors="replace")
-                        if body_text:
-                            self._check_for_patterns(body_text, "request_body", detected_attacks)
-                except Exception:
-                    # If we can't read the body, skip it
-                    pass
+                # Pre-check Content-Length before reading body
+                content_length = request.headers.get("content-length")
+                if content_length and int(content_length) > 1024 * 1024:
+                    pass  # Skip oversized payloads
+                else:
+                    try:
+                        body = await request.body()
+                        if body and len(body) < 1024 * 1024:
+                            # Scan raw bytes directly — no UTF-8 decode needed
+                            self._check_for_patterns(body, "request_body", detected_attacks)
+                    except Exception:
+                        pass
 
         return detected_attacks
 
-    def _check_for_patterns(self, content: str, location: str, attacks: list[dict]) -> None:
-        """Check content against all attack patterns.
+    def _check_for_patterns(self, content: bytes, location: str, attacks: list[dict]) -> None:
+        """Check content against all attack patterns using combined bytes regex.
 
-        Uses the ATTACK_PATTERNS dict which maps pattern names to
-        (compiled_regex, attack_type) tuples for efficient categorization.
+        Uses a single compiled regex with named groups instead of iterating
+        over 16 individual patterns. The named group identifies the attack type.
         """
-        for pattern_name, (pattern, attack_type) in ATTACK_PATTERNS.items():
-            if pattern.search(content):
+        for match in COMBINED_ATTACK_RE.finditer(content):
+            group_name = match.lastgroup
+            if group_name and group_name in _GROUP_TO_ATTACK:
+                pattern_name, attack_type = _GROUP_TO_ATTACK[group_name]
                 attacks.append(
                     {
                         "attack_type": attack_type.value,
                         "pattern_name": pattern_name,
                         "location": location,
-                        "matched_content": content[:100] if self._log_full_request else "[redacted]",
+                        "matched_content": (
+                            content[:100].decode("utf-8", errors="replace")
+                            if self._log_full_request
+                            else "[redacted]"
+                        ),
                     }
                 )
 

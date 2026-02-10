@@ -102,16 +102,18 @@ def get_lightweight_tenant_context() -> "TenantContext | None":
     return _current_tenant.get()
 
 
-def set_current_tenant(tenant: "Tenant | None") -> None:
+def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:
     """Set the current tenant in the context.
 
     Args:
         tenant: The tenant to set as current, or None to clear.
     """
-    if tenant:
-        _current_tenant.set(TenantContext.from_model(tenant))
-    else:
+    if tenant is None:
         _current_tenant.set(None)
+    elif isinstance(tenant, TenantContext):
+        _current_tenant.set(tenant)
+    else:
+        _current_tenant.set(TenantContext.from_model(tenant))
 
 
 def set_tenant_context(tenant: "Tenant | None") -> None:
