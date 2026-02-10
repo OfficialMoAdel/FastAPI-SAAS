@@ -15,16 +15,17 @@ router = APIRouter(prefix="/jobs", tags=["admin", "jobs"])
 
 
 @router.get("/summary", response_model=JobSummaryResponse)
-async def get_jobs_summary():
+async def get_jobs_summary() -> JobSummaryResponse:
     """
     Get a high-level summary of job system health.
     """
     monitor = get_job_monitor()
-    return await monitor.get_summary()
+    summary_data = await monitor.get_summary()
+    return JobSummaryResponse(**summary_data)
 
 
 @router.get("/metrics", response_model=JobMetricsResponse)
-async def get_jobs_metrics(function_name: Optional[str] = None):
+async def get_jobs_metrics(function_name: Optional[str] = None) -> JobMetricsResponse:
     """
     Get aggregated metrics for job functions.
     If function_name is provided, returns metrics only for that function.
@@ -44,7 +45,7 @@ async def get_jobs_metrics(function_name: Optional[str] = None):
 
 
 @router.get("/status/{job_id}", response_model=JobStatusResponse)
-async def get_job_status(job_id: str):
+async def get_job_status(job_id: str) -> JobStatusResponse:
     """
     Get the status and details of a specific job.
     """
@@ -57,23 +58,24 @@ async def get_job_status(job_id: str):
     if "error" in job_data and job_data["status"] == "unknown":
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=job_data["error"])
 
-    return job_data
+    return JobStatusResponse(**job_data)
 
 
 @router.get("/dlq", response_model=list[DLQItemResponse])
 async def get_dlq_items(
     limit: int = Query(100, ge=1, le=1000, description="Number of items to retrieve"),
     offset: int = Query(0, ge=0, description="Offset for pagination"),
-):
+) -> list[DLQItemResponse]:
     """
     Get items from the Dead Letter Queue.
     """
     monitor = get_job_monitor()
-    return await monitor.get_dead_letter_queue(limit=limit, offset=offset)
+    dlq_items = await monitor.get_dead_letter_queue(limit=limit, offset=offset)
+    return [DLQItemResponse(**item) for item in dlq_items]
 
 
 @router.delete("/dlq", status_code=status.HTTP_204_NO_CONTENT)
-async def clear_dlq():
+async def clear_dlq() -> None:
     """
     Clear the Dead Letter Queue.
     """
