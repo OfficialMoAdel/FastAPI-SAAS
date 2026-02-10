@@ -5,7 +5,6 @@ from uuid import UUID
 from arq.worker import Worker
 from sqlalchemy import text
 
-from src.app.core.db.database import local_session
 from src.app.core.utils.job_wrapper import monitor_job
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.webhooks.service import WebhookService
@@ -56,7 +55,7 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
             return f"Webhook {delivery_id} delivered."
         except Exception as e:
             logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
-            raise e
+            raise
 
 
 @monitor_job("migrate_sessions_task")
@@ -70,7 +69,7 @@ async def migrate_sessions_task(ctx: Worker) -> str:
         return f"Migrated {count} users to hash format."
     except Exception as e:
         logging.error(f"Session migration failed: {e}")
-        raise e
+        raise
 
 
 @monitor_job("flush_audit_logs_task")
@@ -83,7 +82,6 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     System task - requires RLS bypass.
     """
     from src.app.modules.audit_logs.service import (
-        AUDIT_LOG_BATCH_SIZE,
         AUDIT_LOG_MAX_FLUSH_PER_RUN,
         flush_audit_log_buffer,
     )
@@ -103,7 +101,7 @@ async def flush_audit_logs_task(ctx: dict) -> str:
                 total += count
         except Exception as e:
             logging.error(f"Failed to flush audit logs: {e}")
-            raise e
+            raise
 
     return f"Flushed {total} audit logs."
 
@@ -129,7 +127,7 @@ async def sync_bloom_filter_task(ctx: dict) -> str:
             return f"Synced {count} tokens to Bloom filter."
         except Exception as e:
             logging.error(f"Bloom filter sync failed: {e}")
-            raise e
+            raise
 
 
 # -------- base functions --------

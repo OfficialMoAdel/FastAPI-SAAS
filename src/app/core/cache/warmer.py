@@ -5,7 +5,7 @@ with error handling and statistics tracking.
 """
 
 import logging
-from typing import Any
+from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -24,9 +24,11 @@ class CacheWarmer:
     """
 
     def __init__(self) -> None:
-        self._warmers: dict[str, Any] = {}
+        self._warmers: dict[str, Callable[[AsyncSession], Awaitable[int]]] = {}
 
-    def register(self, name: str) -> Any:
+    def register(
+        self, name: str
+    ) -> Callable[[Callable[[AsyncSession], Awaitable[int]]], Callable[[AsyncSession], Awaitable[int]]]:
         """Decorator to register a cache warmer.
 
         Args:
@@ -41,7 +43,7 @@ class CacheWarmer:
                 ...
         """
 
-        def decorator(func: Any) -> Any:
+        def decorator(func: Callable[[AsyncSession], Awaitable[int]]) -> Callable[[AsyncSession], Awaitable[int]]:
             if name in self._warmers:
                 logger.warning(f"Overwriting existing warmer: {name}")
             self._warmers[name] = func
