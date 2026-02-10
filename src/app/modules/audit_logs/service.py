@@ -164,7 +164,7 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
 
 async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
     """Fallback: directly insert audit log when Redis unavailable.
-    
+
     Args:
         log_data: Log data
         db: Optional DB session. If None, creates a new one.
@@ -269,37 +269,48 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
         return 0
 
     # Helper to perform bulk insert
-    async def _perform_bulk_insert(session: AsyncSession):
+    async def _perform_bulk_insert(session: AsyncSession) -> bool:
         try:
             session.add_all(log_entries)
             await session.commit()
             logger.info("audit_logs_flushed", count=len(log_entries))
+            return True
         except Exception as e:
             logger.error("audit_log_flush_failed", error=str(e), count=len(log_entries))
             await session.rollback()
-            raise e
+            return False
+
+    inserted = False
 
     if db:
-        # Use provided session (do not close)
-        try:
-            await _perform_bulk_insert(db)
-        except Exception:
-            # Error logged in helper, exception re-raised to caller?
-            # Caller (flush_audit_logs_task) should decide retry logic.
-            # But here we just log and swallow for safety?
-            # Existing code logged and swallowed.
-            pass
+        inserted = await _perform_bulk_insert(db)
     else:
-        # Create new session (and close it)
         from ...core.db.database import async_get_db
         async for session in async_get_db():
             try:
-                await _perform_bulk_insert(session)
-            except Exception:
-                pass
+                inserted = await _perform_bulk_insert(session)
             finally:
                 await session.close()
                 break
+
+    if not inserted:
+        # Re-push failed entries back to Redis to prevent data loss
+        try:
+            repush_pipe = redis_cache.client.pipeline()
+            for entry_data in logs_data:
+                repush_pipe.rpush(AUDIT_LOG_BUFFER_KEY, entry_data)
+            await repush_pipe.execute()
+            logger.warning(
+                "audit_logs_repushed_after_failure",
+                count=len(logs_data),
+            )
+        except Exception as repush_err:
+            logger.critical(
+                "audit_log_repush_failed_data_loss",
+                error=str(repush_err),
+                lost_count=len(logs_data),
+            )
+        return 0
 
     # Log if we hit the flush limit
     if len(log_entries) >= max_flush_per_run:

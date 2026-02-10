@@ -78,10 +78,11 @@ async def upload_file(
         size_bytes = file.size
     else:
         # Fallback: seek to end to get size, then reset position
-        # This avoids loading the entire file into memory
-        await file.seek(0, 2)
+        # Uses underlying file object directly because UploadFile.seek()
+        # does not support the whence parameter
+        file.file.seek(0, 2)
         size_bytes = file.file.tell()
-        await file.seek(0)
+        file.file.seek(0)
 
     try:
         result = await service.upload_file(
