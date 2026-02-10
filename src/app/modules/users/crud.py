@@ -1,8 +1,11 @@
 from typing import Any
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from ...core.db.tenant_crud import TenantAwareCRUD
+from ...core.tenancy.context import get_tenant_context
 from .models import User
 from .schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
@@ -25,11 +28,6 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         Security: Respects tenant isolation via tenant context.
         """
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload
-
-        from ...core.tenancy.context import get_tenant_context
-
         if not username and not email:
             return None
 

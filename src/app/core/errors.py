@@ -28,7 +28,7 @@ from ..modules._base.exceptions import (
 from ..modules._base.exceptions import (
     ValidationError as BaseValidationError,
 )
-from ..modules.ai.exceptions import SessionLimitExceededError
+from ..modules.ai.unified_errors import SessionLimitExceededError
 from ..modules.billing.exceptions import PaymentRequiredError
 
 logger = get_logger(__name__)

@@ -13,9 +13,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.exceptions.http_exceptions import ForbiddenException, NotFoundException
+from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.service import APIKeyService
+from src.app.modules._base.exceptions import ModelNotFoundError
 
 
 class TestAPIKeyValidFromValidation:
@@ -124,7 +125,14 @@ class TestAPIKeyRotation:
     @pytest.fixture
     def mock_db_session(self) -> AsyncMock:
         """Provide a mock database session."""
-        return AsyncMock(spec=AsyncSession)
+        mock = AsyncMock(spec=AsyncSession)
+        
+        async def side_effect_refresh(obj, *args, **kwargs):
+            obj.id = 456
+            return None
+            
+        mock.refresh.side_effect = side_effect_refresh
+        return mock
 
     @pytest.fixture
     def api_key_service(self, mock_db_session: AsyncMock) -> APIKeyService:
@@ -215,7 +223,8 @@ class TestAPIKeyRotation:
                 expected_max = after_rotation + timedelta(days=7, hours=0, minutes=1)
 
                 # Get the added key's valid_from
-                call_args = mock_db_session.add.call_args[0][0]
+                # The first add call should be the APIKey (second might be audit log)
+                call_args = mock_db_session.add.call_args_list[0][0][0]
                 assert expected_min <= call_args.valid_from <= expected_max
 
     @pytest.mark.asyncio
@@ -245,7 +254,7 @@ class TestAPIKeyRotation:
                 )
 
                 # Verify scopes were copied
-                call_args = mock_db_session.add.call_args[0][0]
+                call_args = mock_db_session.add.call_args_list[0][0][0]
                 assert call_args.scopes == scopes
 
     @pytest.mark.asyncio
@@ -277,7 +286,7 @@ class TestAPIKeyRotation:
                 )
 
                 # Verify expiration was copied
-                call_args = mock_db_session.add.call_args[0][0]
+                call_args = mock_db_session.add.call_args_list[0][0][0]
                 assert call_args.expires_at == expires
 
     @pytest.mark.asyncio
@@ -349,7 +358,7 @@ class TestAPIKeyRotation:
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
             mock_get.return_value = None
 
-            with pytest.raises(NotFoundException) as exc_info:
+            with pytest.raises(ModelNotFoundError) as exc_info:
                 await api_key_service.rotate_api_key(
                     key_id=999,
                     user_id=1,
@@ -365,7 +374,14 @@ class TestAPIKeyRotationGracePeriod:
     @pytest.fixture
     def mock_db_session(self) -> AsyncMock:
         """Provide a mock database session."""
-        return AsyncMock(spec=AsyncSession)
+        mock = AsyncMock(spec=AsyncSession)
+        
+        async def side_effect_refresh(obj, *args, **kwargs):
+            obj.id = 456
+            return None
+            
+        mock.refresh.side_effect = side_effect_refresh
+        return mock
 
     @pytest.fixture
     def api_key_service(self, mock_db_session: AsyncMock) -> APIKeyService:
@@ -405,7 +421,7 @@ class TestAPIKeyRotationGracePeriod:
                 after = datetime.now(UTC)
 
                 # Get the added key and check valid_from
-                call_args = mock_db_session.add.call_args[0][0]
+                call_args = mock_db_session.add.call_args_list[0][0][0]
                 expected_min = before + timedelta(days=6, hours=23)
                 expected_max = after + timedelta(days=7, hours=1)
 
@@ -444,7 +460,7 @@ class TestAPIKeyRotationGracePeriod:
                 after = datetime.now(UTC)
 
                 # Get the added key and check valid_from
-                call_args = mock_db_session.add.call_args[0][0]
+                call_args = mock_db_session.add.call_args_list[0][0][0]
                 expected_min = before + timedelta(days=custom_days - 1, hours=23)
                 expected_max = after + timedelta(days=custom_days + 1)
 

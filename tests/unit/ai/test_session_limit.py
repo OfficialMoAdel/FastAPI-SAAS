@@ -75,8 +75,8 @@ class TestSessionLimit:
     @pytest.mark.asyncio
     async def test_create_session_at_limit_fails(self, mock_db_session, mock_user, mock_tenant):
         """Test creating a session when at the limit raises error."""
-        from src.app.modules.ai.exceptions import SessionLimitExceededError
         from src.app.modules.ai.schemas import ChatSessionCreate
+        from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
         session_data = ChatSessionCreate(title="Test Session", model="gemma3")
 
@@ -103,8 +103,8 @@ class TestSessionLimit:
     @pytest.mark.asyncio
     async def test_create_session_over_limit_fails(self, mock_db_session, mock_user, mock_tenant):
         """Test creating a session when over the limit raises error."""
-        from src.app.modules.ai.exceptions import SessionLimitExceededError
         from src.app.modules.ai.schemas import ChatSessionCreate
+        from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
         session_data = ChatSessionCreate(title="Test Session", model="gemma3")
 
@@ -168,7 +168,7 @@ class TestSessionLimitExceededError:
 
     def test_exception_message(self):
         """Test that exception has correct message format."""
-        from src.app.modules.ai.exceptions import SessionLimitExceededError
+        from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
         error = SessionLimitExceededError(tenant_id=1, limit=100, current_count=100)
 
@@ -180,7 +180,7 @@ class TestSessionLimitExceededError:
 
     def test_exception_default_limit(self):
         """Test exception uses default limit of 100."""
-        from src.app.modules.ai.exceptions import SessionLimitExceededError
+        from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
         error = SessionLimitExceededError(tenant_id=5)
 

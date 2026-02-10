@@ -5,11 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.modules.ai.anthropic_provider import AnthropicProvider
-from src.app.modules.ai.exceptions import AIServerError
 from src.app.modules.ai.factory import AIProviderFactory, get_provider
 from src.app.modules.ai.ollama_provider import OllamaProvider
 from src.app.modules.ai.openai_provider import OpenAIProvider
 from src.app.modules.ai.providers import AIProvider
+from src.app.modules.ai.unified_errors import AIServerError
 
 
 @pytest.fixture(autouse=True)

@@ -83,7 +83,7 @@ async def chat_completion(
 
 ```python
 from src.app.modules.ai.service import ChatCompletionError
-from src.app.modules.ai.exceptions import AIRateLimitError
+from src.app.modules.ai.unified_errors import AIRateLimitError
 
 try:
     response = await completion_service.complete(session_id, user_id, request)
@@ -115,7 +115,7 @@ src/app/modules/ai/
 ├── ollama_client.py      # Ollama API client
 ├── middleware.py         # Rate limiting middleware
 ├── rate_limiter.py       # Rate limiter implementation
-└── exceptions.py         # AI-specific exceptions
+└── unified_errors.py     # AI-specific exceptions
 ```
 
 ## Touch Points

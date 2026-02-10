@@ -6,14 +6,17 @@ from uuid import UUID
 
 from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.json_utils import json_dumps, json_loads
 from ...core.security import blacklist_token, get_password_hash
+from ...core.service_registry import get_service
 from ...core.tenancy.context import get_current_tenant
 from ...core.utils import cache
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
+from ..tiers.models import Tier
 from .crud import CRUDUser, crud_users
 from .models import User
 from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
@@ -480,8 +483,6 @@ class UserService(BaseService[User]):
             If user or tier not found
         """
         # Use service registry for cross-module decoupling
-        from ...core.service_registry import get_service
-
         db_user = await self.crud.get(db=self.db, username=username)
         if db_user is None:
             raise ModelNotFoundError("User", username)
@@ -522,12 +523,6 @@ class UserService(BaseService[User]):
         ModelNotFoundError
             If user not found
         """
-        from sqlalchemy import select
-        from sqlalchemy.orm import joinedload
-
-        from ..tiers.models import Tier
-        from .models import User
-
         # Eager load User + Tier + RateLimits in single query
         # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
         stmt = select(User).options(joinedload(User.tier).joinedload(Tier.rate_limits))

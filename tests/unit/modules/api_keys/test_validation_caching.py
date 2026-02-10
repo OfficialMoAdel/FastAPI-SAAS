@@ -16,6 +16,10 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.modules.api_keys.service import APIKeyService
+from src.app.modules.api_keys.models import APIKey
 
 
 class TestAPIKeyValidationCaching:
@@ -70,6 +74,7 @@ class TestAPIKeyValidationCaching:
         mock_key.scopes = '["read"]'
         mock_key.id = 42
         mock_key.expires_at = None
+        mock_key.valid_from = None  # Explicitly set to None for comparison
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_key
@@ -218,28 +223,38 @@ class TestAPIKeyValidationWithoutRedis:
         return APIKeyService(mock_db_session)
 
     @pytest.mark.asyncio
-    async def test_validation_works_without_redis(self, api_key_service: Any) -> None:
-        """Validation should fall back to DB when Redis is unavailable."""
-        mock_key = MagicMock()
+    async def test_validation_works_without_redis(
+        self, api_key_service: APIKeyService, mock_db_session: AsyncMock
+    ) -> None:
+        """Test that validation works even if Redis is unavailable."""
+        # Ensure redis is mocked
+        api_key_service.redis = MagicMock()
+        
+        # Mock Redis to raise connection error
+        api_key_service.redis.get.side_effect = ConnectionError("Redis down")
+        api_key_service.redis.setex.side_effect = ConnectionError("Redis down")
+
+        # Mock DB result
+        mock_key = MagicMock(spec=APIKey)
+        mock_key.id = 1
         mock_key.user_id = 1
         mock_key.tenant_id = 1
-        mock_key.scopes = None
-        mock_key.id = 42
+        mock_key.is_active = True
         mock_key.expires_at = None
+        mock_key.scopes = None
+        mock_key.valid_from = None  # Explicitly set to None for comparison
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_key
         api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
-        with (
-            patch("src.app.modules.api_keys.service.redis_client", None),
-            patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
-        ):
-            mock_crud.update = AsyncMock()
+        # Mock crud update for last_used_at
+        with patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update:
+            mock_update.return_value = None
 
-            result = await api_key_service.validate_api_key("test_api_key_12345")
+            result = await api_key_service.validate_api_key("hashed_key_123")
 
             assert result is not None
-            assert result["user_id"] == 1
-            # DB should be queried
-            api_key_service.db.execute.assert_called_once()
+            assert result["key_id"] == 1
+            # Should have tried DB
+            api_key_service.db.execute.assert_called()

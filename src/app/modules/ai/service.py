@@ -14,11 +14,11 @@ from src.app.core.db.database import local_session
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
+from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
 logger = logging.getLogger(__name__)
 
 from .crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
-from .exceptions import SessionLimitExceededError
 from .models import AIChatMessage, AIChatSession, AISettings
 from .ollama_client import OllamaClient, OllamaError, get_ollama_client
 from .schemas import (
@@ -152,7 +152,7 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data = data.model_dump()
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
-        result = await crud_chat_sessions.create(db=self.db, object=session_data)
+        result = await crud_chat_sessions.create(db=self.db, object=session_data)  # type: ignore
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
@@ -218,7 +218,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
             content=data.content,
             token_count=token_count,
         )
-        result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())
+        result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())  # type: ignore
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
@@ -254,7 +254,7 @@ class AISettingsService(BaseService[AISettings]):
             )
             create_data = default_settings.model_dump()
             create_data["user_id"] = user_id
-            result = await crud_ai_settings.create(db=self.db, object=create_data)
+            result = await crud_ai_settings.create(db=self.db, object=create_data)  # type: ignore
             settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             settings["user_id"] = user_id
         return settings
@@ -275,7 +275,7 @@ class AISettingsService(BaseService[AISettings]):
                 "system_prompt": update_data.get("system_prompt"),
                 "user_id": user_id,
             }
-            result = await crud_ai_settings.create(db=self.db, object=create_data_dict)
+            result = await crud_ai_settings.create(db=self.db, object=create_data_dict)  # type: ignore
             result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             result_dict["user_id"] = user_id
             return result_dict

@@ -315,7 +315,7 @@ class TestAuthServiceEmailFlows:
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
             patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
-            patch("src.app.modules.auth.models.PasswordResetToken") as mock_token_model,
+            patch("src.app.modules.auth.service.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
             mock_get_user.return_value = mock_user
@@ -364,7 +364,7 @@ class TestAuthServiceEmailFlows:
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
             patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
-            patch("src.app.modules.auth.models.EmailVerificationToken") as mock_token_cls,
+            patch("src.app.modules.auth.service.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
             mock_get_user.return_value = mock_user

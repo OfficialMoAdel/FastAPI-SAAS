@@ -7,6 +7,7 @@ from typing import Any
 from fastapi import Request, Response
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -22,12 +23,15 @@ from ...core.security import (
     blacklist_tokens,
     create_access_token,
     create_refresh_token,
+    get_password_hash,
     verify_password,
     verify_token,
 )
+from ...core.tenancy.context import get_tenant_context
 from ...modules.mfa.service import MFAService
 from ...modules.users.crud import crud_users
 from ...modules.users.service import get_user_service
+from .models import EmailVerificationToken, PasswordResetToken
 
 logger = get_logger(__name__)
 
@@ -99,8 +103,6 @@ return new_attempts
         """Publish audit log for login attempt."""
         try:
             if not tenant_id:
-                from ...core.tenancy.context import get_tenant_context
-
                 tenant = get_tenant_context()
                 if tenant:
                     tenant_id = tenant.id
@@ -416,8 +418,6 @@ return new_attempts
         UnauthorizedException
             If current password is incorrect
         """
-        from ...core.security import get_password_hash, verify_password
-
         user = await crud_users.get(db=db, id=user_id, is_deleted=False)
         if not user:
             raise UnauthorizedException("User not found.")
@@ -455,13 +455,6 @@ return new_attempts
         dict[str, str]
             Success message (always returns success for security)
         """
-        import logging
-
-        from ...core.events import EventPriority, event_bus
-        from .models import PasswordResetToken
-
-        logger = logging.getLogger(__name__)
-
         user = await crud_users.get(db=db, email=email, is_deleted=False)
 
         # Always return success to prevent email enumeration
@@ -472,7 +465,7 @@ return new_attempts
             await db.commit()
             await db.refresh(reset_token)
 
-            logger.info("Password reset token created | user_id=%s | token_id=%s", user["id"], reset_token.id)
+            logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
 
             # Send email via event bus
             reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
@@ -522,15 +515,6 @@ return new_attempts
         UnauthorizedException
             If token is invalid or expired
         """
-        import logging
-
-        from sqlalchemy import select
-
-        from ...core.security import get_password_hash
-        from .models import PasswordResetToken
-
-        logger = logging.getLogger(__name__)
-
         # Find token in database
         result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token))
         reset_token = result.scalar_one_or_none()
@@ -562,7 +546,7 @@ return new_attempts
         reset_token.used = True
         await db.commit()
 
-        logger.info("Password reset successful | user_id=%s | token_id=%s", reset_token.user_id, reset_token.id)
+        logger.info("Password reset successful", user_id=reset_token.user_id, token_id=reset_token.id)
 
         return {"message": "Password reset successfully."}
 
@@ -585,9 +569,6 @@ return new_attempts
         dict[str, str]
             Success message
         """
-
-        from ...core.events import EventPriority, event_bus
-        from .models import EmailVerificationToken
 
         user = await crud_users.get(db=db, email=email, is_deleted=False)
 
@@ -644,10 +625,6 @@ return new_attempts
         UnauthorizedException
             If token is invalid or expired
         """
-        from sqlalchemy import select
-
-        from .models import EmailVerificationToken
-
         # Find token in database
         result = await db.execute(select(EmailVerificationToken).where(EmailVerificationToken.token == token))
         verification_token = result.scalar_one_or_none()

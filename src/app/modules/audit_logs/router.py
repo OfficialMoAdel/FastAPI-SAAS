@@ -1,14 +1,19 @@
 """Audit Logs API Router."""
 
+import csv
+import io
+from collections.abc import AsyncGenerator
 from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_tenant, get_current_user
 from ...core.db.database import async_get_db
+from ...core.json_utils import json_dumps
 from ...modules.tenants.models import Tenant
 from ...modules.users.models import User
 from .models import AuditLog
@@ -16,6 +21,7 @@ from .schemas import (
     AuditLogList,
     AuditLogResponse,
 )
+from .service import AuditLogService
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -192,14 +198,6 @@ async def export_audit_logs(
     Maximum 100,000 records per export. Use date filtering for larger datasets.
     Requires AUDIT_LOGS_DOWNLOAD permission.
     """
-    import csv
-    import io
-    from collections.abc import AsyncGenerator
-
-    from fastapi.responses import StreamingResponse
-
-    from src.app.core.json_utils import json_dumps
-
     # Build query with filters
     query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
 
@@ -234,8 +232,6 @@ async def export_audit_logs(
     logs = result.scalars().all()
 
     # Log the export event
-    from src.app.modules.audit_logs.service import AuditLogService
-
     audit_service = AuditLogService(db)
     await audit_service.create_log(
         tenant_id=current_tenant.id,

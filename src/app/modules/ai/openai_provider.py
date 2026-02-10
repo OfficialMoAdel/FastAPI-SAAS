@@ -3,11 +3,17 @@
 Implements the AIProvider interface for OpenAI's GPT models.
 """
 
+import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from httpx import AsyncClient, HTTPStatusError, RequestError
+
+try:
+    from jsonschema import validate
+except ImportError:
+    validate = None
 
 from .providers import (
     AIProvider,
@@ -192,8 +198,6 @@ class OpenAIProvider(AIProvider):
                         if data_str == "[DONE]":
                             break
                         try:
-                            import json
-
                             data = json.loads(data_str)
                             delta = data.get("choices", [{}])[0].get("delta", {})
                             content = delta.get("content", "")
@@ -244,8 +248,6 @@ class OpenAIProvider(AIProvider):
         Raises:
             AIProviderError: If generation or JSON parsing fails
         """
-        import json
-
         # Add JSON formatting instructions
         json_system = (
             system_prompt or ""
@@ -276,9 +278,10 @@ class OpenAIProvider(AIProvider):
 
             # Validate against schema if provided
             if schema:
-                from jsonschema import validate
-
-                validate(instance=parsed, schema=schema)
+                if validate:
+                    validate(instance=parsed, schema=schema)
+                else:
+                    logger.warning("jsonschema not installed, skipping schema validation")
 
             return parsed
         except json.JSONDecodeError as e:
@@ -288,9 +291,6 @@ class OpenAIProvider(AIProvider):
                 error_code="json_parse_error",
                 provider=self.provider_name,
             ) from e
-        except ImportError:
-            logger.warning("jsonschema not installed, skipping schema validation")
-            return parsed
 
     async def embed_text(
         self,
