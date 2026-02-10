@@ -4,7 +4,7 @@ Host-level SSO provider settings (no tenant_id - intentional exception to Consti
 similar to host-level configurations). Stores encrypted OAuth client credentials.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 
 from sqlalchemy import Boolean, DateTime, String, text
 from sqlalchemy.dialects.postgresql import BYTEA, JSONB
@@ -68,6 +68,6 @@ class SSOSettings(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         init=False,
     )

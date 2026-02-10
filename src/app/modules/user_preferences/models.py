@@ -4,7 +4,7 @@ Per FR-024 rationale: Preferences follow the user across tenants; this is an
 intentional exception to Constitution VII, similar to host-level sso_settings.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, String, text
@@ -107,7 +107,7 @@ class UserPreferences(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         init=False,
     )
 

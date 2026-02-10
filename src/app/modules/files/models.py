@@ -6,7 +6,7 @@ with tenant isolation and user ownership tracking.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text
@@ -108,7 +108,7 @@ class File(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        insert_default=datetime.now(UTC),
+        insert_default=lambda: datetime.now(UTC),
         default=None,
     )
 
@@ -116,7 +116,7 @@ class File(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
     )
 
     # Relationships

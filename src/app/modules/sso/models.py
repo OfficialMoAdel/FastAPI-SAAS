@@ -4,7 +4,7 @@ Links users to SSO providers with tenant isolation per Constitution VII.
 Stores optional encrypted access/refresh tokens for token refresh scenarios.
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, text
@@ -92,7 +92,7 @@ class UserSSOConnection(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         init=False,
     )
 

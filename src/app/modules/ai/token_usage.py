@@ -8,7 +8,7 @@ Tracks and logs token usage for AI operations including:
 - Usage by user/tenant
 """
 
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession

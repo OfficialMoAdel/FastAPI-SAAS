@@ -6,7 +6,7 @@ including encrypted credential storage and quota settings.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
@@ -111,15 +111,15 @@ class StorageSettings(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        insert_default=datetime.now(UTC),
+        insert_default=lambda: datetime.now(UTC),
         default=None,
     )
 
     updated_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+        onupdate=lambda: datetime.now(UTC),
         default=None,
-        onupdate=datetime.now(UTC),
     )
 
     # Relationship
