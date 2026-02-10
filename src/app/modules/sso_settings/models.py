@@ -68,6 +68,6 @@ class SSOSettings(Base):
         DateTime(timezone=True),
         nullable=False,
         server_default=text("CURRENT_TIMESTAMP"),
-        onupdate=datetime.utcnow,
+        onupdate=datetime.now(UTC),
         init=False,
     )

@@ -57,7 +57,7 @@ class DashboardMetricsResponse(BaseModel):
     users: UserMetrics = Field(description="User metrics")
     revenue: RevenueMetrics = Field(description="Revenue metrics")
     activity: ActivityMetrics = Field(description="Activity metrics")
-    generated_at: datetime = Field(default_factory=datetime.utcnow, description="When metrics were generated")
+    generated_at: datetime = Field(default_factory=datetime.now(UTC), description="When metrics were generated")
 
     class Config:
         json_schema_extra = {

@@ -111,7 +111,7 @@ class StorageSettings(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
-        insert_default=datetime.utcnow,
+        insert_default=datetime.now(UTC),
         default=None,
     )
 
@@ -119,7 +119,7 @@ class StorageSettings(Base):
         DateTime(timezone=True),
         nullable=True,
         default=None,
-        onupdate=datetime.utcnow,
+        onupdate=datetime.now(UTC),
     )
 
     # Relationship

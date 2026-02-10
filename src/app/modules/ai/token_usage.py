@@ -68,7 +68,7 @@ class AITokenUsageService:
         cost = cls._calculate_cost(provider, model, prompt_tokens, completion_tokens)
 
         usage_data = {
-            "timestamp": datetime.utcnow().isoformat(),
+            "timestamp": datetime.now(UTC).isoformat(),
             "provider": provider,
             "model": model,
             "prompt_tokens": prompt_tokens,
