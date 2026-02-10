@@ -209,3 +209,8 @@ CODE_IMPROVEMENTS.md
 storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py
 .agents
+TEST_COVERAGE_FIX_SUMMARY.md
+TEST_ISOLATION_FIX.md
+*.db
+FINAL_REPORT.md
+tasks
