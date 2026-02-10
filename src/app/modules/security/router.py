@@ -27,7 +27,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.security.auto_ban import (
     ban_ip,
     get_all_banned_ips,
-    get_ban_info,
     get_violation_stats,
     unban_ip,
 )
@@ -558,7 +557,7 @@ async def get_ip_violation_stats(
         return IPViolationStats(ip=ip_address, violations=0, total_ips=0, total_violations=0)
 
     stats = await get_violation_stats(ip_address)
-    ban_info = await get_ban_info(ip_address)
+    # ban_info = await get_ban_info(ip_address)
 
     if isinstance(stats, dict):
         violations = stats.get("violations", 0)

@@ -47,7 +47,7 @@ async def check_database_health(db: AsyncSession) -> HealthResult:
     start = time.perf_counter()
     try:
 
-        async def _check():
+        async def _check() -> None:
             await db.execute(text("SELECT 1"))
 
         await asyncio.wait_for(_check(), timeout=5.0)

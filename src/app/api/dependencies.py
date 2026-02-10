@@ -13,7 +13,6 @@ from ..core.tenancy.context import get_current_tenant as get_tenant_context
 from ..core.utils.rate_limit import rate_limiter
 from ..modules.rate_limits.crud import crud_rate_limits
 from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
-from ..modules.tenants.models import Tenant
 from ..modules.users.service import UserService
 
 logger = get_logger(__name__)
@@ -138,7 +137,7 @@ async def get_current_superuser(current_user: Annotated[dict, Depends(get_curren
     return current_user
 
 
-def get_current_tenant() -> Tenant:
+def get_current_tenant() -> Any:
     """Get the current tenant from context.
 
     This dependency retrieves the tenant that was set by TenantMiddleware.

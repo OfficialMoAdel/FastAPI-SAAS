@@ -6,7 +6,6 @@ from typing import Any, Literal, cast
 import stripe
 from fastapi import HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
@@ -37,6 +36,8 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         HTTPException: If signature verification fails
     """
     try:
+        # Constructing event is CPU bound, but typically fast enough.
+        # Ideally this would be run in a thread executor if payload is huge.
         event = stripe.Webhook.construct_event(payload, sig_header, secret)
         return cast(stripe.Event, event)
     except ValueError as e:
@@ -176,7 +177,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     # Find subscription by stripe_subscription_id using bypass context
     tenant_id = None
     subscription_id = None
-    
+
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
             select(crud_user_subscriptions.model).where(
@@ -184,11 +185,11 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             )
         )
         db_subscription = result.scalar_one_or_none()
-        
+
         if not db_subscription:
             logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
             return
-            
+
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
 
@@ -239,7 +240,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
     # Find subscription by stripe_subscription_id using bypass context
     tenant_id = None
     subscription_id = None
-    
+
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
             select(crud_user_subscriptions.model).where(
@@ -251,7 +252,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         if not db_subscription:
             logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
             return
-            
+
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
 
@@ -292,7 +293,7 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     tenant_id = None
     user_id = None
     subscription_id = None
-    
+
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
             select(crud_user_subscriptions.model).where(
@@ -304,7 +305,7 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
         if not db_subscription:
             logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
             return
-            
+
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id
         subscription_id = db_subscription.id
@@ -352,7 +353,7 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
     tenant_id = None
     user_id = None
     subscription_id = None
-    
+
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
             select(crud_user_subscriptions.model).where(
@@ -364,7 +365,7 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
         if not db_subscription:
             logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
             return
-            
+
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id
         subscription_id = db_subscription.id
@@ -423,10 +424,10 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     tenant_id = None
     user_id = None
     subscription_id = None
-    
+
     # We need to use bypass context for both Stripe lookup (asyncio.to_thread is fine without db)
     # AND for the local subscription lookup
-    
+
     stripe_subscription_id = None
     if stripe_invoice_id:
         try:
@@ -446,11 +447,11 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             )
         )
         db_subscription = result.scalar_one_or_none()
-        
+
         if not db_subscription:
             logger.warning(f"Could not find subscription for charge {charge['id']}")
             return
-            
+
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id
         subscription_id = db_subscription.id

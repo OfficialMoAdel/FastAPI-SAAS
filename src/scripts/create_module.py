@@ -26,67 +26,36 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from jinja2 import Environment, FileSystemLoader, Template
+from jinja2 import Environment, FileSystemLoader
 
 # ============================================================================
 # Field Type Mapping
 # ============================================================================
 
-FIELD_TYPE_MAP: dict[str, dict[str, str]] = {
-    "str": {
-        "sqlalchemy_column": "String(255)",
-        "sqlalchemy_type": "String",
-        "pydantic_type": "str",
-        "pydantic_annotated": "Annotated[str, Field(min_length=1, max_length=255)]",
-    },
-    "int": {
-        "sqlalchemy_column": "Integer",
-        "sqlalchemy_type": "Integer",
-        "pydantic_type": "int",
-        "pydantic_annotated": "int",
-    },
-    "bool": {
-        "sqlalchemy_column": "Boolean",
-        "sqlalchemy_type": "Boolean",
-        "pydantic_type": "bool",
-        "pydantic_annotated": "bool",
-    },
-    "float": {
-        "sqlalchemy_column": "Float",
-        "sqlalchemy_type": "Float",
-        "pydantic_type": "float",
-        "pydantic_annotated": "float",
-    },
+FIELD_TYPE_MAP: dict[str, dict[str, Any]] = {
+    "str": {"type": "str", "default": '""', "sqlalchemy": "String(255)"},
+    "int": {"type": "int", "default": "0", "sqlalchemy": "Integer"},
+    "bool": {"type": "bool", "default": "False", "sqlalchemy": "Boolean"},
+    "float": {"type": "float", "default": "0.0", "sqlalchemy": "Float"},
     "Decimal": {
-        "sqlalchemy_column": "Numeric(10, 2)",
-        "sqlalchemy_type": "Numeric",
-        "pydantic_type": "Decimal",
-        "pydantic_annotated": "Decimal",
+        "type": "Decimal",
+        "default": 'Decimal("0.00")',
+        "sqlalchemy": "Numeric(10, 2)",
         "import_decimal": True,
     },
     "datetime": {
-        "sqlalchemy_column": "DateTime(timezone=True)",
-        "sqlalchemy_type": "DateTime",
-        "pydantic_type": "datetime",
-        "pydantic_annotated": "datetime",
+        "type": "datetime",
+        "default": "func.now()",
+        "sqlalchemy": "DateTime(timezone=True)",
+        "import_datetime": True,
     },
-    "text": {
-        "sqlalchemy_column": "Text",
-        "sqlalchemy_type": "Text",
-        "pydantic_type": "str",
-        "pydantic_annotated": "str",
-    },
-    "json": {
-        "sqlalchemy_column": "JSONB",
-        "sqlalchemy_type": "JSONB",
-        "pydantic_type": "dict[str, Any]",
-        "pydantic_annotated": "dict[str, Any]",
-    },
+    "text": {"type": "str", "default": '""', "sqlalchemy": "Text"},
+    "json": {"type": "dict", "default": "{}", "sqlalchemy": "JSON"},
     "uuid": {
-        "sqlalchemy_column": "UUID(as_uuid=True)",
-        "sqlalchemy_type": "PgUUID",
-        "pydantic_type": "UUID",
-        "pydantic_annotated": "UUID",
+        "type": "UUID",
+        "default": "uuid7",
+        "sqlalchemy": "UUID(as_uuid=True)",
+        "import_uuid": True,
     },
 }
 
@@ -308,16 +277,16 @@ def generate_module(
 
     if dry_run:
         print(f"\n{'=' * 60}")
-        print(f"DRY RUN: Would create the following structure:")
+        print("DRY RUN: Would create the following structure:")
         print(f"{'=' * 60}")
         print(f"\n{module_dir}/")
-        print(f"  ├── __init__.py")
-        print(f"  ├── models.py")
-        print(f"  ├── schemas.py")
-        print(f"  ├── crud.py")
-        print(f"  ├── service.py")
-        print(f"  ├── router.py")
-        print(f"  └── AGENTS.md")
+        print("  ├── __init__.py")
+        print("  ├── models.py")
+        print("  ├── schemas.py")
+        print("  ├── crud.py")
+        print("  ├── service.py")
+        print("  ├── router.py")
+        print("  └── AGENTS.md")
         print(f"\n{'=' * 60}")
         return {}
 
@@ -442,11 +411,11 @@ Optional fields: Add '?' suffix (e.g., 'description:text?')
             print(f"\n{'=' * 60}")
             print(f"Successfully generated module: {args.module_name}")
             print(f"{'=' * 60}")
-            print(f"\nNext steps:")
+            print("\nNext steps:")
             print(f"  1. Review the generated code in src/app/modules/{args.module_name}/")
             print(f"  2. Run type check: uv run mypy src/app/modules/{args.module_name}/")
             print(f"  3. Run linter: uv run ruff check src/app/modules/{args.module_name}/")
-            print(f"  4. Add router to src/app/api/v1/api.py:")
+            print("  4. Add router to src/app/api/v1/api.py:")
             print(f"     from src.app.modules.{args.module_name}.router import router as {args.module_name}_router")
             print(f"     api_router.include_router({args.module_name}_router)")
             print(f"  5. Generate migrations: uv run alembic revision --autogenerate -m 'Add {args.module_name} table'")

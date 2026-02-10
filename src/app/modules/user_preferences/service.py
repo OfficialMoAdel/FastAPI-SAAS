@@ -11,6 +11,7 @@ Handles:
 - Profile image upload and deletion
 """
 
+import asyncio
 import logging
 from typing import Any
 
@@ -69,6 +70,16 @@ class PreferencesService:
         if prefs.preferences:
             result.update(prefs.preferences)
 
+        # Merge explicit columns
+        result.update({
+            "email_notifications_enabled": prefs.email_notifications_enabled,
+            "push_notifications_enabled": prefs.push_notifications_enabled,
+            "disabled_notification_types": prefs.disabled_notification_types,
+            "quiet_hours_enabled": prefs.quiet_hours_enabled,
+            "quiet_hours_start": prefs.quiet_hours_start,
+            "quiet_hours_end": prefs.quiet_hours_end,
+        })
+
         result["updated_at"] = prefs.updated_at
 
         # We also want to return the profile_image_url if we could,
@@ -117,6 +128,12 @@ class PreferencesService:
         logger.debug(f"Updating preferences for user {user_id}: {update_dict}")
 
         # Update preferences
+        if "email_notifications_enabled" in update_dict:
+            # Handle explicit columns if they are in the update dict
+            # We need to separate JSONB updates from column updates if passing to crud.update
+            # But fastcrud handles it if the model has the columns.
+            pass
+
         prefs = await crud_user_preferences.update_preferences(
             db=db,
             user_id=user_id,
@@ -127,6 +144,16 @@ class PreferencesService:
         result = DEFAULT_PREFERENCES.copy()
         if prefs.preferences:
             result.update(prefs.preferences)
+
+        # Merge explicit columns
+        result.update({
+            "email_notifications_enabled": prefs.email_notifications_enabled,
+            "push_notifications_enabled": prefs.push_notifications_enabled,
+            "disabled_notification_types": prefs.disabled_notification_types,
+            "quiet_hours_enabled": prefs.quiet_hours_enabled,
+            "quiet_hours_start": prefs.quiet_hours_start,
+            "quiet_hours_end": prefs.quiet_hours_end,
+        })
 
         result["updated_at"] = prefs.updated_at
 
@@ -155,9 +182,11 @@ class PreferencesService:
             raise ValidationError(f"Invalid file type '{file.content_type}'. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}")
 
         # 2. Validate file size
-        file.file.seek(0, 2)  # Seek to end
-        size = file.file.tell()
-        file.file.seek(0)  # Reset to beginning
+        # Use asyncio.to_thread to run blocking I/O on the underlying file object
+        # without blocking the event loop.
+        await asyncio.to_thread(file.file.seek, 0, 2)  # Seek to end
+        size = await asyncio.to_thread(file.file.tell)
+        await file.seek(0)  # Reset to beginning
 
         if size > MAX_IMAGE_SIZE_BYTES:
             raise ValidationError(

@@ -13,9 +13,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from ...core.events import EventPriority, event_bus
-from ...core.utils import cache as redis_cache
-from .models import AuditLog
+from src.app.core.events import EventPriority, event_bus
+from src.app.core.utils import cache as redis_cache
+from src.app.modules.audit_logs.models import AuditLog
 
 logger = get_logger(__name__)
 
@@ -188,7 +188,7 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         return
 
     # Fallback to creating new session
-    from ...core.db.database import async_get_db
+    from src.app.core.db.database import async_get_db
 
     async for db in async_get_db():
         try:
@@ -285,7 +285,8 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if db:
         inserted = await _perform_bulk_insert(db)
     else:
-        from ...core.db.database import async_get_db
+        from src.app.core.db.database import async_get_db
+
         async for session in async_get_db():
             try:
                 inserted = await _perform_bulk_insert(session)
@@ -352,6 +353,8 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
     try:
         await buffer_audit_log(log_data)
     except Exception as e:
+        # Broad exception handling is appropriate here to prevent
+        # audit logging failures from crashing the main application flow
         logger.error("audit_log_event_failed", error=str(e), exc_info=True)
 
 
@@ -389,7 +392,7 @@ def audit_action(action: str, entity_type: str) -> Callable:
             # Resolve tenant_id from context if missing
             if not tenant_id:
                 try:
-                    from ...core.tenancy.context import get_tenant_context
+                    from src.app.core.tenancy.context import get_tenant_context
 
                     tenant = get_tenant_context()
                     if tenant:

@@ -143,7 +143,14 @@ class UserSubscription(Base, kw_only=True):
 
     __tablename__ = "user_subscriptions"
 
-    __table_args__ = (Index("idx_subscription_tenant_user_status", "tenant_id", "user_id", "status"),)  # type: ignore[assignment]
+    __table_args__ = (
+        Index(
+            "idx_subscription_tenant_user_status",
+            "tenant_id",
+            "user_id",
+            "status",
+        ),
+    )  # type: ignore[assignment]
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)

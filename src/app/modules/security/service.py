@@ -55,12 +55,16 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                await cache.client.setex(key, ttl_seconds, json.dumps(data))
+                client = await cache.async_get_redis().__anext__()
+                if client:
+                    await client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            await cache.client.set(key, json.dumps(data))
+            client = await cache.async_get_redis().__anext__()
+            if client:
+                await client.set(key, json.dumps(data))
 
         return True
 
@@ -74,8 +78,11 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        result = await cache.client.delete(key)
-        return result > 0
+        client = await cache.async_get_redis().__anext__()
+        if client:
+            result = await client.delete(key)
+            return bool(result > 0)
+        return False
 
     async def add_to_blacklist(
         self,
@@ -106,17 +113,21 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                await cache.client.setex(key, ttl_seconds, json.dumps(data))
+                client = await cache.async_get_redis().__anext__()
+                if client:
+                    await client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            await cache.client.set(key, json.dumps(data))
+            client = await cache.async_get_redis().__anext__()
+            if client:
+                await client.set(key, json.dumps(data))
 
         return True
 
     async def remove_from_blacklist(self, ip_address: str) -> bool:
-        """Remove an IP address from the blacklist.
+        """Remove an IP address from the whitelist.
 
         Args:
             ip_address: IPv4 or IPv6 address
@@ -125,8 +136,11 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        result = await cache.client.delete(key)
-        return result > 0
+        client = await cache.async_get_redis().__anext__()
+        if client:
+            result = await client.delete(key)
+            return bool(result > 0)
+        return False
 
     async def is_whitelisted(self, ip_address: str) -> bool:
         """Check if an IP address is in the whitelist.
@@ -141,8 +155,11 @@ class IPFilterService:
             return False
 
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        exists = await cache.client.exists(key)
-        return exists > 0
+        client = await cache.async_get_redis().__anext__()
+        if client:
+            exists = await client.exists(key)
+            return bool(exists > 0)
+        return False
 
     async def is_blacklisted(self, ip_address: str) -> bool:
         """Check if an IP address is in the blacklist.
@@ -157,8 +174,11 @@ class IPFilterService:
             return False
 
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        exists = await cache.client.exists(key)
-        return exists > 0
+        client = await cache.async_get_redis().__anext__()
+        if client:
+            exists = await client.exists(key)
+            return bool(exists > 0)
+        return False
 
     async def get_whitelist(self) -> list[dict[str, Any]]:
         """Get all whitelisted IP addresses.
@@ -170,19 +190,23 @@ class IPFilterService:
         keys = []
         cursor = 0
 
+        client = await cache.async_get_redis().__anext__()
+        if not client:
+            return []
+
         while True:
-            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         entries = []
         for key in keys:
-            data = await cache.client.get(key)
+            data = await client.get(key)
             if data:
                 entry = json.loads(data)
                 # Get TTL for expiration info
-                ttl = await cache.client.ttl(key)
+                ttl = await client.ttl(key)
                 if ttl > 0:
                     entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                 entries.append(entry)
@@ -199,19 +223,23 @@ class IPFilterService:
         keys = []
         cursor = 0
 
+        client = await cache.async_get_redis().__anext__()
+        if not client:
+            return []
+
         while True:
-            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         entries = []
         for key in keys:
-            data = await cache.client.get(key)
+            data = await client.get(key)
             if data:
                 entry = json.loads(data)
                 # Get TTL for expiration info
-                ttl = await cache.client.ttl(key)
+                ttl = await client.ttl(key)
                 if ttl > 0:
                     entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                 entries.append(entry)
@@ -228,14 +256,18 @@ class IPFilterService:
         keys = []
         cursor = 0
 
+        client = await cache.async_get_redis().__anext__()
+        if not client:
+            return 0
+
         while True:
-            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         if keys:
-            return await cache.client.delete(*keys)
+            return int(await client.delete(*keys))
         return 0
 
     async def clear_blacklist(self) -> int:
@@ -248,14 +280,18 @@ class IPFilterService:
         keys = []
         cursor = 0
 
+        client = await cache.async_get_redis().__anext__()
+        if not client:
+            return 0
+
         while True:
-            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         if keys:
-            return await cache.client.delete(*keys)
+            return int(await client.delete(*keys))
         return 0
 
 

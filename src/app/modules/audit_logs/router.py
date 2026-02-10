@@ -7,21 +7,21 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_tenant, get_current_user
-from ...core.db.database import async_get_db
-from ...core.json_utils import json_dumps
-from ...modules.tenants.models import Tenant
-from ...modules.users.models import User
-from .models import AuditLog
-from .schemas import (
+from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.json_utils import json_dumps
+from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.audit_logs.schemas import (
     AuditLogList,
     AuditLogResponse,
 )
-from .service import AuditLogService
+from src.app.modules.audit_logs.service import AuditLogService
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
@@ -191,7 +191,7 @@ async def export_audit_logs(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-):
+) -> StreamingResponse | JSONResponse:
     """
     Export audit logs as CSV, JSON, or JSONL.
 
@@ -227,10 +227,6 @@ async def export_audit_logs(
     # Order by created_at for consistent export
     query = query.order_by(AuditLog.created_at.asc())
 
-    # Execute query
-    result = await db.execute(query)
-    logs = result.scalars().all()
-
     # Log the export event
     audit_service = AuditLogService(db)
     await audit_service.create_log(
@@ -249,14 +245,25 @@ async def export_audit_logs(
 
         # Header
         writer.writerow(
-            ["id", "action", "user_id", "entity_type", "entity_id", "details", "ip_address", "user_agent", "created_at"]
+            [
+                "id",
+                "action",
+                "user_id",
+                "entity_type",
+                "entity_id",
+                "details",
+                "ip_address",
+                "user_agent",
+                "created_at",
+            ]
         )
         yield output.getvalue()
         output.seek(0)
         output.truncate(0)
 
-        # Rows
-        for log in logs:
+        # Stream rows
+        stream_result = await db.stream(query)
+        async for log in stream_result.scalars():
             writer.writerow(
                 [
                     str(log.id),
@@ -276,7 +283,8 @@ async def export_audit_logs(
 
     async def generate_jsonl() -> AsyncGenerator[str, None]:
         """Generate JSONL content (one JSON object per line)."""
-        for log in logs:
+        stream_result = await db.stream(query)
+        async for log in stream_result.scalars():
             line = json_dumps(
                 {
                     "id": str(log.id),
@@ -296,9 +304,12 @@ async def export_audit_logs(
     async def generate_json() -> AsyncGenerator[str, None]:
         """Generate JSON array content."""
         yield "[\n"
-        for i, log in enumerate(logs):
-            if i > 0:
+        first = True
+        stream_result = await db.stream(query)
+        async for log in stream_result.scalars():
+            if not first:
                 yield ",\n"
+            first = False
             line = json_dumps(
                 {
                     "id": str(log.id),

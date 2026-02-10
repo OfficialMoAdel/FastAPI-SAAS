@@ -125,13 +125,13 @@ def log_pool_status(engine: Any) -> dict[str, int]:
         Dictionary with pool status
     """
     pool = engine.pool
-    
+
     # Update current pool state metrics before returning
     _metrics.pool_size = pool.size()
     _metrics.checked_out = pool.checkedout()
     _metrics.checked_in = pool.checkedin()
     _metrics.overflow = pool.overflow()
-    
+
     status = _metrics.get_snapshot()
 
     logger.info(

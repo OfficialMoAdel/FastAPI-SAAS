@@ -31,7 +31,7 @@ async def job_tenant_context(
 
     Yields:
         AsyncSession: Database session with RLS context set
-        
+
     Example:
         async def deliver_webhook_task(ctx, delivery_id, tenant_id):
             async with job_tenant_context(tenant_id) as db:

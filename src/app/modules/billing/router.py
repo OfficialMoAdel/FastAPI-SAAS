@@ -71,12 +71,19 @@ async def stripe_webhook(
 
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook secret not configured")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Webhook secret not configured",
+        )
 
     if not sig_header:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing Stripe-Signature header")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Stripe-Signature header",
+        )
 
     # Verify signature
+    # Note: verification is synchronous (CPU-bound)
     event = verify_webhook_signature(payload, sig_header, webhook_secret)
 
     # Idempotency check (T050)
@@ -90,7 +97,7 @@ async def stripe_webhook(
     await redis.setex(key, 86400, "1")
 
     # Handle event in background task (T051)
-    background_tasks.add_task(handle_webhook_event, event)
+    background_tasks.add_task(handle_webhook_event, event, background_tasks)
 
     return {"status": "success"}
 

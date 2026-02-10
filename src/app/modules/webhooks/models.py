@@ -100,15 +100,15 @@ class WebhookEndpoint(Base, UUIDMixin):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.now(UTC),
+        default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.now(UTC),
+        default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         init=False,
     )
 
@@ -249,15 +249,15 @@ class WebhookDelivery(Base, UUIDMixin):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.now(UTC),
+        default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime,
-        default=datetime.now(UTC),
+        default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
-        onupdate=datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
         init=False,
     )
 

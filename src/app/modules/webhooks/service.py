@@ -264,10 +264,12 @@ class WebhookService:
 
         # Check circuit breaker before attempting delivery
         if not webhook_circuit.is_closed:
+            import time
+            current_time = time.time()
             logger.warning(
                 "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
                 delivery_id,
-                webhook_circuit.recovery_timeout - (__import__("time").time() - webhook_circuit._last_failure_time),
+                webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time),
             )
             # Mark for retry later when circuit recovers
             await self._handle_delivery_failure(delivery, attempt)

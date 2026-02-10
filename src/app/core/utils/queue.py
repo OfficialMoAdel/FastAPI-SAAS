@@ -11,4 +11,4 @@ async def get_queue_size() -> int:
     """
     if pool is None:
         return 0
-    return await pool.zcard("arq:queue")
+    return int(await pool.zcard("arq:queue"))

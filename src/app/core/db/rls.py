@@ -207,10 +207,10 @@ def with_tenant_context(tenant_id: str, user_id: str | None = None) -> Callable[
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Import here to avoid circular dependency
-            from src.app.core.db.database import get_session
+            from src.app.core.db.database import async_get_db
 
             # Get session and set RLS context
-            async for session in get_session():
+            async for session in async_get_db():
                 async with rls_context(session, tenant_id, user_id):
                     # Call the original function
                     return await func(*args, **kwargs)

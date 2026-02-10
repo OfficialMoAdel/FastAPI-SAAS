@@ -24,8 +24,15 @@ client: Redis | None = None
 _BRACKET_PATTERN = re.compile(r"{(.*?)}")
 MAX_SCAN_ITERATIONS = 1000
 
+# Standard library logger
 logger = logging.getLogger(__name__)
-stampede_logger = logging.getLogger("src.app.core.utils.cache.stampede")
+
+# Structlog logger for stampede
+# We import get_logger from structlog, and type it as Any to bypass mypy checks
+# since structlog loggers support kwargs which standard Logger does not.
+from structlog import get_logger
+
+stampede_logger: Any = get_logger("src.app.core.utils.cache.stampede")
 
 
 # =============================================================================
@@ -142,7 +149,8 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
         # OR we can scan and delete them if we want to be clean.
         # But for O(1) performance, we skip scanning.
         # The indexes will just be empty sets eventually or point to nothing.
-        # Wait, if they point to nothing, `invalidate_tenant_cache(prefix)` later will get keys that don't exist, call delete on them (no-op).
+        # Wait, if they point to nothing, `invalidate_tenant_cache(prefix)` later will get keys that don't exist,
+        # call delete on them (no-op).
         # That's fine.
 
         results = await pipe.execute()
@@ -446,8 +454,6 @@ async def get_tenant_index_size(tenant_id: int | str) -> int:
 import asyncio
 
 from structlog import get_logger
-
-stampede_logger = get_logger(__name__)
 
 
 async def get_with_stampede_protection(
@@ -1011,7 +1017,8 @@ def cache(
                         formatted_pattern = _format_prefix(pattern, kwargs)
                         # OPT-8: Use O(1) pattern invalidation if available
                         # If the pattern was registered via invalidation_patterns, this is O(1).
-                        # However, pattern_to_invalidate_extra historically implies a glob match (formatted_pattern + "*").
+                        # However, pattern_to_invalidate_extra historically implies a glob match
+                        # (formatted_pattern + "*").
                         # To support O(1) invalidation while maintaining backward compatibility:
                         # We could try to invalidate the pattern exactly as formatted first?
                         # Or just rely on _delete_keys_by_pattern for now unless we introduce a new arg.
@@ -1021,8 +1028,6 @@ def cache(
                         # Also attempt to invalidate exact pattern match in the new index
                         # This allows progressive migration to O(1) without breaking changes
                         await invalidate_by_pattern(formatted_pattern)
-
-            return result
 
         return inner
 

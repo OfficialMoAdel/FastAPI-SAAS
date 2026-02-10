@@ -148,7 +148,9 @@ class StripeSettingsService(BaseService[StripeSettings]):
             # Create object must be a Pydantic model for FastCRUD
             create_obj = StripeSettingsCreateInternal(**update_data)
             create_result = await crud_stripe_settings.create(
-                db=self.db, object=create_obj, schema_to_select=StripeSettingsRead
+                db=self.db,
+                object=create_obj,
+                schema_to_select=StripeSettingsRead,
             )
             return dict(create_result) if create_result else {}
         else:

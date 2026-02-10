@@ -5,7 +5,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field, field_validator
 
-from .._base import BaseCreate, BaseList, BaseReadUUID
+from src.app.modules._base import BaseCreate, BaseList, BaseReadUUID
 
 # =============================================================================
 # Audit Log Schemas

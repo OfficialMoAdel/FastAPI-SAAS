@@ -1,11 +1,14 @@
 """API Key service layer - business logic for API key management."""
 
 import hashlib
+import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.modules.audit_logs.service import AuditLogService
 
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.json_utils import json_dumps, json_loads
@@ -15,8 +18,6 @@ from .._base.service import BaseService
 from .crud import crud_api_keys
 from .models import APIKey
 from .schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
-from src.app.modules.audit_logs.service import AuditLogService
-import logging
 
 logger = logging.getLogger(__name__)
 
@@ -113,7 +114,7 @@ class APIKeyService(BaseService[APIKey]):
             tenant_id=tenant_id,
             action="api_key.created",
             entity_type="api_key",
-            entity_id=key_record.id,
+            entity_id=str(key_record.id),
             user_id=user_id,
             details={
                 "key_name": key_record.name,
@@ -476,7 +477,7 @@ class APIKeyService(BaseService[APIKey]):
             tenant_id=tenant_id,
             action="api_key.rotated",
             entity_type="api_key",
-            entity_id=new_key_record.id,
+            entity_id=str(new_key_record.id),
             user_id=user_id,
             details={
                 "old_key_id": api_key.id,

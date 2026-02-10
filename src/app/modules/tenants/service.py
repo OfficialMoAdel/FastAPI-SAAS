@@ -80,14 +80,14 @@ class TenantService(BaseService[Tenant]):
         created_tenant = await self.crud.create(
             db=self.db,
             object=tenant,
-            schema_to_select=TenantResponse,
         )
 
         # P2-1: Use optimized dict construction if feature flag is enabled
         if FEATURE_TENANT_DICT_OPTIMIZATION:
-            result = _tenant_to_dict(created_tenant)
+            # Type ignore: optimized path assumes ORM object is compatible with _tenant_to_dict
+            result = _tenant_to_dict(created_tenant)  # type: ignore[arg-type]
         else:
-            result = created_tenant
+            result = TenantResponse.model_validate(created_tenant).model_dump()
 
         logger.info(
             "Tenant created | id=%s | slug=%s | name=%s",
@@ -224,7 +224,7 @@ class TenantService(BaseService[Tenant]):
         )
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)
+        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
     async def deactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Deactivate a tenant (soft delete).
@@ -260,7 +260,7 @@ class TenantService(BaseService[Tenant]):
         logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)
+        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
     async def reactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
@@ -296,7 +296,7 @@ class TenantService(BaseService[Tenant]):
         logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)
+        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
 
 def get_tenant_service(db: AsyncSession) -> TenantService:
