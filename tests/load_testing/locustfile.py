@@ -1,4 +1,6 @@
 import logging
+from io import BytesIO
+from typing import Final
 
 from locust import HttpUser, between, task
 
@@ -7,17 +9,31 @@ from tests.load_testing.utils import generate_dummy_file
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger: Final = logging.getLogger(__name__)
 
 # Cache for dummy file to avoid regeneration cpu cost
-_DUMMY_FILE_CACHE = {}
+_DUMMY_FILE_CACHE: Final[dict[int, tuple]] = {}
 
-def get_cached_dummy_file(size_kb: int):
+# Retry configuration
+LOGIN_RETRY_COUNT: Final[int] = 3
+LOGIN_RETRY_DELAY_S: Final[float] = 1.0
+
+# Task weights
+WEIGHT_USER_PROFILE: Final[int] = 3
+WEIGHT_LIST_USERS: Final[int] = 1
+WEIGHT_REFRESH_TOKEN: Final[int] = 2
+WEIGHT_TENANT_INFO: Final[int] = 1
+WEIGHT_FILE_OPS: Final[int] = 1
+WEIGHT_AUDIT_LOGS: Final[int] = 1
+
+
+def get_cached_dummy_file(size_kb: int) -> tuple[str, BytesIO, str]:
+    """Get cached dummy file or generate if not exists."""
     if size_kb not in _DUMMY_FILE_CACHE:
         _DUMMY_FILE_CACHE[size_kb] = generate_dummy_file(size_kb)
-    # Return a fresh IO object but reuse content
+
     filename, content, mime = _DUMMY_FILE_CACHE[size_kb]
-    from io import BytesIO
+    # Return a fresh IO object but reuse content
     return filename, BytesIO(content.getvalue()), mime
 
 class SaaSUser(HttpUser):
@@ -40,11 +56,11 @@ class SaaSUser(HttpUser):
             self.client.headers.update({"X-Tenant-ID": str(self.tenant_id)})
 
         # Authenticate with retries
-        for i in range(3):
+        for i in range(LOGIN_RETRY_COUNT):
             if self.login():
                 break
             import time
-            time.sleep(1)
+            time.sleep(LOGIN_RETRY_DELAY_S)
 
         # If tenant ID isn't provided, try to fetch the first available tenant
         if not self.tenant_id:
@@ -99,21 +115,21 @@ class SaaSUser(HttpUser):
         # So fetch_tenant is never reached if login fails.
         pass
 
-    @task(3)
+    @task(WEIGHT_USER_PROFILE)
     def get_user_profile(self):
         """Load profile information (common read operation)."""
         if not self.access_token:
             return
         self.client.get("/api/v1/users/me", name="/api/v1/users/me")
 
-    @task(1)
+    @task(WEIGHT_LIST_USERS)
     def list_users(self):
         """List users (admin operation)."""
         if not self.access_token:
             return
         self.client.get("/api/v1/users", name="/api/v1/users")
 
-    @task(2)
+    @task(WEIGHT_REFRESH_TOKEN)
     def refresh_token_check(self):
         """Test token refresh flow."""
         # Note: This might invalidate current access token in some implementations
@@ -134,14 +150,14 @@ class SaaSUser(HttpUser):
             cookies=cookies
         )
 
-    @task(1)
+    @task(WEIGHT_TENANT_INFO)
     def get_tenant_info(self):
         """Get tenant details."""
         if not self.tenant_id:
             return
         self.client.get("/api/v1/tenants/1", name="/api/v1/tenants/{id}") # Use ID 1 assuming it matches test tenant
 
-    @task(1)
+    @task(WEIGHT_FILE_OPS)
     def file_operations(self):
         """Upload and then download a file."""
         if not self.access_token:
@@ -167,7 +183,7 @@ class SaaSUser(HttpUser):
             if file_id:
                 self.client.get(f"/api/v1/files/{file_id}", name="/api/v1/files/{id}")
 
-    @task(1)
+    @task(WEIGHT_AUDIT_LOGS)
     def view_audit_logs(self):
         """Check audit logs (read operation)."""
         if not self.access_token:

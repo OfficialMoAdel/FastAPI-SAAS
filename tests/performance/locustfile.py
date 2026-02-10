@@ -36,7 +36,7 @@ from __future__ import annotations
 import logging
 import os
 import time
-from typing import Any
+from typing import Any, Final
 
 from locust import HttpUser, between, events, task
 
@@ -45,18 +45,39 @@ from locust import HttpUser, between, events, task
 # =============================================================================
 
 # API base path
-API_V1 = "/api/v1"
+API_V1: Final[str] = "/api/v1"
 
-# Test user credentials (should exist in test database)
-TEST_USER_EMAIL = os.getenv("PERF_TEST_EMAIL", "perftest@example.com")
-TEST_USER_PASSWORD = os.getenv("PERF_TEST_PASSWORD", "TestPassword123!")
+# Default test credentials
+DEFAULT_TEST_EMAIL: Final[str] = "perftest@example.com"
+DEFAULT_TEST_PASSWORD: Final[str] = "TestPassword123!"
 
 # AI Chat test payload
-AI_CHAT_PAYLOAD = {
-    "session_id": None,  # Will be set dynamically
+AI_CHAT_PAYLOAD: Final[dict[str, Any]] = {
+    "session_id": None,
     "message": "Hello, this is a performance test message.",
-    "model": "llama3.2",  # Fastest model for testing
+    "model": "llama3.2",
 }
+
+# Slow request threshold (ms)
+SLOW_REQUEST_THRESHOLD_MS: Final[float] = 100.0
+
+# Traffic distribution weights
+TRAFFIC_USER_ME_WEIGHT: Final[int] = 80
+TRAFFIC_AI_CHAT_WEIGHT: Final[int] = 10
+TRAFFIC_TOKEN_REFRESH_WEIGHT: Final[int] = 10
+
+# Wait time configuration (seconds)
+WAIT_TIME_MIN_S: Final[float] = 1.0
+WAIT_TIME_MAX_S: Final[float] = 3.0
+
+# ReadOnly user configuration
+READONLY_WAIT_MIN_S: Final[float] = 0.5
+READONLY_WAIT_MAX_S: Final[float] = 2.0
+READONLY_USER_WEIGHT: Final[int] = 2
+
+# Test user credentials (should exist in test database)
+TEST_USER_EMAIL = os.getenv("PERF_TEST_EMAIL", DEFAULT_TEST_EMAIL)
+TEST_USER_PASSWORD = os.getenv("PERF_TEST_PASSWORD", DEFAULT_TEST_PASSWORD)
 
 # Logging configuration
 logging.basicConfig(
@@ -147,7 +168,7 @@ def on_request(
     metrics.record_request(name, response_time, success)
 
     # Log slow requests
-    if response_time > 100:
+    if response_time > SLOW_REQUEST_THRESHOLD_MS:
         logger.warning(f"SLOW REQUEST: {name} took {response_time:.1f}ms")
 
     # Log errors with details
@@ -189,7 +210,7 @@ class FastAPISaaSUser(HttpUser):
     """
 
     # Wait between 1-3 seconds between tasks (realistic user behavior)
-    wait_time = between(1, 3)
+    wait_time = between(WAIT_TIME_MIN_S, WAIT_TIME_MAX_S)
 
     # Store authentication tokens
     access_token: str | None = None
@@ -239,7 +260,7 @@ class FastAPISaaSUser(HttpUser):
     # TASKS (weighted by realistic traffic patterns)
     # =========================================================================
 
-    @task(80)  # 80% of traffic
+    @task(TRAFFIC_USER_ME_WEIGHT)  # 80% of traffic
     def get_current_user(self) -> None:
         """
         GET /api/v1/users/me - THE HOT PATH
@@ -270,7 +291,7 @@ class FastAPISaaSUser(HttpUser):
             else:
                 response.failure(f"Unexpected status: {response.status_code}")
 
-    @task(10)  # 10% of traffic
+    @task(TRAFFIC_AI_CHAT_WEIGHT)  # 10% of traffic
     def ai_chat_completion(self) -> None:
         """
         POST /api/v1/ai/chat - AI Chat Completion
@@ -312,7 +333,7 @@ class FastAPISaaSUser(HttpUser):
             else:
                 response.failure(f"AI chat failed: {response.status_code}")
 
-    @task(10)  # 10% of traffic
+    @task(TRAFFIC_TOKEN_REFRESH_WEIGHT)  # 10% of traffic
     def refresh_auth_token(self) -> None:
         """
         POST /api/v1/auth/refresh - Token Refresh
@@ -354,8 +375,8 @@ class ReadOnlyUser(HttpUser):
     Useful for simulating read-heavy traffic patterns.
     """
 
-    wait_time = between(0.5, 2)
-    weight = 2  # Spawn 2 ReadOnlyUsers for every 1 FastAPISaaSUser
+    wait_time = between(READONLY_WAIT_MIN_S, READONLY_WAIT_MAX_S)
+    weight = READONLY_USER_WEIGHT  # Spawn 2 ReadOnlyUsers for every 1 FastAPISaaSUser
 
     access_token: str | None = None
 
