@@ -8,7 +8,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from src.app.core.config import settings
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.utils import cache
 
 
 class IPFilterService:
@@ -55,12 +55,12 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                await redis_client.setex(key, ttl_seconds, json.dumps(data))
+                await cache.client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            await redis_client.set(key, json.dumps(data))
+            await cache.client.set(key, json.dumps(data))
 
         return True
 
@@ -74,7 +74,7 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        result = await redis_client.delete(key)
+        result = await cache.client.delete(key)
         return result > 0
 
     async def add_to_blacklist(
@@ -106,12 +106,12 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                await redis_client.setex(key, ttl_seconds, json.dumps(data))
+                await cache.client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            await redis_client.set(key, json.dumps(data))
+            await cache.client.set(key, json.dumps(data))
 
         return True
 
@@ -125,7 +125,7 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        result = await redis_client.delete(key)
+        result = await cache.client.delete(key)
         return result > 0
 
     async def is_whitelisted(self, ip_address: str) -> bool:
@@ -141,7 +141,7 @@ class IPFilterService:
             return False
 
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        exists = await redis_client.exists(key)
+        exists = await cache.client.exists(key)
         return exists > 0
 
     async def is_blacklisted(self, ip_address: str) -> bool:
@@ -157,7 +157,7 @@ class IPFilterService:
             return False
 
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        exists = await redis_client.exists(key)
+        exists = await cache.client.exists(key)
         return exists > 0
 
     async def get_whitelist(self) -> list[dict[str, Any]]:
@@ -171,18 +171,18 @@ class IPFilterService:
         cursor = 0
 
         while True:
-            cursor, batch = await redis_client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         entries = []
         for key in keys:
-            data = await redis_client.get(key)
+            data = await cache.client.get(key)
             if data:
                 entry = json.loads(data)
                 # Get TTL for expiration info
-                ttl = await redis_client.ttl(key)
+                ttl = await cache.client.ttl(key)
                 if ttl > 0:
                     entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                 entries.append(entry)
@@ -200,18 +200,18 @@ class IPFilterService:
         cursor = 0
 
         while True:
-            cursor, batch = await redis_client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         entries = []
         for key in keys:
-            data = await redis_client.get(key)
+            data = await cache.client.get(key)
             if data:
                 entry = json.loads(data)
                 # Get TTL for expiration info
-                ttl = await redis_client.ttl(key)
+                ttl = await cache.client.ttl(key)
                 if ttl > 0:
                     entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
                 entries.append(entry)
@@ -229,13 +229,13 @@ class IPFilterService:
         cursor = 0
 
         while True:
-            cursor, batch = await redis_client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         if keys:
-            return await redis_client.delete(*keys)
+            return await cache.client.delete(*keys)
         return 0
 
     async def clear_blacklist(self) -> int:
@@ -249,13 +249,13 @@ class IPFilterService:
         cursor = 0
 
         while True:
-            cursor, batch = await redis_client.scan(cursor, match=pattern, count=100)
+            cursor, batch = await cache.client.scan(cursor, match=pattern, count=100)
             keys.extend(batch)
             if cursor == 0:
                 break
 
         if keys:
-            return await redis_client.delete(*keys)
+            return await cache.client.delete(*keys)
         return 0
 
 

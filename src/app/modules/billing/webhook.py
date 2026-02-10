@@ -8,7 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.db.database import local_session
+from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
 from .crud import crud_billing_records, crud_user_subscriptions
 from .schemas import (
@@ -64,23 +64,22 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     logger.info(f"Received Stripe webhook event: {event_type}")
 
     try:
-        async with local_session() as db:
-            if event_type == "checkout.session.completed":
-                await handle_checkout_session_completed(db, event)
-            elif event_type == "customer.subscription.updated":
-                await handle_subscription_updated(db, event)
-            elif event_type == "customer.subscription.deleted":
-                await handle_subscription_deleted(db, event)
-            elif event_type == "invoice.payment_succeeded":
-                await handle_invoice_payment_succeeded(db, event)
-            elif event_type == "invoice.payment_failed":
-                await handle_invoice_payment_failed(db, event)
-            elif event_type == "charge.refunded":
-                await handle_charge_refunded(db, event)
-            else:
-                logger.info(f"Unhandled event type: {event_type}")
+        # Handlers manage their own DB sessions and RLS context
+        if event_type == "checkout.session.completed":
+            await handle_checkout_session_completed(event)
+        elif event_type == "customer.subscription.updated":
+            await handle_subscription_updated(event)
+        elif event_type == "customer.subscription.deleted":
+            await handle_subscription_deleted(event)
+        elif event_type == "invoice.payment_succeeded":
+            await handle_invoice_payment_succeeded(event)
+        elif event_type == "invoice.payment_failed":
+            await handle_invoice_payment_failed(event)
+        elif event_type == "charge.refunded":
+            await handle_charge_refunded(event)
+        else:
+            logger.info(f"Unhandled event type: {event_type}")
 
-            await db.commit()
     except Exception as e:
         logger.error(f"Error handling webhook event {event_type}: {e}")
         raise
@@ -88,7 +87,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     return {"status": "success"}
 
 
-async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_checkout_session_completed(event: stripe.Event) -> None:
     """
     Handle checkout.session.completed event.
 
@@ -146,10 +145,12 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
                 cancel_at_period_end=False,
             )
 
-            await crud_user_subscriptions.create(
-                db=db,
-                object=subscription_data,
-            )
+            async with job_tenant_context(tenant_id) as db:
+                await crud_user_subscriptions.create(
+                    db=db,
+                    object=subscription_data,
+                )
+                await db.commit()
 
             logger.info(f"Created subscription for user {user_id} in tenant {tenant_id}")
 
@@ -160,7 +161,7 @@ async def handle_checkout_session_completed(db: AsyncSession, event: stripe.Even
         logger.warning(f"No subscription ID in checkout session: {session['id']}")
 
 
-async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_subscription_updated(event: stripe.Event) -> None:
     """
     Handle customer.subscription.updated event.
 
@@ -172,17 +173,24 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
     stripe_subscription_id = subscription["id"]
     logger.info(f"Processing subscription.updated: {stripe_subscription_id}")
 
-    # Find subscription by stripe_subscription_id
-    result = await db.execute(
-        select(crud_user_subscriptions.model).where(
-            crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+    # Find subscription by stripe_subscription_id using bypass context
+    tenant_id = None
+    subscription_id = None
+    
+    async with job_bypass_context("Webhook subscription lookup") as db:
+        result = await db.execute(
+            select(crud_user_subscriptions.model).where(
+                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+            )
         )
-    )
-    db_subscription = result.scalar_one_or_none()
-
-    if not db_subscription:
-        logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-        return
+        db_subscription = result.scalar_one_or_none()
+        
+        if not db_subscription:
+            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
+            return
+            
+        tenant_id = db_subscription.tenant_id
+        subscription_id = db_subscription.id
 
     # Map Stripe status to our status
     status_map: dict[str, SubscriptionStatus] = {
@@ -207,16 +215,18 @@ async def handle_subscription_updated(db: AsyncSession, event: stripe.Event) -> 
     if subscription.get("canceled_at"):
         update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
 
-    await crud_user_subscriptions.update(
-        db=db,
-        object=update_data,
-        id=db_subscription.id,
-    )
+    async with job_tenant_context(tenant_id) as db:
+        await crud_user_subscriptions.update(
+            db=db,
+            object=update_data,
+            id=subscription_id,
+        )
+        await db.commit()
 
     logger.info(f"Updated subscription {stripe_subscription_id} to status {new_status}")
 
 
-async def handle_subscription_deleted(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_subscription_deleted(event: stripe.Event) -> None:
     """
     Handle customer.subscription.deleted event.
 
@@ -226,17 +236,24 @@ async def handle_subscription_deleted(db: AsyncSession, event: stripe.Event) -> 
     stripe_subscription_id = subscription["id"]
     logger.info(f"Processing subscription.deleted: {stripe_subscription_id}")
 
-    # Find subscription by stripe_subscription_id
-    result = await db.execute(
-        select(crud_user_subscriptions.model).where(
-            crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+    # Find subscription by stripe_subscription_id using bypass context
+    tenant_id = None
+    subscription_id = None
+    
+    async with job_bypass_context("Webhook subscription lookup") as db:
+        result = await db.execute(
+            select(crud_user_subscriptions.model).where(
+                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+            )
         )
-    )
-    db_subscription = result.scalar_one_or_none()
+        db_subscription = result.scalar_one_or_none()
 
-    if not db_subscription:
-        logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-        return
+        if not db_subscription:
+            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
+            return
+            
+        tenant_id = db_subscription.tenant_id
+        subscription_id = db_subscription.id
 
     # Update subscription to canceled/expired
     update_data = UserSubscriptionUpdate(
@@ -244,16 +261,18 @@ async def handle_subscription_deleted(db: AsyncSession, event: stripe.Event) -> 
         canceled_at=datetime.now(UTC),
     )
 
-    await crud_user_subscriptions.update(
-        db=db,
-        object=update_data,
-        id=db_subscription.id,
-    )
+    async with job_tenant_context(tenant_id) as db:
+        await crud_user_subscriptions.update(
+            db=db,
+            object=update_data,
+            id=subscription_id,
+        )
+        await db.commit()
 
     logger.info(f"Marked subscription {stripe_subscription_id} as canceled")
 
 
-async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     """
     Handle invoice.payment_succeeded event.
 
@@ -269,23 +288,32 @@ async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event
         logger.info(f"Invoice {invoice['id']} is not for a subscription, skipping")
         return
 
-    # Find subscription by stripe_subscription_id
-    result = await db.execute(
-        select(crud_user_subscriptions.model).where(
-            crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+    # Find subscription by stripe_subscription_id using bypass context
+    tenant_id = None
+    user_id = None
+    subscription_id = None
+    
+    async with job_bypass_context("Webhook subscription lookup") as db:
+        result = await db.execute(
+            select(crud_user_subscriptions.model).where(
+                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+            )
         )
-    )
-    db_subscription = result.scalar_one_or_none()
+        db_subscription = result.scalar_one_or_none()
 
-    if not db_subscription:
-        logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-        return
+        if not db_subscription:
+            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
+            return
+            
+        tenant_id = db_subscription.tenant_id
+        user_id = db_subscription.user_id
+        subscription_id = db_subscription.id
 
     # Create billing record with tenant_id in the object
     billing_record = BillingRecordCreateInternal(
-        tenant_id=db_subscription.tenant_id,
-        user_id=db_subscription.user_id,
-        user_subscription_id=db_subscription.id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        user_subscription_id=subscription_id,
         stripe_payment_intent_id=invoice.get("payment_intent"),
         stripe_invoice_id=invoice["id"],
         amount_cents=invoice["amount_paid"],
@@ -294,15 +322,17 @@ async def handle_invoice_payment_succeeded(db: AsyncSession, event: stripe.Event
         description="Invoice payment for subscription",
     )
 
-    await crud_billing_records.create(
-        db=db,
-        object=billing_record,
-    )
+    async with job_tenant_context(tenant_id) as db:
+        await crud_billing_records.create(
+            db=db,
+            object=billing_record,
+        )
+        await db.commit()
 
     logger.info(f"Created succeeded billing record for invoice {invoice['id']}")
 
 
-async def handle_invoice_payment_failed(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_invoice_payment_failed(event: stripe.Event) -> None:
     """
     Handle invoice.payment_failed event.
 
@@ -318,23 +348,32 @@ async def handle_invoice_payment_failed(db: AsyncSession, event: stripe.Event) -
         logger.info(f"Invoice {invoice['id']} is not for a subscription, skipping")
         return
 
-    # Find subscription by stripe_subscription_id
-    result = await db.execute(
-        select(crud_user_subscriptions.model).where(
-            crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+    # Find subscription by stripe_subscription_id using bypass context
+    tenant_id = None
+    user_id = None
+    subscription_id = None
+    
+    async with job_bypass_context("Webhook subscription lookup") as db:
+        result = await db.execute(
+            select(crud_user_subscriptions.model).where(
+                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+            )
         )
-    )
-    db_subscription = result.scalar_one_or_none()
+        db_subscription = result.scalar_one_or_none()
 
-    if not db_subscription:
-        logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-        return
+        if not db_subscription:
+            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
+            return
+            
+        tenant_id = db_subscription.tenant_id
+        user_id = db_subscription.user_id
+        subscription_id = db_subscription.id
 
     # Create billing record with failed status
     billing_record = BillingRecordCreateInternal(
-        tenant_id=db_subscription.tenant_id,
-        user_id=db_subscription.user_id,
-        user_subscription_id=db_subscription.id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        user_subscription_id=subscription_id,
         stripe_payment_intent_id=invoice.get("payment_intent"),
         stripe_invoice_id=invoice["id"],
         amount_cents=invoice["amount_due"],
@@ -343,23 +382,25 @@ async def handle_invoice_payment_failed(db: AsyncSession, event: stripe.Event) -
         description=f"Payment failed: {invoice.get('last_finalization_error', {}).get('message', 'Unknown error')}",
     )
 
-    await crud_billing_records.create(
-        db=db,
-        object=billing_record,
-    )
+    async with job_tenant_context(tenant_id) as db:
+        await crud_billing_records.create(
+            db=db,
+            object=billing_record,
+        )
 
-    # Update subscription to past_due
-    update_data = UserSubscriptionUpdate(status="past_due")
-    await crud_user_subscriptions.update(
-        db=db,
-        object=update_data,
-        id=db_subscription.id,
-    )
+        # Update subscription to past_due
+        update_data = UserSubscriptionUpdate(status="past_due")
+        await crud_user_subscriptions.update(
+            db=db,
+            object=update_data,
+            id=subscription_id,
+        )
+        await db.commit()
 
     logger.info(f"Created failed billing record and updated subscription to past_due for invoice {invoice['id']}")
 
 
-async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
+async def handle_charge_refunded(event: stripe.Event) -> None:
     """
     Handle charge.refunded event.
 
@@ -379,31 +420,47 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
         return
 
     # Try to find the subscription through the invoice
-    db_subscription = None
+    tenant_id = None
+    user_id = None
+    subscription_id = None
+    
+    # We need to use bypass context for both Stripe lookup (asyncio.to_thread is fine without db)
+    # AND for the local subscription lookup
+    
+    stripe_subscription_id = None
     if stripe_invoice_id:
         try:
             invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
-            if stripe_subscription_id:
-                result = await db.execute(
-                    select(crud_user_subscriptions.model).where(
-                        crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-                    )
-                )
-                db_subscription = result.scalar_one_or_none()
         except stripe.error.StripeError as e:
             logger.error(f"Error retrieving invoice: {e}")
 
-    if not db_subscription:
-        logger.warning(f"Could not find subscription for charge {charge['id']}")
+    if not stripe_subscription_id:
+        logger.warning(f"Could not determine subscription for charge {charge['id']}")
         return
+
+    async with job_bypass_context("Webhook subscription lookup") as db:
+        result = await db.execute(
+            select(crud_user_subscriptions.model).where(
+                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
+            )
+        )
+        db_subscription = result.scalar_one_or_none()
+        
+        if not db_subscription:
+            logger.warning(f"Could not find subscription for charge {charge['id']}")
+            return
+            
+        tenant_id = db_subscription.tenant_id
+        user_id = db_subscription.user_id
+        subscription_id = db_subscription.id
 
     # Create billing record with refunded status
     refund_amount = charge.get("amount_refunded", 0)
     billing_record = BillingRecordCreateInternal(
-        tenant_id=db_subscription.tenant_id,
-        user_id=db_subscription.user_id,
-        user_subscription_id=db_subscription.id,
+        tenant_id=tenant_id,
+        user_id=user_id,
+        user_subscription_id=subscription_id,
         stripe_payment_intent_id=stripe_payment_intent_id,
         stripe_invoice_id=stripe_invoice_id,
         amount_cents=-refund_amount,  # Negative amount for refund
@@ -412,9 +469,11 @@ async def handle_charge_refunded(db: AsyncSession, event: stripe.Event) -> None:
         description=f"Refund processed for charge {charge['id']}",
     )
 
-    await crud_billing_records.create(
-        db=db,
-        object=billing_record,
-    )
+    async with job_tenant_context(tenant_id) as db:
+        await crud_billing_records.create(
+            db=db,
+            object=billing_record,
+        )
+        await db.commit()
 
     logger.info(f"Created refunded billing record for charge {charge['id']}")

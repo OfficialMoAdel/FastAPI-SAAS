@@ -731,11 +731,16 @@ class FakeRedisPipeline:
 class FakeRedis:
     def __init__(self):
         self.store = {}
+        self.connection_kwargs = {"protocol": 3}
 
     async def get(self, key):
         if not key:
             return None
         return self.store.get(key)
+
+    async def exists(self, key):
+        """Check if a key exists in the store."""
+        return 1 if key in self.store else 0
 
     async def set(self, key, value, ex=None, px=None, **kwargs):
         self.store[key] = value
@@ -892,6 +897,10 @@ class FakeRedis:
     async def close(self):
         pass
 
+    async def aclose(self):
+        """Simulate async connection closing."""
+        await self.close()
+
     async def enqueue_job(self, function, *args, **kwargs):
         return Mock(job_id="job_mock_123")
 
@@ -1018,10 +1027,16 @@ def mock_redis(request):
 
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
-        patch("src.app.core.setup.create_redis_queue_pool", new=AsyncMock()),
-        patch("src.app.core.setup.close_redis_cache_pool", new=AsyncMock()),
-        patch("src.app.core.setup.close_redis_queue_pool", new=AsyncMock()),
         patch("src.app.core.utils.cache.client", new=fake_redis),
+        # Patch all top-level importers of redis_client to avoid NoneType errors
+        # patch("src.app.modules.security.service.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client
+        patch("src.app.modules.feature_flags.service.redis_client", new=fake_redis),
+        patch("src.app.modules.mfa.router.redis_client", new=fake_redis),
+        patch("src.app.core.security.auto_ban.redis_client", new=fake_redis),
+        patch("src.app.core.security.rate_limit_cache.redis_client", new=fake_redis),
+        patch("src.app.core.security.token_blacklist_cache.redis_client", new=fake_redis),
+        patch("src.app.modules.sso_settings.service.redis_client", new=fake_redis),
+        
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
         patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this

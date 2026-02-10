@@ -51,7 +51,7 @@ class StorageSettings(Base):
 
     __tablename__ = "storage_settings"
 
-    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 
     # Tenant relationship (one-to-one)
     tenant_id: Mapped[int] = mapped_column(

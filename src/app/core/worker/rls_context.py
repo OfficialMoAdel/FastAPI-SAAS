@@ -10,6 +10,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.db.rls import RLS_BYPASS_VAR, RLS_TENANT_VAR, RLS_USER_VAR
@@ -21,7 +22,7 @@ logger = logging.getLogger(__name__)
 async def job_tenant_context(
     tenant_id: int | str,
     user_id: int | str | None = None,
-) -> AsyncGenerator[None, None]:
+) -> AsyncGenerator[AsyncSession, None]:
     """Set RLS context for background job execution.
 
     Args:
@@ -29,15 +30,13 @@ async def job_tenant_context(
         user_id: Optional user ID to set as current user
 
     Yields:
-        None
-
+        AsyncSession: Database session with RLS context set
+        
     Example:
         async def deliver_webhook_task(ctx, delivery_id, tenant_id):
-            async with job_tenant_context(tenant_id):
-                # All DB operations are tenant-scoped
-                async with local_session() as db:
-                    service = WebhookService(db)
-                    await service.deliver_webhook(delivery_id)
+            async with job_tenant_context(tenant_id) as db:
+                service = WebhookService(db)
+                await service.deliver_webhook(delivery_id)
     """
     async with local_session() as session:
         connection = await session.connection()
@@ -58,7 +57,7 @@ async def job_tenant_context(
                 )
                 logger.debug("Job RLS user context set | user_id=%s", user_id)
 
-            yield
+            yield session
 
         except Exception as e:
             logger.error(
@@ -79,7 +78,7 @@ async def job_tenant_context(
 
 
 @asynccontextmanager
-async def job_bypass_context(reason: str) -> AsyncGenerator[None, None]:
+async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
     """Bypass RLS for system jobs with audit logging.
 
     CRITICAL: All RLS bypasses are logged for security audit.
@@ -88,14 +87,12 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[None, None]:
         reason: Required reason for bypassing RLS (for audit trail)
 
     Yields:
-        None
+        AsyncSession: Database session with RLS bypass enabled
 
     Example:
         async def flush_audit_logs_task(ctx):
-            async with job_bypass_context("Flushing audit logs to database"):
-                # Can access all tenant data
-                async with local_session() as db:
-                    await flush_audit_log_buffer()
+            async with job_bypass_context("Flushing audit logs") as db:
+                await flush_audit_log_buffer(db)
     """
     if not reason:
         raise ValueError("Reason is required for RLS bypass (audit trail)")
@@ -118,7 +115,7 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[None, None]:
             # TODO: Write to audit_logs table in separate transaction
             # This should be done to ensure bypass is logged even if job fails
 
-            yield
+            yield session
 
         finally:
             # Clear bypass flag

@@ -38,27 +38,25 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
         delivery_id = UUID(delivery_id)
 
     # First, get tenant_id from delivery record (bypass needed for lookup)
-    async with job_bypass_context("Fetching tenant_id for webhook delivery"):
-        async with local_session() as db:
-            db_result = await db.execute(
-                text("SELECT tenant_id FROM webhook_deliveries WHERE id = :id"),
-                {"id": str(delivery_id)},
-            )
-            row = db_result.fetchone()
-            if not row:
-                raise ValueError(f"Webhook delivery {delivery_id} not found")
-            tenant_id = row[0]
+    async with job_bypass_context("Fetching tenant_id for webhook delivery") as db:
+        db_result = await db.execute(
+            text("SELECT tenant_id FROM webhook_deliveries WHERE id = :id"),
+            {"id": str(delivery_id)},
+        )
+        row = db_result.fetchone()
+        if not row:
+            raise ValueError(f"Webhook delivery {delivery_id} not found")
+        tenant_id = row[0]
 
     # Now process with proper tenant context
-    async with job_tenant_context(tenant_id):
-        async with local_session() as db:
-            service = WebhookService(db)
-            try:
-                await service.deliver_webhook(delivery_id)
-                return f"Webhook {delivery_id} delivered."
-            except Exception as e:
-                logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
-                raise e
+    async with job_tenant_context(tenant_id) as db:
+        service = WebhookService(db)
+        try:
+            await service.deliver_webhook(delivery_id)
+            return f"Webhook {delivery_id} delivered."
+        except Exception as e:
+            logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
+            raise e
 
 
 @monitor_job("migrate_sessions_task")
@@ -93,22 +91,21 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     logging.info("Starting audit log flush task")
     total = 0
 
-    async with job_bypass_context("Flushing audit logs to database"):
+    async with job_bypass_context("Flushing audit logs to database") as db:
         try:
             # Drain buffer with limit per run to prevent long-running tasks
             while total < AUDIT_LOG_MAX_FLUSH_PER_RUN:
                 remaining = AUDIT_LOG_MAX_FLUSH_PER_RUN - total
-                flushed = await flush_audit_log_buffer(max_flush_per_run=remaining)
-                total += flushed
-                if flushed < AUDIT_LOG_BATCH_SIZE:
+                # Pass the session to ensure RLS bypass works correctly
+                count = await flush_audit_log_buffer(max_flush_per_run=remaining, db=db)
+                if count == 0:
                     break
-
-            if total > 0:
-                logging.info(f"Flushed {total} audit logs to database")
-            return f"Flushed {total} audit logs."
+                total += count
         except Exception as e:
-            logging.error(f"Audit log flush failed: {e}")
+            logging.error(f"Failed to flush audit logs: {e}")
             raise e
+
+    return f"Flushed {total} audit logs."
 
 
 @monitor_job("sync_bloom_filter_task")

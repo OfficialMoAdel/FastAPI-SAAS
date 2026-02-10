@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
 from ...core.events import EventPriority, event_bus
-from ...core.utils.cache import client as redis_client
+from ...core.utils import cache as redis_cache
 from .models import AuditLog
 
 logger = get_logger(__name__)
@@ -138,7 +138,7 @@ class AuditLogService:
         return list(result.scalars().all())
 
 
-async def buffer_audit_log(log_data: dict[str, Any]) -> None:
+async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
     """Buffer an audit log entry for async batch insert.
 
     Uses Redis LPUSH for O(1) buffering instead of immediate DB write.
@@ -146,23 +146,48 @@ async def buffer_audit_log(log_data: dict[str, Any]) -> None:
 
     Args:
         log_data: Audit log data to buffer
+        db: Optional DB session for fallback direct insert
     """
-    if redis_client is None:
+    if redis_cache.client is None:
         logger.warning("audit_log_redis_unavailable", action="direct_insert")
-        await _direct_insert_log(log_data)
+        await _direct_insert_log(log_data, db)
         return
 
     try:
-        lpush_result = redis_client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
+        lpush_result = redis_cache.client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
         if hasattr(lpush_result, "__await__"):
             await lpush_result
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
-        await _direct_insert_log(log_data)
+        await _direct_insert_log(log_data, db)
 
 
-async def _direct_insert_log(log_data: dict[str, Any]) -> None:
-    """Fallback: directly insert audit log when Redis unavailable."""
+async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:
+    """Fallback: directly insert audit log when Redis unavailable.
+    
+    Args:
+        log_data: Log data
+        db: Optional DB session. If None, creates a new one.
+    """
+    if db:
+        # Use provided session
+        try:
+            service = AuditLogService(db)
+            await service.create_log(
+                tenant_id=int(log_data["tenant_id"]),
+                action=log_data["action"],
+                entity_type=log_data.get("entity_type"),
+                entity_id=log_data.get("entity_id"),
+                user_id=int(log_data["user_id"]) if log_data.get("user_id") else None,
+                details=log_data.get("details", {}),
+                ip_address=log_data.get("ip_address"),
+                user_agent=log_data.get("user_agent"),
+            )
+        except Exception as e:
+            logger.error("audit_log_direct_insert_failed", error=str(e))
+        return
+
+    # Fallback to creating new session
     from ...core.db.database import async_get_db
 
     async for db in async_get_db():
@@ -185,7 +210,7 @@ async def _direct_insert_log(log_data: dict[str, Any]) -> None:
             break
 
 
-async def flush_audit_log_buffer(max_flush_per_run: int | None = None) -> int:
+async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: AsyncSession | None = None) -> int:
     """Flush buffered audit logs to database in batch.
 
     Atomically retrieves and removes logs from Redis, then bulk inserts to DB.
@@ -194,14 +219,14 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None) -> int:
     Args:
         max_flush_per_run: Maximum number of logs to flush in this run.
                            If None, uses AUDIT_LOG_MAX_FLUSH_PER_RUN config.
+        db: Database session to use. If None, creates a new one.
+            CRITICAL: Pass the session from job_bypass_context to ensure RLS bypass.
 
     Returns:
         Number of logs flushed
     """
-    if redis_client is None:
+    if redis_cache.client is None:
         return 0
-
-    from ...core.db.database import async_get_db
 
     if max_flush_per_run is None:
         max_flush_per_run = AUDIT_LOG_MAX_FLUSH_PER_RUN
@@ -210,7 +235,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None) -> int:
     flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
 
     # Atomically get and remove up to flush_limit logs
-    pipe = redis_client.pipeline()
+    pipe = redis_cache.client.pipeline()
     pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
     pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
     results = await pipe.execute()
@@ -243,22 +268,42 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None) -> int:
     if not log_entries:
         return 0
 
-    # Bulk insert with single transaction
-    async for db in async_get_db():
+    # Helper to perform bulk insert
+    async def _perform_bulk_insert(session: AsyncSession):
         try:
-            db.add_all(log_entries)
-            await db.commit()
+            session.add_all(log_entries)
+            await session.commit()
             logger.info("audit_logs_flushed", count=len(log_entries))
         except Exception as e:
             logger.error("audit_log_flush_failed", error=str(e), count=len(log_entries))
-            await db.rollback()
-        finally:
-            await db.close()
-            break
+            await session.rollback()
+            raise e
+
+    if db:
+        # Use provided session (do not close)
+        try:
+            await _perform_bulk_insert(db)
+        except Exception:
+            # Error logged in helper, exception re-raised to caller?
+            # Caller (flush_audit_logs_task) should decide retry logic.
+            # But here we just log and swallow for safety?
+            # Existing code logged and swallowed.
+            pass
+    else:
+        # Create new session (and close it)
+        from ...core.db.database import async_get_db
+        async for session in async_get_db():
+            try:
+                await _perform_bulk_insert(session)
+            except Exception:
+                pass
+            finally:
+                await session.close()
+                break
 
     # Log if we hit the flush limit
     if len(log_entries) >= max_flush_per_run:
-        remaining_result = redis_client.llen(AUDIT_LOG_BUFFER_KEY)
+        remaining_result = redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY)
         remaining = await remaining_result if hasattr(remaining_result, "__await__") else remaining_result
         logger.warning(
             "audit_log_flush_limit_reached",

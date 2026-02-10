@@ -14,10 +14,8 @@ from unittest.mock import MagicMock, mock_open, patch
 
 import pytest
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent.parent.parent.parent / "src"))
-
-from scripts.create_module import (
+# Change import to use absolute path from root
+from src.scripts.create_module import (
     FIELD_TYPE_MAP,
     FieldDefinition,
     ModuleContext,

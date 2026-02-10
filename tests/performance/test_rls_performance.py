@@ -14,10 +14,13 @@ from collections.abc import AsyncGenerator
 import pytest
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
+from src.app.core.tenancy.context import clear_tenant_context, set_current_tenant
 from src.app.modules.posts.models import Post
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
+from src.app.modules.notifications.models import Notification
 
 # Mark all tests as async
 pytestmark = pytest.mark.asyncio

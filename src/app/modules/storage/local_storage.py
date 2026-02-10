@@ -12,6 +12,7 @@ Usage:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
@@ -90,16 +91,16 @@ class LocalStorage(StorageProvider):
             # Create parent directories
             await aiofiles.os.makedirs(full_path.parent, exist_ok=True)
 
-            # Read content and get size
-            # Use asyncio.to_thread to prevent blocking the event loop during file read
-            import asyncio
-
-            content = await asyncio.to_thread(file.read)
-            size = len(content)
-
-            # Write file
+            # Stream content to file to prevent memory exhaustion
+            size = 0
             async with aiofiles.open(full_path, "wb") as f:
-                await f.write(content)
+                while True:
+                    # Read chunk in thread to avoid blocking event loop
+                    chunk = await asyncio.to_thread(file.read, CHUNK_SIZE)
+                    if not chunk:
+                        break
+                    await f.write(chunk)
+                    size += len(chunk)
 
             # Store metadata (mime type) in a sidecar file
             meta_path = full_path.with_suffix(full_path.suffix + ".meta")

@@ -564,13 +564,13 @@ class PerformanceSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="PERFORMANCE_")
 
-    FEATURE_REMOVE_WASTED_CONNECTION: bool = False
+    FEATURE_REMOVE_WASTED_CONNECTION: bool = True
     """Remove wasted database connection in tenant middleware (P0-1)."""
 
     FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False
     """Use contextvar for tenant context (P0-2)."""
 
-    FEATURE_STREAMING_UPLOADS: bool = False
+    FEATURE_STREAMING_UPLOADS: bool = True
     """Use streaming multipart uploads for S3 storage (P0-3)."""
 
     FEATURE_EAGER_LOADING: bool = False
