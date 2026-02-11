@@ -205,7 +205,6 @@ baseline*
 unique_failed*
 failed.txt
 anlus.txt
-CODE_IMPROVEMENTS.md
 storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py
 .agents
@@ -214,3 +213,4 @@ TEST_ISOLATION_FIX.md
 *.db
 FINAL_REPORT.md
 tasks
+CODE_REVIEW_REPORT.md

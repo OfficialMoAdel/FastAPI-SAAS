@@ -31,23 +31,32 @@ AUTH_INFO_CACHE_PREFIX = "user:auth"
 
 
 def _user_cache_key(user_id: UUID | str) -> str:
-    """Generate cache key for user profile."""
+    """Generate cache key for user profile.
+    
+    User ID is globally unique (UUID), so no tenant scoping needed.
+    """
     return f"{USER_CACHE_PREFIX}:{user_id}"
 
 
 def _user_email_cache_key(email: str) -> str:
-    """Generate cache key for user by email."""
-    return f"{USER_CACHE_PREFIX}:email:{email}"
+    """Generate cache key for user by email (scoped to tenant)."""
+    tenant = get_current_tenant()
+    t_id = str(tenant.id) if tenant else "global"
+    return f"{USER_CACHE_PREFIX}:{t_id}:email:{email}"
 
 
 def _user_username_cache_key(username: str) -> str:
-    """Generate cache key for user by username."""
-    return f"{USER_CACHE_PREFIX}:username:{username}"
+    """Generate cache key for user by username (scoped to tenant)."""
+    tenant = get_current_tenant()
+    t_id = str(tenant.id) if tenant else "global"
+    return f"{USER_CACHE_PREFIX}:{t_id}:username:{username}"
 
 
 def _user_auth_cache_key(identifier: str) -> str:
-    """Generate cache key for user auth info by username or email."""
-    return f"{AUTH_INFO_CACHE_PREFIX}:{identifier}"
+    """Generate cache key for user auth info by username or email (scoped to tenant)."""
+    tenant = get_current_tenant()
+    t_id = str(tenant.id) if tenant else "global"
+    return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{identifier}"
 
 
 class UserService(BaseService[User]):
@@ -180,6 +189,12 @@ class UserService(BaseService[User]):
         stmt = select(User).where(
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
+
+        # Explicitly filter by tenant_id if available (redundant with RLS but critical for SQLite tests)
+        tenant = get_current_tenant()
+        if tenant:
+            stmt = stmt.where(User.tenant_id == tenant.id)
+
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:

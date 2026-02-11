@@ -50,7 +50,11 @@ async def db_session():
 @pytest_asyncio.fixture
 async def async_client():
     """Create an async test client."""
-    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"User-Agent": "TestClient/1.0"},
+    ) as client:
         yield client
 
 

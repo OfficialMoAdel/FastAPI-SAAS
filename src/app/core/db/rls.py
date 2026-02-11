@@ -10,10 +10,12 @@ from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Any, TypeVar
 
-from sqlalchemy import text
+from sqlalchemy import text, event
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
+from sqlalchemy.orm import Session
 
 from src.app.core.logger import get_logger
+from ..tenancy.context import get_current_tenant
 
 logger = get_logger(__name__)
 
@@ -24,6 +26,27 @@ RLS_BYPASS_VAR = "app.bypass_rls"
 
 # Type variable for decorator
 F = TypeVar("F", bound=Callable[..., Any])
+
+
+def restore_rls_context(session: Session, transaction: Any, connection: Any) -> None:
+    """Restores RLS context after a transaction begins.
+
+    This is necessary because PostgreSQL `set_config` with `is_local=True`
+    is transaction-scoped. When a commit occurs, the configuration is lost.
+    This listener ensures it's re-applied for the next transaction in the same session.
+    """
+    # SQLite does not support set_config (used in tests)
+    if connection.dialect.name != "postgresql":
+        return
+
+    tenant = get_current_tenant()
+    if tenant:
+        # We are in a synchronous event listener, so we use the sync connection directly.
+        # This connection is the underlying driver connection or SQLAlchemy wrapper.
+        connection.execute(
+            text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+            {"tenant_id": str(tenant.id)},
+        )
 
 
 async def set_rls_context(

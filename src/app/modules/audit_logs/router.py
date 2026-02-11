@@ -180,7 +180,7 @@ async def get_export_count(
     }
 
 
-@router.get("/export")
+@router.get("/export", response_model=None)
 async def export_audit_logs(
     format: str = Query("csv", pattern="^(csv|json|jsonl)$", description="Export format"),
     action: str | None = Query(None, description="Filter by action"),

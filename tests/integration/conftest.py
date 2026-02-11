@@ -9,6 +9,7 @@ from typing import Any
 import pytest
 import pytest_asyncio
 import structlog
+from httpx import ASGITransport, AsyncClient
 from redis.asyncio import Redis
 from sqlalchemy import event as sqla_event
 from sqlalchemy import text
@@ -458,3 +459,37 @@ def skip_without_services(request):
                 pytest.skip(f"Redis not available at {redis_host}:{test_port}")
         except Exception:
             pytest.skip("Cannot check Redis availability")
+
+
+@pytest.fixture
+async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncClient, None]:
+    """Async client fixture."""
+    app = get_test_app
+    # Note: ASGITransport(app=app) handles lifespan automatically.
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={
+            "X-Tenant-ID": "test-tenant-integration",
+            "User-Agent": "TestClient/1.0",
+        },
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+async def unauthenticated_async_client(get_test_app, unauthenticated_mock_context) -> AsyncGenerator[AsyncClient, None]:
+    """Async client WITHOUT authentication for testing auth-required endpoints.
+
+    Use this fixture when testing that endpoints correctly reject unauthenticated requests.
+    """
+    app = get_test_app
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={
+            "X-Tenant-ID": "test-tenant-integration",
+            "User-Agent": "TestClient/1.0",
+        },
+    ) as ac:
+        yield ac

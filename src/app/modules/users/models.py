@@ -37,7 +37,9 @@ class User(Base):
     __tablename__ = "user"
     __table_args__ = (
         UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
+        UniqueConstraint("username", "tenant_id", name="uq_user_username_tenant"),
         Index("idx_users_tenant_email", "tenant_id", "email"),
+        Index("idx_users_tenant_username", "tenant_id", "username"),
         Index("idx_users_tenant_deleted", "tenant_id", "is_deleted"),
     )
 
@@ -46,7 +48,7 @@ class User(Base):
     tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
 
     name: Mapped[str] = mapped_column(String(30))
-    username: Mapped[str] = mapped_column(String(20), unique=True, index=True)
+    username: Mapped[str] = mapped_column(String(20), index=True)
     email: Mapped[str] = mapped_column(String(50), index=True)  # Uniqueness now per-tenant via constraint
     hashed_password: Mapped[str] = mapped_column(String)
 

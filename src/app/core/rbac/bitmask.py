@@ -27,6 +27,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 from functools import lru_cache
 from typing import Final
 
@@ -50,13 +51,32 @@ def _build_permission_bit_map() -> dict[str, int]:
     return {slug: i for i, slug in enumerate(slugs)}
 
 
+def _compute_permission_version_hash() -> str:
+    """
+    Compute a hash of the sorted permission slugs.
+    
+    This hash is used to version Redis cache keys. If the set of permissions changes
+    (e.g. adding a new permission), the alphabetical order and bit mapping changes.
+    Using this hash in cache keys prevents bitmask collisions across deployments.
+    """
+    slugs = sorted(p.value for p in PermissionEnum)
+    # Use SHA256 of the sorted slugs string representation
+    return hashlib.sha256(",".join(slugs).encode()).hexdigest()[:8]
+
+
 # Pre-computed at module load time
 _PERMISSION_BIT_MAP: Final[dict[str, int]] = _build_permission_bit_map()
 _BIT_PERMISSION_MAP: Final[dict[int, str]] = {v: k for k, v in _PERMISSION_BIT_MAP.items()}
+_PERMISSION_VERSION_HASH: Final[str] = _compute_permission_version_hash()
 
 
 class PermissionBitmask:
     """Utilities for bitmask-based permission operations."""
+
+    @staticmethod
+    def get_permission_version_hash() -> str:
+        """Get the hash of current permission set for cache versioning."""
+        return _PERMISSION_VERSION_HASH
 
     @staticmethod
     @lru_cache(maxsize=256)

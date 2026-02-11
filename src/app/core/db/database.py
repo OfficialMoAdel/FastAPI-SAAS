@@ -4,12 +4,13 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
+from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr, DeclarativeBase
 from sqlalchemy.pool import NullPool
+from sqlalchemy import event
 
 from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
-from src.app.core.db.rls import rls_context
+from src.app.core.db.rls import rls_context, restore_rls_context
 from src.app.core.tenancy.context import get_current_tenant
 
 
@@ -72,6 +73,11 @@ if settings.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.ENVIRONMENT.
     )
 
 local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+
+# Register RLS event listener
+# We listen to the underlying sync Session class because AsyncSession wraps it
+# and events are dispatched from the inner session.
+event.listen(Session, "after_begin", restore_rls_context)
 
 # Alias for compatibility with code expecting async_session_maker
 async_session_maker = local_session

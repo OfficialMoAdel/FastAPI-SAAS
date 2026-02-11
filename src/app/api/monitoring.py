@@ -5,6 +5,7 @@ Provides Prometheus metrics export and health check endpoints for monitoring.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -138,18 +139,28 @@ async def health_check() -> HealthCheckResponse:
 
     Returns overall system health with component-level checks.
     """
-    checks = {}
-
     # Run all health checks in parallel
-    checks["database"] = await check_database()
-    checks["redis"] = await check_redis()
-    checks["worker_queue"] = await check_worker_queue()
-    checks["cache_metrics"] = await check_cache_metrics()
-    checks["dlq_size"] = await check_dlq_size()
+    results = await asyncio.gather(
+        check_database(),
+        check_redis(),
+        check_worker_queue(),
+        check_cache_metrics(),
+        check_dlq_size(),
+        return_exceptions=True,
+    )
+
+    keys = ["database", "redis", "worker_queue", "cache_metrics", "dlq_size"]
+    checks = {}
+    
+    for key, result in zip(keys, results):
+        if isinstance(result, Exception):
+            checks[key] = {"status": "unhealthy", "error": str(result)}
+        else:
+            checks[key] = result
 
     # Determine overall status
     overall_status = "ok"
-    for component, result in checks.items():
+    for result in checks.values():
         if result.get("status") == "unhealthy":
             overall_status = "error"
             break

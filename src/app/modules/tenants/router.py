@@ -4,8 +4,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
-from ...api.dependencies import get_current_user
+from ...api.dependencies import get_current_user, get_current_superuser
 from ...core.db.database import async_get_db
+from ...core.exceptions.http_exceptions import ForbiddenException
 from .schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
 from .service import TenantService, get_tenant_service
 
@@ -15,7 +16,7 @@ router = APIRouter(prefix="/tenants", tags=["tenants"])
 @router.get("", response_model=TenantList)
 async def list_tenants(
     service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    _current_user: Annotated[dict, Depends(get_current_superuser)],
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=10, ge=1, le=100),
     is_active: bool | None = Query(default=None),
@@ -45,7 +46,7 @@ async def list_tenants(
 async def create_tenant(
     tenant: TenantCreate,
     service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Create a new tenant.
 
@@ -65,6 +66,9 @@ async def get_tenant(
 
     Requires authentication. Returns 404 if not found.
     """
+    if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
+        raise ForbiddenException(detail="You do not have permission to access this tenant.")
+        
     return await service.get_tenant(tenant_id)
 
 
@@ -80,6 +84,9 @@ async def update_tenant(
     Requires authentication. Returns 404 if not found.
     Can update name and is_active status.
     """
+    if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
+        raise ForbiddenException(detail="You do not have permission to update this tenant.")
+
     return await service.update_tenant(tenant_id, values)
 
 
@@ -87,7 +94,7 @@ async def update_tenant(
 async def deactivate_tenant(
     tenant_id: int,
     service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Deactivate a tenant.
 
@@ -101,7 +108,7 @@ async def deactivate_tenant(
 async def reactivate_tenant(
     tenant_id: int,
     service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
-    _current_user: Annotated[dict, Depends(get_current_user)],
+    _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Reactivate a deactivated tenant.
 

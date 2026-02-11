@@ -542,14 +542,13 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 
 
 @pytest.fixture
-async def async_client(get_test_app, full_mock_context) -> AsyncGenerator[AsyncClient, None]:
-    """Async client fixture."""
+async def async_client(get_test_app) -> AsyncGenerator[AsyncClient, None]:
+    """Async client fixture for all tests."""
     app = get_test_app
-    # Note: ASGITransport(app=app) handles lifespan automatically.
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"X-Tenant-ID": "test-tenant-integration"},
+        headers={"User-Agent": "TestClient/1.0"},
     ) as ac:
         yield ac
 

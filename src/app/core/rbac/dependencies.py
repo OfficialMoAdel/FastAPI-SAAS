@@ -113,7 +113,9 @@ async def get_cached_permissions(
 
 def _get_bitmask_cache_key(user_id: int, tenant_id: int) -> str:
     """Get Redis key for bitmask-based permission cache."""
-    return f"perms:bitmask:{tenant_id}:{user_id}"
+    # Append version hash to invalidate cache when permissions change (e.g. new deployment)
+    version = PermissionBitmask.get_permission_version_hash()
+    return f"perms:bitmask:{tenant_id}:{user_id}:{version}"
 
 
 async def get_cached_permissions_bitmask(
