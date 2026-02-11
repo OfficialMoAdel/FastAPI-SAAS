@@ -54,7 +54,7 @@ def _build_permission_bit_map() -> dict[str, int]:
 def _compute_permission_version_hash() -> str:
     """
     Compute a hash of the sorted permission slugs.
-    
+
     This hash is used to version Redis cache keys. If the set of permissions changes
     (e.g. adding a new permission), the alphabetical order and bit mapping changes.
     Using this hash in cache keys prevents bitmask collisions across deployments.

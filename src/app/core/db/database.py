@@ -2,15 +2,15 @@ import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+from sqlalchemy import event
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
-from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr, DeclarativeBase
+from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr
 from sqlalchemy.pool import NullPool
-from sqlalchemy import event
 
 from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
-from src.app.core.db.rls import rls_context, restore_rls_context
+from src.app.core.db.rls import restore_rls_context, rls_context
 from src.app.core.tenancy.context import get_current_tenant
 
 

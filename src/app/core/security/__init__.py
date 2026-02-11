@@ -72,7 +72,7 @@ class TokenType(str, Enum):
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
     """Verify password asynchronously using dedicated thread pool.
-    
+
     Uses the bcrypt thread pool to prevent blocking the event loop
     during password verification. This is critical under high concurrency
     as bcrypt operations take ~50-100ms.
@@ -89,7 +89,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
 
 async def get_password_hash(password: str) -> str:
     """Hash password asynchronously using dedicated thread pool.
-    
+
     Uses the bcrypt thread pool to prevent blocking the event loop
     during password hashing. The configured BCRYPT_ROUNTS determines
     the computational cost (default: 12 rounds).

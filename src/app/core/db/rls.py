@@ -10,11 +10,12 @@ from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Any, TypeVar
 
-from sqlalchemy import text, event
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 
 from src.app.core.logger import get_logger
+
 from ..tenancy.context import get_current_tenant
 
 logger = get_logger(__name__)

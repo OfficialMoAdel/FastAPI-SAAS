@@ -150,21 +150,22 @@ async def health_check() -> HealthCheckResponse:
     )
 
     keys = ["database", "redis", "worker_queue", "cache_metrics", "dlq_size"]
-    checks = {}
-    
+    checks: dict[str, dict[str, str | float | bool]] = {}
+
     for key, result in zip(keys, results):
-        if isinstance(result, Exception):
+        if isinstance(result, BaseException):
             checks[key] = {"status": "unhealthy", "error": str(result)}
         else:
             checks[key] = result
 
     # Determine overall status
     overall_status = "ok"
-    for result in checks.values():
-        if result.get("status") == "unhealthy":
+    for check_result in checks.values():
+        status = check_result.get("status")
+        if status == "unhealthy":
             overall_status = "error"
             break
-        elif result.get("status") != "healthy" and overall_status == "ok":
+        elif status != "healthy" and overall_status == "ok":
             overall_status = "degraded"
 
     return HealthCheckResponse(

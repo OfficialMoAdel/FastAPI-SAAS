@@ -32,7 +32,7 @@ AUTH_INFO_CACHE_PREFIX = "user:auth"
 
 def _user_cache_key(user_id: UUID | str) -> str:
     """Generate cache key for user profile.
-    
+
     User ID is globally unique (UUID), so no tenant scoping needed.
     """
     return f"{USER_CACHE_PREFIX}:{user_id}"

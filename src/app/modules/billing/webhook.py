@@ -28,14 +28,14 @@ _WEBHOOK_EVENT_TTL_SECONDS = 86400 * 7  # 7 days retention ( Stripe retries for 
 
 async def _is_event_processed(event_id: str) -> bool:
     """Check if a webhook event has already been processed.
-    
+
     Uses Redis to track processed event IDs for idempotency.
     Stripe may deliver the same event multiple times, so we must ensure
     each event is only processed once to prevent duplicate operations.
-    
+
     Args:
         event_id: The Stripe event ID (e.g., "evt_1234567890")
-        
+
     Returns:
         True if event was already processed, False otherwise
     """
@@ -57,9 +57,9 @@ async def _is_event_processed(event_id: str) -> bool:
 
 async def _mark_event_processed(event_id: str) -> None:
     """Mark a webhook event as processed.
-    
+
     Stores the event ID in Redis with TTL to prevent duplicate processing.
-    
+
     Args:
         event_id: The Stripe event ID
     """
@@ -107,7 +107,7 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
 async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None) -> dict[str, str]:
     """
     Route and handle specific Stripe webhook events.
-    
+
     Implements idempotency to prevent duplicate processing of the same event.
     Stripe guarantees at-least-once delivery, so the same event may be delivered
     multiple times. We track processed event IDs to ensure each event is handled

@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
-from ...api.dependencies import get_current_user, get_current_superuser
+from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
 from ...core.exceptions.http_exceptions import ForbiddenException
 from .schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
@@ -68,7 +68,7 @@ async def get_tenant(
     """
     if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
         raise ForbiddenException(detail="You do not have permission to access this tenant.")
-        
+
     return await service.get_tenant(tenant_id)
 
 
