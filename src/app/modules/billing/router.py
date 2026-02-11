@@ -19,6 +19,7 @@ from .schemas import (
     BillingRecordRead,
     CheckoutCreate,
     CheckoutSession,
+    PortalResponse,
     PricingCreate,
     PricingRead,
     ProductCreate,
@@ -372,7 +373,7 @@ async def create_portal_session(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
-) -> dict:
+) -> PortalResponse:
     """Create a Stripe Customer Portal session."""
     # return_url expected in body or query? Usually body.
     # Simple JSON body: {"return_url": "..."}
@@ -383,7 +384,7 @@ async def create_portal_session(
 
     service = get_checkout_service(db)
     url = await service.create_portal_session(return_url=return_url)
-    return {"url": url}
+    return PortalResponse(url=url)
 
 
 @router.get("/records", response_model=BillingRecordList)

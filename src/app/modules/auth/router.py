@@ -17,9 +17,15 @@ from ..users.service import UserService
 from .schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
+    EmailVerificationResponse,
+    ForgotPasswordResponse,
+    LogoutResponse,
     PasswordChangeRequest,
+    PasswordChangeResponse,
     PasswordResetConfirm,
     PasswordResetRequest,
+    PasswordResetResponse,
+    RefreshTokenResponse,
     Token,
 )
 from .service import AuthService
@@ -61,7 +67,7 @@ async def register(
     return await user_service.create(user)
 
 
-@router.post("/refresh")
+@router.post("/refresh", response_model=RefreshTokenResponse)
 async def refresh_access_token(
     response: Response,
     request: Request,
@@ -73,7 +79,7 @@ async def refresh_access_token(
     return await auth_service.refresh_access_token(refresh_token, response, db)
 
 
-@router.post("/logout")
+@router.post("/logout", response_model=LogoutResponse)
 async def logout(
     response: Response,
     request: Request,
@@ -86,58 +92,63 @@ async def logout(
     return await auth_service.logout(access_token, refresh_token, response, request, db)
 
 
-@router.patch("/password")
+@router.patch("/password", response_model=PasswordChangeResponse)
 async def change_password(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
     body: PasswordChangeRequest,
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> PasswordChangeResponse:
     """Change current user's password."""
-    return await auth_service.change_password(
+    result = await auth_service.change_password(
         user_id=current_user["id"],
         current_password=body.current_password,
         new_password=body.new_password,
         db=db,
     )
+    return PasswordChangeResponse(**result)
 
 
-@router.post("/forgot-password")
+@router.post("/forgot-password", response_model=ForgotPasswordResponse)
 async def forgot_password(
     body: PasswordResetRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> ForgotPasswordResponse:
     """Request password reset email."""
-    return await auth_service.request_password_reset(email=body.email, db=db)
+    result = await auth_service.request_password_reset(email=body.email, db=db)
+    return ForgotPasswordResponse(**result)
 
 
-@router.post("/reset-password")
+@router.post("/reset-password", response_model=PasswordResetResponse)
 async def reset_password(
     body: PasswordResetConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> PasswordResetResponse:
     """Reset password using reset token."""
-    return await auth_service.reset_password(token=body.token, new_password=body.new_password, db=db)
+    result = await auth_service.reset_password(token=body.token, new_password=body.new_password, db=db)
+    return PasswordResetResponse(**result)
 
 
-@router.post("/send-verification")
+@router.post("/send-verification", response_model=EmailVerificationResponse)
 async def send_verification_email(
     body: EmailVerificationRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> EmailVerificationResponse:
     """Send email verification link."""
-    return await auth_service.send_verification_email(email=body.email, db=db)
+    result = await auth_service.send_verification_email(email=body.email, db=db)
+    return EmailVerificationResponse(**result)
 
 
-@router.post("/verify-email")
+@router.post("/verify-email", response_model=EmailVerificationResponse)
 async def verify_email(
     body: EmailVerificationConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> EmailVerificationResponse:
     """Verify email using verification token."""
-    return await auth_service.verify_email(token=body.token, db=db)
+    result = await auth_service.verify_email(token=body.token, db=db)
+    return EmailVerificationResponse(**result)

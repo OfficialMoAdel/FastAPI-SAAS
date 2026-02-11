@@ -3,6 +3,7 @@
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
@@ -18,8 +19,12 @@ from .service import APIKeyService, get_api_key_service
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
+async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> APIKeyService:
+    """Dependency for APIKeyService injection."""
+    return get_api_key_service(db)
+
 # Type alias for dependency injection
-APIKeyServiceDep = Annotated[APIKeyService, Depends(lambda db=Depends(async_get_db): get_api_key_service(db))]
+APIKeyServiceDep = Annotated[APIKeyService, Depends(_get_api_key_service)]
 
 
 def _get_tenant_id() -> int:

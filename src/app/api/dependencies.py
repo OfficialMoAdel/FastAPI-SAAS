@@ -1,5 +1,6 @@
 from typing import Annotated, Any
 
+import jwt
 from fastapi import Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -125,7 +126,12 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
             logger.error(f"Unexpected HTTPException in get_optional_user: {http_exc.detail}")
         return None
 
+    except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.DecodeError, jwt.InvalidSignatureError):
+        # JWT validation errors - return None for optional authentication
+        return None
+
     except Exception as exc:
+        # Log unexpected errors but don't break the request for optional auth
         logger.error(f"Unexpected error in get_optional_user: {exc}")
         return None
 

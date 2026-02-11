@@ -244,3 +244,10 @@ class UserPreferencesDeleteInternal(BaseModel):
     """Internal schema for deleting user preferences."""
 
     pass
+
+
+class ImageUploadResponse(BaseModel):
+    """Response schema for image upload endpoint."""
+
+    message: str
+    avatar_url: str | None = None

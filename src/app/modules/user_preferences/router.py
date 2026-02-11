@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.modules.user_preferences.schemas import (
+    ImageUploadResponse,
     UserPreferencesResponse,
     UserPreferencesUpdate,
 )
@@ -58,7 +59,7 @@ async def update_preferences(
     return UserPreferencesResponse(**result)
 
 
-@router.patch("/image", status_code=status.HTTP_200_OK)
+@router.patch("/image", response_model=ImageUploadResponse)
 async def upload_profile_image(
     file: UploadFile = File(...),
     current_user: dict[str, Any] = Depends(get_current_user),
@@ -75,7 +76,7 @@ async def upload_profile_image(
         user_id=current_user["id"],
         file=file,
     )
-    return result
+    return ImageUploadResponse(**result)
 
 
 @router.delete("/image", status_code=status.HTTP_204_NO_CONTENT)

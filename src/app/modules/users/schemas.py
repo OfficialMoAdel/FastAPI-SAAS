@@ -161,3 +161,15 @@ class UserList(BaseList[UserRead]):
     """Paginated list of users."""
 
     pass
+
+
+class UserDeleteResponse(BaseModel):
+    """Response schema for user deletion."""
+
+    message: str = "User deleted successfully"
+
+
+class UserRestoreResponse(BaseModel):
+    """Response schema for user restoration."""
+
+    message: str = "User restored successfully"

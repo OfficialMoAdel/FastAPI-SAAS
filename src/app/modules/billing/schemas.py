@@ -470,5 +470,11 @@ class PaymentError(BaseCreate):
     decline_code: str | None = None
 
 
+class PortalResponse(BaseCreate):
+    """Schema for customer portal session response."""
+
+    url: str
+
+
 # Resolve forward references
 ProductReadWithPricing.model_rebuild()

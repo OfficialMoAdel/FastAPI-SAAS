@@ -2,13 +2,14 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
+from starlette.status import HTTP_404_NOT_FOUND
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
-from .schemas import UserCreate, UserList, UserRead, UserTierUpdate, UserUpdate
+from .schemas import UserCreate, UserDeleteResponse, UserList, UserRead, UserTierUpdate, UserUpdate
 from .service import UserService, get_user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -18,7 +19,7 @@ async def _get_username_from_id(service: UserService, user_id: str) -> str:
     """Helper to get username from ID, handling both ORM objects and cached dicts."""
     user = await service.get(int(user_id))
     if not user:
-        raise ValueError("User not found")
+        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
     return user["username"] if isinstance(user, dict) else user.username
 
 
@@ -75,7 +76,7 @@ async def read_user(request: Request, user_id: str, service: UserService = Depen
         return await service.get_by_username(user_id)
 
 
-@router.patch("/{user_id}")
+@router.patch("/{user_id}", response_model=dict[str, str])
 async def patch_user(
     request: Request,
     values: UserUpdate,
@@ -96,7 +97,7 @@ async def patch_user(
     return await service.update(username, values, current_user)
 
 
-@router.put("/{user_id}")
+@router.put("/{user_id}", response_model=dict[str, str])
 async def put_user(
     request: Request,
     values: UserUpdate,
@@ -111,14 +112,14 @@ async def put_user(
     return await patch_user(request, values, user_id, current_user, service)
 
 
-@router.delete("/{user_id}")
+@router.delete("/{user_id}", response_model=UserDeleteResponse)
 async def erase_user(
     request: Request,
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
-) -> dict[str, str]:
+) -> UserDeleteResponse:
     """Soft delete a user.
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -129,10 +130,11 @@ async def erase_user(
     except (ValueError, KeyError):
         username = user_id
 
-    return await service.delete(username, current_user, token)
+    await service.delete(username, current_user, token)
+    return UserDeleteResponse()
 
 
-@router.delete("/db/{user_id}", dependencies=[Depends(get_current_superuser)])
+@router.delete("/db/{user_id}", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
     request: Request,
     user_id: str,
@@ -152,7 +154,7 @@ async def erase_db_user(
     return await service.hard_delete(username, token)
 
 
-@router.get("/{user_id}/rate-limits", dependencies=[Depends(get_current_superuser)])
+@router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
 async def read_user_rate_limits(
     request: Request, user_id: str, service: UserService = Depends(_get_user_service)
 ) -> dict[str, Any]:
@@ -169,7 +171,7 @@ async def read_user_rate_limits(
     return await service.get_with_rate_limits(username)
 
 
-@router.get("/{user_id}/tier", dependencies=[Depends(get_current_user)])
+@router.get("/{user_id}/tier", response_model=dict | None, dependencies=[Depends(get_current_user)])
 async def read_user_tier(
     request: Request, user_id: str, service: UserService = Depends(_get_user_service)
 ) -> dict | None:
@@ -186,7 +188,7 @@ async def read_user_tier(
     return await service.get_with_tier(username)
 
 
-@router.patch("/{user_id}/tier", dependencies=[Depends(get_current_superuser)])
+@router.patch("/{user_id}/tier", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
     request: Request, user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
 ) -> dict[str, str]:

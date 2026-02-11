@@ -50,6 +50,12 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
+class PasswordChangeResponse(BaseModel):
+    """Password change response schema."""
+
+    message: str
+
+
 class PasswordResetRequest(BaseModel):
     """Password reset request schema (forgot password)."""
 
@@ -87,11 +93,31 @@ class EmailVerificationResponse(BaseModel):
     message: str
 
 
+class ForgotPasswordResponse(BaseModel):
+    """Forgot password response schema."""
+
+    message: str
+
+
+class MessageResponse(BaseModel):
+    """Generic message response schema for simple success messages."""
+
+    message: str
+
+
 # Re-export all token schemas for backward compatibility
 __all__ = [
     "AuthTokenResponse",
+    "EmailVerificationResponse",
+    "ForgotPasswordResponse",
     "LoginRequest",
     "LogoutResponse",
+    "MessageResponse",
+    "PasswordChangeRequest",
+    "PasswordChangeResponse",
+    "PasswordResetConfirm",
+    "PasswordResetRequest",
+    "PasswordResetResponse",
     "RefreshTokenResponse",
     "Token",
     "TokenBlacklistBase",

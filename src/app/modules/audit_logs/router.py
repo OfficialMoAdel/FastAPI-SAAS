@@ -141,7 +141,7 @@ async def list_available_actions(
 EXPORT_MAX_RECORDS = 100_000
 
 
-@router.get("/export/count")
+@router.get("/export/count", response_model=dict)
 async def get_export_count(
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
