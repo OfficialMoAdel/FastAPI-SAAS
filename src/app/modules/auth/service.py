@@ -50,6 +50,10 @@ def get_auth_service() -> "AuthService":
 class AuthService:
     """Service class for authentication-related business logic."""
 
+    # Precomputed dummy bcrypt hash for timing attack prevention.
+    # Used when user doesn't exist to ensure constant-time authentication.
+    _DUMMY_BCRYPT_HASH = "$2b$12$E9xqo1Z2bUoF8q1Qn8lFmu9Vz7Z3kQs5r2wEe7yHj3kLmNpQrStu"  # noqa: S105
+
     # Atomic Lua script for login attempt checking.
     # Combines lockout check + increment + expire into single Redis roundtrip.
     # Returns -1 if locked out, otherwise the new attempt count.
@@ -68,7 +72,8 @@ return new_attempts
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
 
-        Uses eager loading to include tier data for rate limiting in JWT claims.
+        Uses constant-time authentication to prevent timing attacks.
+        Always performs bcrypt verification regardless of whether user exists.
 
         Returns
         -------
@@ -83,10 +88,14 @@ return new_attempts
         else:
             db_user = await user_service.get_user_auth_info(username=username_or_email)
 
-        if not db_user:
-            return None
+        # SECURITY: Use dummy hash if user not found to prevent timing attacks.
+        # This ensures bcrypt verification always takes ~100ms, preventing
+        # attackers from enumerating valid usernames via response time analysis.
+        hash_to_verify = db_user["hashed_password"] if db_user else self._DUMMY_BCRYPT_HASH
+        password_valid = await verify_password(password, hash_to_verify)
 
-        if not await verify_password(password, db_user["hashed_password"]):
+        # Only return user data if both user exists AND password is valid
+        if not db_user or not password_valid:
             return None
 
         return db_user

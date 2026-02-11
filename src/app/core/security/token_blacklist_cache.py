@@ -17,6 +17,7 @@ blacklisted tokens to bypass Redis check on workers that didn't receive the
 blacklist update. Relying on Redis + negative cache instead.
 """
 
+import asyncio
 import logging
 import time
 from datetime import UTC, datetime
@@ -41,6 +42,8 @@ from src.app.core.config import settings
 # R2 #11b: Module-level constant avoids repeated settings access per call
 NEGATIVE_CACHE_TTL: int = settings.TOKEN_NEGATIVE_CACHE_TTL
 
+# Lock for preventing concurrent Lua script reloads during NOSCRIPT errors
+_script_reload_lock = asyncio.Lock()
 
 @lru_cache(maxsize=4096)
 def _token_cache_key(token: str) -> str:
@@ -156,20 +159,37 @@ async def is_token_blacklisted(token: str) -> bool | None:
         except Exception as script_error:
             # If script not found (e.g., Redis restart), reload and retry
             if "NOSCRIPT" in str(script_error):
-                global _script_sha
-                _script_sha = None
-                script_sha = await _ensure_script_loaded()
-                if script_sha:
-                    retry_result = await redis_client.evalsha(  # type: ignore[misc]
-                        script_sha,
-                        2,
-                        negative_key,
-                        BLACKLIST_KEY,
-                        token,
-                        str(now),
-                        str(NEGATIVE_CACHE_TTL),
-                    )
-                    return bool(int(retry_result))
+                # Use lock to prevent concurrent reloads from multiple coroutines
+                async with _script_reload_lock:
+                    # Double-check pattern - another coroutine might have loaded it
+                    global _script_sha
+                    if _script_sha is not None:
+                        # Another coroutine already reloaded, retry with new SHA
+                        retry_result = await redis_client.evalsha(  # type: ignore[misc]
+                            _script_sha,
+                            2,
+                            negative_key,
+                            BLACKLIST_KEY,
+                            token,
+                            str(now),
+                            str(NEGATIVE_CACHE_TTL),
+                        )
+                        return bool(int(retry_result))
+
+                    # We need to reload
+                    _script_sha = None
+                    script_sha = await _ensure_script_loaded()
+                    if script_sha:
+                        retry_result = await redis_client.evalsha(  # type: ignore[misc]
+                            script_sha,
+                            2,
+                            negative_key,
+                            BLACKLIST_KEY,
+                            token,
+                            str(now),
+                            str(NEGATIVE_CACHE_TTL),
+                        )
+                        return bool(int(retry_result))
             raise  # Re-raise if not a NOSCRIPT error
 
     except Exception as e:

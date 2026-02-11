@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
@@ -35,6 +36,15 @@ JWT_AUDIENCE = "fastapi-saas-api"
 
 _jwt_logger = logging.getLogger(__name__)
 
+# Dedicated thread pool for bcrypt operations to prevent event loop blocking
+# bcrypt.checkpw takes ~50-100ms depending on rounds, so we use a thread pool
+# to avoid blocking the async event loop during high-concurrency authentication
+_BCRYPT_MAX_WORKERS = 10
+_bcrypt_executor = ThreadPoolExecutor(
+    max_workers=_BCRYPT_MAX_WORKERS,
+    thread_name_prefix="bcrypt_auth"
+)
+
 
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
@@ -61,19 +71,37 @@ class TokenType(str, Enum):
 
 
 async def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verify password asynchronously without blocking the event loop."""
-    correct_password: bool = await asyncio.to_thread(bcrypt.checkpw, plain_password.encode(), hashed_password.encode())
-    return correct_password
+    """Verify password asynchronously using dedicated thread pool.
+    
+    Uses the bcrypt thread pool to prevent blocking the event loop
+    during password verification. This is critical under high concurrency
+    as bcrypt operations take ~50-100ms.
+    """
+    loop = asyncio.get_event_loop()
+    result: bool = await loop.run_in_executor(
+        _bcrypt_executor,
+        bcrypt.checkpw,
+        plain_password.encode(),
+        hashed_password.encode()
+    )
+    return result
 
 
 async def get_password_hash(password: str) -> str:
-    """Hash password asynchronously without blocking the event loop."""
-    hashed_password: bytes = await asyncio.to_thread(
+    """Hash password asynchronously using dedicated thread pool.
+    
+    Uses the bcrypt thread pool to prevent blocking the event loop
+    during password hashing. The configured BCRYPT_ROUNTS determines
+    the computational cost (default: 12 rounds).
+    """
+    loop = asyncio.get_event_loop()
+    hashed: bytes = await loop.run_in_executor(
+        _bcrypt_executor,
         bcrypt.hashpw,
         password.encode(),
-        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS),
+        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
     )
-    return hashed_password.decode()
+    return hashed.decode()
 
 
 async def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
@@ -109,6 +137,15 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
 async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSession) -> TokenData | None:
     """Verify a JWT token and return TokenData if valid.
 
+    Implements a two-layer blacklist check (Redis cache + DB fallback) to prevent
+    use of revoked tokens. When Redis is unavailable, falls back to DB check.
+
+    SECURITY NOTE: When using DB fallback mode (Redis unavailable), there is a
+    theoretical race condition window between the blacklist check and token
+    validation. In production, ensure Redis high availability to minimize risk.
+    If Redis is down, the system gracefully degrades to DB checks with slightly
+    higher latency but maintains security.
+
     Parameters
     ----------
     token: str
@@ -123,16 +160,22 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     TokenData | None
         TokenData instance if the token is valid, None otherwise.
     """
-    # Check Redis cache first (O(1) lookup)
+    # Layer 1: Check Redis cache first (O(1) lookup, sub-millisecond)
     cache_result = await is_token_blacklisted(token)
     if cache_result is True:
+        # Token confirmed blacklisted in Redis
         return None
     elif cache_result is None:
-        # Redis unavailable, fall back to DB check
+        # Redis unavailable - fall back to DB check with warning
+        _jwt_logger.warning(
+            "Redis unavailable for token blacklist check, falling back to DB. "
+            "This increases latency and creates a small race condition window. "
+            "Restore Redis ASAP for optimal security."
+        )
         is_blacklisted = await crud_token_blacklist.exists(db, token=token)
         if is_blacklisted:
             return None
-    # cache_result is False means not in cache, proceed with token validation
+    # cache_result is False means token not in blacklist, proceed with validation
 
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)

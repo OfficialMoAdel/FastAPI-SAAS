@@ -7,6 +7,7 @@ import stripe
 from fastapi import HTTPException, status
 from sqlalchemy import select
 
+from src.app.core.utils.cache import client as redis_client
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
 from .crud import crud_billing_records, crud_user_subscriptions
@@ -18,6 +19,59 @@ from .schemas import (
 )
 
 logger = logging.getLogger(__name__)
+
+# Redis key prefix for webhook idempotency tracking
+# Stripe events have at-least-once delivery guarantee, so we must track processed events
+_WEBHOOK_EVENT_KEY_PREFIX = "stripe:webhook:processed:"
+_WEBHOOK_EVENT_TTL_SECONDS = 86400 * 7  # 7 days retention ( Stripe retries for 3 days)
+
+
+async def _is_event_processed(event_id: str) -> bool:
+    """Check if a webhook event has already been processed.
+    
+    Uses Redis to track processed event IDs for idempotency.
+    Stripe may deliver the same event multiple times, so we must ensure
+    each event is only processed once to prevent duplicate operations.
+    
+    Args:
+        event_id: The Stripe event ID (e.g., "evt_1234567890")
+        
+    Returns:
+        True if event was already processed, False otherwise
+    """
+    if redis_client is None:
+        # Redis not available - we can't guarantee idempotency
+        # Log warning and proceed (better to risk duplicate than lose event)
+        logger.warning("Redis unavailable for webhook idempotency check")
+        return False
+
+    try:
+        key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
+        result = await redis_client.exists(key)
+        return bool(result)
+    except Exception as e:
+        logger.error(f"Failed to check webhook event idempotency: {e}")
+        # Fail open - assume not processed to avoid losing events
+        return False
+
+
+async def _mark_event_processed(event_id: str) -> None:
+    """Mark a webhook event as processed.
+    
+    Stores the event ID in Redis with TTL to prevent duplicate processing.
+    
+    Args:
+        event_id: The Stripe event ID
+    """
+    if redis_client is None:
+        return
+
+    try:
+        key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
+        await redis_client.setex(key, _WEBHOOK_EVENT_TTL_SECONDS, "1")
+    except Exception as e:
+        logger.error(f"Failed to mark webhook event as processed: {e}")
+        # Don't raise - event was processed, marking failure is non-critical
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:
@@ -53,6 +107,11 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
 async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None) -> dict[str, str]:
     """
     Route and handle specific Stripe webhook events.
+    
+    Implements idempotency to prevent duplicate processing of the same event.
+    Stripe guarantees at-least-once delivery, so the same event may be delivered
+    multiple times. We track processed event IDs to ensure each event is handled
+    exactly once.
 
     Args:
         event: The Stripe event object
@@ -62,7 +121,13 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
         Status dict
     """
     event_type = event["type"]
-    logger.info(f"Received Stripe webhook event: {event_type}")
+    event_id = event["id"]
+    logger.info(f"Received Stripe webhook event: {event_type} (ID: {event_id})")
+
+    # IDEMPOTENCY CHECK: Ensure we don't process the same event twice
+    if await _is_event_processed(event_id):
+        logger.info(f"Event {event_id} already processed, skipping")
+        return {"status": "already_processed"}
 
     try:
         # Handlers manage their own DB sessions and RLS context
@@ -80,9 +145,16 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             await handle_charge_refunded(event)
         else:
             logger.info(f"Unhandled event type: {event_type}")
+            # Mark unhandled events as processed to avoid reprocessing
+            await _mark_event_processed(event_id)
+            return {"status": "unhandled"}
+
+        # Mark event as processed after successful handling
+        await _mark_event_processed(event_id)
 
     except Exception as e:
-        logger.error(f"Error handling webhook event {event_type}: {e}")
+        logger.error(f"Error handling webhook event {event_type} (ID: {event_id}): {e}")
+        # Do NOT mark as processed on failure - allow Stripe to retry
         raise
 
     return {"status": "success"}
