@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import event
@@ -83,15 +84,33 @@ event.listen(Session, "after_begin", restore_rls_context)
 async_session_maker = local_session
 
 
+@asynccontextmanager
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
-    async with local_session() as db:
-        try:
-            tenant = get_current_tenant()
-            if tenant:
-                # Apply RLS context for the current tenant
-                async with rls_context(db, str(tenant.id)):
-                    yield db
-            else:
+    """Get database session with RLS context and proper cleanup.
+
+    Yields a database session with RLS context automatically set for the current tenant.
+    Ensures proper rollback on exceptions and session cleanup to prevent connection pool exhaustion.
+
+    Yields:
+        AsyncSession: Database session with RLS context set
+
+    Example:
+        >>> async def get_user(db: AsyncSession = Depends(async_get_db)):
+        ...     return await crud_users.get(db, id=1)
+    """
+    db = local_session()
+    try:
+        tenant = get_current_tenant()
+        if tenant:
+            # Apply RLS context for the current tenant
+            async with rls_context(db, str(tenant.id)):
                 yield db
-        except Exception:
-            raise
+        else:
+            yield db
+    except Exception:
+        # Rollback on exception before re-raising
+        await db.rollback()
+        raise
+    finally:
+        # Always close session to prevent connection pool exhaustion
+        await db.close()
