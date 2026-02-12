@@ -1,7 +1,6 @@
-import pytest
 from unittest.mock import Mock, patch
-from sqlalchemy import text
-from src.app.core.db.rls import restore_rls_context, RLS_TENANT_VAR
+
+from src.app.core.db.rls import RLS_TENANT_VAR, restore_rls_context
 
 
 def test_restore_rls_context_with_tenant():
@@ -9,6 +8,9 @@ def test_restore_rls_context_with_tenant():
     mock_session = Mock()
     mock_transaction = Mock()
     mock_connection = Mock()
+    # Must mock dialect.name since restore_rls_context checks for "postgresql"
+    mock_connection.dialect = Mock()
+    mock_connection.dialect.name = "postgresql"
 
     # Mock tenant
     mock_tenant = Mock()
@@ -35,8 +37,28 @@ def test_restore_rls_context_without_tenant():
     mock_session = Mock()
     mock_transaction = Mock()
     mock_connection = Mock()
+    mock_connection.dialect = Mock()
+    mock_connection.dialect.name = "postgresql"
 
     with patch("src.app.core.db.rls.get_current_tenant", return_value=None):
         restore_rls_context(mock_session, mock_transaction, mock_connection)
 
+    mock_connection.execute.assert_not_called()
+
+
+def test_restore_rls_context_sqlite_skipped():
+    """Test that restore_rls_context skips execution for SQLite (used in tests)."""
+    mock_session = Mock()
+    mock_transaction = Mock()
+    mock_connection = Mock()
+    mock_connection.dialect = Mock()
+    mock_connection.dialect.name = "sqlite"
+
+    mock_tenant = Mock()
+    mock_tenant.id = 123
+
+    with patch("src.app.core.db.rls.get_current_tenant", return_value=mock_tenant):
+        restore_rls_context(mock_session, mock_transaction, mock_connection)
+
+    # Should not execute for SQLite
     mock_connection.execute.assert_not_called()
