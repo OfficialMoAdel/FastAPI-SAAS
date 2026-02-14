@@ -44,7 +44,7 @@ class NotificationService:
 
     async def get_template_content(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         template_name: str,
     ) -> tuple[str, str]:
         """Get email template content (subject and body).
@@ -111,7 +111,7 @@ class NotificationService:
 
     async def render_template(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         template_name: str,
         context: dict[str, Any],
     ) -> tuple[str, str]:
@@ -137,7 +137,7 @@ class NotificationService:
 
     async def send_email(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         to_email: str,
         template_name: str,
         context: dict[str, Any],

@@ -6,10 +6,12 @@ with tenant isolation and user ownership tracking.
 
 from __future__ import annotations
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -54,7 +56,8 @@ class File(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 
     # Tenant relationship (CASCADE delete - files deleted with tenant)
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

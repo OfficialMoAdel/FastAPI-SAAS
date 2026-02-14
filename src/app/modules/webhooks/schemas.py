@@ -36,9 +36,7 @@ class WebhookEndpointCreate(WebhookEndpointBase, BaseCreate):
     secret: str | None = Field(
         None, description="Optional custom secret for signature (auto-generated if not provided)"
     )
-    signing_secret: str | None = Field(
-        None, description="Per-endpoint signing secret (auto-generated if not provided)"
-    )
+    signing_secret: str | None = Field(None, description="Per-endpoint signing secret (auto-generated if not provided)")
 
 
 class WebhookEndpointUpdate(BaseUpdate):

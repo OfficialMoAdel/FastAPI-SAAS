@@ -1,9 +1,11 @@
 """API Key SQLAlchemy model."""
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
@@ -32,7 +34,7 @@ class APIKey(Base):
 
     # Ownership
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"))
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"))
 
     # Status and metadata
     is_active: Mapped[bool] = mapped_column(default=True)

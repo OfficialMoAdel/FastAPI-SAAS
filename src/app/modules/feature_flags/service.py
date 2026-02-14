@@ -387,11 +387,11 @@ class _LegacyFeatureFlagsService:
         """Get or create service instance with db session."""
         return FeatureFlagService(db=db)
 
-    async def get_flag(self, db: AsyncSession, name: str, tenant_id: int) -> FeatureFlag | None:
+    async def get_flag(self, db: AsyncSession, name: str, tenant_id: UUID) -> FeatureFlag | None:
         service = await self._get_service(db)
         return await service.get_flag_by_key_or_none(name)
 
-    async def is_feature_enabled(self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: int) -> bool:
+    async def is_feature_enabled(self, db: AsyncSession, flag_name: str, user_id: int | None, tenant_id: UUID) -> bool:
         service = await self._get_service(db)
         return await service.is_enabled(UUID(str(tenant_id)), flag_name, default=False)
 

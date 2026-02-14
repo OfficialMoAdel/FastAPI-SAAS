@@ -71,14 +71,16 @@ class PreferencesService:
             result.update(prefs.preferences)
 
         # Merge explicit columns
-        result.update({
-            "email_notifications_enabled": prefs.email_notifications_enabled,
-            "push_notifications_enabled": prefs.push_notifications_enabled,
-            "disabled_notification_types": prefs.disabled_notification_types,
-            "quiet_hours_enabled": prefs.quiet_hours_enabled,
-            "quiet_hours_start": prefs.quiet_hours_start,
-            "quiet_hours_end": prefs.quiet_hours_end,
-        })
+        result.update(
+            {
+                "email_notifications_enabled": prefs.email_notifications_enabled,
+                "push_notifications_enabled": prefs.push_notifications_enabled,
+                "disabled_notification_types": prefs.disabled_notification_types,
+                "quiet_hours_enabled": prefs.quiet_hours_enabled,
+                "quiet_hours_start": prefs.quiet_hours_start,
+                "quiet_hours_end": prefs.quiet_hours_end,
+            }
+        )
 
         result["updated_at"] = prefs.updated_at
 
@@ -146,14 +148,16 @@ class PreferencesService:
             result.update(prefs.preferences)
 
         # Merge explicit columns
-        result.update({
-            "email_notifications_enabled": prefs.email_notifications_enabled,
-            "push_notifications_enabled": prefs.push_notifications_enabled,
-            "disabled_notification_types": prefs.disabled_notification_types,
-            "quiet_hours_enabled": prefs.quiet_hours_enabled,
-            "quiet_hours_start": prefs.quiet_hours_start,
-            "quiet_hours_end": prefs.quiet_hours_end,
-        })
+        result.update(
+            {
+                "email_notifications_enabled": prefs.email_notifications_enabled,
+                "push_notifications_enabled": prefs.push_notifications_enabled,
+                "disabled_notification_types": prefs.disabled_notification_types,
+                "quiet_hours_enabled": prefs.quiet_hours_enabled,
+                "quiet_hours_start": prefs.quiet_hours_start,
+                "quiet_hours_end": prefs.quiet_hours_end,
+            }
+        )
 
         result["updated_at"] = prefs.updated_at
 

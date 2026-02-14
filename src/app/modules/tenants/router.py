@@ -1,6 +1,7 @@
 """Tenant API router - HTTP handlers delegating to service layer."""
 
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +67,7 @@ async def create_tenant(
 
 @router.get("/{tenant_id}", response_model=TenantResponse)
 async def get_tenant(
-    tenant_id: int,
+    tenant_id: UUID,
     service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
@@ -82,7 +83,7 @@ async def get_tenant(
 
 @router.patch("/{tenant_id}", response_model=TenantResponse)
 async def update_tenant(
-    tenant_id: int,
+    tenant_id: UUID,
     values: TenantUpdate,
     service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_user)],
@@ -100,7 +101,7 @@ async def update_tenant(
 
 @router.post("/{tenant_id}/deactivate", response_model=TenantResponse)
 async def deactivate_tenant(
-    tenant_id: int,
+    tenant_id: UUID,
     service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
@@ -114,7 +115,7 @@ async def deactivate_tenant(
 
 @router.post("/{tenant_id}/reactivate", response_model=TenantResponse)
 async def reactivate_tenant(
-    tenant_id: int,
+    tenant_id: UUID,
     service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:

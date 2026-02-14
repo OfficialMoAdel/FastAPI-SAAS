@@ -6,12 +6,13 @@ including encrypted credential storage and quota settings.
 
 from __future__ import annotations
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from enum import Enum
 from typing import TYPE_CHECKING
 
 from sqlalchemy import BigInteger, DateTime, ForeignKey, Integer, LargeBinary, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -54,7 +55,8 @@ class StorageSettings(Base):
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 
     # Tenant relationship (one-to-one)
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         unique=True,
         nullable=False,

@@ -1,5 +1,6 @@
 import logging
 from typing import Any
+from uuid import UUID
 
 from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -32,7 +33,7 @@ class SSOSettingsService:
 
     @audit_action("sso_settings.create", "sso_settings")
     async def create_settings(
-        self, db: AsyncSession, settings: SSOSettingsCreate, user_id: int, tenant_id: int | None = None
+        self, db: AsyncSession, settings: SSOSettingsCreate, user_id: int, tenant_id: UUID | None = None
     ) -> SSOSettingsRead:
         """Create new SSO provider settings.
 
@@ -125,7 +126,7 @@ class SSOSettingsService:
 
     @audit_action("sso_settings.update", "sso_settings")
     async def update_settings(
-        self, db: AsyncSession, provider: str, settings: SSOSettingsUpdate, user_id: int, tenant_id: int | None = None
+        self, db: AsyncSession, provider: str, settings: SSOSettingsUpdate, user_id: int, tenant_id: UUID | None = None
     ) -> SSOSettingsRead:
         """Update SSO settings."""
         current = await crud_sso_settings.get(db=db, provider=provider)
@@ -162,7 +163,7 @@ class SSOSettingsService:
 
     @audit_action("sso_settings.delete", "sso_settings")
     async def delete_settings(
-        self, db: AsyncSession, provider: str, user_id: int, tenant_id: int | None = None
+        self, db: AsyncSession, provider: str, user_id: int, tenant_id: UUID | None = None
     ) -> None:
         """Delete SSO settings."""
         # Determine tenant_id if not passed (for audit log)

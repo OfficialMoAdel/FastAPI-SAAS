@@ -106,6 +106,5 @@ def run_migrations_online() -> None:
 if context.is_offline_mode():
     run_migrations_offline()
 else:
-    import asyncio
-
+    # asyncio already imported at top of file
     asyncio.run(run_migrations_online())  # type: ignore[func-returns-value]

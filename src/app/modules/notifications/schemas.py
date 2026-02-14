@@ -26,13 +26,13 @@ class NotificationCreate(NotificationBase, BaseCreate):
     """Schema for creating notification."""
 
     tenant_id: UUID
-    user_id: UUID | None = None
+    user_id: int | None = None
 
 
 class NotificationRead(BaseReadUUID):
     """Schema for notification response."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int | None
     template_name: str
     to_email: str

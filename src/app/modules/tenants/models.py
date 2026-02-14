@@ -1,9 +1,11 @@
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy import BigInteger, Boolean, DateTime, Integer, String, text
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from uuid6 import uuid7
 
 from ...core.db.database import Base
 
@@ -29,24 +31,28 @@ class Tenant(Base):
 
     __tablename__ = "tenants"
 
-    id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        primary_key=True,
+        insert_default=uuid7,
+        server_default=text("gen_random_uuid()"),
+        init=False,
+    )
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     slug: Mapped[str] = mapped_column(String(50), unique=True, index=True, nullable=False)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     feature_flags: Mapped[dict] = mapped_column(JSONB, nullable=False, default_factory=dict, server_default="{}")
 
     # Storage quota counters (denormalized for O(1) quota checks)
-    storage_usage_bytes: Mapped[int] = mapped_column(
-        BigInteger, nullable=False, default=0, server_default="0"
-    )
-    file_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, default=0, server_default="0"
-    )
+    storage_usage_bytes: Mapped[int] = mapped_column(BigInteger, nullable=False, default=0, server_default="0")
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0, server_default="0")
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default_factory=lambda: datetime.now(UTC), nullable=False
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False)

@@ -17,7 +17,9 @@ class Tier(Base):
     name: Mapped[str] = mapped_column(String, nullable=False, unique=True)
 
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, onupdate=lambda: datetime.now(UTC)
+    )
 
     rate_limits: Mapped[list["RateLimit"]] = relationship(
         "RateLimit",

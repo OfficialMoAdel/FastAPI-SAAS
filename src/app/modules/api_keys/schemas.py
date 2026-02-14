@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -28,7 +29,7 @@ class APIKeyRead(BaseRead):
     name: str
     key_prefix: str
     user_id: int
-    tenant_id: int
+    tenant_id: UUID
     is_active: bool
     scopes: list[str] | None = None
     expires_at: datetime | None = None

@@ -4,11 +4,12 @@ Models for Stripe integration, subscription management, products, and billing re
 All models follow row-level multi-tenancy via tenant_id foreign key.
 """
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, Text
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -27,7 +28,9 @@ class StripeSettings(Base):
     __tablename__ = "stripe_settings"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, unique=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, unique=True, nullable=False
+    )
 
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     stripe_account_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
@@ -40,7 +43,9 @@ class StripeSettings(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="stripe_settings", init=False)
@@ -52,7 +57,9 @@ class SubscriptionPlan(Base):
     __tablename__ = "subscription_plans"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     price_monthly_cents: Mapped[int] = mapped_column(Integer, nullable=False)
@@ -74,7 +81,9 @@ class SubscriptionPlan(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False)
@@ -87,7 +96,9 @@ class Product(Base):
     __tablename__ = "products"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
 
     name: Mapped[str] = mapped_column(String(100), nullable=False)
     description: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
@@ -99,7 +110,9 @@ class Product(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="products", init=False)
@@ -132,7 +145,9 @@ class Pricing(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     product: Mapped["Product"] = relationship(back_populates="pricing_tiers", init=False)
@@ -153,7 +168,9 @@ class UserSubscription(Base, kw_only=True):
     )  # type: ignore[assignment]
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, nullable=False)
     subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True, nullable=False)
 
@@ -175,7 +192,9 @@ class UserSubscription(Base, kw_only=True):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(init=False)
@@ -190,7 +209,9 @@ class BillingRecord(Base):
     __tablename__ = "billing_records"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, nullable=False)
 
     # Required fields (no defaults) must come first

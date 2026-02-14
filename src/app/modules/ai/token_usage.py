@@ -10,6 +10,7 @@ Tracks and logs token usage for AI operations including:
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,9 +48,9 @@ class AITokenUsageService:
         model: str,
         prompt_tokens: int,
         completion_tokens: int,
-        user_id: str | None = None,
-        tenant_id: str | None = None,
-        session_id: str | None = None,
+        user_id: int | None = None,
+        tenant_id: UUID | None = None,
+        session_id: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Log token usage for AI operations.
@@ -123,9 +124,9 @@ class AITokenUsageService:
         model: str,
         prompt_tokens: int,
         completion_tokens: int,
-        user_id: str | None = None,
-        tenant_id: str | None = None,
-        session_id: str | None = None,
+        user_id: int | None = None,
+        tenant_id: UUID | None = None,
+        session_id: int | None = None,
         metadata: dict[str, Any] | None = None,
     ) -> None:
         """Save token usage to database for analytics.
@@ -171,9 +172,9 @@ def log_token_usage(
     model: str,
     prompt_tokens: int,
     completion_tokens: int,
-    user_id: str | None = None,
-    tenant_id: str | None = None,
-    session_id: str | None = None,
+    user_id: int | None = None,
+    tenant_id: UUID | None = None,
+    session_id: int | None = None,
     metadata: dict[str, Any] | None = None,
 ) -> None:
     """Convenience function to log token usage.

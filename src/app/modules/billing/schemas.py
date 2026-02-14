@@ -6,6 +6,7 @@ products, pricing, user subscriptions, and billing records.
 
 from datetime import datetime
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -28,7 +29,7 @@ class StripeSettingsCreate(BaseCreate):
 class StripeSettingsCreateInternal(StripeSettingsCreate):
     """Internal schema for creating Stripe settings with tenant_id and encrypted fields."""
 
-    tenant_id: int
+    tenant_id: UUID
     encrypted_secret_key: bytes | None = None
     updated_at: datetime | None = None
 
@@ -81,7 +82,7 @@ class SubscriptionPlanCreate(BaseCreate):
 class SubscriptionPlanCreateInternal(SubscriptionPlanCreate):
     """Internal schema for creating a subscription plan with tenant_id."""
 
-    tenant_id: int
+    tenant_id: UUID
 
 
 class SubscriptionPlanUpdate(BaseUpdate):
@@ -103,7 +104,7 @@ class SubscriptionPlanUpdate(BaseUpdate):
 class SubscriptionPlanRead(BaseRead):
     """Schema for reading a subscription plan."""
 
-    tenant_id: int
+    tenant_id: UUID
     name: str
     description: str | None
     stripe_price_id_monthly: str | None
@@ -134,7 +135,7 @@ class ProductCreate(BaseCreate):
 class ProductCreateInternal(ProductCreate):
     """Internal schema for creating a product with tenant_id."""
 
-    tenant_id: int
+    tenant_id: UUID
 
 
 class ProductUpdate(BaseUpdate):
@@ -149,7 +150,7 @@ class ProductUpdate(BaseUpdate):
 class ProductRead(BaseRead):
     """Schema for reading a product."""
 
-    tenant_id: int
+    tenant_id: UUID
     name: str
     description: str | None
     stripe_product_id: str | None
@@ -238,7 +239,7 @@ class UserSubscriptionCreate(BaseCreate):
 class UserSubscriptionCreateInternal(UserSubscriptionCreate):
     """Internal schema for creating a user subscription with tenant_id."""
 
-    tenant_id: int
+    tenant_id: UUID
 
 
 class UserSubscriptionUpdate(BaseUpdate):
@@ -255,7 +256,7 @@ class UserSubscriptionUpdate(BaseUpdate):
 class UserSubscriptionRead(BaseRead):
     """Schema for reading a user subscription."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int
     subscription_plan_id: int
     stripe_subscription_id: str | None
@@ -297,13 +298,13 @@ class BillingRecordCreate(BaseCreate):
 class BillingRecordCreateInternal(BillingRecordCreate):
     """Internal schema for creating a billing record with tenant_id."""
 
-    tenant_id: int
+    tenant_id: UUID
 
 
 class BillingRecordRead(BaseRead):
     """Schema for reading a billing record."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int
     user_subscription_id: int | None
     stripe_payment_intent_id: str | None

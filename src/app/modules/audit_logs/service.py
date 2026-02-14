@@ -38,7 +38,7 @@ class AuditLogService:
 
     async def create_log(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         action: str,
         entity_type: str | None = None,
         entity_id: str | None = None,
@@ -50,7 +50,7 @@ class AuditLogService:
         """Create an audit log entry.
 
         Args:
-            tenant_id: Tenant ID (integer FK)
+            tenant_id: Tenant ID (UUID FK)
             action: Action performed (e.g., "user.created", "post.updated")
             entity_type: Type of entity affected (e.g., "user", "post")
             entity_id: ID of the affected entity
@@ -174,7 +174,7 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=int(log_data["tenant_id"]),
+                tenant_id=UUID(log_data["tenant_id"]),
                 action=log_data["action"],
                 entity_type=log_data.get("entity_type"),
                 entity_id=log_data.get("entity_id"),
@@ -194,7 +194,7 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         try:
             service = AuditLogService(db)
             await service.create_log(
-                tenant_id=int(log_data["tenant_id"]),
+                tenant_id=UUID(log_data["tenant_id"]),
                 action=log_data["action"],
                 entity_type=log_data.get("entity_type"),
                 entity_id=log_data.get("entity_id"),
@@ -247,7 +247,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
         try:
             data = orjson.loads(raw_data)
             log_entry = AuditLog(
-                tenant_id=int(data["tenant_id"]),
+                tenant_id=UUID(data["tenant_id"]),
                 action=data["action"],
                 entity_type=data.get("entity_type"),
                 entity_id=data.get("entity_id"),

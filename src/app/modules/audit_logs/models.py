@@ -1,5 +1,6 @@
 """Audit log model for tracking system actions and changes."""
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 from uuid import UUID
@@ -49,8 +50,8 @@ class AuditLog(Base):
     )
 
     # Foreign Keys (required fields without defaults)
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

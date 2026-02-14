@@ -148,8 +148,8 @@ class FeatureFlagOverride(Base):
     )
 
     # Foreign Keys
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

@@ -8,6 +8,7 @@ Performance Optimization (R2-HYBRID MED-2):
 
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Any
+from uuid import UUID
 
 from cachetools import TTLCache
 from fastapi import Depends
@@ -46,7 +47,7 @@ class RoleService:
     def __init__(
         self,
         db: AsyncSession,
-        tenant_id: int,
+        tenant_id: UUID,
         redis_client: "Redis | None" = None,
     ) -> None:
         self.db = db

@@ -15,6 +15,7 @@ Memory Optimization (FEATURE_CONTEXTVAR_OPTIMIZATION):
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+from uuid import UUID
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
@@ -31,7 +32,7 @@ class TenantContext:
     Memory savings: ~90% compared to storing full ORM model.
     """
 
-    tenant_id: int
+    tenant_id: UUID
     tenant_slug: str
     tenant_name: str
     is_active: bool
@@ -51,7 +52,7 @@ class TenantContext:
         )
 
     @property
-    def id(self) -> int:
+    def id(self) -> UUID:
         """Alias for tenant_id for backward compatibility."""
         return self.tenant_id
 

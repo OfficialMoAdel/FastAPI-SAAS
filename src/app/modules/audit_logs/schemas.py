@@ -2,6 +2,7 @@
 
 from datetime import datetime
 from typing import Any
+from uuid import UUID
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -24,7 +25,7 @@ class AuditLogBase(BaseModel):
 class AuditLogCreate(AuditLogBase, BaseCreate):
     """Schema for creating audit log."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int | None = None
     ip_address: str | None = None
     user_agent: str | None = None
@@ -33,7 +34,7 @@ class AuditLogCreate(AuditLogBase, BaseCreate):
 class AuditLogRead(BaseReadUUID):
     """Schema for audit log response."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int | None
     action: str
     entity_type: str | None
@@ -92,7 +93,7 @@ class AuditLogFilter(BaseModel):
 class AuditLogEventData(BaseModel):
     """Schema for validating audit log event queue data."""
 
-    tenant_id: str
+    tenant_id: UUID
     user_id: str | None = None
     action: str
     entity_type: str | None = None
@@ -101,17 +102,11 @@ class AuditLogEventData(BaseModel):
     ip_address: str | None = None
     user_agent: str | None = None
 
-    @field_validator("tenant_id", "user_id", mode="before")
+    @field_validator("tenant_id", mode="before")
     @classmethod
-    def validate_integer_ids(cls, v: Any) -> str | None:
-        if v is None:
-            return None
-        if isinstance(v, int):
-            return str(v)
+    def validate_tenant_id(cls, v: Any) -> UUID:
+        if isinstance(v, UUID):
+            return v
         if isinstance(v, str):
-            try:
-                int(v)
-                return v
-            except ValueError:
-                raise ValueError(f"Invalid integer ID format: {v}")
-        raise ValueError(f"ID must be int or str, got {type(v).__name__}")
+            return UUID(v)
+        raise ValueError(f"tenant_id must be UUID or str, got {type(v).__name__}")

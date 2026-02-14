@@ -553,7 +553,7 @@ class UserService(BaseService[User]):
         """
         # Eager load User + Tier + RateLimits in single query
         # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
-        stmt = select(User).options(joinedload(User.tier).joinedload(Tier.rate_limits))
+        stmt = select(User).options(joinedload(User.tier).joinedload(Tier.rate_limits)).where(User.username == username)
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 

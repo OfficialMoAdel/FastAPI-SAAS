@@ -45,7 +45,9 @@ class User(Base):
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
 
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
 
     name: Mapped[str] = mapped_column(String(30))
     username: Mapped[str] = mapped_column(String(20), index=True)
@@ -55,7 +57,9 @@ class User(Base):
     profile_image_url: Mapped[str] = mapped_column(String, default="https://profileimageurl.com")
     uuid: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), default_factory=uuid7, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default_factory=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, onupdate=lambda: datetime.now(UTC)
+    )
     deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
     is_superuser: Mapped[bool] = mapped_column(default=False)

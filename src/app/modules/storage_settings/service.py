@@ -7,6 +7,7 @@ including credential encryption, validation, and provider factory.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+from uuid import UUID
 
 import structlog
 from fastapi import Depends
@@ -62,7 +63,7 @@ class StorageSettingsService:
         """
         self.db = db
 
-    async def get_settings(self, tenant_id: int) -> StorageSettings | None:
+    async def get_settings(self, tenant_id: UUID) -> StorageSettings | None:
         """Get storage settings for a tenant.
 
         Args:
@@ -74,7 +75,7 @@ class StorageSettingsService:
         result = await self.db.execute(select(StorageSettings).where(StorageSettings.tenant_id == tenant_id))
         return result.scalar_one_or_none()
 
-    async def get_settings_or_raise(self, tenant_id: int) -> StorageSettings:
+    async def get_settings_or_raise(self, tenant_id: UUID) -> StorageSettings:
         """Get storage settings or raise if not configured.
 
         Args:
@@ -93,7 +94,7 @@ class StorageSettingsService:
 
     async def create_settings(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         data: StorageSettingsCreate,
     ) -> StorageSettings:
         """Create storage settings for a tenant.
@@ -150,7 +151,7 @@ class StorageSettingsService:
 
     async def update_settings(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         data: StorageSettingsUpdate,
     ) -> StorageSettings:
         """Update storage settings for a tenant.
@@ -216,7 +217,7 @@ class StorageSettingsService:
         )
         return settings
 
-    async def get_provider(self, tenant_id: int) -> StorageProvider:
+    async def get_provider(self, tenant_id: UUID) -> StorageProvider:
         """Get a configured storage provider for a tenant.
 
         Args:

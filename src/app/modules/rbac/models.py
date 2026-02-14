@@ -1,6 +1,8 @@
+import uuid as uuid_pkg
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
@@ -21,7 +23,9 @@ class Role(Base):
     __tablename__ = "roles"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), nullable=False, index=True)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=False, index=True
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str | None] = mapped_column(String, nullable=True)
     is_system: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -48,7 +52,9 @@ class UserRole(Base):
     __tablename__ = "user_roles"
 
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), primary_key=True)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), primary_key=True, index=True)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), primary_key=True, index=True
+    )
     role_id: Mapped[int] = mapped_column(ForeignKey("roles.id"), primary_key=True, index=True)
 
     # Composite index for efficient permission lookups by tenant+user

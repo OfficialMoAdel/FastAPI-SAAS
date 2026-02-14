@@ -351,10 +351,7 @@ async def get_signing_secret(
     )
 
     if not result["signing_secret"]:
-        raise HTTPException(
-            status_code=404,
-            detail="No signing secret found for this endpoint"
-        )
+        raise HTTPException(status_code=404, detail="No signing secret found for this endpoint")
 
     return SigningSecretViewResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],

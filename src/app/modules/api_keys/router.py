@@ -1,6 +1,7 @@
 """API Keys router - HTTP endpoints for API key management."""
 
 from typing import Annotated
+from uuid import UUID
 
 from fastapi import APIRouter, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -19,15 +20,17 @@ from .service import APIKeyService, get_api_key_service
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
+
 async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> APIKeyService:
     """Dependency for APIKeyService injection."""
     return get_api_key_service(db)
+
 
 # Type alias for dependency injection
 APIKeyServiceDep = Annotated[APIKeyService, Depends(_get_api_key_service)]
 
 
-def _get_tenant_id() -> int:
+def _get_tenant_id() -> UUID:
     """Get current tenant ID from context."""
     context = get_tenant_context()
     if context is None:
@@ -41,7 +44,7 @@ def _get_tenant_id() -> int:
 async def create_api_key(
     body: APIKeyCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[int, Depends(_get_tenant_id)],
+    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
 ) -> APIKeyResponse:
     """Create a new API key.
@@ -59,7 +62,7 @@ async def create_api_key(
 @router.get("", response_model=APIKeyList)
 async def list_api_keys(
     current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[int, Depends(_get_tenant_id)],
+    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
     page: int = 1,
     per_page: int = 10,
@@ -90,7 +93,7 @@ async def list_api_keys(
 async def revoke_api_key(
     key_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[int, Depends(_get_tenant_id)],
+    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
 ) -> APIKeyRevokeResponse:
     """Revoke an API key.
@@ -109,7 +112,7 @@ async def revoke_api_key(
 async def rotate_api_key(
     key_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
-    tenant_id: Annotated[int, Depends(_get_tenant_id)],
+    tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
     grace_period_days: int = 7,
 ) -> APIKeyRotateResponse:

@@ -8,6 +8,8 @@ T135: Unified AI Error Exceptions
 
 from __future__ import annotations
 
+from uuid import UUID
+
 from .providers import AIProviderError
 
 
@@ -231,7 +233,7 @@ class SessionLimitExceededError(Exception):
 
     def __init__(
         self,
-        tenant_id: int,
+        tenant_id: int | UUID,
         limit: int = 100,
         current_count: int | None = None,
     ):

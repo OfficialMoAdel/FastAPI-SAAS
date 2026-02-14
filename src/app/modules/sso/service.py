@@ -1,5 +1,6 @@
 from datetime import timedelta
 from typing import Any, cast
+from uuid import UUID
 
 from fastapi import Depends, Request
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -403,7 +404,7 @@ class SSOService:
         db: AsyncSession,
         user_id: int,
         provider: str,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
     ) -> None:
         """Disconnect SSO provider from user account.
 
@@ -443,7 +444,7 @@ class SSOService:
         self,
         db: AsyncSession,
         user_id: int,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
     ) -> bool:
         """Check if user can disconnect an SSO provider.
 

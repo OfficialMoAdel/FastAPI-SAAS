@@ -9,6 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 from enum import Enum
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -132,7 +133,7 @@ class StorageSettingsRead(BaseRead, StorageSettingsBase):
     Credentials are masked for security.
     """
 
-    tenant_id: int
+    tenant_id: UUID
     bucket_name: str | None = None
     region: str | None = None
 

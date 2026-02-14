@@ -5,6 +5,7 @@ import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,7 +67,7 @@ class APIKeyService(BaseService[APIKey]):
         self,
         api_key_data: APIKeyCreate,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> APIKeyResponse:
         """Create a new API key for a user.
 
@@ -141,7 +142,7 @@ class APIKeyService(BaseService[APIKey]):
     async def list_api_keys(
         self,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
         page: int = 1,
         items_per_page: int = 10,
     ) -> dict[str, Any]:
@@ -177,7 +178,7 @@ class APIKeyService(BaseService[APIKey]):
         self,
         key_id: int,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> dict[str, str]:
         """Revoke an API key.
 
@@ -247,8 +248,7 @@ class APIKeyService(BaseService[APIKey]):
         )
 
         logger.info(
-            f"API key revoked | user={user_id} | tenant={tenant_id} | "
-            f"key_id={key_id} | key_name={api_key.name}"
+            f"API key revoked | user={user_id} | tenant={tenant_id} | key_id={key_id} | key_name={api_key.name}"
         )
 
         return {"message": "API key revoked successfully"}
@@ -388,7 +388,7 @@ class APIKeyService(BaseService[APIKey]):
         self,
         key_id: int,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
         grace_period_days: int = 7,
     ) -> APIKeyResponse:
         """Rotate an API key with grace period for zero-downtime rotation.

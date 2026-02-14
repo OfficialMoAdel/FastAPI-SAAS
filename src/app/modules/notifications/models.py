@@ -1,6 +1,7 @@
 """Notification models for email delivery tracking and template management."""
 
 import enum
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Optional
 
@@ -14,6 +15,7 @@ from sqlalchemy import (
     Text,
     UniqueConstraint,
 )
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from ...core.db.database import Base
@@ -65,8 +67,8 @@ class Notification(Base, UUIDMixin):
     )
 
     # Foreign Keys
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -186,8 +188,8 @@ class EmailTemplateOverride(Base, UUIDMixin):
     )
 
     # Foreign Keys
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

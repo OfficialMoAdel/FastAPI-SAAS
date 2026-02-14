@@ -3,6 +3,7 @@
 import asyncio
 from datetime import timedelta
 from typing import Any
+from uuid import UUID
 
 from fastapi import Request, Response
 from jwt.exceptions import PyJWTError as JWTError
@@ -105,7 +106,7 @@ return new_attempts
         request: Request,
         username: str,
         success: bool,
-        tenant_id: int | None = None,
+        tenant_id: int | UUID | None = None,
         user_id: int | None = None,
         reason: str | None = None,
     ) -> None:

@@ -207,6 +207,18 @@ async def bypass_rls(
             extra={"security_event": "rls_bypass"},
         )
 
+        # SECURITY TODO: Implement audit logging for RLS bypass
+        # When RLS is bypassed for admin operations, an audit log entry must be
+        # created to track who accessed what data and why. This is critical for:
+        # 1. Compliance (GDPR, SOC2, etc.)
+        # 2. Security incident investigation
+        # 3. Data access accountability
+        #
+        # Implementation approach:
+        # - Use a separate transaction to ensure audit log is written even if
+        #   the main operation fails or rolls back
+        # - Log: timestamp, user_id, reason, tables accessed, operation type
+        # - Consider adding this to the existing AuditLogService
         # TODO: Write to audit_logs table
         # This should be done in a separate transaction to ensure it's logged
         # even if the main operation fails

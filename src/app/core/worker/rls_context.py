@@ -8,6 +8,7 @@ Provides context managers for setting RLS context in background jobs:
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -20,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def job_tenant_context(
-    tenant_id: int | str,
+    tenant_id: int | str | UUID,
     user_id: int | str | None = None,
 ) -> AsyncGenerator[AsyncSession, None]:
     """Set RLS context for background job execution.
@@ -112,6 +113,14 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                 reason,
             )
 
+            # SECURITY TODO: Implement audit logging for job RLS bypass
+            # Background jobs that bypass RLS must be logged for security and compliance.
+            # This is especially important because:
+            # 1. Jobs run with elevated privileges
+            # 2. Jobs may access multiple tenants' data
+            # 3. Failed jobs should still leave an audit trail
+            #
+            # Log details should include: job_id, function_name, reason, timestamp
             # TODO: Write to audit_logs table in separate transaction
             # This should be done to ensure bypass is logged even if job fails
 

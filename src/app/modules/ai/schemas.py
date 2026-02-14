@@ -5,6 +5,7 @@ and user AI settings/preferences.
 """
 
 from typing import Annotated, Literal
+from uuid import UUID
 
 from pydantic import Field
 
@@ -41,7 +42,7 @@ class ChatSessionUpdate(BaseUpdate):
 class ChatSessionRead(BaseRead):
     """Schema for reading a chat session."""
 
-    tenant_id: int
+    tenant_id: UUID
     user_id: int
     title: str | None
     model: str

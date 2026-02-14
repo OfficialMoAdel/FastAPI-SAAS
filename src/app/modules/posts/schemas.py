@@ -1,5 +1,6 @@
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -41,7 +42,7 @@ class PostCreate(PostBase, BaseCreate):
 
 class PostCreateInternal(PostCreate):
     created_by_user_id: int
-    tenant_id: int | None = None
+    tenant_id: UUID | None = None
 
 
 class PostUpdate(BaseUpdate):

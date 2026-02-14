@@ -2,6 +2,7 @@ import asyncio
 import logging
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
+from uuid import UUID
 
 import stripe
 from fastapi import HTTPException, status
@@ -155,14 +156,15 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
     # Extract metadata
     metadata = session.get("metadata", {})
-    tenant_id = int(metadata.get("tenant_id", 0))
+    tenant_id_str = metadata.get("tenant_id", "0")
+    tenant_id = UUID(tenant_id_str) if tenant_id_str and tenant_id_str != "0" else None
     user_id = int(metadata.get("user_id", 0))
     plan_id = int(metadata.get("plan_id", 0))
 
     if not all([tenant_id, user_id, plan_id]):
         logger.error(
             "Missing metadata in checkout session: tenant_id=%s, user_id=%s, plan_id=%s",
-            tenant_id,
+            str(tenant_id) if tenant_id else None,
             user_id,
             plan_id,
         )
@@ -189,7 +191,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
             # Create user subscription with tenant_id in the object
             subscription_data = UserSubscriptionCreateInternal(
-                tenant_id=tenant_id,
+                tenant_id=tenant_id,  # type: ignore[arg-type]
                 user_id=user_id,
                 subscription_plan_id=plan_id,
                 stripe_subscription_id=stripe_subscription_id,
@@ -200,7 +202,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                 cancel_at_period_end=False,
             )
 
-            async with job_tenant_context(tenant_id) as db:
+            async with job_tenant_context(tenant_id) as db:  # type: ignore[arg-type]
                 await crud_user_subscriptions.create(
                     db=db,
                     object=subscription_data,

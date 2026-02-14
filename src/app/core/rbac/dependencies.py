@@ -13,6 +13,7 @@ Bitmask Strategy:
 
 from collections.abc import AsyncGenerator, Callable
 from typing import Any
+from uuid import UUID
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
@@ -266,7 +267,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     return _check_permission
 
 
-async def invalidate_user_permissions_cache(user_id: int, tenant_id: int) -> None:
+async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID) -> None:
     """
     Invalidate the cached permissions for a user in a specific tenant.
     Clears both Set-based cache and bitmask cache for backward compatibility.

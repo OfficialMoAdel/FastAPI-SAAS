@@ -3,6 +3,7 @@
 import logging
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -98,7 +99,7 @@ class TenantService(BaseService[Tenant]):
 
         return result
 
-    async def get_tenant(self, tenant_id: int) -> dict[str, Any]:
+    async def get_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Get a tenant by ID.
 
         Parameters
@@ -178,7 +179,7 @@ class TenantService(BaseService[Tenant]):
 
     async def update_tenant(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         values: TenantUpdate,
     ) -> dict[str, Any]:
         """Update a tenant.
@@ -226,7 +227,7 @@ class TenantService(BaseService[Tenant]):
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         return _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
-    async def deactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
+    async def deactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Deactivate a tenant (soft delete).
 
         Optimized: Uses session refresh instead of second DB roundtrip.
@@ -262,7 +263,7 @@ class TenantService(BaseService[Tenant]):
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
         return _tenant_to_dict(tenant)  # type: ignore[arg-type]
 
-    async def reactivate_tenant(self, tenant_id: int) -> dict[str, Any]:
+    async def reactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
 
         Optimized: Uses session refresh instead of second DB roundtrip.

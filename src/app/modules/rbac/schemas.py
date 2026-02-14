@@ -1,3 +1,5 @@
+from uuid import UUID
+
 from pydantic import BaseModel
 
 from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
@@ -69,7 +71,7 @@ class UserRoleRead(BaseRead):
 
     user_id: int
     role_id: int
-    tenant_id: int
+    tenant_id: UUID
 
 
 # Backward compatibility alias

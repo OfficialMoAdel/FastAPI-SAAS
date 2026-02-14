@@ -4,11 +4,12 @@ Links users to SSO providers with tenant isolation per Constitution VII.
 Stores optional encrypted access/refresh tokens for token refresh scenarios.
 """
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 from sqlalchemy import DateTime, ForeignKey, String, UniqueConstraint, text
-from sqlalchemy.dialects.postgresql import BYTEA
+from sqlalchemy.dialects.postgresql import BYTEA, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -49,7 +50,8 @@ class UserSSOConnection(Base):
         nullable=False,
         index=True,
     )
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
         ForeignKey("tenants.id"),
         nullable=False,
         index=True,

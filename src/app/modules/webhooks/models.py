@@ -11,7 +11,6 @@ from sqlalchemy import (
     Enum,
     ForeignKey,
     Index,
-    Integer,
     SmallInteger,
     String,
     Text,
@@ -58,8 +57,8 @@ class WebhookEndpoint(Base, UUIDMixin):
     __tablename__ = "webhook_endpoints"
 
     # Foreign Keys
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
@@ -182,8 +181,8 @@ class WebhookDelivery(Base, UUIDMixin):
         nullable=False,
         index=True,
     )
-    tenant_id: Mapped[int] = mapped_column(
-        Integer,
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        PgUUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
         index=True,

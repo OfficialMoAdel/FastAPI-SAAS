@@ -3,6 +3,7 @@
 import re
 from datetime import datetime
 from typing import Annotated
+from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
@@ -49,7 +50,7 @@ class UserCreateInternal(UserBase):
     """Internal schema for creating users with hashed password."""
 
     hashed_password: str
-    tenant_id: int | None = None
+    tenant_id: UUID | None = None
 
 
 class UserUpdateInternal(BaseUpdate):
@@ -85,7 +86,7 @@ class UserRead(BaseRead):
     email: EmailStr
     profile_image_url: str
     tier_id: int | None
-    tenant_id: int
+    tenant_id: UUID
 
 
 class UserCreate(UserBase, BaseCreate):

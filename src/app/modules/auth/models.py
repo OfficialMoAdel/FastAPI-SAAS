@@ -93,7 +93,7 @@ class PasswordResetToken(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<EmailVerificationToken(id={self.id}, user_id={self.user_id})>"
+        return f"<PasswordResetToken(id={self.id}, user_id={self.user_id})>"
 
     @property
     def is_expired(self) -> bool:

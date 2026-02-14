@@ -63,6 +63,12 @@ class DashboardService:
         # P2-3: Combine queries to reduce roundtrips (1 query instead of 4)
         # We use scalar_subquery() to select multiple counts in one go
 
+        # NOTE: Using deleted_at.is_(None) to check for non-deleted users
+        # This is inconsistent with most other queries that use is_deleted=False
+        # Once the User model is refactored to use only deleted_at (see TODO in
+        # src/app/modules/users/models.py), all queries should be updated to
+        # use the same pattern for checking soft-deleted records.
+
         # 1. Total users
         total_sub = select(func.count(User.id)).where(User.deleted_at.is_(None)).scalar_subquery()
 

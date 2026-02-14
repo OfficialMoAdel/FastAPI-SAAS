@@ -1,4 +1,5 @@
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -30,7 +31,7 @@ class CRUDUserSSOConnection(
         provider: str | None = None,
         provider_user_id: str | None = None,
         user_id: int | None = None,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
     ) -> UserSSOConnection | None:
         """Get SSO connection by various criteria."""
         query = select(self.model)
@@ -54,7 +55,7 @@ class CRUDUserSSOConnection(
         db: AsyncSession,
         user_id: int,
         provider: str,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
     ) -> bool:
         """Check if SSO connection exists for user and provider."""
         query = (
@@ -76,7 +77,7 @@ class CRUDUserSSOConnection(
         self,
         db: AsyncSession,
         user_id: int | None = None,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
         **kwargs: Any,
     ) -> int:
         """Count SSO connections for a user."""
@@ -99,7 +100,7 @@ class CRUDUserSSOConnection(
         id: int | None = None,
         user_id: int | None = None,
         provider: str | None = None,
-        tenant_id: int | None = None,
+        tenant_id: UUID | None = None,
     ) -> None:
         """Delete SSO connection by ID or by user/provider combo."""
         if id is not None:

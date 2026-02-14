@@ -1,5 +1,6 @@
 from datetime import datetime
 from enum import Enum
+from uuid import UUID
 
 from pydantic import BaseModel
 
@@ -28,7 +29,7 @@ class UserSSOConnectionCreate(BaseCreate):
     provider_email: str | None = None
     token_expires_at: datetime | None = None
     user_id: int
-    tenant_id: int
+    tenant_id: UUID
     access_token: bytes | None = None
     refresh_token: bytes | None = None
 
@@ -53,7 +54,7 @@ class UserSSOConnectionRead(BaseRead):
     provider_email: str | None = None
     token_expires_at: datetime | None = None
     user_id: int
-    tenant_id: int
+    tenant_id: UUID
 
 
 class SSOProviderRead(BaseModel):

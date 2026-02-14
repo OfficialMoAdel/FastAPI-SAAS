@@ -43,7 +43,7 @@ class WebhookService:
 
     async def create_endpoint(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         url: str,
         event_type: str,
         secret: str | None = None,
@@ -76,7 +76,7 @@ class WebhookService:
         logger.info(f"Created webhook endpoint for tenant {tenant_id}: {event_type} -> {url}")
         return endpoint
 
-    async def get_active_endpoints(self, tenant_id: int, event_type: str) -> list[WebhookEndpoint]:
+    async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
         """Get all active webhook endpoints for a tenant and event type."""
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
@@ -89,7 +89,7 @@ class WebhookService:
 
     async def trigger_webhooks(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         event_type: str,
         payload: dict[str, Any],
     ) -> list[WebhookDelivery]:
@@ -265,6 +265,7 @@ class WebhookService:
         # Check circuit breaker before attempting delivery
         if not webhook_circuit.is_closed:
             import time
+
             current_time = time.time()
             logger.warning(
                 "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
@@ -415,7 +416,7 @@ class WebhookService:
 
     async def get_delivery_history(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         limit: int = 100,
         offset: int = 0,
     ) -> list[WebhookDelivery]:
@@ -435,7 +436,7 @@ class WebhookService:
     async def get_signing_secret(
         self,
         endpoint_id: UUID,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> dict[str, Any]:
         """Get the signing secret for a webhook endpoint (admin only).
 
@@ -475,7 +476,7 @@ class WebhookService:
     async def rotate_signing_secret(
         self,
         endpoint_id: UUID,
-        tenant_id: int,
+        tenant_id: UUID,
         grace_period_seconds: int = 300,
     ) -> dict[str, Any]:
         """Rotate the signing secret for a webhook endpoint.

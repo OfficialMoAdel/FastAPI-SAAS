@@ -4,10 +4,12 @@ Models for AI chat sessions, messages, and user preferences.
 All models follow row-level multi-tenancy via tenant_id foreign key.
 """
 
+import uuid as uuid_pkg
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -23,7 +25,9 @@ class AIChatSession(Base):
     __tablename__ = "ai_chat_sessions"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[int] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, nullable=False)
 
     title: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
@@ -35,7 +39,9 @@ class AIChatSession(Base):
         nullable=False,
         index=True,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="ai_chat_sessions", init=False)
@@ -100,7 +106,9 @@ class AISettings(Base):
         default_factory=lambda: datetime.now(UTC),
         nullable=False,
     )
-    updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None, nullable=True)
+    updated_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), default=None, nullable=True, onupdate=lambda: datetime.now(UTC)
+    )
 
     # Relationships
     user: Mapped["User"] = relationship(back_populates="ai_settings", init=False)
@@ -116,9 +124,22 @@ class AITokenUsage(Base):
     __tablename__ = "ai_token_usage"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    tenant_id: Mapped[str | None] = mapped_column(ForeignKey("tenants.id"), index=True, nullable=True)
-    user_id: Mapped[str | None] = mapped_column(ForeignKey("user.id"), index=True, nullable=True)
-    session_id: Mapped[str | None] = mapped_column(ForeignKey("ai_chat_sessions.id"), index=True, nullable=True)
+    tenant_id: Mapped[uuid_pkg.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id"),
+        index=True,
+        nullable=True,
+    )
+    user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("user.id"),
+        index=True,
+        nullable=True,
+    )
+    session_id: Mapped[int | None] = mapped_column(
+        ForeignKey("ai_chat_sessions.id"),
+        index=True,
+        nullable=True,
+    )
 
     provider: Mapped[str] = mapped_column(String(50), nullable=False, index=True)
     model: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
@@ -128,7 +149,7 @@ class AITokenUsage(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, nullable=False)
     cost_usd: Mapped[float] = mapped_column(Float, nullable=False, default=0.0)
 
-    usage_metadata: Mapped[dict[str, str]] = mapped_column(JSON, nullable=False, default_factory=dict)
+    usage_metadata: Mapped[dict[str, Any]] = mapped_column(JSON, nullable=False, default_factory=dict)
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
