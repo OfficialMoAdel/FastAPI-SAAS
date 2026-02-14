@@ -35,6 +35,27 @@ class FakeRedis:
         self.store[key] = value
         return True
 
+    async def eval(self, script: str, numkeys: int, *keys_and_args):
+        """Execute a Lua script (mock implementation for account lockout).
+        
+        For testing: implements account lockout logic
+        - Returns -1 if locked out (attempts >= max_attempts)
+        - Otherwise returns new attempt count
+        """
+        if numkeys >= 1:
+            key = keys_and_args[0]
+            max_attempts = int(keys_and_args[1]) if len(keys_and_args) > 1 else 5
+            lockout_duration = int(keys_and_args[2]) if len(keys_and_args) > 2 else 900
+            
+            current_attempts = int(self.store.get(key, 0))
+            current_attempts += 1
+            self.store[key] = str(current_attempts)
+            
+            if current_attempts > max_attempts:
+                return -1  # Locked out
+            return current_attempts
+        return 1
+
     async def aclose(self):
         pass
 

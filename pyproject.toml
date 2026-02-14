@@ -30,8 +30,7 @@ dependencies = [
     "fastcrud>=0.19.2",
     "crudadmin>=0.4.2",
     "gunicorn>=23.0.0",
-    "ruff>=0.11.13",
-    "mypy>=1.16.0",
+    # Dev tools moved to [project.optional-dependencies] dev section
     "jinja2>=3.1.0",
     "cryptography>=45.0.3",
     "structlog>=24.1.0",

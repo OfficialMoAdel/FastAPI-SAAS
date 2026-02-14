@@ -956,6 +956,14 @@ class FakeRedis:
         self.store[key] = current
         return current
 
+    async def eval(self, script: str, numkeys: int, *keys_and_args):
+        """Execute a Lua script (mock implementation).
+        
+        For testing purposes, this delegates to evalsha since we don't
+        actually execute Lua scripts - we just need the same behavior.
+        """
+        return await self.evalsha("mock_script_sha", numkeys, *keys_and_args)
+
     async def zscore(self, key, member):
         """Get the score of a member in a sorted set.
 
