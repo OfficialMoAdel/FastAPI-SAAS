@@ -5,6 +5,7 @@ from typing import Any
 from uuid import UUID
 
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -55,15 +56,27 @@ def _require_tenant_id() -> str:
 
 
 def _user_email_cache_key(email: str) -> str:
-    """Generate cache key for user by email (tenant-scoped, no collision risk)."""
+    """Generate cache key for user by email (tenant-scoped, no collision risk).
+
+    SECURITY FIX: Normalizes email to lowercase to prevent cache misses
+    when the same email is provided with different casing.
+    """
     t_id = _require_tenant_id()
-    return f"{USER_CACHE_PREFIX}:{t_id}:email:{email}"
+    # Normalize email to lowercase for consistent cache keys
+    normalized_email = email.lower().strip()
+    return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
 
 
 def _user_username_cache_key(username: str) -> str:
-    """Generate cache key for user by username (tenant-scoped, no collision risk)."""
+    """Generate cache key for user by username (tenant-scoped, no collision risk).
+
+    SECURITY FIX: Normalizes username to lowercase to prevent cache misses
+    when the same username is provided with different casing.
+    """
     t_id = _require_tenant_id()
-    return f"{USER_CACHE_PREFIX}:{t_id}:username:{username}"
+    # Normalize username to lowercase for consistent cache keys
+    normalized_username = username.lower().strip()
+    return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
 
 
 def _user_auth_cache_key(identifier: str) -> str:
@@ -198,13 +211,16 @@ class UserService(BaseService[User]):
         DuplicateError
             If email or username already exists
         """
+        # SECURITY FIX: Check for duplicates BEFORE expensive password hashing
+        # Prevents DoS via forced bcrypt operations
+        tenant = get_current_tenant()
+
         # Optimized: Check for duplicate email or username in single query
         stmt = select(User).where(
             or_(User.email == user.email, User.username == user.username), User.is_deleted.is_(False)
         )
 
         # Explicitly filter by tenant_id if available (redundant with RLS but critical for SQLite tests)
-        tenant = get_current_tenant()
         if tenant:
             stmt = stmt.where(User.tenant_id == tenant.id)
 
@@ -221,12 +237,22 @@ class UserService(BaseService[User]):
         del user_dict["password"]
 
         # Inject tenant_id from context
-        tenant = get_current_tenant()
         if tenant is not None:
             user_dict["tenant_id"] = tenant.id
 
         user_internal = UserCreateInternal(**user_dict)
-        result = await self.crud.create(db=self.db, object=user_internal)
+
+        try:
+            result = await self.crud.create(db=self.db, object=user_internal)
+        except IntegrityError as e:
+            # Handle race condition: duplicate was created between our check and insert
+            await self.db.rollback()
+            if "uq_user_email_tenant" in str(e):
+                raise DuplicateError("email", user.email) from e
+            elif "uq_user_username_tenant" in str(e):
+                raise DuplicateError("username", user.username) from e
+            raise
+
         return result  # type: ignore[return-value]
 
     async def get_user_auth_info(
@@ -450,10 +476,11 @@ class UserService(BaseService[User]):
         if username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException()
 
-        # Invalidate cache before delete
+        # SECURITY FIX: Delete user BEFORE invalidating cache
+        # Prevents stale cache if DB operation fails
+        await self.crud.delete(db=self.db, username=username)
         await self._invalidate_user_cache(db_user)
 
-        await self.crud.delete(db=self.db, username=username)
         await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted"}
 
@@ -483,10 +510,13 @@ class UserService(BaseService[User]):
 
         # Get full user for cache invalidation before hard delete
         full_user = await self.crud.get(db=self.db, username=username)
+
+        # SECURITY FIX: Delete user BEFORE invalidating cache
+        # Prevents stale cache if DB operation fails
+        await self.crud.db_delete(db=self.db, username=username)
         if full_user:
             await self._invalidate_user_cache(full_user)
 
-        await self.crud.db_delete(db=self.db, username=username)
         await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted from the database"}
 

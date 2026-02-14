@@ -28,6 +28,11 @@ class CryptSettings(BaseSettings):
     ALGORITHM: str = "HS256"  # Options: HS256 (symmetric), RS256 (asymmetric)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
+    # SECURITY FIX: Maximum absolute session duration to prevent indefinite refresh
+    MAX_SESSION_DURATION_DAYS: int = Field(
+        default=30, ge=1, le=365,
+        description="Maximum absolute session duration before forcing re-auth"
+    )
     # Bcrypt work factor: 8=30ms(dev), 10=100ms, 12=250ms(default), 14=1000ms
     BCRYPT_ROUNDS: int = Field(default=12, ge=8, le=14)
     # L3: Configurable bcrypt thread pool size for password hashing
@@ -130,7 +135,10 @@ class DatabaseSettings(BaseSettings):
 
         If DB_POOL_SIZE is explicitly set, use it. Otherwise auto-calculate.
         """
-        if os.getenv("DB_POOL_SIZE"):
+        # SECURITY FIX: Handle empty string environment variable
+        # Empty string is truthy, so we need to check for actual content
+        pool_size = os.getenv("DB_POOL_SIZE")
+        if pool_size and pool_size.strip():
             return self.DB_POOL_SIZE
         return self.DB_WORKERS * 10
 
@@ -655,6 +663,5 @@ class Settings(
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
     # have env_prefix which would otherwise be inherited and break field resolution
     model_config = SettingsConfigDict(env_prefix="")
-
 
 settings = Settings()  # type: ignore

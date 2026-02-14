@@ -102,6 +102,27 @@ class UserCreate(UserBase, BaseCreate):
         ),
     ]
 
+    @field_validator("username")
+    @classmethod
+    def validate_username_not_reserved(cls, v: str) -> str:
+        """Validate username is not a reserved system name.
+
+        SECURITY FIX: Prevents users from registering reserved system usernames
+        that could be used for phishing or confusion attacks.
+        """
+        reserved = {
+            "admin", "administrator", "root", "api", "www", "mail", "email",
+            "support", "help", "info", "contact", "sales", "billing",
+            "security", "secure", "auth", "login", "logout", "signup",
+            "register", "user", "users", "account", "accounts", "system",
+            "service", "services", "host", "master", "webmaster", "postmaster",
+            "hostmaster", "abuse", "noc", "security", "team", "staff",
+            "null", "undefined", "test", "testing", "demo", "example",
+        }
+        if v.lower() in reserved:
+            raise ValueError(f"Username '{v}' is reserved and cannot be used")
+        return v
+
     @field_validator("password")
     @classmethod
     def validate_password_complexity(cls, v: str) -> str:

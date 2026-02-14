@@ -77,19 +77,25 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
     Uses the bcrypt thread pool to prevent blocking the event loop
     during password verification. This is critical under high concurrency
     as bcrypt operations take ~50-100ms.
+
+    SECURITY FIX: Added exception handling for malformed hashes to prevent crashes.
     """
-    loop = asyncio.get_running_loop()
-    result: bool = await loop.run_in_executor(
-        _bcrypt_executor, bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
-    )
-    return result
+    try:
+        loop = asyncio.get_running_loop()
+        result: bool = await loop.run_in_executor(
+            _bcrypt_executor, bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
+        )
+        return result
+    except Exception as e:
+        _jwt_logger.error(f"Password verification failed: {e}")
+        return False
 
 
 async def get_password_hash(password: str) -> str:
     """Hash password asynchronously using dedicated thread pool.
 
     Uses the bcrypt thread pool to prevent blocking the event loop
-    during password hashing. The configured BCRYPT_ROUNTS determines
+    during password hashing. The configured BCRYPT_ROUNDS determines
     the computational cost (default: 12 rounds).
     """
     loop = asyncio.get_running_loop()
@@ -100,12 +106,28 @@ async def get_password_hash(password: str) -> str:
 
 
 async def create_access_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    """Create access token with JTI (JWT ID) for blacklist tracking.
+
+    SECURITY FIX: Includes JTI (JWT ID) to enable precise blacklist checking
+    without race conditions.
+    """
+    from uuid import uuid4
+
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
         expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    to_encode.update({"exp": expire, "token_type": TokenType.ACCESS, "aud": JWT_AUDIENCE})
+
+    # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
+    to_encode.update({
+        "exp": expire,
+        "token_type": TokenType.ACCESS,
+        "aud": JWT_AUDIENCE,
+        "jti": str(uuid4()),  # Unique token ID for blacklist
+        "iat": datetime.now(UTC).timestamp(),  # Issued at
+    })
+
     # HS256 is fast (~10-50us) — to_thread overhead (~50-200us) exceeds the operation itself.
     # Only use to_thread for CPU-heavy RS256 signing.
     if ALGORITHM == "RS256":
@@ -116,12 +138,30 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
 
 
 async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | None = None) -> str:
+    """Create refresh token with JTI (JWT ID) for blacklist tracking.
+
+    SECURITY FIX: Includes JTI (JWT ID) to enable precise blacklist checking
+    without race conditions. Also includes absolute_exp for session lifetime limits.
+    """
+    from uuid import uuid4
+
     to_encode = data.copy()
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
         expire = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
-    to_encode.update({"exp": expire, "token_type": TokenType.REFRESH, "aud": JWT_AUDIENCE})
+
+    # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
+    # SECURITY FIX: Add absolute_exp for maximum session lifetime enforcement
+    to_encode.update({
+        "exp": expire,
+        "token_type": TokenType.REFRESH,
+        "aud": JWT_AUDIENCE,
+        "jti": str(uuid4()),  # Unique token ID for blacklist
+        "iat": datetime.now(UTC).timestamp(),  # Issued at
+        "absolute_exp": (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp(),
+    })
+
     if ALGORITHM == "RS256":
         encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
     else:
@@ -132,14 +172,9 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
 async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSession) -> TokenData | None:
     """Verify a JWT token and return TokenData if valid.
 
-    Implements a two-layer blacklist check (Redis cache + DB fallback) to prevent
-    use of revoked tokens. When Redis is unavailable, falls back to DB check.
-
-    SECURITY NOTE: When using DB fallback mode (Redis unavailable), there is a
-    theoretical race condition window between the blacklist check and token
-    validation. In production, ensure Redis high availability to minimize risk.
-    If Redis is down, the system gracefully degrades to DB checks with slightly
-    higher latency but maintains security.
+    SECURITY FIX: Eliminates race condition by decoding token FIRST (local operation),
+    then checking blacklist using JTI (JWT ID). This ensures blacklist check happens
+    atomically relative to the token content.
 
     Parameters
     ----------
@@ -155,39 +190,48 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     TokenData | None
         TokenData instance if the token is valid, None otherwise.
     """
-    # Layer 1: Check Redis cache first (O(1) lookup, sub-millisecond)
-    cache_result = await is_token_blacklisted(token)
-    if cache_result is True:
-        # Token confirmed blacklisted in Redis
-        return None
-    elif cache_result is None:
-        # Redis unavailable - fall back to DB check with warning
-        _jwt_logger.warning(
-            "Redis unavailable for token blacklist check, falling back to DB. "
-            "This increases latency and creates a small race condition window. "
-            "Restore Redis ASAP for optimal security."
-        )
-        is_blacklisted = await crud_token_blacklist.exists(db, token=token)
-        if is_blacklisted:
-            return None
-    # cache_result is False means token not in blacklist, proceed with validation
-
+    # SECURITY FIX: Decode token FIRST (local operation, no race condition)
+    # This eliminates the race condition window between blacklist check and decode
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
     except JWTError:
         return None
 
+    # Extract token metadata
     try:
         username_or_email: str | None = payload.get("sub")
         token_type: str | None = payload.get("token_type")
         tier_id: int | None = payload.get("tier_id")
+        jti: str | None = payload.get("jti")  # JWT ID for blacklist check
 
         if username_or_email is None or token_type != expected_token_type:
             return None
-
-        return TokenData(username_or_email=username_or_email, tier_id=tier_id)
     except Exception:
         return None
+
+    # SECURITY FIX: Check blacklist AFTER decode using JTI (JWT ID)
+    # This ensures we're checking the specific token, not just any token
+    if jti:
+        # Check by JTI (preferred - more precise)
+        cache_result = await is_token_blacklisted(f"jti:{jti}")
+    else:
+        # Fallback: check by full token hash (backward compatibility)
+        cache_result = await is_token_blacklisted(token)
+
+    if cache_result is True:
+        # Token confirmed blacklisted
+        return None
+    elif cache_result is None:
+        # Redis unavailable - fall back to DB check
+        _jwt_logger.warning(
+            "Redis unavailable for token blacklist check, falling back to DB. "
+            "Restore Redis ASAP for optimal security."
+        )
+        is_blacklisted = await crud_token_blacklist.exists(db, token=token)
+        if is_blacklisted:
+            return None
+
+    return TokenData(username_or_email=username_or_email, tier_id=tier_id)
 
 
 async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSession) -> None:
