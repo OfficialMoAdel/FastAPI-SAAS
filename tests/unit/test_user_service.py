@@ -167,6 +167,54 @@ class TestUserServiceCreate:
 
         assert "username" in str(exc_info.value)
 
+    @pytest.mark.asyncio
+    async def test_create_duplicate_check_before_password_hash(self, user_service, mock_db, mock_user_create, mock_existing_user):
+        """SECURITY TEST: Verify duplicate check happens BEFORE expensive password hash.
+
+        This test verifies the DoS vulnerability fix (Issue #1 from security plan):
+        - When a duplicate user is found, get_password_hash should NOT be called
+        - This prevents attackers from forcing expensive bcrypt operations (~50-100ms each)
+        - Without this fix, 10 requests/second could consume 100% CPU
+        """
+        # Mock: existing user with same email found
+        mock_existing_user.email = mock_user_create.email
+        mock_db.scalar.return_value = mock_existing_user
+
+        with patch("src.app.modules.users.service.get_password_hash", new_callable=AsyncMock) as mock_hash:
+            # Configure mock to raise exception if called (should never happen for duplicate)
+            mock_hash.side_effect = Exception("SECURITY VIOLATION: get_password_hash called for duplicate user!")
+
+            # Attempt to create duplicate user - should fail with DuplicateError
+            with pytest.raises(DuplicateError) as exc_info:
+                await user_service.create(mock_user_create)
+
+            assert "email" in str(exc_info.value)
+
+            # CRITICAL: Password hash should NOT have been called for duplicate
+            mock_hash.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_no_password_hash_for_duplicate_username(self, user_service, mock_db, mock_user_create, mock_existing_user):
+        """SECURITY TEST: Verify duplicate username check also prevents password hashing.
+
+        Tests that the DoS protection works for username duplicates as well as email duplicates.
+        """
+        # Mock: existing user with same username (but different email)
+        mock_existing_user.email = "other@example.com"
+        mock_existing_user.username = mock_user_create.username
+        mock_db.scalar.return_value = mock_existing_user
+
+        with patch("src.app.modules.users.service.get_password_hash", new_callable=AsyncMock) as mock_hash:
+            mock_hash.side_effect = Exception("SECURITY VIOLATION: get_password_hash called for duplicate user!")
+
+            with pytest.raises(DuplicateError) as exc_info:
+                await user_service.create(mock_user_create)
+
+            assert "username" in str(exc_info.value)
+
+            # Password hash should NOT have been called
+            mock_hash.assert_not_called()
+
 
 class TestUserServiceGet:
     """Tests for user retrieval logic."""
