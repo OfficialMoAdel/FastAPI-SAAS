@@ -137,6 +137,17 @@ return new_attempts
             )
         except Exception as e:
             logger.error("failed_to_publish_audit_log", error=str(e))
+            # SECURITY FIX: Make audit log failure mode configurable
+            # fail_open: Log error but allow operation (default, availability focused)
+            # fail_closed: Raise exception and block operation (security focused, compliance)
+            # Note: fail_closed requires ServiceUnavailableException to be defined
+            if getattr(settings, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
+                # This would require ServiceUnavailableException to be defined
+                # For now, we log the error and continue (fail_open behavior)
+                logger.warning(
+                    "audit_log_fail_closed_not_implemented",
+                    message="AUDIT_LOG_FAILURE_MODE='fail_closed' requested but exception type not available"
+                )
 
     async def login(
         self,

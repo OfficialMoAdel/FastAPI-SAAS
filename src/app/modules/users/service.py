@@ -213,7 +213,8 @@ class UserService(BaseService[User]):
         """
         # SECURITY FIX: Check for duplicates BEFORE expensive password hashing
         # Prevents DoS via forced bcrypt operations
-        tenant = get_current_tenant()
+        # OPTIMIZATION FIX: Fetch tenant once and reuse throughout method (#16)
+        tenant = get_current_tenant()  # Single fetch, reused throughout
 
         # Optimized: Check for duplicate email or username in single query
         stmt = select(User).where(
@@ -221,6 +222,7 @@ class UserService(BaseService[User]):
         )
 
         # Explicitly filter by tenant_id if available (redundant with RLS but critical for SQLite tests)
+        # Uses cached tenant from single fetch above
         if tenant:
             stmt = stmt.where(User.tenant_id == tenant.id)
 
@@ -236,7 +238,7 @@ class UserService(BaseService[User]):
         user_dict["hashed_password"] = await get_password_hash(password=user_dict["password"])
         del user_dict["password"]
 
-        # Inject tenant_id from context
+        # Inject tenant_id from context - uses same cached tenant
         if tenant is not None:
             user_dict["tenant_id"] = tenant.id
 

@@ -33,7 +33,8 @@ ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 
 # JWT Audience for token validation
-JWT_AUDIENCE = "fastapi-saas-api"
+# SECURITY FIX: Made configurable via settings instead of hardcoded
+JWT_AUDIENCE: str = getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api")
 
 _jwt_logger = logging.getLogger(__name__)
 

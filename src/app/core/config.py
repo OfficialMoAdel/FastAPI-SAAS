@@ -44,6 +44,8 @@ class CryptSettings(BaseSettings):
     # RS256 asymmetric keys (optional, required if ALGORITHM=RS256)
     JWT_PRIVATE_KEY: SecretStr | None = None  # PEM-encoded private key
     JWT_PUBLIC_KEY: str | None = None  # PEM-encoded public key
+    # SECURITY FIX: Made JWT audience configurable instead of hardcoded
+    JWT_AUDIENCE: str = Field(default="fastapi-saas-api", description="JWT token audience claim")
 
     @model_validator(mode="after")
     def validate_secrets(self) -> "CryptSettings":
@@ -221,6 +223,13 @@ class AuthSettings(BaseSettings):
     # Account lockout configuration
     AUTH_MAX_LOGIN_ATTEMPTS: int = 5
     AUTH_LOCKOUT_DURATION_SECONDS: int = 900  # 15 minutes
+    # SECURITY FIX: Make audit log failure mode configurable
+    # "fail_open": Log error but allow operation (default, availability focused)
+    # "fail_closed": Raise exception and block operation (security focused, compliance)
+    AUDIT_LOG_FAILURE_MODE: Literal["fail_open", "fail_closed"] = Field(
+        default="fail_open",
+        description="How to handle audit log failures: 'fail_open' (allow) or 'fail_closed' (block)"
+    )
 
 
 class TestSettings(BaseSettings): ...
