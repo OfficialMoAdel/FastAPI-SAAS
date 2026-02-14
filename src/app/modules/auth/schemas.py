@@ -50,12 +50,6 @@ class PasswordChangeRequest(BaseModel):
     new_password: str
 
 
-class PasswordChangeResponse(BaseModel):
-    """Password change response schema."""
-
-    message: str
-
-
 class PasswordResetRequest(BaseModel):
     """Password reset request schema (forgot password)."""
 
@@ -67,12 +61,6 @@ class PasswordResetConfirm(BaseModel):
 
     token: str
     new_password: str
-
-
-class PasswordResetResponse(BaseModel):
-    """Password reset response schema."""
-
-    message: str
 
 
 class EmailVerificationRequest(BaseModel):
@@ -87,22 +75,18 @@ class EmailVerificationConfirm(BaseModel):
     token: str
 
 
-class EmailVerificationResponse(BaseModel):
-    """Schema for email verification response."""
-
-    message: str
-
-
-class ForgotPasswordResponse(BaseModel):
-    """Forgot password response schema."""
-
-    message: str
-
-
 class MessageResponse(BaseModel):
     """Generic message response schema for simple success messages."""
 
     message: str
+
+
+# M7: Consolidate duplicate message schemas - use MessageResponse as base
+# Type aliases for backward compatibility with existing API contracts
+PasswordChangeResponse = MessageResponse
+PasswordResetResponse = MessageResponse
+EmailVerificationResponse = MessageResponse
+ForgotPasswordResponse = MessageResponse
 
 
 # Re-export all token schemas for backward compatibility

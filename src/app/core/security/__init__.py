@@ -1,4 +1,5 @@
 import asyncio
+import atexit
 import json
 import logging
 from concurrent.futures import ThreadPoolExecutor
@@ -39,11 +40,11 @@ _jwt_logger = logging.getLogger(__name__)
 # Dedicated thread pool for bcrypt operations to prevent event loop blocking
 # bcrypt.checkpw takes ~50-100ms depending on rounds, so we use a thread pool
 # to avoid blocking the async event loop during high-concurrency authentication
-_BCRYPT_MAX_WORKERS = 10
-_bcrypt_executor = ThreadPoolExecutor(
-    max_workers=_BCRYPT_MAX_WORKERS,
-    thread_name_prefix="bcrypt_auth"
-)
+# L3: Thread pool size is now configurable via BCRYPT_THREAD_POOL_SIZE setting
+_bcrypt_executor = ThreadPoolExecutor(max_workers=settings.BCRYPT_THREAD_POOL_SIZE, thread_name_prefix="bcrypt_auth")
+
+# Ensure thread pool is properly shutdown on exit
+atexit.register(_bcrypt_executor.shutdown, wait=True)
 
 
 @lru_cache(maxsize=1)
@@ -77,12 +78,9 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
     during password verification. This is critical under high concurrency
     as bcrypt operations take ~50-100ms.
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     result: bool = await loop.run_in_executor(
-        _bcrypt_executor,
-        bcrypt.checkpw,
-        plain_password.encode(),
-        hashed_password.encode()
+        _bcrypt_executor, bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
     )
     return result
 
@@ -94,12 +92,9 @@ async def get_password_hash(password: str) -> str:
     during password hashing. The configured BCRYPT_ROUNTS determines
     the computational cost (default: 12 rounds).
     """
-    loop = asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     hashed: bytes = await loop.run_in_executor(
-        _bcrypt_executor,
-        bcrypt.hashpw,
-        password.encode(),
-        bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+        _bcrypt_executor, bcrypt.hashpw, password.encode(), bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
     )
     return hashed.decode()
 

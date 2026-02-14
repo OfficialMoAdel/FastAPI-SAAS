@@ -279,9 +279,18 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         return 0
 
     try:
+        # M1: Use pipeline for atomic multi-operation (add to blacklist + invalidate negative cache)
+        pipe = redis_client.pipeline()
         # Build mapping of token -> expiry score
         mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
-        added = await redis_client.zadd(BLACKLIST_KEY, mapping)
+        pipe.zadd(BLACKLIST_KEY, mapping)
+        # M1: Invalidate negative cache for all tokens being blacklisted
+        for token, _ in tokens:
+            negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
+            pipe.delete(negative_key)
+        results = await pipe.execute()
+        # ZADD returns count of new members added
+        added = results[0] if results else 0
         return added if isinstance(added, int) else len(tokens)
     except Exception as e:
         logger.warning(f"Failed to bulk add tokens to Redis blacklist: {e}")

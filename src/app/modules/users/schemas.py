@@ -173,3 +173,18 @@ class UserRestoreResponse(BaseModel):
     """Response schema for user restoration."""
 
     message: str = "User restored successfully"
+
+
+class UserUpdateResponse(BaseModel):
+    """Response schema for user update (PATCH/PUT)."""
+
+    message: str = "User updated successfully"
+
+
+class UserTierResponse(BaseModel):
+    """Response schema for user tier information."""
+
+    tier_id: int | None = None
+    tier_name: str | None = None
+    tier_price: float | None = None
+    tier_currency: str | None = None

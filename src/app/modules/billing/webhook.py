@@ -26,52 +26,34 @@ _WEBHOOK_EVENT_KEY_PREFIX = "stripe:webhook:processed:"
 _WEBHOOK_EVENT_TTL_SECONDS = 86400 * 7  # 7 days retention ( Stripe retries for 3 days)
 
 
-async def _is_event_processed(event_id: str) -> bool:
-    """Check if a webhook event has already been processed.
+async def _try_acquire_event_lock(event_id: str) -> bool:
+    """Atomically try to acquire processing lock for a webhook event.
 
-    Uses Redis to track processed event IDs for idempotency.
-    Stripe may deliver the same event multiple times, so we must ensure
-    each event is only processed once to prevent duplicate operations.
+    Uses Redis SET with NX (set-if-not-exists) for atomic idempotency.
+    This eliminates the TOCTOU race condition between check and mark operations.
 
     Args:
         event_id: The Stripe event ID (e.g., "evt_1234567890")
 
     Returns:
-        True if event was already processed, False otherwise
+        True if lock acquired (event NOT previously processed), False if already processed
     """
     if redis_client is None:
         # Redis not available - we can't guarantee idempotency
         # Log warning and proceed (better to risk duplicate than lose event)
         logger.warning("Redis unavailable for webhook idempotency check")
-        return False
+        return True  # Allow processing
 
     try:
         key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
-        result = await redis_client.exists(key)
-        return bool(result)
+        # SET key value NX EX ttl - atomic set-if-not-exists with expiration
+        # Returns True if set (lock acquired), False if key already exists
+        result = await redis_client.set(key, "1", nx=True, ex=_WEBHOOK_EVENT_TTL_SECONDS)
+        return result is not None  # True = lock acquired, False = already processed
     except Exception as e:
-        logger.error(f"Failed to check webhook event idempotency: {e}")
-        # Fail open - assume not processed to avoid losing events
-        return False
-
-
-async def _mark_event_processed(event_id: str) -> None:
-    """Mark a webhook event as processed.
-
-    Stores the event ID in Redis with TTL to prevent duplicate processing.
-
-    Args:
-        event_id: The Stripe event ID
-    """
-    if redis_client is None:
-        return
-
-    try:
-        key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
-        await redis_client.setex(key, _WEBHOOK_EVENT_TTL_SECONDS, "1")
-    except Exception as e:
-        logger.error(f"Failed to mark webhook event as processed: {e}")
-        # Don't raise - event was processed, marking failure is non-critical
+        logger.error(f"Failed to acquire webhook event lock: {e}")
+        # Fail open - allow processing to avoid losing events
+        return True
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:
@@ -124,8 +106,9 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     event_id = event["id"]
     logger.info(f"Received Stripe webhook event: {event_type} (ID: {event_id})")
 
-    # IDEMPOTENCY CHECK: Ensure we don't process the same event twice
-    if await _is_event_processed(event_id):
+    # IDEMPOTENCY CHECK: Atomically acquire processing lock
+    # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race
+    if not await _try_acquire_event_lock(event_id):
         logger.info(f"Event {event_id} already processed, skipping")
         return {"status": "already_processed"}
 
@@ -145,12 +128,11 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             await handle_charge_refunded(event)
         else:
             logger.info(f"Unhandled event type: {event_type}")
-            # Mark unhandled events as processed to avoid reprocessing
-            await _mark_event_processed(event_id)
+            # Lock already acquired, event is marked as processed
             return {"status": "unhandled"}
 
-        # Mark event as processed after successful handling
-        await _mark_event_processed(event_id)
+        # Lock was already acquired in _try_acquire_event_lock
+        # No need to mark again - atomic SET NX handles this
 
     except Exception as e:
         logger.error(f"Error handling webhook event {event_type} (ID: {event_id}): {e}")

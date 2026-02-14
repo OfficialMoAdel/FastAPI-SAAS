@@ -368,7 +368,7 @@ async def create_checkout_session(
     return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
 
 
-@router.post("/portal")
+@router.post("/portal", response_model=PortalResponse)
 async def create_portal_session(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],

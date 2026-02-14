@@ -18,6 +18,10 @@ class AppSettings(BaseSettings):
     # DATABASE: Control table creation (set to False in production)
     CREATE_TABLES_ON_STARTUP: bool = True
 
+    # L2: Centralized pagination defaults for API consistency
+    PAGINATION_DEFAULT_PER_PAGE: int = Field(default=20, ge=1, le=100, description="Default items per page")
+    PAGINATION_MAX_PER_PAGE: int = Field(default=100, ge=1, le=1000, description="Maximum items per page")
+
 
 class CryptSettings(BaseSettings):
     SECRET_KEY: SecretStr  # REQUIRED: Must be set via environment variable
@@ -26,6 +30,8 @@ class CryptSettings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # Bcrypt work factor: 8=30ms(dev), 10=100ms, 12=250ms(default), 14=1000ms
     BCRYPT_ROUNDS: int = Field(default=12, ge=8, le=14)
+    # L3: Configurable bcrypt thread pool size for password hashing
+    BCRYPT_THREAD_POOL_SIZE: int = Field(default=4, ge=1, le=32, description="Thread pool size for bcrypt operations")
     # Key for Fernet encryption. If None, webhooks encryption might fail or use a dev key.
     ENCRYPTION_KEY: SecretStr | None = None
     # SECURITY: Set unique salt per deployment for key derivation
@@ -649,5 +655,6 @@ class Settings(
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
     # have env_prefix which would otherwise be inherited and break field resolution
     model_config = SettingsConfigDict(env_prefix="")
+
 
 settings = Settings()  # type: ignore

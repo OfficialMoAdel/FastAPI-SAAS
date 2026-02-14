@@ -14,10 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
+from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import (
     AuditLogList,
     AuditLogResponse,
+    ExportCountResponse,
 )
 from src.app.modules.audit_logs.service import AuditLogService
 from src.app.modules.tenants.models import Tenant
@@ -141,7 +143,11 @@ async def list_available_actions(
 EXPORT_MAX_RECORDS = 100_000
 
 
-@router.get("/export/count", response_model=dict)
+@router.get(
+    "/export/count",
+    response_model=ExportCountResponse,  # M5: Typed response schema
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_DOWNLOAD))],
+)
 async def get_export_count(
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
@@ -151,7 +157,7 @@ async def get_export_count(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> dict:
+) -> ExportCountResponse:
     """
     Get count of records that would be exported.
 
@@ -173,14 +179,28 @@ async def get_export_count(
     result = await db.execute(query)
     count = result.scalar_one()
 
-    return {
-        "count": count,
-        "max_export_limit": EXPORT_MAX_RECORDS,
-        "can_export": count <= EXPORT_MAX_RECORDS,
-    }
+    return ExportCountResponse(
+        count=count,
+        max_export_limit=EXPORT_MAX_RECORDS,
+        can_export=count <= EXPORT_MAX_RECORDS,
+    )
 
 
-@router.get("/export", response_model=None)
+@router.get(
+    "/export",
+    response_model=None,  # M6: StreamingResponse cannot use response_model; see responses parameter below
+    responses={
+        200: {
+            "description": "Audit logs export file",
+            "content": {
+                "text/csv": {"schema": {"type": "string"}},
+                "application/json": {"schema": {"type": "array", "items": {"type": "object"}}},
+                "application/x-ndjson": {"schema": {"type": "string"}},
+            },
+        }
+    },
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_DOWNLOAD))],
+)
 async def export_audit_logs(
     format: str = Query("csv", pattern="^(csv|json|jsonl)$", description="Export format"),
     action: str | None = Query(None, description="Filter by action"),

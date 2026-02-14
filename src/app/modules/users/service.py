@@ -38,24 +38,37 @@ def _user_cache_key(user_id: UUID | str) -> str:
     return f"{USER_CACHE_PREFIX}:{user_id}"
 
 
-def _user_email_cache_key(email: str) -> str:
-    """Generate cache key for user by email (scoped to tenant)."""
+def _require_tenant_id() -> str:
+    """
+    Get current tenant ID or raise error.
+
+    Tenant context is required for tenant-scoped cache keys to prevent
+    cross-tenant cache collisions. Use this for email/username lookups
+    which are only unique within a tenant.
+    """
     tenant = get_current_tenant()
-    t_id = str(tenant.id) if tenant else "global"
+    if tenant is None:
+        raise RuntimeError(
+            "Tenant context required for tenant-scoped cache key. Ensure request is authenticated with tenant context."
+        )
+    return str(tenant.id)
+
+
+def _user_email_cache_key(email: str) -> str:
+    """Generate cache key for user by email (tenant-scoped, no collision risk)."""
+    t_id = _require_tenant_id()
     return f"{USER_CACHE_PREFIX}:{t_id}:email:{email}"
 
 
 def _user_username_cache_key(username: str) -> str:
-    """Generate cache key for user by username (scoped to tenant)."""
-    tenant = get_current_tenant()
-    t_id = str(tenant.id) if tenant else "global"
+    """Generate cache key for user by username (tenant-scoped, no collision risk)."""
+    t_id = _require_tenant_id()
     return f"{USER_CACHE_PREFIX}:{t_id}:username:{username}"
 
 
 def _user_auth_cache_key(identifier: str) -> str:
-    """Generate cache key for user auth info by username or email (scoped to tenant)."""
-    tenant = get_current_tenant()
-    t_id = str(tenant.id) if tenant else "global"
+    """Generate cache key for user auth info (tenant-scoped, no collision risk)."""
+    t_id = _require_tenant_id()
     return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{identifier}"
 
 

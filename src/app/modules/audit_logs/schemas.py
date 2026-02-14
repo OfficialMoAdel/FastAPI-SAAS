@@ -62,6 +62,15 @@ AuditLogListResponse = AuditLogList
 # =============================================================================
 
 
+# M5: Typed response schema for export count endpoint
+class ExportCountResponse(BaseModel):
+    """Schema for export count response."""
+
+    count: int = Field(..., description="Number of records matching the filter criteria")
+    max_export_limit: int = Field(..., description="Maximum records allowed per export")
+    can_export: bool = Field(..., description="Whether the count is within export limit")
+
+
 class AuditLogFilter(BaseModel):
     """Schema for filtering audit logs."""
 

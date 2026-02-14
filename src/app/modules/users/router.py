@@ -8,8 +8,18 @@ from starlette.status import HTTP_404_NOT_FOUND
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
+from ...core.pagination import PaginationParams, get_pagination_params
 from ...core.security import oauth2_scheme
-from .schemas import UserCreate, UserDeleteResponse, UserList, UserRead, UserTierUpdate, UserUpdate
+from .schemas import (
+    UserCreate,
+    UserDeleteResponse,
+    UserList,
+    UserRead,
+    UserTierResponse,
+    UserTierUpdate,
+    UserUpdate,
+    UserUpdateResponse,
+)
 from .service import UserService, get_user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -37,22 +47,21 @@ async def write_user(request: Request, user: UserCreate, service: UserService = 
 @router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
 async def read_users(
     request: Request,
-    page: int = 1,
-    per_page: int = 10,
+    pagination: PaginationParams = Depends(get_pagination_params),
     service: UserService = Depends(_get_user_service),
 ) -> dict:
     """Get paginated list of users for the current tenant (superuser only)."""
-    users_data = await service.list_users(page=page, per_page=per_page, is_deleted=False)
+    users_data = await service.list_users(page=pagination.page, per_page=pagination.per_page, is_deleted=False)
 
     data = users_data.get("data", [])
     total = users_data.get("total_count", len(data))
     return {
         "items": data,
         "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
+        "page": pagination.page,
+        "per_page": pagination.per_page,
+        "has_next": pagination.page * pagination.per_page < total,
+        "has_previous": pagination.page > 1,
     }
 
 
@@ -76,14 +85,14 @@ async def read_user(request: Request, user_id: str, service: UserService = Depen
         return await service.get_by_username(user_id)
 
 
-@router.patch("/{user_id}", response_model=dict[str, str])
+@router.patch("/{user_id}", response_model=UserUpdateResponse)
 async def patch_user(
     request: Request,
     values: UserUpdate,
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> dict[str, str]:
+) -> UserUpdateResponse:
     """Update a user (partial update).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -94,22 +103,24 @@ async def patch_user(
     except (ValueError, KeyError):
         username = user_id
 
-    return await service.update(username, values, current_user)
+    result = await service.update(username, values, current_user)
+    return UserUpdateResponse(message=result.get("message", "User updated successfully"))
 
 
-@router.put("/{user_id}", response_model=dict[str, str])
+@router.put("/{user_id}", response_model=UserUpdateResponse)
 async def put_user(
     request: Request,
     values: UserUpdate,
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> dict[str, str]:
+) -> UserUpdateResponse:
     """Update a user (full update, alias for PATCH).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    return await patch_user(request, values, user_id, current_user, service)
+    result = await patch_user(request, values, user_id, current_user, service)
+    return result
 
 
 @router.delete("/{user_id}", response_model=UserDeleteResponse)
@@ -171,10 +182,10 @@ async def read_user_rate_limits(
     return await service.get_with_rate_limits(username)
 
 
-@router.get("/{user_id}/tier", response_model=dict | None, dependencies=[Depends(get_current_user)])
+@router.get("/{user_id}/tier", response_model=UserTierResponse | None, dependencies=[Depends(get_current_user)])
 async def read_user_tier(
     request: Request, user_id: str, service: UserService = Depends(_get_user_service)
-) -> dict | None:
+) -> UserTierResponse | None:
     """Get user's tier information (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -185,7 +196,15 @@ async def read_user_tier(
     except (ValueError, KeyError):
         username = user_id
 
-    return await service.get_with_tier(username)
+    result = await service.get_with_tier(username)
+    if result is None:
+        return None
+    return UserTierResponse(
+        tier_id=result.get("tier_id"),
+        tier_name=result.get("tier_name"),
+        tier_price=result.get("tier_price"),
+        tier_currency=result.get("tier_currency"),
+    )
 
 
 @router.patch("/{user_id}/tier", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])

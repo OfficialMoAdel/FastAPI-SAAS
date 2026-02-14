@@ -40,13 +40,22 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
     if connection.dialect.name != "postgresql":
         return
 
-    tenant = get_current_tenant()
-    if tenant:
-        # We are in a synchronous event listener, so we use the sync connection directly.
-        # This connection is the underlying driver connection or SQLAlchemy wrapper.
-        connection.execute(
-            text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-            {"tenant_id": str(tenant.id)},
+    # M3: Add error handling to prevent failures from propagating through SQLAlchemy event system
+    try:
+        tenant = get_current_tenant()
+        if tenant:
+            # We are in a synchronous event listener, so we use the sync connection directly.
+            # This connection is the underlying driver connection or SQLAlchemy wrapper.
+            connection.execute(
+                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+                {"tenant_id": str(tenant.id)},
+            )
+    except Exception as e:
+        # M3: Log error but don't propagate - RLS context is best-effort in event listeners
+        logger.warning(
+            "Failed to restore RLS context in event listener",
+            error=str(e),
+            tenant_id=getattr(tenant, "id", None) if "tenant" in dir() else None,
         )
 
 
@@ -142,6 +151,12 @@ async def rls_context(
         # Set RLS context
         await set_rls_context(connection, tenant_id, user_id)
         yield session
+
+    except Exception:
+        # Rollback before clearing RLS context to avoid "current transaction is
+        # aborted" errors when calling RESET on a failed transaction
+        await session.rollback()
+        raise
 
     finally:
         # Always clear context, even on exception

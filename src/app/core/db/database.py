@@ -78,7 +78,9 @@ local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expir
 # Register RLS event listener
 # We listen to the underlying sync Session class because AsyncSession wraps it
 # and events are dispatched from the inner session.
-event.listen(Session, "after_begin", restore_rls_context)
+# M8: Add idempotency check to prevent duplicate listener registration during testing
+if not event.contains(Session, "after_begin", restore_rls_context):
+    event.listen(Session, "after_begin", restore_rls_context)
 
 # Alias for compatibility with code expecting async_session_maker
 async_session_maker = local_session

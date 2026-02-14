@@ -153,10 +153,12 @@ async def health_check() -> HealthCheckResponse:
     checks: dict[str, dict[str, str | float | bool]] = {}
 
     for key, result in zip(keys, results):
-        if isinstance(result, BaseException):
+        # M4: Use Exception instead of BaseException to avoid catching KeyboardInterrupt/SystemExit
+        if isinstance(result, Exception):
             checks[key] = {"status": "unhealthy", "error": str(result)}
         else:
-            checks[key] = result
+            # Type narrowing: result is guaranteed to be dict after isinstance check
+            checks[key] = result  # type: ignore[assignment]
 
     # Determine overall status
     overall_status = "ok"
