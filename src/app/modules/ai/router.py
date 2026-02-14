@@ -2,7 +2,7 @@
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -60,8 +60,8 @@ async def create_chat_session(
 async def list_chat_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
 ) -> dict:
     """List chat sessions for the current user."""
     service = get_chat_session_service(db)
@@ -128,8 +128,8 @@ async def list_session_messages(
     session_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 50,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(50, ge=1, le=100, description="Items per page"),
 ) -> dict:
     """List messages in a chat session."""
     # First verify session ownership

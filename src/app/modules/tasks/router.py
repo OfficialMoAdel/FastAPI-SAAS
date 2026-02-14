@@ -1,11 +1,10 @@
 """Task API router - HTTP handlers delegating to service layer."""
 
-from typing import Any
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 
 from ...api.dependencies import rate_limiter_dependency
-from .schemas import Job, TaskCreate
+from .schemas import Job, TaskCreate, TaskStatus
 from .service import task_service
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
@@ -28,8 +27,8 @@ async def create_task(body: TaskCreate) -> dict[str, str]:
     return await task_service.create_task(body.message)
 
 
-@router.get("/task/{task_id}")
-async def get_task(task_id: str) -> dict[str, Any] | None:
+@router.get("/task/{task_id}", response_model=TaskStatus)
+async def get_task(task_id: str) -> TaskStatus:
     """Get information about a specific background task.
 
     Parameters
@@ -39,7 +38,15 @@ async def get_task(task_id: str) -> dict[str, Any] | None:
 
     Returns
     -------
-    Optional[dict[str, Any]]
-        A dictionary containing information about the task if found, or None otherwise.
+    TaskStatus
+        A dictionary containing information about the task.
+
+    Raises
+    ------
+    HTTPException
+        404 if task not found.
     """
-    return await task_service.get_task(task_id)
+    result = await task_service.get_task(task_id)
+    if result is None:
+        raise HTTPException(status_code=404, detail="Task not found")
+    return TaskStatus(**result)

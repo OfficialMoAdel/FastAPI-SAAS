@@ -116,8 +116,8 @@ async def execute_query_with_circuit_breaker(
                     import json
 
                     return list(json.loads(cached))
-            except Exception:
-                pass
+            except Exception as cache_error:
+                logger.debug("Circuit breaker cache fallback failed: %s", cache_error)
 
         if fallback_data is not None:
             return fallback_data

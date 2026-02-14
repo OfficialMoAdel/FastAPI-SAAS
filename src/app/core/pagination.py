@@ -13,6 +13,7 @@ Usage:
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from fastapi import Query
 
@@ -77,3 +78,44 @@ def get_pagination_params(
         PaginationParams instance with calculated offset/limit
     """
     return PaginationParams(page=page, per_page=per_page)
+
+
+def build_paginated_response(
+    items: list[Any],
+    total: int,
+    page: int,
+    per_page: int,
+) -> dict[str, Any]:
+    """Build a standardized paginated response dictionary.
+
+    This utility function eliminates duplicate pagination response construction
+    across multiple routers.
+
+    Args:
+        items: List of items for the current page
+        total: Total number of items across all pages
+        page: Current page number (1-indexed)
+        per_page: Number of items per page
+
+    Returns:
+        Dictionary with items and pagination metadata
+
+    Example:
+        @router.get("/items")
+        async def list_items(pagination: PaginationParams = Depends(get_pagination_params)):
+            result = await service.list_items(limit=pagination.limit, offset=pagination.offset)
+            return build_paginated_response(
+                items=result["data"],
+                total=result["total_count"],
+                page=pagination.page,
+                per_page=pagination.per_page,
+            )
+    """
+    return {
+        "items": items,
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }

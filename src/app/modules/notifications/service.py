@@ -393,7 +393,7 @@ async def send_email_task(
     """
     from ...core.db.database import async_get_db
 
-    async for db in async_get_db():
+    async with async_get_db() as db:
         try:
             service = NotificationService(db)
 
@@ -434,10 +434,6 @@ async def send_email_task(
             # Mark as failed
             await service.mark_failed(UUID(notification_id), str(e))
             raise  # Re-raise for ARQ retry
-
-        finally:
-            await db.close()
-            break
 
 
 # Event handler for notification.send events

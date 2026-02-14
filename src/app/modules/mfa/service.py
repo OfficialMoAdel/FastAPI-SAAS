@@ -89,8 +89,8 @@ class MFAService:
                     },
                     priority=EventPriority.NORMAL,
                 )
-        except Exception:
-            pass  # Don't fail if audit logging fails
+        except Exception as e:
+            logger.debug("Audit logging failed (non-critical): %s", e)
 
         # Note: In production, generate actual QR code image
         # For now, return the provisioning URI
@@ -170,8 +170,8 @@ class MFAService:
                     },
                     priority=EventPriority.CRITICAL,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Audit logging failed (non-critical): %s", e)
 
         return {
             "message": "MFA enabled successfully",
@@ -242,8 +242,8 @@ class MFAService:
                             },
                             priority=EventPriority.NORMAL,
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Audit logging failed (non-critical): %s", e)
 
                 return {
                     "valid": True,
@@ -270,8 +270,8 @@ class MFAService:
                     },
                     priority=EventPriority.NORMAL,
                 )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Audit logging failed (non-critical): %s", e)
 
         raise UnauthorizedException("Invalid MFA token")
 
@@ -344,8 +344,8 @@ class MFAService:
                             },
                             priority=EventPriority.CRITICAL,
                         )
-                except Exception:
-                    pass
+                except Exception as e:
+                    logger.debug("Audit logging failed (non-critical): %s", e)
 
                 return {
                     "valid": True,
@@ -425,8 +425,8 @@ class MFAService:
                 },
                 priority=EventPriority.CRITICAL,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Audit logging failed (non-critical): %s", e)
 
         return {"message": "MFA disabled successfully"}
 
@@ -558,8 +558,8 @@ class MFAService:
                 },
                 priority=EventPriority.NORMAL,
             )
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug("Audit logging failed (non-critical): %s", e)
 
         return {
             "message": "New backup codes generated",

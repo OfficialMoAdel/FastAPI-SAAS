@@ -1,8 +1,21 @@
+from collections.abc import AsyncGenerator
+
 from crudadmin import CRUDAdmin
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import EnvironmentOption, settings
 from ..core.db.database import async_get_db
 from .views import register_admin_views
+
+
+async def _get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    """Wrapper to provide CRUDAdmin-compatible session generator.
+
+    CRUDAdmin expects Callable[[], AsyncGenerator[AsyncSession, None]]
+    but async_get_db returns _AsyncGeneratorContextManager due to @asynccontextmanager.
+    """
+    async with async_get_db() as session:
+        yield session
 
 
 def create_admin_interface() -> CRUDAdmin | None:
@@ -23,7 +36,7 @@ def create_admin_interface() -> CRUDAdmin | None:
         }
 
     admin = CRUDAdmin(
-        session=async_get_db,
+        session=_get_db_session,  # type: ignore[arg-type]
         SECRET_KEY=settings.SECRET_KEY.get_secret_value(),
         mount_path=settings.CRUD_ADMIN_MOUNT_PATH,
         session_backend=session_backend,

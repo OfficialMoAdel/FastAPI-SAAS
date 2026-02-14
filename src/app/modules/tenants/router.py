@@ -3,6 +3,7 @@
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_superuser, get_current_user
 from ...core.db.database import async_get_db
@@ -13,9 +14,16 @@ from .service import TenantService, get_tenant_service
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
 
+async def _get_tenant_service(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> TenantService:
+    """Dependency factory for TenantService."""
+    return get_tenant_service(db)
+
+
 @router.get("", response_model=TenantList)
 async def list_tenants(
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
     page: int = Query(default=1, ge=1),
     per_page: int = Query(default=10, ge=1, le=100),
@@ -45,7 +53,7 @@ async def list_tenants(
 @router.post("", response_model=TenantResponse, status_code=201)
 async def create_tenant(
     tenant: TenantCreate,
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Create a new tenant.
@@ -59,7 +67,7 @@ async def create_tenant(
 @router.get("/{tenant_id}", response_model=TenantResponse)
 async def get_tenant(
     tenant_id: int,
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """Get a tenant by ID.
@@ -76,7 +84,7 @@ async def get_tenant(
 async def update_tenant(
     tenant_id: int,
     values: TenantUpdate,
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_user)],
 ) -> dict[str, Any]:
     """Update a tenant.
@@ -93,7 +101,7 @@ async def update_tenant(
 @router.post("/{tenant_id}/deactivate", response_model=TenantResponse)
 async def deactivate_tenant(
     tenant_id: int,
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Deactivate a tenant.
@@ -107,7 +115,7 @@ async def deactivate_tenant(
 @router.post("/{tenant_id}/reactivate", response_model=TenantResponse)
 async def reactivate_tenant(
     tenant_id: int,
-    service: Annotated[TenantService, Depends(lambda db=Depends(async_get_db): get_tenant_service(db))],
+    service: Annotated[TenantService, Depends(_get_tenant_service)],
     _current_user: Annotated[dict, Depends(get_current_superuser)],
 ) -> dict[str, Any]:
     """Reactivate a deactivated tenant.

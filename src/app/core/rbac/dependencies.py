@@ -303,7 +303,7 @@ async def _get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
     from ...core.db.database import async_get_db
 
-    async for db in async_get_db():
+    async with async_get_db() as db:
         yield db
 
 

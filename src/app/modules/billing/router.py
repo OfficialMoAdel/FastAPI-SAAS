@@ -3,7 +3,7 @@
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -175,9 +175,9 @@ async def create_subscription_plan(
 @router.get("/plans", response_model=SubscriptionPlanList)
 async def list_subscription_plans(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
-    is_active: bool | None = None,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> dict:
     """List subscription plans (public for pricing page)."""
     service = get_subscription_plan_service(db)
@@ -255,9 +255,9 @@ async def create_product(
 @router.get("/products", response_model=ProductList)
 async def list_products(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
-    is_active: bool | None = None,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> dict:
     """List products."""
     service = get_product_service(db)
@@ -391,9 +391,9 @@ async def create_portal_session(
 async def list_billing_records(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
-    status: str | None = None,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    status: str | None = Query(None, description="Filter by status (succeeded, failed, pending, refunded)"),
 ) -> dict:
     """List billing records for the current user.
 

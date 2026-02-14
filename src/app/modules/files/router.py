@@ -9,7 +9,9 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import get_current_tenant
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
 from src.app.modules.files.schemas import (
     FileList,
     FileRead,
@@ -32,27 +34,11 @@ from src.app.modules.users import User
 router = APIRouter(prefix="/files", tags=["Files"])
 
 
-def require_read_permission(user: User = Depends(get_current_user)) -> User:
-    """Dependency to check FILES_READ permission."""
-    # Permission check - simplified for now
-    return user
-
-
-def require_write_permission(user: User = Depends(get_current_user)) -> User:
-    """Dependency to check FILES_WRITE permission."""
-    return user
-
-
-def require_delete_permission(user: User = Depends(get_current_user)) -> User:
-    """Dependency to check FILES_DELETE permission."""
-    return user
-
-
 @router.post("/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     tenant: Tenant = Depends(get_current_tenant),
-    user: User = Depends(require_write_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_WRITE)),
     service: FileService = Depends(get_file_service),
 ) -> FileUploadResponse:
     """Upload a file to tenant storage.
@@ -87,7 +73,7 @@ async def upload_file(
     try:
         result = await service.upload_file(
             tenant_id=tenant.id,
-            user_id=user.id,
+            user_id=_user.id,
             file=file.file,
             filename=file.filename or "unnamed",
             mime_type=file.content_type or "application/octet-stream",
@@ -124,7 +110,7 @@ async def list_files(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Page size"),
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_read_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_READ)),
     service: FileService = Depends(get_file_service),
 ) -> dict:
     """List files for the current tenant.
@@ -164,7 +150,7 @@ async def list_files(
 async def download_file(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_read_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_READ)),
     service: FileService = Depends(get_file_service),
 ) -> StreamingResponse:
     """Download a file.
@@ -203,7 +189,7 @@ async def download_file(
 async def get_file_info(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_read_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_READ)),
     service: FileService = Depends(get_file_service),
 ) -> FileRead:
     """Get file metadata without downloading.
@@ -233,7 +219,7 @@ async def get_signed_url(
     file_id: int,
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_read_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_READ)),
     service: FileService = Depends(get_file_service),
 ) -> SignedUrlResponse:
     """Get a signed URL for file access.
@@ -266,7 +252,7 @@ async def update_file(
     file_id: int,
     data: FileUpdate,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_write_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_WRITE)),
     service: FileService = Depends(get_file_service),
 ) -> FileRead:
     """Update file metadata.
@@ -296,7 +282,7 @@ async def update_file(
 async def delete_file(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),
-    _user: User = Depends(require_delete_permission),
+    _user: User = Depends(requires_permission(Permission.FILES_DELETE)),
     service: FileService = Depends(get_file_service),
 ) -> Response:
     """Delete a file.

@@ -207,7 +207,7 @@ def custom_openapi():
             if method.get("security"):
                 continue
             # Apply JWT auth to all non-public routes
-            if path.get("/api/v1/auth", "").startswith("/auth"):
+            if path.startswith("/api/v1/auth"):
                 continue
             method.setdefault("security", []).append({"bearerAuth": []})
 

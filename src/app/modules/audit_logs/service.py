@@ -190,7 +190,7 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
     # Fallback to creating new session
     from src.app.core.db.database import async_get_db
 
-    async for db in async_get_db():
+    async with async_get_db() as db:
         try:
             service = AuditLogService(db)
             await service.create_log(
@@ -205,9 +205,6 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
             )
         except Exception as e:
             logger.error("audit_log_direct_insert_failed", error=str(e))
-        finally:
-            await db.close()
-            break
 
 
 async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: AsyncSession | None = None) -> int:
@@ -287,12 +284,11 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     else:
         from src.app.core.db.database import async_get_db
 
-        async for session in async_get_db():
+        async with async_get_db() as session:
             try:
                 inserted = await _perform_bulk_insert(session)
             finally:
                 await session.close()
-                break
 
     if not inserted:
         # Re-push failed entries back to Redis to prevent data loss

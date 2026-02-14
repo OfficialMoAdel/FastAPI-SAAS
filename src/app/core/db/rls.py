@@ -41,6 +41,7 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
         return
 
     # M3: Add error handling to prevent failures from propagating through SQLAlchemy event system
+    tenant = None
     try:
         tenant = get_current_tenant()
         if tenant:
@@ -55,7 +56,7 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
         logger.warning(
             "Failed to restore RLS context in event listener",
             error=str(e),
-            tenant_id=getattr(tenant, "id", None) if "tenant" in dir() else None,
+            tenant_id=getattr(tenant, "id", None) if tenant else None,
         )
 
 
