@@ -436,8 +436,19 @@ class RoleService:
             await self._invalidate_role_cache(role_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
-        """Assign a role to a user within the current tenant."""
+        """Assign a role to a user within the current tenant.
+
+        Security: Validates both role AND user belong to the current tenant.
+        """
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
+
+        # Verify user belongs to the same tenant (P1 fix: tenant isolation)
+        from ..users.models import User
+
+        user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
+        user_result = await self.db.execute(user_stmt)
+        if not user_result.scalar_one_or_none():
+            raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
         stmt = select(UserRole).where(
@@ -463,7 +474,18 @@ class RoleService:
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
-        """Remove a role from a user within the current tenant."""
+        """Remove a role from a user within the current tenant.
+
+        Security: Validates user belongs to the current tenant.
+        """
+        # Verify user belongs to the same tenant (P1 fix: tenant isolation)
+        from ..users.models import User
+
+        user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
+        user_result = await self.db.execute(user_stmt)
+        if not user_result.scalar_one_or_none():
+            raise ModelNotFoundError("User", user_id)
+
         stmt = select(UserRole).where(
             and_(
                 UserRole.user_id == user_id,

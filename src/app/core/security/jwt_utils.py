@@ -51,8 +51,8 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Constants matching main security module
-JWT_AUDIENCE: str = "fastapi-saas-api"
+# Constants matching main security module - now uses settings for consistency
+JWT_AUDIENCE: str = settings.JWT_AUDIENCE or "fastapi-saas-api"
 REQUEST_STATE_KEY: str = "jwt_payload"
 
 

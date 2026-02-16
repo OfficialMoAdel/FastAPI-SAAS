@@ -2,7 +2,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -64,6 +64,8 @@ class User(Base):
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
     is_superuser: Mapped[bool] = mapped_column(default=False)
     is_email_verified: Mapped[bool] = mapped_column(default=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
 

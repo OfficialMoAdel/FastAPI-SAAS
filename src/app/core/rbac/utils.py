@@ -1,4 +1,7 @@
-def get_user_permissions_cache_key(user_id: int, tenant_id: int) -> str:
+from uuid import UUID
+
+
+def get_user_permissions_cache_key(user_id: int, tenant_id: int | UUID) -> str:
     """
     Generate the Redis cache key for a user's permissions within a specific tenant.
 

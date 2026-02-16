@@ -33,7 +33,7 @@ _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
 
 async def get_user_permissions(
     user_id: int,
-    tenant_id: int,
+    tenant_id: int | UUID,
     db: AsyncSession,
 ) -> set[str]:
     """
@@ -58,7 +58,7 @@ async def get_user_permissions(
 
 async def get_cached_permissions(
     user_id: int,
-    tenant_id: int,
+    tenant_id: int | UUID,
     db: AsyncSession,
 ) -> set[str]:
     """
@@ -112,7 +112,7 @@ async def get_cached_permissions(
     return permissions
 
 
-def _get_bitmask_cache_key(user_id: int, tenant_id: int) -> str:
+def _get_bitmask_cache_key(user_id: int, tenant_id: int | UUID) -> str:
     """Get Redis key for bitmask-based permission cache."""
     # Append version hash to invalidate cache when permissions change (e.g. new deployment)
     version = PermissionBitmask.get_permission_version_hash()
@@ -121,7 +121,7 @@ def _get_bitmask_cache_key(user_id: int, tenant_id: int) -> str:
 
 async def get_cached_permissions_bitmask(
     user_id: int,
-    tenant_id: int,
+    tenant_id: int | UUID,
     db: AsyncSession,
 ) -> int:
     """
@@ -182,7 +182,7 @@ async def get_cached_permissions_bitmask(
 
 async def has_permission_cached(
     user_id: int,
-    tenant_id: int,
+    tenant_id: int | UUID,
     permission_slug: str,
     db: AsyncSession,
 ) -> bool:
@@ -242,17 +242,17 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             return
 
         # 2. Get tenant context
-        # Use simple tenant ID extraction for now to avoid complexity in testing
         from ..tenancy.context import get_tenant_context
 
         tenant_context = get_tenant_context()
-        if tenant_context:
-            tenant_id = tenant_context.id
-        else:
-            # Fallback or error - for now allow tests to mock this part if needed
-            # But the failure is about TOKEN, not tenant.
-            # We already failed at _get_current_user_from_token
-            tenant_id = 0
+        if tenant_context is None:
+            # SECURITY FIX: Never fall back to a default tenant ID
+            # Permission checks require valid tenant context
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Tenant context required for permission check",
+            )
+        tenant_id = tenant_context.id
 
         # 3. Check permission using O(1) bitmask
         has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)
@@ -346,7 +346,7 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
     return user
 
 
-def _get_current_tenant_id() -> int:
+def _get_current_tenant_id() -> UUID:
     """Get current tenant ID from middleware context."""
     from ..tenancy.context import get_tenant_context
 

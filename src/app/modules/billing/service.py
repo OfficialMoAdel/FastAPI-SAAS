@@ -122,6 +122,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
         tenant = get_current_tenant()
         if tenant is None:
             return None
+        if not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
         result = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
         return dict(result) if result else None
 
@@ -130,6 +132,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
         tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
+        if not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
 
         settings = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
 
@@ -138,7 +142,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
         # Encrypt the secret key if provided
         if "stripe_secret_key" in update_data and update_data["stripe_secret_key"]:
             encrypted = self._encryption.encrypt_column(update_data.pop("stripe_secret_key"))
-            update_data["encrypted_secret_key"] = encrypted.encode()
+            # encrypt_column returns a string, store as-is (not .encode())
+            update_data["encrypted_secret_key"] = encrypted
 
         update_data["updated_at"] = datetime.now(UTC)
 
@@ -171,6 +176,8 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
+        if not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
 
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
@@ -240,6 +247,8 @@ class ProductService(BaseService[Product]):
         tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
+        if not tenant.is_active:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
 
         product_data = data.model_dump()
         product_data["tenant_id"] = tenant.id
@@ -553,8 +562,12 @@ class BillingRecordService(BaseService[BillingRecord]):
         Returns:
             Dict with 'data' list and 'total_count'
         """
+        # SECURITY FIX: Include tenant_id to prevent cross-tenant data access
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise HTTPException(status_code=403, detail="Tenant context required")
         offset = (page - 1) * limit
-        filters: dict[str, Any] = {"user_id": user_id}
+        filters: dict[str, Any] = {"user_id": user_id, "tenant_id": tenant.id}
 
         # T105: Add billing record status filtering
         if status is not None:

@@ -197,7 +197,16 @@ async def rate_limiter_dependency(
             logger.warning(f"User {user_id} has no assigned tier. Applying default rate limit.")
             limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
     else:
-        user_id = request.client.host if request.client else "unknown"
+        # Use a unique identifier per request when client info is unavailable
+        # to prevent DoS attacks on the shared "unknown" bucket
+        if request.client and request.client.host:
+            user_id = request.client.host
+        else:
+            # Generate a temporary unique identifier for this request
+            # This prevents attackers from exhausting a shared bucket
+            import uuid
+
+            user_id = f"unknown_{uuid.uuid4().hex[:8]}"
         limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
 
     is_limited = await rate_limiter.is_rate_limited(db=db, user_id=user_id, path=path, limit=limit, period=period)

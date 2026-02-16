@@ -181,16 +181,12 @@ coverage_report*
 sql_app.db*
 # Auto Claude data directory
 .auto-claude/
-Advanced Code Optimization Workflow.md
-OPTIMIZATION_REQUIREMENTS.md
-ERROR.text
 test.db-journal
 tmpclaude*
 *.db
 test_*.db*
 skill
 baseline_*.json
-n8n
 tests/e2e/results/*
 reports/*.md
 reports/*.json
@@ -204,7 +200,6 @@ final_failed*
 baseline*
 unique_failed*
 failed.txt
-anlus.txt
 storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py
 .agents

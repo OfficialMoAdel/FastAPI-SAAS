@@ -70,6 +70,7 @@ class Token(BaseModel):
 class TokenData(BaseModel):
     username_or_email: str
     tier_id: int | None = None  # For Zero-DB rate limiting
+    absolute_exp: float | None = None  # Absolute session expiration timestamp
 
 
 class TokenBlacklistBase(BaseModel):

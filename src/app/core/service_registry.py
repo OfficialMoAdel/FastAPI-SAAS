@@ -110,6 +110,7 @@ def _register_default_services() -> None:
         return  # Already registered
 
     # Import here to avoid circular imports at module load time
+    from src.app.modules.api_keys.service import APIKeyService
     from src.app.modules.rate_limits.service import RateLimitService
     from src.app.modules.tiers.service import TierService
     from src.app.modules.users.service import UserService
@@ -117,6 +118,7 @@ def _register_default_services() -> None:
     _SERVICE_FACTORIES["tier"] = lambda db: TierService(db)
     _SERVICE_FACTORIES["rate_limit"] = lambda db: RateLimitService(db)
     _SERVICE_FACTORIES["user"] = lambda db: UserService(db)
+    _SERVICE_FACTORIES["api_key"] = lambda db: APIKeyService(db)
 
 
 # Type aliases for IDE support

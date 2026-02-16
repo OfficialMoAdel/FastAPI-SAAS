@@ -7,7 +7,7 @@ All business logic is handled by the billing module's BillingRecordService.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
@@ -68,8 +68,15 @@ async def get_invoice(
 
     Returns:
         Invoice details
+
+    Raises:
+        HTTPException: 403 if invoice doesn't belong to current user
     """
     service = get_billing_record_service(db)
-    # get_record only requires record_id, authorization is handled at router level
     result = await service.get_record(invoice_id)
+
+    # SECURITY FIX: Verify invoice belongs to current user
+    if result and result.get("user_id") != current_user["id"]:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this invoice")
+
     return dict(result) if result else {}

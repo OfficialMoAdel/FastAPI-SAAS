@@ -38,7 +38,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     return get_user_service(db)
 
 
-@router.post("", response_model=UserRead, status_code=201)
+@router.post("", response_model=UserRead, status_code=201, dependencies=[Depends(get_current_user)])
 async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
     """Create a new user."""
     return await service.create(user)

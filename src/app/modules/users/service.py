@@ -410,7 +410,8 @@ class UserService(BaseService[User]):
         DuplicateError
             If new email/username already taken
         """
-        db_user = await self.crud.get(db=self.db, username=username)
+        # SECURITY FIX: Prevent updating soft-deleted users
+        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
@@ -506,18 +507,15 @@ class UserService(BaseService[User]):
         ModelNotFoundError
             If user not found
         """
-        db_user = await self.crud.exists(db=self.db, username=username)
+        # SECURITY FIX: Single query with soft-delete filter (prevents double query)
+        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if not db_user:
             raise ModelNotFoundError("User", username)
-
-        # Get full user for cache invalidation before hard delete
-        full_user = await self.crud.get(db=self.db, username=username)
 
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
         await self.crud.db_delete(db=self.db, username=username)
-        if full_user:
-            await self._invalidate_user_cache(full_user)
+        await self._invalidate_user_cache(db_user)
 
         await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted from the database"}
@@ -585,7 +583,11 @@ class UserService(BaseService[User]):
         """
         # Eager load User + Tier + RateLimits in single query
         # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
-        stmt = select(User).options(joinedload(User.tier).joinedload(Tier.rate_limits)).where(User.username == username)
+        stmt = (
+            select(User)
+            .options(joinedload(User.tier).joinedload(Tier.rate_limits))
+            .where(User.username == username, User.is_deleted.is_(False))
+        )
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 

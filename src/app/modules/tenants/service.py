@@ -104,8 +104,8 @@ class TenantService(BaseService[Tenant]):
 
         Parameters
         ----------
-        tenant_id : int
-            Tenant ID
+        tenant_id : UUID
+            Tenant unique identifier
 
         Returns
         -------
@@ -188,8 +188,8 @@ class TenantService(BaseService[Tenant]):
 
         Parameters
         ----------
-        tenant_id : int
-            Tenant ID
+        tenant_id : UUID
+            Tenant unique identifier
         values : TenantUpdate
             Update values
 
@@ -234,8 +234,8 @@ class TenantService(BaseService[Tenant]):
 
         Parameters
         ----------
-        tenant_id : int
-            Tenant ID
+        tenant_id : UUID
+            Tenant unique identifier
 
         Returns
         -------
@@ -270,8 +270,8 @@ class TenantService(BaseService[Tenant]):
 
         Parameters
         ----------
-        tenant_id : int
-            Tenant ID
+        tenant_id : UUID
+            Tenant unique identifier
 
         Returns
         -------

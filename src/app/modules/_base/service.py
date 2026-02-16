@@ -21,7 +21,6 @@ Usage:
 
 from __future__ import annotations
 
-import asyncio
 from collections.abc import Callable
 from typing import Any, Generic, TypeVar, cast
 
@@ -37,9 +36,8 @@ T = TypeVar("T")
 # OPT P0-2: Flyweight cache for FastCRUD instances
 # FastCRUD is stateless (stores only model metadata), so we can reuse instances
 # This reduces O(N) allocations per request to O(1) for cached models
-# SECURITY FIX: Added asyncio.Lock for thread-safe cache access
+# Note: No lock needed - FastCRUD init is synchronous and cache is populated at module load
 _CRUD_CACHE: dict[type, FastCRUD] = {}
-_CRUD_CACHE_LOCK = asyncio.Lock()
 
 
 class BaseService(Generic[T]):
@@ -71,14 +69,12 @@ class BaseService(Generic[T]):
 
     @staticmethod
     def _get_or_create_crud(model: type[T]) -> FastCRUD:
-        """Get cached FastCRUD instance or create new one (thread-safe).
+        """Get cached FastCRUD instance or create new one.
 
-        SECURITY FIX: Uses asyncio.Lock to prevent race conditions during
-        cache initialization in concurrent environments.
+        Note: No lock needed - FastCRUD initialization is synchronous and
+        the cache is populated during first service instantiation per model.
         """
         if model not in _CRUD_CACHE:
-            # Note: This is synchronous, but we use the lock pattern
-            # In async context, we'd use async with, but FastCRUD init is sync
             _CRUD_CACHE[model] = FastCRUD(model)
         return _CRUD_CACHE[model]
 

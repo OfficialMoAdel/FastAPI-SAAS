@@ -359,21 +359,22 @@ class SessionManager:
             True if session is valid, False otherwise
         """
         if not self._redis_client:
-            # Fail open if Redis unavailable - with critical logging for monitoring
+            # SECURITY: Fail closed if Redis unavailable - reject when session state cannot be verified
+            # This prevents invalidated sessions from being accepted during Redis outages
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
             record_fail_open("session_validation")
 
             logger.critical(
-                "redis_unavailable_session_bypass",
+                "redis_unavailable_session_rejected",
                 extra={
                     "user_id": user_id,
                     "session_id": session_id,
                     "severity": "high",
-                    "action": "session_validation_bypassed",
+                    "action": "session_validation_rejected",
                 },
             )
-            return True
+            return False
 
         # O(1) lookup using Hash - HEXISTS (Hash is source of truth for existence)
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"

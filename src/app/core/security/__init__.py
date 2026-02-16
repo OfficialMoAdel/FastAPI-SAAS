@@ -121,13 +121,18 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
     # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
-    to_encode.update({
-        "exp": expire,
-        "token_type": TokenType.ACCESS,
-        "aud": JWT_AUDIENCE,
-        "jti": str(uuid4()),  # Unique token ID for blacklist
-        "iat": datetime.now(UTC).timestamp(),  # Issued at
-    })
+    # SECURITY FIX: Include token_version for session invalidation on password change
+    token_version = to_encode.pop("token_version", 0)
+    to_encode.update(
+        {
+            "exp": expire,
+            "token_type": TokenType.ACCESS,
+            "aud": JWT_AUDIENCE,
+            "jti": str(uuid4()),  # Unique token ID for blacklist
+            "iat": datetime.now(UTC).timestamp(),  # Issued at
+            "token_version": token_version,
+        }
+    )
 
     # HS256 is fast (~10-50us) — to_thread overhead (~50-200us) exceeds the operation itself.
     # Only use to_thread for CPU-heavy RS256 signing.
@@ -154,14 +159,19 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
 
     # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
     # SECURITY FIX: Add absolute_exp for maximum session lifetime enforcement
-    to_encode.update({
-        "exp": expire,
-        "token_type": TokenType.REFRESH,
-        "aud": JWT_AUDIENCE,
-        "jti": str(uuid4()),  # Unique token ID for blacklist
-        "iat": datetime.now(UTC).timestamp(),  # Issued at
-        "absolute_exp": (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp(),
-    })
+    # SECURITY FIX: Include token_version for session invalidation on password change
+    token_version = to_encode.pop("token_version", 0)
+    to_encode.update(
+        {
+            "exp": expire,
+            "token_type": TokenType.REFRESH,
+            "aud": JWT_AUDIENCE,
+            "jti": str(uuid4()),  # Unique token ID for blacklist
+            "iat": datetime.now(UTC).timestamp(),  # Issued at
+            "token_version": token_version,
+            "absolute_exp": (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp(),
+        }
+    )
 
     if ALGORITHM == "RS256":
         encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
@@ -225,14 +235,34 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     elif cache_result is None:
         # Redis unavailable - fall back to DB check
         _jwt_logger.warning(
-            "Redis unavailable for token blacklist check, falling back to DB. "
-            "Restore Redis ASAP for optimal security."
+            "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
         )
         is_blacklisted = await crud_token_blacklist.exists(db, token=token)
         if is_blacklisted:
             return None
 
-    return TokenData(username_or_email=username_or_email, tier_id=tier_id)
+    # SECURITY FIX: Check token_version for session invalidation on password change
+    token_version: int | None = payload.get("token_version")
+    if token_version is not None:
+        # Fetch user from database to verify token_version matches
+        from ..modules.users.crud import crud_users
+
+        user = await crud_users.get(db, username=username_or_email)
+        if not user:
+            # Try by email if username lookup failed
+            user = await crud_users.get(db, email=username_or_email)
+        if not user or user.token_version != token_version:
+            # Token version mismatch - user changed password or was invalidated
+            return None
+
+    # Extract absolute expiration for session lifetime enforcement
+    absolute_exp: float | None = payload.get("absolute_exp")
+
+    return TokenData(
+        username_or_email=username_or_email,
+        tier_id=tier_id,
+        absolute_exp=absolute_exp,
+    )
 
 
 async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSession) -> None:
@@ -272,15 +302,21 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     """Blacklist a single token after validating its signature.
 
     Adds token to both Redis cache (for fast lookup) and database (for persistence).
+    Uses JTI (JWT ID) for precise blacklisting when available.
     """
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
+        jti = payload.get("jti")
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
-            # Add to Redis cache
-            await add_token_to_blacklist(token, expires_at)
+            # Add to Redis cache - prefer JTI for precise blacklisting
+            if jti:
+                await add_token_to_blacklist(f"jti:{jti}", expires_at)
+            else:
+                # Fallback for tokens without JTI (backward compatibility)
+                await add_token_to_blacklist(token, expires_at)
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
 

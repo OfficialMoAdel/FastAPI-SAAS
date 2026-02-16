@@ -6,9 +6,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import Request, Response
+from jwt import ExpiredSignatureError
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
-from sqlalchemy import select
+from redis.exceptions import RedisError
+from sqlalchemy import select, update
+from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -31,6 +34,7 @@ from ...core.security import (
 from ...core.tenancy.context import get_tenant_context
 from ...modules.mfa.service import MFAService
 from ...modules.users.crud import crud_users
+from ...modules.users.models import User
 from ...modules.users.service import get_user_service
 from .models import EmailVerificationToken, PasswordResetToken
 
@@ -146,7 +150,7 @@ return new_attempts
                 # For now, we log the error and continue (fail_open behavior)
                 logger.warning(
                     "audit_log_fail_closed_not_implemented",
-                    message="AUDIT_LOG_FAILURE_MODE='fail_closed' requested but exception type not available"
+                    message="AUDIT_LOG_FAILURE_MODE='fail_closed' requested but exception type not available",
                 )
 
     async def login(
@@ -245,12 +249,14 @@ return new_attempts
 
         # Include tier info in JWT claims for Zero-DB rate limiting
         # tier_name allows middleware to apply correct limits without DB lookup
+        # SECURITY FIX: Include token_version for session invalidation on password change
         tier = user.get("tier")
         tier_name = tier.get("name") if tier else None
         token_data = {
             "sub": user["username"],
             "tier_id": user.get("tier_id"),
             "tier_name": tier_name,
+            "token_version": user.get("token_version", 0),
         }
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -296,30 +302,16 @@ return new_attempts
             raise UnauthorizedException("Invalid refresh token.")
 
         # SECURITY FIX: Check absolute session expiration to enforce maximum session lifetime
-        from jwt import decode as jwt_decode
+        # Use absolute_exp from already-verified token (avoid double JWT decode)
+        absolute_exp = user_data.absolute_exp
+        if absolute_exp:
+            from datetime import UTC
+            from datetime import datetime as dt
 
-        from ...core.security import ALGORITHM, JWT_AUDIENCE, _get_verification_key
-        try:
-            payload = jwt_decode(
-                refresh_token,
-                _get_verification_key(),
-                algorithms=[ALGORITHM],
-                audience=JWT_AUDIENCE
-            )
-            absolute_exp = payload.get("absolute_exp")
-            if absolute_exp:
-                from datetime import UTC
-                from datetime import datetime as dt
-                if dt.fromtimestamp(absolute_exp, tz=UTC) < dt.now(UTC):
-                    raise UnauthorizedException(
-                        "Session expired. Please log in again.",
-                    )
-        except UnauthorizedException:
-            raise
-        except Exception:
-            # If we can't verify absolute_exp, continue with normal flow
-            # The token will still be validated by verify_token
-            pass
+            if dt.fromtimestamp(absolute_exp, tz=UTC) < dt.now(UTC):
+                raise UnauthorizedException(
+                    "Session expired. Please log in again.",
+                )
 
         # Blacklist the used refresh token (Rotation)
         await blacklist_token(token=refresh_token, db=db)
@@ -341,10 +333,12 @@ return new_attempts
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = db_user.get("tier") if db_user else None
         tier_name = tier.get("name") if tier else None
+        # SECURITY FIX: Include token_version for session invalidation
         token_data = {
             "sub": user_data.username_or_email,
             "tier_id": db_user.get("tier_id") if db_user else None,
             "tier_name": tier_name,
+            "token_version": db_user.get("token_version", 0) if db_user else 0,
         }
 
         # Create new tokens
@@ -409,8 +403,8 @@ return new_attempts
             user_data = None
             try:
                 user_data = await verify_token(access_token, TokenType.ACCESS, db)
-            except Exception:
-                pass  # Token might be expired, proceed with logout anyway
+            except (UnauthorizedException, ExpiredSignatureError):
+                pass  # Token expired or invalid, proceed with logout anyway
 
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
@@ -479,7 +473,8 @@ return new_attempts
         UnauthorizedException
             If current password is incorrect
         """
-        user = await crud_users.get(db=db, id=user_id, is_deleted=False)
+        # SECURITY FIX: Only active users can change their password
+        user = await crud_users.get(db=db, id=user_id, is_deleted=False, is_active=True)
         if not user:
             raise UnauthorizedException("User not found.")
 
@@ -499,21 +494,21 @@ return new_attempts
         user_service = get_user_service(db)
         await user_service._invalidate_user_cache(user)
 
-        return {
-            "message": "Password changed successfully. All other sessions have been logged out."
-        }
+        return {"message": "Password changed successfully. All other sessions have been logged out."}
 
-    async def _invalidate_all_user_sessions(
-        self,
-        user: dict[str, Any],
-        db: AsyncSession
-    ) -> None:
+    async def _invalidate_all_user_sessions(self, user: dict[str, Any], db: AsyncSession) -> None:
         """Invalidate all active sessions for a user.
 
         Blacklists any tokens that might be active for this user.
         Note: This is a safety net. Ideally, we would track all active sessions
         in the database and revoke them individually.
         """
+        # SECURITY FIX: Increment token_version to invalidate all existing tokens
+        # This ensures any tokens issued before password change are invalid
+        user_id = user.get("id")
+        await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
+        await db.commit()
+
         # Get identifiers that could be in tokens
         identifiers = [
             user.get("username"),
@@ -522,15 +517,10 @@ return new_attempts
 
         # Create tokens with common expiration scenarios and blacklist them
         # This is a defense-in-depth approach
-        from datetime import timedelta
-
-        from ..core.security import blacklist_token, create_access_token, create_refresh_token
-
         for identifier in identifiers:
             if not identifier:
                 continue
 
-            # Blacklist any tokens that might exist for this user
             # We create token signatures and blacklist them
             token_data = {"sub": identifier}
 
@@ -539,19 +529,15 @@ return new_attempts
                 # This ensures any tokens issued before password change are invalid
                 access_token = await create_access_token(
                     data=token_data,
-                    expires_delta=timedelta(seconds=1)  # Expire immediately
+                    expires_delta=timedelta(seconds=1),  # Expire immediately
                 )
-                refresh_token = await create_refresh_token(
-                    data=token_data,
-                    expires_delta=timedelta(seconds=1)
-                )
+                refresh_token = await create_refresh_token(data=token_data, expires_delta=timedelta(seconds=1))
 
                 await blacklist_token(token=access_token, db=db)
                 await blacklist_token(token=refresh_token, db=db)
-            except Exception:
-                # If blacklisting fails, continue anyway
-                # The password has already been changed
-                pass
+            except (DatabaseError, RedisError) as e:
+                # If blacklisting fails, log but continue - password already changed
+                logger.warning(f"Token blacklisting failed after password change: {e}")
 
     async def request_password_reset(
         self,
@@ -654,17 +640,10 @@ return new_attempts
         if not user:
             raise UnauthorizedException("Invalid password reset token.")
 
-        # Check if user account is deleted
-        if user.get("is_deleted", False):
-            raise UnauthorizedException(
-                "This account has been deleted. Please contact support to reactivate your account."
-            )
-
-        # Check if user account is inactive
-        if not user.get("is_active", True):
-            raise UnauthorizedException(
-                "This account has been deactivated. Please contact support for assistance."
-            )
+        # SECURITY FIX: Use generic message for deleted/inactive accounts
+        # Prevents account enumeration attacks - attackers cannot determine account status
+        if user.get("is_deleted", False) or not user.get("is_active", True):
+            raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
 
         # Mark token as used FIRST (before password change)
         # SECURITY FIX: Prevents token reuse if password change fails

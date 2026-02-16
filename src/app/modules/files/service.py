@@ -62,7 +62,7 @@ class FileService:
     async def upload_file(
         self,
         tenant_id: UUID,
-        user_id: UUID,
+        user_id: int,
         file: BinaryIO,
         filename: str,
         mime_type: str,
@@ -127,12 +127,12 @@ class FileService:
             raise Exception(f"Storage upload failed: {result.error}")
 
         # Create database record
-        # Note: File model uses int FKs; tenant.id and user.id are UUID in API but
-        # the mapped_column stores the underlying int PK. Cast for type checker.
+        # File model: tenant_id is UUID, user_id is int (FK to user.id)
+        # tenant_id is already UUID from API, user_id is already int from User model
         try:
             file_record = File(
-                tenant_id=int(tenant_id),  # type: ignore[arg-type]
-                user_id=int(user_id),  # type: ignore[arg-type]
+                tenant_id=tenant_id,  # UUID - no cast needed
+                user_id=user_id,  # int - already correct type
                 original_name=filename,
                 storage_path=storage_path,
                 mime_type=mime_type,

@@ -635,7 +635,7 @@ class PasskeyService:
 
         # Query user by ID with tier eager-loaded
         stmt = (
-            select(User).options(joinedload(User.tier)).where(User.id == credential.user_id, User.is_deleted.is_(False))
+            select(User).options(joinedload(User.tier)).where(User.id == credential.user_id, User.is_deleted == False)
         )
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

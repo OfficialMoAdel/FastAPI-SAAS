@@ -40,7 +40,7 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             lookup_clause = User.email == email
 
         # Build base statement
-        stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))
+        stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted == False)
 
         # Add tenant filter only if tenant context exists
         if tenant is not None:
