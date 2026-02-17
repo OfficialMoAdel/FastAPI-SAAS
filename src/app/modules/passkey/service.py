@@ -352,7 +352,6 @@ class PasskeyService:
         Returns:
             List of decrypted PublicKeyCredentialDescriptor objects.
         """
-        from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_passkey_query
         from src.app.core.security.encryption import get_encryption
 
@@ -362,8 +361,11 @@ class PasskeyService:
         encryption = get_encryption()
         start_time = time.perf_counter()
 
-        # Parallel decryption with concurrency limit
-        semaphore = asyncio.Semaphore(settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT)
+        # P2-6: Dynamic concurrency based on CPU count instead of fixed value
+        # Formula: min(32, (os.cpu_count() or 1) + 4) provides adaptive parallelism
+        import os
+        concurrency_limit = min(32, (os.cpu_count() or 1) + 4)
+        semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def decrypt_one(cred_id: bytes, transports: Any | None) -> PublicKeyCredentialDescriptor | None:
             async with semaphore:
@@ -635,7 +637,7 @@ class PasskeyService:
 
         # Query user by ID with tier eager-loaded
         stmt = (
-            select(User).options(joinedload(User.tier)).where(User.id == credential.user_id, User.is_deleted == False)
+            select(User).options(joinedload(User.tier)).where(User.id == credential.user_id, User.is_deleted.is_(False))
         )
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

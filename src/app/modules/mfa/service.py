@@ -18,6 +18,7 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
+from src.app.core.utils.cache import client as redis  # FIXED: Import redis client
 from src.app.modules.mfa.crud import crud_mfa_methods
 from src.app.modules.mfa.models import MFAMethod
 from src.app.modules.mfa.schemas import (
@@ -28,6 +29,9 @@ from src.app.modules.mfa.schemas import (
 logger = get_logger(__name__)
 
 # Constants for MFA configuration - MUST be defined before class usage
+# FIXED: Use settings with defaults for MFA lockout configuration
+MFA_MAX_ATTEMPTS: int = getattr(settings, "MFA_MAX_ATTEMPTS", 5)
+MFA_LOCKOUT_DURATION_SECONDS: int = getattr(settings, "MFA_LOCKOUT_DURATION_SECONDS", 300)
 TOTP_INTERVAL = 30  # 30 seconds
 TOTP_DIGITS = 6
 TOTP_SKEW = 1  # Allow 1 interval before/after
@@ -43,6 +47,28 @@ MFA_ACTION_VERIFY_SUCCESS = "mfa.verify.success"
 MFA_ACTION_VERIFY_FAILED = "mfa.verify.failed"
 MFA_ACTION_BACKUP_CODE_USED = "mfa.backup_code.used"
 MFA_ACTION_BACKUP_CODES_REGENERATED = "mfa.backup_codes.regenerated"
+
+# Lua script for atomic MFA lockout check + increment
+# Returns: -1 if locked out, otherwise new attempt count
+_MFA_CHECK_LUA = """
+    local key = KEYS[1]
+    local max_attempts = tonumber(ARGV[1])
+    local lockout_duration = tonumber(ARGV[2])
+    
+    local current = redis.call('GET', key)
+    if current and tonumber(current) >= max_attempts then
+        local ttl = redis.call('TTL', key)
+        if ttl > 0 then
+            return -1
+        end
+    end
+    
+    local new_count = redis.call('INCR', key)
+    if new_count == 1 then
+        redis.call('EXPIRE', key, lockout_duration)
+    end
+    return new_count
+"""
 
 
 class MFAService:
@@ -198,6 +224,30 @@ class MFAService:
         Raises:
             UnauthorizedException: If token is invalid or MFA not enabled.
         """
+        # SECURITY FIX: Check MFA lockout before verification to prevent brute force
+        # Skip lockout check if Redis is unavailable (fail open for availability)
+        mfa_attempts_key = f"mfa_attempts:{user_id}"
+        if redis is not None:
+            result: int | str = await redis.eval(  # type: ignore[misc]
+                _MFA_CHECK_LUA,
+                1,
+                mfa_attempts_key,
+                str(MFA_MAX_ATTEMPTS),
+                str(MFA_LOCKOUT_DURATION_SECONDS),
+            )
+
+            if result == -1:
+                raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
+        else:
+            # Redis unavailable - log warning and continue without lockout
+            logger.warning(
+                "Redis unavailable - MFA lockout disabled | user_id=%s",
+                user_id,
+            )
+
+        if result == -1:
+            raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
+
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if not mfa_method_dict:
@@ -596,17 +646,27 @@ class MFAService:
     def _get_fernet(self) -> Fernet:
         """Get Fernet instance for encryption/decryption.
 
-        Derives a valid Fernet key from SECRET_KEY using base64 encoding.
+        Derives a valid Fernet key from SECRET_KEY using PBKDF2HMAC.
+        Uses proper key derivation with salt instead of simple truncation.
 
         Returns:
             Fernet instance.
         """
-        # Fernet requires a 32-byte base64-encoded key
-        # Derive it from SECRET_KEY
-        secret = settings.SECRET_KEY.get_secret_value()[:32].encode()
-        # Pad to 32 bytes if needed
-        padded = secret.ljust(32, b"\0")
-        key = base64.urlsafe_b64encode(padded)
+        # FIXED: Use proper PBKDF2HMAC key derivation with salt
+        # instead of simple truncation + null padding (security vulnerability)
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
+
+        # Use a consistent salt derived from application name (not random, for reproducibility)
+        salt = b"fastapi_saas_mfa_v1"
+        kdf = PBKDF2HMAC(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=salt,
+            iterations=480000,  # OWASP recommended minimum
+        )
+        secret = settings.SECRET_KEY.get_secret_value().encode()
+        key = base64.urlsafe_b64encode(kdf.derive(secret))
         return Fernet(key)
 
     async def _encrypt_secret(self, secret: str) -> str:

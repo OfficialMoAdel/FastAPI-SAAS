@@ -4,18 +4,22 @@ import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 import orjson
 from redis.exceptions import RedisError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 from structlog import get_logger
 
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
+
+if TYPE_CHECKING:
+    pass
 
 logger = get_logger(__name__)
 
@@ -88,7 +92,7 @@ class AuditLogService:
 
         return log_entry
 
-    async def get_logs(
+    async def query_logs(
         self,
         tenant_id: UUID,
         user_id: UUID | None = None,
@@ -101,6 +105,8 @@ class AuditLogService:
         offset: int = 0,
     ) -> list[AuditLog]:
         """Query audit logs with filters.
+
+        P2-5: Uses joinedload to prevent N+1 queries when accessing user relationship.
 
         Args:
             tenant_id: Tenant ID (required for multi-tenancy)
@@ -115,9 +121,12 @@ class AuditLogService:
 
         Returns
         -------
-            List of audit log entries
+            List of audit log entries with eager-loaded user data
         """
-        query = select(AuditLog).where(AuditLog.tenant_id == tenant_id)
+        # P2-5: Eager load user relationship to prevent N+1 queries
+        query = select(AuditLog).options(
+            joinedload(AuditLog.user),  # type: ignore[arg-type]
+        ).where(AuditLog.tenant_id == tenant_id)
 
         if user_id:
             query = query.where(AuditLog.user_id == user_id)

@@ -194,6 +194,11 @@ return new_attempts
         normalized_username = username.lower().strip()
         login_attempts_key = f"login_attempts:{normalized_username}"
 
+        # Authenticate first (this takes time due to bcrypt)
+        # We do this BEFORE checking lockout to prevent timing attacks
+        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
+
+        # SECURITY FIX: Check lockout AFTER authentication to prevent username enumeration
         # Atomic Lua script: check lockout + increment in single roundtrip
         # Returns: -1 if locked out, otherwise the new attempt count
         result = await redis.eval(  # type: ignore[misc]
@@ -204,9 +209,6 @@ return new_attempts
             str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
         )
 
-        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
-
-        # SECURITY FIX: Check lockout AFTER authentication to prevent username enumeration
         # Use same error message regardless of whether account exists or is locked
         if result == -1:
             await self._publish_login_audit(request, username, False, reason="account_locked")
@@ -537,7 +539,7 @@ return new_attempts
                 await blacklist_token(token=refresh_token, db=db)
             except (DatabaseError, RedisError) as e:
                 # If blacklisting fails, log but continue - password already changed
-                logger.warning(f"Token blacklisting failed after password change: {e}")
+                logger.warning("Token blacklisting failed after password change", error=str(e))
 
     async def request_password_reset(
         self,

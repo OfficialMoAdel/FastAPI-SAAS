@@ -1,6 +1,5 @@
 """Tenant service layer - encapsulates all tenant business logic."""
 
-import logging
 from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
@@ -8,6 +7,9 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
+from src.app.core.utils.cache import client as redis_client
 
 from .._base.exceptions import DuplicateError, ModelNotFoundError
 from .._base.service import BaseService
@@ -15,7 +17,10 @@ from .crud import crud_tenants
 from .models import Tenant
 from .schemas import TenantCreate, TenantResponse, TenantUpdate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
+
+# P2-4: Cache TTL for tenant data (5 minutes)
+TENANT_CACHE_TTL = 300
 
 
 def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
@@ -34,6 +39,16 @@ def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
     }
 
 
+def _get_cache_key(tenant_id: UUID | str) -> str:
+    """Generate Redis cache key for tenant."""
+    return f"tenant:{tenant_id}"
+
+
+def _get_slug_cache_key(slug: str) -> str:
+    """Generate Redis cache key for tenant slug lookup."""
+    return f"tenant:slug:{slug.lower().strip()}"
+
+
 class TenantService(BaseService[Tenant]):
     """Service class for tenant-related business logic."""
 
@@ -47,6 +62,73 @@ class TenantService(BaseService[Tenant]):
         """
         super().__init__(Tenant, db)
         self.crud = crud_tenants
+
+    async def _cache_tenant(self, tenant: Tenant) -> None:
+        """Cache tenant data in Redis.
+
+        P2-4: Caches both ID and slug lookups for O(1) retrieval.
+        """
+        if not redis_client:
+            return
+
+        try:
+            tenant_data = _tenant_to_dict(tenant)
+            cache_key = _get_cache_key(tenant.id)
+            await redis_client.setex(cache_key, TENANT_CACHE_TTL, json_dumps(tenant_data, as_str=True))
+
+            # Also cache by slug for slug-based lookups
+            slug_key = _get_slug_cache_key(tenant.slug)
+            await redis_client.setex(slug_key, TENANT_CACHE_TTL, str(tenant.id))
+        except Exception as e:
+            logger.debug("Failed to cache tenant", error=str(e))
+
+    async def _invalidate_tenant_cache(self, tenant_id: UUID, slug: str | None = None) -> None:
+        """Invalidate tenant cache in Redis."""
+        if not redis_client:
+            return
+
+        try:
+            await redis_client.delete(_get_cache_key(tenant_id))
+            if slug:
+                await redis_client.delete(_get_slug_cache_key(slug))
+        except Exception as e:
+            logger.debug("Failed to invalidate tenant cache", error=str(e))
+
+    async def _get_cached_tenant(self, tenant_id: UUID) -> dict[str, Any] | None:
+        """Get tenant from cache if available."""
+        if not redis_client:
+            return None
+
+        try:
+            cached = await redis_client.get(_get_cache_key(tenant_id))
+            if cached:
+                result: dict[str, Any] = json_loads(cached)
+                return result
+        except Exception as e:
+            logger.debug("Failed to get cached tenant", error=str(e))
+
+        return None
+
+    async def _get_cached_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
+        """Get tenant by slug from cache if available."""
+        if not redis_client:
+            return None
+
+        try:
+            # First check if we have the tenant ID cached for this slug
+            slug_key = _get_slug_cache_key(slug)
+            tenant_id = await redis_client.get(slug_key)
+
+            if tenant_id:
+                # Now get the full tenant data by ID
+                cached = await redis_client.get(_get_cache_key(tenant_id.decode()))
+                if cached:
+                    result: dict[str, Any] = json_loads(cached)
+                    return result
+        except Exception as e:
+            logger.debug("Failed to get cached tenant by slug", error=str(e))
+
+        return None
 
     async def create_tenant(self, tenant: TenantCreate) -> dict[str, Any]:
         """Create a new tenant with validation.
@@ -90,6 +172,9 @@ class TenantService(BaseService[Tenant]):
         else:
             result = TenantResponse.model_validate(created_tenant).model_dump()
 
+        # FIXED: Cache the newly created tenant for immediate lookup
+        await self._cache_tenant(created_tenant)
+
         logger.info(
             "Tenant created | id=%s | slug=%s | name=%s",
             result["id"],
@@ -100,7 +185,9 @@ class TenantService(BaseService[Tenant]):
         return result
 
     async def get_tenant(self, tenant_id: UUID) -> dict[str, Any]:
-        """Get a tenant by ID.
+        """Get a tenant by ID with Redis caching.
+
+        P2-4: First checks Redis cache for O(1) retrieval, falls back to DB.
 
         Parameters
         ----------
@@ -117,13 +204,26 @@ class TenantService(BaseService[Tenant]):
         ModelNotFoundError
             If tenant not found
         """
+        # P2-4: Try cache first
+        cached = await self._get_cached_tenant(tenant_id)
+        if cached:
+            return cached
+
+        # Cache miss - fetch from DB
         tenant = await self.crud.get(db=self.db, id=tenant_id, schema_to_select=TenantResponse)
         if tenant is None:
             raise ModelNotFoundError("Tenant", tenant_id)
+
+        # Cache for next request
+        if isinstance(tenant, Tenant):
+            await self._cache_tenant(tenant)
+
         return tenant
 
     async def get_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
-        """Get a tenant by slug.
+        """Get a tenant by slug with Redis caching.
+
+        P2-4: First checks Redis cache for O(1) retrieval, falls back to DB.
 
         Parameters
         ----------
@@ -136,7 +236,20 @@ class TenantService(BaseService[Tenant]):
             Tenant data or None if not found
         """
         normalized_slug = slug.lower().strip()
-        return await self.crud.get(db=self.db, slug=normalized_slug, schema_to_select=TenantResponse)
+
+        # P2-4: Try cache first
+        cached = await self._get_cached_tenant_by_slug(normalized_slug)
+        if cached:
+            return cached
+
+        # Cache miss - fetch from DB
+        tenant = await self.crud.get(db=self.db, slug=normalized_slug, schema_to_select=TenantResponse)
+
+        # Cache for next request
+        if isinstance(tenant, Tenant):
+            await self._cache_tenant(tenant)
+
+        return tenant
 
     async def list_tenants(
         self,
@@ -218,6 +331,9 @@ class TenantService(BaseService[Tenant]):
         await self.db.commit()
         await self.db.refresh(tenant)
 
+        # FIXED: Invalidate tenant cache after update to prevent stale data
+        await self._invalidate_tenant_cache(tenant_id, tenant.slug)
+
         logger.info(
             "Tenant updated | id=%s | fields=%s",
             tenant_id,
@@ -258,6 +374,9 @@ class TenantService(BaseService[Tenant]):
         await self.db.commit()
         await self.db.refresh(tenant)
 
+        # FIXED: Invalidate tenant cache after deactivation to prevent stale data
+        await self._invalidate_tenant_cache(tenant_id, tenant.slug)
+
         logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
@@ -293,6 +412,9 @@ class TenantService(BaseService[Tenant]):
 
         await self.db.commit()
         await self.db.refresh(tenant)
+
+        # FIXED: Invalidate tenant cache after reactivation to prevent stale data
+        await self._invalidate_tenant_cache(tenant_id, tenant.slug)
 
         logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 

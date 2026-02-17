@@ -112,6 +112,13 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         if redis_client:
             session_manager.set_redis_client(redis_client)
 
+        # FIXED: Initialize GCRA rate limiter for algorithm selection
+        from .core.utils.gcra_rate_limit import init_gcra_rate_limiter
+
+        if redis_client:
+            init_gcra_rate_limiter(redis_client)
+            logger.info("GCRA rate limiter initialized")
+
         # Warm token blacklist cache from database
         await _warm_token_blacklist_cache()
 

@@ -2,7 +2,9 @@ from arq.connections import RedisSettings
 from arq.cron import cron
 
 from ...core.config import settings
+from ...core.events import process_event_handler
 from ...core.json_utils import json_dumps, json_loads
+from ...modules.notifications.service import send_email_task
 from .functions import (
     deliver_webhook_task,
     flush_audit_logs_task,
@@ -37,6 +39,8 @@ class WorkerSettings:
         migrate_sessions_task,
         flush_audit_logs_task,
         sync_bloom_filter_task,
+        process_event_handler,  # FIXED: Was missing - handles async event bus events
+        send_email_task,        # FIXED: Was missing - handles email notifications
     ]
     redis_settings = RedisSettings(host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT)
     on_startup = startup

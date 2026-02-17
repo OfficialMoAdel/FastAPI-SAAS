@@ -68,6 +68,8 @@ async def set_rls_context(
     """
     Set RLS context variables in the database session.
 
+    P2-2: Optimized to use single roundtrip for all context variables.
+
     Args:
         connection: Database connection
         tenant_id: Tenant UUID to set as current tenant
@@ -77,20 +79,23 @@ async def set_rls_context(
         Exception: If setting context fails (fail-closed)
     """
     try:
-        # Set tenant context (required)
-        await connection.execute(
-            text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-            {"tenant_id": tenant_id},
-        )
-        logger.debug("RLS context set", tenant_id=tenant_id)
-
-        # Set user context (optional)
+        # P2-2: Single roundtrip for all context variables using COALESCE
         if user_id:
             await connection.execute(
-                text(f"SELECT set_config('{RLS_USER_VAR}', :user_id, true)"),
-                {"user_id": user_id},
+                text(f"""
+                    SELECT
+                        set_config('{RLS_TENANT_VAR}', :tenant_id, true),
+                        set_config('{RLS_USER_VAR}', :user_id, true)
+                """),
+                {"tenant_id": tenant_id, "user_id": user_id},
             )
-            logger.debug("RLS user context set", user_id=user_id)
+            logger.debug("RLS context set", tenant_id=tenant_id, user_id=user_id)
+        else:
+            await connection.execute(
+                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+                {"tenant_id": tenant_id},
+            )
+            logger.debug("RLS context set", tenant_id=tenant_id)
 
     except Exception as e:
         logger.error(
@@ -106,6 +111,8 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
     """
     Clear RLS context variables from the database session.
 
+    P2-2: Optimized to use single roundtrip for all reset operations.
+
     Args:
         connection: Database connection
 
@@ -113,10 +120,15 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
         Fails open - logs warnings but doesn't raise exceptions
     """
     try:
-        # Reset all RLS variables
-        await connection.execute(text(f"RESET {RLS_TENANT_VAR}"))
-        await connection.execute(text(f"RESET {RLS_USER_VAR}"))
-        await connection.execute(text(f"RESET {RLS_BYPASS_VAR}"))
+        # P2-2: Single roundtrip to reset all RLS variables
+        await connection.execute(
+            text(f"""
+                SELECT
+                    set_config('{RLS_TENANT_VAR}', '', true),
+                    set_config('{RLS_USER_VAR}', '', true),
+                    set_config('{RLS_BYPASS_VAR}', '', true)
+            """)
+        )
         logger.debug("RLS context cleared")
 
     except Exception as e:

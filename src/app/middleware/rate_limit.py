@@ -216,8 +216,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         tier_name = None
 
         if user:
-            user_id = getattr(user, "id", None) or user.get("id") if isinstance(user, dict) else None
-            tier_name = await self._get_user_tier_name(user)
+            # Handle both ORM objects and dicts safely
+            if isinstance(user, dict):
+                user_id = user.get("id")
+                tier_name = await self._get_user_tier_name(user)
+            else:
+                user_id = getattr(user, "id", None)
+                tier_name = await self._get_user_tier_name(user)
 
         # 2. If no user in state, use jwt_utils to extract/cache JWT claims
         # This eliminates double JWT decode when auth dependency runs later

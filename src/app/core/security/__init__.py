@@ -87,7 +87,8 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
             _bcrypt_executor, bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
         )
         return result
-    except Exception as e:
+    except (ValueError, TypeError) as e:
+        # Only catch specific bcrypt errors, not all exceptions
         _jwt_logger.error(f"Password verification failed: {e}")
         return False
 
@@ -244,16 +245,43 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     # SECURITY FIX: Check token_version for session invalidation on password change
     token_version: int | None = payload.get("token_version")
     if token_version is not None:
-        # Fetch user from database to verify token_version matches
-        from ..modules.users.crud import crud_users
+        # P1-4: Cache token_version in Redis to avoid DB query on every request
+        cache_key = f"user:{username_or_email}:token_version"
 
-        user = await crud_users.get(db, username=username_or_email)
-        if not user:
-            # Try by email if username lookup failed
-            user = await crud_users.get(db, email=username_or_email)
-        if not user or user.token_version != token_version:
-            # Token version mismatch - user changed password or was invalidated
-            return None
+        from ..utils.cache import client as redis_client
+
+        cached_version = None
+        if redis_client:
+            try:
+                cached_value = await redis_client.get(cache_key)
+                if cached_value is not None:
+                    cached_version = int(cached_value)
+            except Exception:
+                # Cache miss or error - fall back to DB
+                pass
+
+        if cached_version is not None:
+            # Use cached version for O(1) validation
+            if cached_version != token_version:
+                return None
+        else:
+            # Cache miss - fetch from DB and cache for 5 minutes
+            from ..modules.users.crud import crud_users
+
+            user = await crud_users.get(db, username=username_or_email)
+            if not user:
+                # Try by email if username lookup failed
+                user = await crud_users.get(db, email=username_or_email)
+            if not user or user.token_version != token_version:
+                # Token version mismatch - user changed password or was invalidated
+                return None
+
+            # Cache the token_version for future requests
+            if redis_client:
+                try:
+                    await redis_client.setex(cache_key, 300, str(user.token_version))  # 5 min TTL
+                except Exception:
+                    pass  # Don't fail on cache error
 
     # Extract absolute expiration for session lifetime enforcement
     absolute_exp: float | None = payload.get("absolute_exp")

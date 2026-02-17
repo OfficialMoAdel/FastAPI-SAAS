@@ -24,6 +24,7 @@ from ...core.db.database import Base
 if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AISettings, AITokenUsage
     from src.app.modules.api_keys.models import APIKey
+    from src.app.modules.audit_logs.models import AuditLog
     from src.app.modules.billing.models import BillingRecord, UserSubscription
     from src.app.modules.files.models import File
     from src.app.modules.mfa.models import MFAMethod
@@ -88,3 +89,4 @@ class User(Base):
     ai_settings: Mapped["AISettings | None"] = relationship(back_populates="user", uselist=False, init=False)
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="user", init=False)
     tier: Mapped["Tier | None"] = relationship(lazy="joined", init=False)  # OPT-6: Eager load tier
+    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user", init=False)

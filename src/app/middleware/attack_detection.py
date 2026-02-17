@@ -193,19 +193,51 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         return any(path.startswith(exempt) for exempt in EXEMPT_PATHS)
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP with trusted proxy support."""
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            return forwarded_for.split(",")[0].strip()
+        """Extract client IP with trusted proxy validation.
 
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip
+        SECURITY FIX: Only trust X-Forwarded-For/X-Real-IP headers when
+        the request comes from a trusted proxy. Prevents IP spoofing attacks.
+        """
+        client_ip = ""
 
-        if request.client:
-            return request.client.host
+        # Check if request comes from trusted proxy first
+        if request.client and request.client.host:
+            direct_ip = request.client.host
 
-        return "unknown"
+            # Validate trusted proxy before trusting forwarded headers
+            if self._is_trusted_proxy(direct_ip):
+                # Trust X-Forwarded-For from trusted proxies
+                forwarded_for = request.headers.get("X-Forwarded-For")
+                if forwarded_for:
+                    # Get the first IP in the chain (original client)
+                    client_ip = forwarded_for.split(",")[0].strip()
+                else:
+                    # Fall back to X-Real-IP
+                    real_ip = request.headers.get("X-Real-IP")
+                    if real_ip:
+                        client_ip = real_ip
+
+            if not client_ip:
+                client_ip = direct_ip
+        else:
+            client_ip = "unknown"
+
+        return client_ip
+
+    def _is_trusted_proxy(self, ip: str) -> bool:
+        """Check if IP is a trusted proxy.
+
+        Currently checks if IP is localhost/private network.
+        In production, configure TRUSTED_PROXIES setting.
+        """
+        import ipaddress
+
+        try:
+            addr = ipaddress.ip_address(ip)
+            # Trust loopback and private networks
+            return addr.is_loopback or addr.is_private
+        except ValueError:
+            return False
 
     async def _detect_attack_patterns(self, request: Request) -> list[dict]:
         """Scan request for attack patterns using zero-copy bytes scanning.
@@ -226,7 +258,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         query = str(request.query_params)
         if query:
-            self._check_for_patterns(query.encode("utf-8", errors="replace"), "query_string", detected_attacks)
+            self._check_for_patterns(
+                query.encode("utf-8", errors="replace"), "query_string", detected_attacks
+            )
 
         # Check specific headers
         headers_to_check = ["user-agent", "referer", "x-requested-with"]

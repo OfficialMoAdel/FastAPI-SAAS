@@ -262,4 +262,4 @@ def has_cached_jwt_payload(request: Request) -> bool:
     Returns:
         True if payload is cached, False otherwise.
     """
-    return hasattr(request.state, REQUEST_STATE_KEY) and request.state.jwt_payload is not None
+    return getattr(request.state, REQUEST_STATE_KEY, None) is not None

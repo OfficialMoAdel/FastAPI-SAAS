@@ -66,6 +66,7 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
             "is_superuser": user.is_superuser,
             "is_deleted": user.is_deleted,  # A1: Required for token refresh security check
             "is_email_verified": user.is_email_verified,  # A2: Required for email verification status
+            "token_version": user.token_version,  # FIXED: Was missing - required for session invalidation
         }
 
         if user.tier:

@@ -4,11 +4,26 @@ Provides Redis-based storage and management for IP whitelist and blacklist.
 """
 
 import json
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
 from src.app.core.config import settings
 from src.app.core.utils import cache
+
+
+@asynccontextmanager
+async def get_redis_client() -> AsyncIterator[Any]:
+    """Context manager for Redis client.
+
+    P3-1: Cleaner async context manager pattern instead of awkward __anext__().
+    """
+    client = None
+    async for redis_client in cache.async_get_redis():
+        client = redis_client
+        break
+    yield client
 
 
 class IPFilterService:
@@ -55,16 +70,16 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                client = await cache.async_get_redis().__anext__()
-                if client:
-                    await client.setex(key, ttl_seconds, json.dumps(data))
+                async with get_redis_client() as client:
+                    if client:
+                        await client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            client = await cache.async_get_redis().__anext__()
-            if client:
-                await client.set(key, json.dumps(data))
+            async with get_redis_client() as client:
+                if client:
+                    await client.set(key, json.dumps(data))
 
         return True
 
@@ -78,10 +93,10 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        client = await cache.async_get_redis().__anext__()
-        if client:
-            result = await client.delete(key)
-            return bool(result > 0)
+        async with get_redis_client() as client:
+            if client:
+                result = await client.delete(key)
+                return bool(result > 0)
         return False
 
     async def add_to_blacklist(
@@ -113,16 +128,16 @@ class IPFilterService:
         if expires_at:
             ttl_seconds = int((expires_at - datetime.now(UTC)).total_seconds())
             if ttl_seconds > 0:
-                client = await cache.async_get_redis().__anext__()
-                if client:
-                    await client.setex(key, ttl_seconds, json.dumps(data))
+                async with get_redis_client() as client:
+                    if client:
+                        await client.setex(key, ttl_seconds, json.dumps(data))
             else:
                 # Expiration is in the past, don't add
                 return False
         else:
-            client = await cache.async_get_redis().__anext__()
-            if client:
-                await client.set(key, json.dumps(data))
+            async with get_redis_client() as client:
+                if client:
+                    await client.set(key, json.dumps(data))
 
         return True
 
@@ -136,10 +151,10 @@ class IPFilterService:
             True if entry existed and was removed
         """
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        client = await cache.async_get_redis().__anext__()
-        if client:
-            result = await client.delete(key)
-            return bool(result > 0)
+        async with get_redis_client() as client:
+            if client:
+                result = await client.delete(key)
+                return bool(result > 0)
         return False
 
     async def is_whitelisted(self, ip_address: str) -> bool:
@@ -155,10 +170,10 @@ class IPFilterService:
             return False
 
         key = f"{self.WHITELIST_PREFIX}{ip_address}"
-        client = await cache.async_get_redis().__anext__()
-        if client:
-            exists = await client.exists(key)
-            return bool(exists > 0)
+        async with get_redis_client() as client:
+            if client:
+                exists = await client.exists(key)
+                return bool(exists > 0)
         return False
 
     async def is_blacklisted(self, ip_address: str) -> bool:
@@ -174,10 +189,10 @@ class IPFilterService:
             return False
 
         key = f"{self.BLACKLIST_PREFIX}{ip_address}"
-        client = await cache.async_get_redis().__anext__()
-        if client:
-            exists = await client.exists(key)
-            return bool(exists > 0)
+        async with get_redis_client() as client:
+            if client:
+                exists = await client.exists(key)
+                return bool(exists > 0)
         return False
 
     async def get_whitelist(self) -> list[dict[str, Any]]:
@@ -190,28 +205,36 @@ class IPFilterService:
         keys = []
         cursor = 0
 
-        client = await cache.async_get_redis().__anext__()
-        if not client:
-            return []
+        async with get_redis_client() as client:
+            if not client:
+                return []
 
-        while True:
-            cursor, batch = await client.scan(cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == 0:
-                break
+            while True:
+                cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
 
-        entries = []
-        for key in keys:
-            data = await client.get(key)
-            if data:
-                entry = json.loads(data)
-                # Get TTL for expiration info
-                ttl = await client.ttl(key)
-                if ttl > 0:
-                    entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
-                entries.append(entry)
+            # P3-1: Use pipeline for bulk GET+TTL operations
+            entries = []
+            if keys:
+                pipe = client.pipeline()
+                for key in keys:
+                    pipe.get(key)
+                    pipe.ttl(key)
+                results = await pipe.execute()
 
-        return entries
+                # Process pairs of (data, ttl)
+                for i in range(0, len(results), 2):
+                    data = results[i]
+                    ttl = results[i + 1]
+                    if data:
+                        entry = json.loads(data)
+                        if ttl > 0:
+                            entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
+                        entries.append(entry)
+
+            return entries
 
     async def get_blacklist(self) -> list[dict[str, Any]]:
         """Get all blacklisted IP addresses.
@@ -223,28 +246,36 @@ class IPFilterService:
         keys = []
         cursor = 0
 
-        client = await cache.async_get_redis().__anext__()
-        if not client:
-            return []
+        async with get_redis_client() as client:
+            if not client:
+                return []
 
-        while True:
-            cursor, batch = await client.scan(cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == 0:
-                break
+            while True:
+                cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
 
-        entries = []
-        for key in keys:
-            data = await client.get(key)
-            if data:
-                entry = json.loads(data)
-                # Get TTL for expiration info
-                ttl = await client.ttl(key)
-                if ttl > 0:
-                    entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
-                entries.append(entry)
+            # P3-1: Use pipeline for bulk GET+TTL operations
+            entries = []
+            if keys:
+                pipe = client.pipeline()
+                for key in keys:
+                    pipe.get(key)
+                    pipe.ttl(key)
+                results = await pipe.execute()
 
-        return entries
+                # Process pairs of (data, ttl)
+                for i in range(0, len(results), 2):
+                    data = results[i]
+                    ttl = results[i + 1]
+                    if data:
+                        entry = json.loads(data)
+                        if ttl > 0:
+                            entry["expires_at"] = datetime.now(UTC).timestamp() + ttl
+                        entries.append(entry)
+
+            return entries
 
     async def clear_whitelist(self) -> int:
         """Clear all entries from the whitelist.
@@ -256,15 +287,15 @@ class IPFilterService:
         keys = []
         cursor = 0
 
-        client = await cache.async_get_redis().__anext__()
-        if not client:
-            return 0
+        async with get_redis_client() as client:
+            if not client:
+                return 0
 
-        while True:
-            cursor, batch = await client.scan(cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == 0:
-                break
+            while True:
+                cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
 
         if keys:
             return int(await client.delete(*keys))
@@ -280,15 +311,15 @@ class IPFilterService:
         keys = []
         cursor = 0
 
-        client = await cache.async_get_redis().__anext__()
-        if not client:
-            return 0
+        async with get_redis_client() as client:
+            if not client:
+                return 0
 
-        while True:
-            cursor, batch = await client.scan(cursor, match=pattern, count=100)
-            keys.extend(batch)
-            if cursor == 0:
-                break
+            while True:
+                cursor, batch = await client.scan(cursor, match=pattern, count=100)
+                keys.extend(batch)
+                if cursor == 0:
+                    break
 
         if keys:
             return int(await client.delete(*keys))

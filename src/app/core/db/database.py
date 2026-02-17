@@ -62,6 +62,12 @@ else:
         pool_pre_ping=True,
         pool_recycle=3600,
         pool_timeout=settings.DB_POOL_TIMEOUT,
+        # P1-1: Configure asyncpg statement cache for better performance
+        # Default 100 statements, 1KB max - increase for complex workloads
+        connect_args={
+            "statement_cache_size": 5000,  # Cache up to 5000 prepared statements
+            "max_cacheable_statement_size": 10240,  # 10KB max statement size
+        },
     )
 
 # Setup query profiler in development mode

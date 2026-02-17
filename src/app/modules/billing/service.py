@@ -211,16 +211,26 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         )
 
     async def update_plan(self, plan_id: int, data: SubscriptionPlanUpdate) -> dict[str, Any]:
-        """Update a subscription plan."""
-        plan = await crud_subscription_plans.get(db=self.db, id=plan_id)
+        """Update a subscription plan.
+
+        P2-3: Uses session refresh instead of second DB roundtrip.
+        """
+        # Fetch ORM object directly for in-place update
+        plan = await self.db.get(SubscriptionPlan, plan_id)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await crud_subscription_plans.update(db=self.db, object=update_data, id=plan_id)
-        result = await crud_subscription_plans.get(db=self.db, id=plan_id)
-        return dict(result) if result else {}
+
+        # Apply updates to ORM object
+        for key, value in update_data.items():
+            setattr(plan, key, value)
+
+        await self.db.commit()
+        await self.db.refresh(plan)
+
+        return SubscriptionPlanRead.model_validate(plan).model_dump()
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
@@ -407,16 +417,25 @@ class PricingService(BaseService[Pricing]):
         )
 
     async def update_pricing(self, pricing_id: int, data: PricingUpdate) -> dict[str, Any]:
-        """Update a pricing tier."""
-        pricing = await crud_pricing.get(db=self.db, id=pricing_id)
+        """Update a pricing tier.
+
+        P2-3: Uses session refresh instead of second DB roundtrip.
+        """
+        pricing = await self.db.get(Pricing, pricing_id)
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await crud_pricing.update(db=self.db, object=update_data, id=pricing_id)
-        result = await crud_pricing.get(db=self.db, id=pricing_id)
-        return dict(result) if result else {}
+
+        # Apply updates to ORM object
+        for key, value in update_data.items():
+            setattr(pricing, key, value)
+
+        await self.db.commit()
+        await self.db.refresh(pricing)
+
+        return PricingRead.model_validate(pricing).model_dump()
 
 
 class UserSubscriptionService(BaseService[UserSubscription]):
@@ -598,11 +617,16 @@ class CheckoutService:
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
-        # Use Platform API Key from Env
-        api_key = settings.STRIPE_SECRET_KEY
-        if not api_key:
+        try:
+            # Use Platform API Key from Env
+            api_key = settings.STRIPE_SECRET_KEY
+            if not api_key:
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
+                )
+        except AttributeError:
             raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe configuration error"
             )
 
         # Get settings to find Customer ID

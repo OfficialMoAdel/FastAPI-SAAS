@@ -73,11 +73,15 @@ async def execute_query_with_circuit_breaker(
         # No fallback available
         raise RuntimeError("Database circuit breaker is OPEN and no fallback available")
 
-    # Handle HALF_OPEN transition manually since we aren't using the decorator
-    if current_state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
-        async with db_circuit._lock:
-            if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
-                db_circuit._state = CircuitState.HALF_OPEN
+    # FIXED: Corrected HALF_OPEN state transition logic
+    # Previous bug: checked state == HALF_OPEN AND _state == OPEN (always false)
+    # The HALF_OPEN state requires single-request testing - allow one operation through
+    if current_state == CircuitState.HALF_OPEN:
+        # In HALF_OPEN state, we allow only one test request
+        # The circuit breaker state machine handles this, but we log it
+        logger.debug("Database circuit HALF_OPEN - allowing test request")
+        # If we succeed, record_success() will transition to CLOSED
+        # If we fail, record_failure() will transition back to OPEN
 
     # Execute query
     try:

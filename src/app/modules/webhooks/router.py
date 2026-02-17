@@ -45,7 +45,7 @@ async def list_webhook_endpoints(
     if is_active is not None:
         query = query.where(WebhookEndpoint.is_active == is_active)
     if event_type:
-        query = query.where(WebhookEndpoint.event_type.contains([event_type]))
+        query = query.where(WebhookEndpoint.event_type == event_type)
 
     query = query.order_by(WebhookEndpoint.created_at.desc())
 

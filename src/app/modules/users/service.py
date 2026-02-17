@@ -149,8 +149,9 @@ class UserService(BaseService[User]):
                 pipe.setex(_user_username_cache_key(username), USER_CACHE_TTL, serialized)
                 await pipe.execute()
         except Exception as e:
+            # Log warning but don't fail the request due to cache issues
             user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning(f"Failed to cache user {user_id_log}: {e}")
+            logger.warning("Failed to cache user %s: %s", user_id_log, e)
 
     async def _invalidate_user_cache(self, user: User | dict[str, Any]) -> None:
         """Invalidate all cache entries for a user."""

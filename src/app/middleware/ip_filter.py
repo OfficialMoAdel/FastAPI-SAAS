@@ -47,29 +47,51 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
         self._filter_service = IPFilterService()
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP with trusted proxy support.
+        """Extract client IP with trusted proxy validation.
 
-        Priority:
-        1. X-Forwarded-For header (if trusted proxy)
-        2. X-Real-IP header (if trusted proxy)
-        3. Direct connection IP
+        SECURITY FIX: Only trust X-Forwarded-For/X-Real-IP headers when
+        the request comes from a trusted proxy. Prevents IP spoofing attacks.
         """
-        # Check for forwarded headers if behind trusted proxy
-        forwarded_for = request.headers.get("x-forwarded-for")
-        if forwarded_for:
-            # Take the first IP in the chain (original client)
-            client_ip = forwarded_for.split(",")[0].strip()
-            return client_ip
+        client_ip = ""
 
-        real_ip = request.headers.get("x-real-ip")
-        if real_ip:
-            return real_ip
+        # Check if request comes from trusted proxy first
+        if request.client and request.client.host:
+            direct_ip = request.client.host
 
-        # Fall back to direct connection
-        if request.client:
-            return request.client.host
+            # Validate trusted proxy before trusting forwarded headers
+            if self._is_trusted_proxy(direct_ip):
+                # Trust X-Forwarded-For from trusted proxies
+                forwarded_for = request.headers.get("X-Forwarded-For")
+                if forwarded_for:
+                    # Get the first IP in the chain (original client)
+                    client_ip = forwarded_for.split(",")[0].strip()
+                else:
+                    # Fall back to X-Real-IP
+                    real_ip = request.headers.get("X-Real-IP")
+                    if real_ip:
+                        client_ip = real_ip
 
-        return "unknown"
+            if not client_ip:
+                client_ip = direct_ip
+        else:
+            client_ip = "unknown"
+
+        return client_ip
+
+    def _is_trusted_proxy(self, ip: str) -> bool:
+        """Check if IP is a trusted proxy.
+
+        Currently checks if IP is localhost/private network.
+        In production, configure TRUSTED_PROXIES setting.
+        """
+        import ipaddress
+
+        try:
+            addr = ipaddress.ip_address(ip)
+            # Trust loopback and private networks
+            return addr.is_loopback or addr.is_private
+        except ValueError:
+            return False
 
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from IP filtering."""

@@ -15,6 +15,7 @@ from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
+    from src.app.modules.users.models import User
 
 
 class AuditLog(Base):
@@ -114,6 +115,11 @@ class AuditLog(Base):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
         "Tenant",
+        back_populates="audit_logs",
+        init=False,
+    )
+    user: Mapped["User | None"] = relationship(  # type: ignore
+        "User",
         back_populates="audit_logs",
         init=False,
     )

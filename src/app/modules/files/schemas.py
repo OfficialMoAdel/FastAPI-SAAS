@@ -48,7 +48,7 @@ class FileRead(BaseRead):
     """
 
     tenant_id: UUID
-    user_id: UUID | None = None
+    user_id: int | None = None
     original_name: str
     storage_path: str
     mime_type: str

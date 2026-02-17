@@ -176,7 +176,7 @@ class SQLiteSettings(DatabaseSettings):
 
 class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
-    MYSQL_PASSWORD: str = ""  # REQUIRED: No default - must be set via env
+    MYSQL_PASSWORD: str = Field(..., description="MySQL database password - REQUIRED when using MySQL")
     MYSQL_SERVER: str = "localhost"
     MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
@@ -671,6 +671,6 @@ class Settings(
     # Override model_config to ensure no env_prefix is applied to base fields
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
     # have env_prefix which would otherwise be inherited and break field resolution
-    model_config = SettingsConfigDict(env_prefix="")
+    model_config = SettingsConfigDict(env_prefix="", env_file=".env", env_file_encoding="utf-8")
 
 settings = Settings()  # type: ignore
