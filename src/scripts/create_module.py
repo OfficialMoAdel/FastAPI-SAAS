@@ -33,28 +33,70 @@ from jinja2 import Environment, FileSystemLoader
 # ============================================================================
 
 FIELD_TYPE_MAP: dict[str, dict[str, Any]] = {
-    "str": {"type": "str", "default": '""', "sqlalchemy": "String(255)"},
-    "int": {"type": "int", "default": "0", "sqlalchemy": "Integer"},
-    "bool": {"type": "bool", "default": "False", "sqlalchemy": "Boolean"},
-    "float": {"type": "float", "default": "0.0", "sqlalchemy": "Float"},
+    "str": {
+        "pydantic_type": "str",
+        "pydantic_annotated": "Annotated[str, StringConstraints(max_length=255)]",
+        "default": '""',
+        "sqlalchemy_column": "String(255)",
+        "sqlalchemy_type": "String",
+    },
+    "int": {
+        "pydantic_type": "int",
+        "pydantic_annotated": "int",
+        "default": "0",
+        "sqlalchemy_column": "Integer",
+        "sqlalchemy_type": "Integer",
+    },
+    "bool": {
+        "pydantic_type": "bool",
+        "pydantic_annotated": "bool",
+        "default": "False",
+        "sqlalchemy_column": "Boolean",
+        "sqlalchemy_type": "Boolean",
+    },
+    "float": {
+        "pydantic_type": "float",
+        "pydantic_annotated": "float",
+        "default": "0.0",
+        "sqlalchemy_column": "Float",
+        "sqlalchemy_type": "Float",
+    },
     "Decimal": {
-        "type": "Decimal",
+        "pydantic_type": "Decimal",
+        "pydantic_annotated": "Decimal",
         "default": 'Decimal("0.00")',
-        "sqlalchemy": "Numeric(10, 2)",
+        "sqlalchemy_column": "Numeric(10, 2)",
+        "sqlalchemy_type": "Numeric",
         "import_decimal": True,
     },
     "datetime": {
-        "type": "datetime",
+        "pydantic_type": "datetime",
+        "pydantic_annotated": "datetime",
         "default": "func.now()",
-        "sqlalchemy": "DateTime(timezone=True)",
+        "sqlalchemy_column": "DateTime(timezone=True)",
+        "sqlalchemy_type": "DateTime",
         "import_datetime": True,
     },
-    "text": {"type": "str", "default": '""', "sqlalchemy": "Text"},
-    "json": {"type": "dict", "default": "{}", "sqlalchemy": "JSON"},
+    "text": {
+        "pydantic_type": "str",
+        "pydantic_annotated": "str",
+        "default": '""',
+        "sqlalchemy_column": "Text",
+        "sqlalchemy_type": "Text",
+    },
+    "json": {
+        "pydantic_type": "dict",
+        "pydantic_annotated": "dict",
+        "default": "{}",
+        "sqlalchemy_column": "JSON",
+        "sqlalchemy_type": "JSON",
+    },
     "uuid": {
-        "type": "UUID",
+        "pydantic_type": "UUID",
+        "pydantic_annotated": "UUID",
         "default": "uuid7",
-        "sqlalchemy": "UUID(as_uuid=True)",
+        "sqlalchemy_column": "UUID(as_uuid=True)",
+        "sqlalchemy_type": "UUID",
         "import_uuid": True,
     },
 }
@@ -147,6 +189,24 @@ def to_pascal_case(name: str) -> str:
     return "".join(word.capitalize() for word in name.split("_"))
 
 
+# Common pluralization rules for singularization
+SINGULAR_RULES = [
+    (r"ies$", "y"),  # categories -> category
+    (r"es$", ""),  # boxes -> box, addresses -> address
+    (r"s$", ""),  # products -> product
+]
+
+
+def to_singular(name: str) -> str:
+    """Convert a plural word to singular using common rules."""
+    import re
+
+    for pattern, replacement in SINGULAR_RULES:
+        if re.search(pattern, name):
+            return re.sub(pattern, replacement, name)
+    return name
+
+
 def parse_field(field_str: str) -> FieldDefinition:
     """Parse a field definition string.
 
@@ -200,7 +260,9 @@ def create_module_context(module_name: str, fields_str: str, tenant_aware: bool 
     """
     # Parse module name
     module_name = to_snake_case(module_name)
-    model_name = to_pascal_case(module_name)
+    # Model name is singular (products -> Product)
+    singular_name = to_singular(module_name)
+    model_name = to_pascal_case(singular_name)
     # Table names are usually singular in this codebase
     table_name = module_name
 

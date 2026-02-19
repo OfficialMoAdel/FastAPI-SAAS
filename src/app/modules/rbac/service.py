@@ -363,12 +363,6 @@ class RoleService:
                 error=str(e),
                 tenant_id=self.tenant_id,
             )
-        except Exception as e:
-            logger.warning(
-                "RBAC cache invalidation error",
-                error=str(e),
-                tenant_id=self.tenant_id,
-            )
 
     async def add_permission_to_role(self, role_id: int, permission_slug: str) -> None:
         """Add a permission to a role."""

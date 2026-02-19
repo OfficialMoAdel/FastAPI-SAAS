@@ -95,7 +95,7 @@ class AuditLogService:
     async def query_logs(
         self,
         tenant_id: UUID,
-        user_id: UUID | None = None,
+        user_id: int | None = None,  # FIX: Changed from UUID to int to match model
         action: str | None = None,
         entity_type: str | None = None,
         entity_id: UUID | None = None,
@@ -110,7 +110,7 @@ class AuditLogService:
 
         Args:
             tenant_id: Tenant ID (required for multi-tenancy)
-            user_id: Filter by user ID
+            user_id: Filter by user ID (int, matches user.id FK)
             action: Filter by action name
             entity_type: Filter by entity type
             entity_id: Filter by entity ID

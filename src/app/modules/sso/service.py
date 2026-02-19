@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -27,6 +28,8 @@ from .providers.github import GitHubProvider
 from .providers.google import GoogleProvider
 from .providers.microsoft import MicrosoftProvider
 from .schemas import SSOProvider, UserSSOConnectionCreate, UserSSOConnectionUpdate
+
+logger = logging.getLogger(__name__)
 
 
 class SSOService:
@@ -373,8 +376,9 @@ class SSOService:
             except NotFoundException:
                 # Provider not configured -> disabled
                 pass
-            except Exception:
+            except Exception as e:
                 # Any other error -> disabled safety fallback
+                logger.error(f"SSO provider status check failed: {e}")
                 pass
 
             # If the endpoint is strictly for "enabled" providers as buttons, we might filter here.

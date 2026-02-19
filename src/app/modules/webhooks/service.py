@@ -149,11 +149,21 @@ class WebhookService:
         await self.db.commit()
 
         # Enqueue tasks concurrently (Redis is safe for concurrent ops)
+        # FIX: Log exceptions instead of silently swallowing them
         if deliveries:
-            await asyncio.gather(
+            enqueue_results = await asyncio.gather(
                 *(self._enqueue_delivery(d.id) for d in deliveries),
                 return_exceptions=True,
             )
+            # Log any exceptions that occurred during enqueue
+            for i, enqueue_result in enumerate(enqueue_results):
+                if isinstance(enqueue_result, Exception):
+                    logger.error(
+                        "webhook_enqueue_failed",
+                        delivery_id=str(deliveries[i].id),
+                        error=str(enqueue_result),
+                        error_type=type(enqueue_result).__name__,
+                    )
 
         logger.info(f"Triggered {len(deliveries)} webhooks for event {event_type} in tenant {tenant_id}")
         return deliveries

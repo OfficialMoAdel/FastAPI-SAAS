@@ -227,8 +227,9 @@ class MFAService:
         # SECURITY FIX: Check MFA lockout before verification to prevent brute force
         # Skip lockout check if Redis is unavailable (fail open for availability)
         mfa_attempts_key = f"mfa_attempts:{user_id}"
+        result: int | str = 0  # Initialize to prevent UnboundLocalError when Redis unavailable
         if redis is not None:
-            result: int | str = await redis.eval(  # type: ignore[misc]
+            result = await redis.eval(  # type: ignore[misc]
                 _MFA_CHECK_LUA,
                 1,
                 mfa_attempts_key,

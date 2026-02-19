@@ -361,10 +361,10 @@ class PasskeyService:
         encryption = get_encryption()
         start_time = time.perf_counter()
 
-        # P2-6: Dynamic concurrency based on CPU count instead of fixed value
-        # Formula: min(32, (os.cpu_count() or 1) + 4) provides adaptive parallelism
-        import os
-        concurrency_limit = min(32, (os.cpu_count() or 1) + 4)
+        # P2-6: Use configurable concurrency limit from settings
+        from src.app.core.config import settings
+
+        concurrency_limit = settings.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
         semaphore = asyncio.Semaphore(concurrency_limit)
 
         async def decrypt_one(cred_id: bytes, transports: Any | None) -> PublicKeyCredentialDescriptor | None:

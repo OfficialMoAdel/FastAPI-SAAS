@@ -473,7 +473,7 @@ class UserService(BaseService[User]):
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await self.crud.get(db=self.db, username=username)
+        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if not db_user:
             raise ModelNotFoundError("User", username)
 
@@ -542,7 +542,7 @@ class UserService(BaseService[User]):
             If user or tier not found
         """
         # Use service registry for cross-module decoupling
-        db_user = await self.crud.get(db=self.db, username=username)
+        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
