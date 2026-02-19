@@ -45,6 +45,7 @@ NEGATIVE_CACHE_TTL: int = settings.TOKEN_NEGATIVE_CACHE_TTL
 # Lock for preventing concurrent Lua script reloads during NOSCRIPT errors
 _script_reload_lock = asyncio.Lock()
 
+
 @lru_cache(maxsize=4096)
 def _token_cache_key(token: str) -> str:
     """Generate collision-resistant cache key for a token.
@@ -163,8 +164,8 @@ async def is_token_blacklisted(token: str) -> bool | None:
                 async with _script_reload_lock:
                     # Double-check pattern - another coroutine might have loaded it
                     global _script_sha
-                    if _script_sha is not None:
-                        # Another coroutine already reloaded, retry with new SHA
+                    if _script_sha is not None and _script_sha != script_sha:
+                        # Another coroutine already reloaded with a different SHA, retry
                         retry_result = await redis_client.evalsha(  # type: ignore[misc]
                             _script_sha,
                             2,
@@ -176,7 +177,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                         )
                         return bool(int(retry_result))
 
-                    # We need to reload
+                    # We need to reload - invalidate old SHA first
                     _script_sha = None
                     script_sha = await _ensure_script_loaded()
                     if script_sha:

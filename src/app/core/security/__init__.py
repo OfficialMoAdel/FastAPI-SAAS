@@ -276,10 +276,15 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 # Token version mismatch - user changed password or was invalidated
                 return None
 
-            # Cache the token_version for future requests
+            # Cache the token_version using SETNX to prevent race condition
+            # Multiple concurrent requests may fetch from DB, but only first wins cache write
             if redis_client:
                 try:
-                    await redis_client.setex(cache_key, 300, str(user.token_version))  # 5 min TTL
+                    # SETNX only sets if key doesn't exist (atomic operation)
+                    was_set = await redis_client.setnx(cache_key, str(user.token_version))
+                    if was_set:
+                        # Set TTL only if we won the race
+                        await redis_client.expire(cache_key, 300)  # 5 min TTL
                 except Exception:
                     pass  # Don't fail on cache error
 

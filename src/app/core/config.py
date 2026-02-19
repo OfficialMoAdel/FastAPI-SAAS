@@ -194,7 +194,7 @@ class MySQLSettings(DatabaseSettings):
 
 class PostgresSettings(DatabaseSettings):
     POSTGRES_USER: str  # REQUIRED: No defaults
-    POSTGRES_PASSWORD: str  # REQUIRED: No defaults
+    POSTGRES_PASSWORD: SecretStr  # SECURITY: Use SecretStr to prevent logging exposure
     POSTGRES_SERVER: str = "localhost"  # Override via POSTGRES_SERVER in .env
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
@@ -205,7 +205,7 @@ class PostgresSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def POSTGRES_URI(self) -> str:
-        credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD}"
+        credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
         location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         return f"{credentials}@{location}"
 
