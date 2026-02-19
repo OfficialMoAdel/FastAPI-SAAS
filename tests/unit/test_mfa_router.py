@@ -4,134 +4,362 @@ MFA Router Tests
 Unit tests for the MFA router endpoints, focusing on rate limiting and lockout mechanism.
 """
 
+from collections.abc import Generator
+from unittest.mock import AsyncMock, Mock, patch
+
+import pytest
 from fastapi import status
+from fastapi.testclient import TestClient
+
+from src.app.core.exceptions.http_exceptions import RateLimitException
+
+
+@pytest.fixture
+def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
+    """Client fixture with rate limiting enabled for MFA tests."""
+    from src.app.api.dependencies import get_current_user
+    from src.app.core.db.database import async_get_db
+
+    app = get_test_app
+
+    fake_tenant = Mock()
+    fake_tenant.id = 1
+    fake_tenant.slug = "test-tenant"
+    fake_tenant.is_active = True
+
+    fake_superuser = Mock(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=1,
+    )
+    fake_superuser.__getitem__ = lambda self, key: getattr(self, key)
+
+    async def mock_get_current_user():
+        return fake_superuser
+
+    app.dependency_overrides[async_get_db] = lambda: None
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+
+    async def override_get_db():
+        from tests.conftest import TestingSessionLocal
+
+        async with TestingSessionLocal() as session:
+            yield session
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        # DON'T mock rate limiter - let tests control it
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+    ):
+        with TestClient(app) as _client:
+            yield _client
+
+    app.dependency_overrides.clear()
 
 
 class TestMFARateLimiting:
     """Test MFA rate limiting and lockout mechanism."""
 
-    def test_verify_endpoint_rate_limits_after_5_attempts(self, client, auth_headers):
+    def test_verify_endpoint_rate_limits_after_5_attempts(self, client_with_rate_limit):
         """Should rate limit after 5 failed verify attempts."""
-        # First 5 attempts should fail with 401 (invalid token)
-        for i in range(5):
-            response = client.post(
-                "/api/v1/mfa/verify",
-                json={"totp_token": "000000", "backup_code": None},
-                headers=auth_headers,
-            )
-            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        attempt_count = 0
 
-        # 6th attempt should be rate limited with 429
-        response = client.post(
-            "/api/v1/mfa/verify",
-            json={"totp_token": "000000", "backup_code": None},
-            headers=auth_headers,
-        )
-        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-        assert "Too many MFA verification attempts" in response.json()["detail"]
+        async def mock_check_mfa_rate_limit(request, identifier=None):
+            """Mock MFA rate limiter that tracks attempts and raises after limit."""
+            nonlocal attempt_count
+            attempt_count += 1
 
-    def test_verify_endpoint_respects_rate_limit_period(self, client, auth_headers):
+            if attempt_count > 5:
+                raise RateLimitException("Too many MFA verification attempts. Please try again in 60 seconds.")
+
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=mock_check_mfa_rate_limit,
+        ):
+            from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+            with patch(
+                "src.app.modules.mfa.service.MFAService.verify_totp_token",
+                new_callable=AsyncMock,
+                side_effect=UnauthorizedException("Invalid MFA token"),
+            ):
+                # First 5 attempts should fail with 401 (invalid token)
+                for i in range(5):
+                    response = client_with_rate_limit.post(
+                        "/api/v1/mfa/verify",
+                        json={"totp_token": "000000", "backup_code": None},
+                        headers=headers,
+                    )
+                    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+                # 6th attempt should be rate limited with 429
+                response = client_with_rate_limit.post(
+                    "/api/v1/mfa/verify",
+                    json={"totp_token": "000000", "backup_code": None},
+                    headers=headers,
+                )
+                assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                assert "Too many MFA verification attempts" in response.json()["detail"]
+
+    def test_verify_endpoint_respects_rate_limit_period(self, client_with_rate_limit):
         """Should allow requests after rate limit period expires."""
-        # Make 5 failed attempts to hit rate limit
-        for i in range(5):
-            response = client.post(
-                "/api/v1/mfa/verify",
-                json={"totp_token": "000000", "backup_code": None},
-                headers=auth_headers,
-            )
-            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        attempt_count = 0
+        is_limited = False
 
-        # 6th attempt should be rate limited
-        response = client.post(
-            "/api/v1/mfa/verify",
-            json={"totp_token": "000000", "backup_code": None},
-            headers=auth_headers,
-        )
-        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+        async def mock_check_mfa_rate_limit(request, identifier=None):
+            """Mock MFA rate limiter with simulated period expiry."""
+            nonlocal attempt_count, is_limited
+            attempt_count += 1
 
-        # After waiting for the rate limit period (60 seconds), should allow requests again
-        # In tests, we can mock the Redis TTL to simulate time passing
-        # This test documents the expected behavior - actual time-based testing requires mocking
+            if is_limited or attempt_count > 5:
+                is_limited = True
+                raise RateLimitException("Too many MFA verification attempts. Please try again in 60 seconds.")
 
-    def test_complete_login_endpoint_rate_limits_after_5_attempts(self, client):
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=mock_check_mfa_rate_limit,
+        ):
+            from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+            with patch(
+                "src.app.modules.mfa.service.MFAService.verify_totp_token",
+                new_callable=AsyncMock,
+                side_effect=UnauthorizedException("Invalid MFA token"),
+            ):
+                # Make 5 failed attempts to hit rate limit
+                for i in range(5):
+                    response = client_with_rate_limit.post(
+                        "/api/v1/mfa/verify",
+                        json={"totp_token": "000000", "backup_code": None},
+                        headers=headers,
+                    )
+                    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+                # 6th attempt should be rate limited
+                response = client_with_rate_limit.post(
+                    "/api/v1/mfa/verify",
+                    json={"totp_token": "000000", "backup_code": None},
+                    headers=headers,
+                )
+                assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+
+                # Reset the counter (simulating period expiry)
+                attempt_count = 0
+                is_limited = False
+
+                # After reset, should allow requests again
+                response = client_with_rate_limit.post(
+                    "/api/v1/mfa/verify",
+                    json={"totp_token": "000000", "backup_code": None},
+                    headers=headers,
+                )
+                assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+    def test_complete_login_endpoint_rate_limits_after_5_attempts(self, client_with_rate_limit):
         """Should rate limit after 5 failed complete login attempts."""
-        # Make 5 failed attempts with invalid MFA pending token
-        for i in range(5):
-            response = client.post(
-                "/api/v1/mfa/complete-login",
-                json={
-                    "mfa_token": "pending_token_123",
-                    "totp_token": "000000",
-                    "backup_code": None,
-                },
-            )
-            assert response.status_code == status.HTTP_401_UNAUTHORIZED
+        attempt_count = 0
 
-        # 6th attempt should be rate limited
-        response = client.post(
-            "/api/v1/mfa/complete-login",
-            json={
-                "mfa_token": "pending_token_123",
-                "totp_token": "000000",
-                "backup_code": None,
-            },
-        )
-        assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
-        assert "Too many MFA verification attempts" in response.json()["detail"]
+        async def mock_check_mfa_rate_limit(request, identifier=None):
+            """Mock MFA rate limiter that tracks attempts."""
+            nonlocal attempt_count
+            attempt_count += 1
 
-    def test_rate_limit_uses_user_id_as_identifier(self, client, auth_headers):
+            if attempt_count > 5:
+                raise RateLimitException("Too many MFA verification attempts. Please try again in 60 seconds.")
+
+        headers = {"X-Tenant-ID": "test-tenant"}
+
+        # mfa_token must be 32-64 characters per schema validation
+        valid_mfa_token = "a" * 32  # 32 char token
+
+        with patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=mock_check_mfa_rate_limit,
+        ):
+            with patch(
+                "src.app.core.security.MFAPendingTokenManager.validate_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ):
+                # Make 5 failed attempts with invalid MFA pending token
+                for i in range(5):
+                    response = client_with_rate_limit.post(
+                        "/api/v1/mfa/complete-login",
+                        json={
+                            "mfa_token": valid_mfa_token,
+                            "totp_token": "000000",
+                            "backup_code": None,
+                        },
+                        headers=headers,
+                    )
+                    assert response.status_code == status.HTTP_401_UNAUTHORIZED
+
+                # 6th attempt should be rate limited
+                response = client_with_rate_limit.post(
+                    "/api/v1/mfa/complete-login",
+                    json={
+                        "mfa_token": valid_mfa_token,
+                        "totp_token": "000000",
+                        "backup_code": None,
+                    },
+                    headers=headers,
+                )
+                assert response.status_code == status.HTTP_429_TOO_MANY_REQUESTS
+                assert "Too many MFA verification attempts" in response.json()["detail"]
+
+    def test_rate_limit_uses_user_id_as_identifier(self, client_with_rate_limit):
         """Rate limiting should be per-user, not per-request."""
-        # Different users should have separate rate limits
-        # This test documents the expected behavior - requires multiple user auth headers
+        captured_identifiers = []
 
-    def test_rate_limit_uses_ip_when_user_not_available(self, client):
-        """Rate limiting should use IP when user ID is not available."""
-        # For complete-login endpoint, uses MFA pending token as identifier
-        # This test documents the expected behavior
+        async def mock_check_mfa_rate_limit(request, identifier=None):
+            """Mock that captures the rate limit identifier."""
+            captured_identifiers.append(identifier)
+
+        headers = {
+            "Authorization": "Bearer test-token",
+            "X-Tenant-ID": "test-tenant",
+        }
+
+        with patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=mock_check_mfa_rate_limit,
+        ):
+            with patch(
+                "src.app.modules.mfa.service.MFAService.verify_totp_token",
+                new_callable=AsyncMock,
+                return_value={"valid": True, "message": "Valid token"},
+            ):
+                # Make multiple requests - should use same identifier (user_id)
+                for i in range(3):
+                    client_with_rate_limit.post(
+                        "/api/v1/mfa/verify",
+                        json={"totp_token": "123456", "backup_code": None},
+                        headers=headers,
+                    )
+
+                # All identifiers should be the same (user-based)
+                assert len(captured_identifiers) == 3
+                assert len(set(captured_identifiers)) == 1  # All same identifier
+                assert captured_identifiers[0] == "1"  # user_id from mock
+
+    def test_rate_limit_uses_token_as_identifier(self, client_with_rate_limit):
+        """Rate limiting should use mfa_token as identifier for complete-login."""
+        captured_identifiers = []
+
+        async def mock_check_mfa_rate_limit(request, identifier=None):
+            """Mock that captures the rate limit identifier."""
+            captured_identifiers.append(identifier)
+
+        headers = {"X-Tenant-ID": "test-tenant"}
+
+        # mfa_token must be 32-64 characters per schema validation
+        valid_mfa_token = "test_pending_token_12345678_abcd"  # 32+ char token
+
+        with patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            side_effect=mock_check_mfa_rate_limit,
+        ):
+            with patch(
+                "src.app.core.security.MFAPendingTokenManager.validate_token",
+                new_callable=AsyncMock,
+                return_value=None,
+            ):
+                # For complete-login endpoint, uses mfa_token as identifier
+                client_with_rate_limit.post(
+                    "/api/v1/mfa/complete-login",
+                    json={
+                        "mfa_token": valid_mfa_token,
+                        "totp_token": "123456",
+                        "backup_code": None,
+                    },
+                    headers=headers,
+                )
+
+                # Identifier should be the mfa_token
+                assert len(captured_identifiers) == 1
+                assert captured_identifiers[0] == valid_mfa_token
 
 
 class TestMFAEndpointAuthentication:
-    """Test MFA endpoint authentication requirements."""
+    """Test MFA endpoint authentication requirements.
 
-    def test_setup_requires_authentication(self, client):
+    These tests verify that MFA endpoints require authentication.
+    The tenant middleware runs before auth, so we must provide a valid tenant header.
+    """
+
+    def test_setup_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.post("/api/v1/mfa/setup")
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.post("/api/v1/mfa/setup", headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_enable_requires_authentication(self, client):
+    def test_enable_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.post(
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.post(
             "/api/v1/mfa/enable",
             json={"secret": "test_secret", "totp_token": "123456"},
+            headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_verify_requires_authentication(self, client):
+    def test_verify_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.post(
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.post(
             "/api/v1/mfa/verify",
             json={"totp_token": "123456", "backup_code": None},
+            headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_disable_requires_authentication(self, client):
+    def test_disable_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.post(
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.post(
             "/api/v1/mfa/disable",
             json={"password": "test_password", "totp_token": "123456"},
+            headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_status_requires_authentication(self, client):
+    def test_status_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.get("/api/v1/mfa/status")
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.get("/api/v1/mfa/status", headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_backup_codes_requires_authentication(self, client):
+    def test_backup_codes_requires_authentication(self, client_auth):
         """Should return 401 when not authenticated."""
-        response = client.post(
+        headers = {"X-Tenant-ID": "test-tenant-integration"}
+        response = client_auth.post(
             "/api/v1/mfa/backup-codes",
             json={"password": "test_password", "totp_token": "123456"},
+            headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 

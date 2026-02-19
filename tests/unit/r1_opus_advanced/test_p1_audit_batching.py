@@ -4,7 +4,7 @@ Verifies that audit logs are buffered in Redis and batch-flushed.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
@@ -20,11 +20,13 @@ class TestAuditLogBatching:
             buffer_audit_log,
         )
 
-        mock_redis = AsyncMock()
+        mock_redis = MagicMock()
+        mock_redis.lpush = MagicMock(return_value=AsyncMock(return_value=1))
 
-        with patch("src.app.modules.audit_logs.service.redis_client", mock_redis):
+        with patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache:
+            mock_cache.client = mock_redis
             log_data = {
-                "tenant_id": "123",
+                "tenant_id": "00000000-0000-0000-0000-000000000001",
                 "action": "user.created",
                 "entity_type": "user",
                 "user_id": "456",
@@ -44,22 +46,23 @@ class TestAuditLogBatching:
 
         from src.app.modules.audit_logs.service import buffer_audit_log
 
-        mock_redis = AsyncMock()
-        mock_redis.lpush = AsyncMock(side_effect=RedisError("Connection failed"))
+        mock_redis = MagicMock()
+        mock_redis.lpush = MagicMock(side_effect=RedisError("Connection failed"))
 
         with (
-            patch("src.app.modules.audit_logs.service.redis_client", mock_redis),
+            patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache,
             patch("src.app.modules.audit_logs.service._direct_insert_log", new_callable=AsyncMock) as mock_direct,
         ):
+            mock_cache.client = mock_redis
             log_data: dict[str, Any] = {
-                "tenant_id": "123",
+                "tenant_id": "00000000-0000-0000-0000-000000000001",
                 "action": "user.created",
             }
 
             await buffer_audit_log(log_data)
 
             # Verify fallback was called
-            mock_direct.assert_called_once_with(log_data)
+            mock_direct.assert_called_once_with(log_data, None)
 
     def test_flush_function_uses_pipeline(self) -> None:
         """Verify flush function uses Redis pipeline pattern."""

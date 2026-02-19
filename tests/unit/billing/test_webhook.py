@@ -1,5 +1,6 @@
 import pytest
 import stripe
+import uuid
 from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException
 
@@ -57,42 +58,60 @@ def test_verify_webhook_signature_invalid_signature():
 @pytest.mark.asyncio
 async def test_handle_webhook_event_checkout_completed():
     """Test routing for checkout.session.completed."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer in webhook handler
+    plan_id = 456  # plan_id is also expected to be an integer
+    
     event = {
         "id": "evt_test", 
         "type": "checkout.session.completed", 
         "data": {
             "object": {
                 "id": "cs_test",
-                "metadata": {"tenant_id": "1", "user_id": "2", "plan_id": "3"},
+                "metadata": {
+                    "tenant_id": str(tenant_id),
+                    "user_id": str(user_id),  # Integer as string
+                    "plan_id": str(plan_id)   # Integer as string
+                },
                 "subscription": "sub_123"
             }
         }
     }
 
-    # Mock dependencies for the handler
+    # Mock Stripe subscription
     mock_stripe_sub = MagicMock()
-    # Support dictionary access for timestamps
     mock_stripe_sub.__getitem__.side_effect = lambda k: {
         "current_period_start": 1600000000,
         "current_period_end": 1600000000 + 3600,
-    }.get(k)
-    
-    # Support attribute access for items
+    }[k]
+    # Support .get() method
+    mock_stripe_sub.get = lambda k, d=None: {
+        "current_period_start": 1600000000,
+        "current_period_end": 1600000000 + 3600,
+        "status": "active",
+        "cancel_at_period_end": False,
+    }.get(k, d)
     mock_item = MagicMock()
     mock_item.price.recurring.interval = "month"
     mock_stripe_sub.items.data = [mock_item]
 
     with patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.create", new_callable=AsyncMock) as mock_create, \
-         patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub):
+         patch("src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False) as mock_exists, \
+         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
         
+        mock_to_thread.return_value = mock_stripe_sub
+        
+        # Mock tenant db session
         mock_db = AsyncMock()
+        mock_db.commit = AsyncMock()
         mock_ctx.return_value.__aenter__.return_value = mock_db
         
         result = await handle_webhook_event(event)
         
         assert result == {"status": "success"}
-        mock_ctx.assert_called_once_with(1)
+        mock_ctx.assert_called_once_with(tenant_id)
+        mock_exists.assert_called_once()
         mock_create.assert_called_once()
         mock_db.commit.assert_called_once()
 
@@ -100,6 +119,9 @@ async def test_handle_webhook_event_checkout_completed():
 @pytest.mark.asyncio
 async def test_handle_webhook_event_invoice_payment_succeeded():
     """Test routing and bypass context for invoice.payment_succeeded."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer
+    
     event = {
         "id": "evt_invoice",
         "type": "invoice.payment_succeeded",
@@ -123,7 +145,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
         
         mock_result = MagicMock()
-        mock_subscription = MagicMock(tenant_id=1, user_id=2, id=100)
+        mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
         
@@ -140,7 +162,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         mock_bypass_db.execute.assert_called_once()
         
         # Verify tenant context used for creation
-        mock_tenant_ctx.assert_called_once_with(1)
+        mock_tenant_ctx.assert_called_once_with(tenant_id)
         mock_create.assert_called_once()
         mock_tenant_db.commit.assert_called_once()
 
@@ -151,12 +173,15 @@ async def test_handle_webhook_event_unhandled():
     event = {"id": "evt_test", "type": "unknown.event", "data": {"object": {}}}
 
     result = await handle_webhook_event(event)
-    assert result == {"status": "success"}
+    assert result["status"] == "unhandled"  # Unhandled events return "unhandled" status
 
 
 @pytest.mark.asyncio
 async def test_handle_webhook_event_invoice_payment_failed():
     """Test invoice.payment_failed handler."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer
+    
     event = {
         "id": "evt_failed",
         "type": "invoice.payment_failed",
@@ -181,7 +206,7 @@ async def test_handle_webhook_event_invoice_payment_failed():
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
         mock_result = MagicMock()
-        mock_subscription = MagicMock(tenant_id=1, user_id=2, id=100)
+        mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
         
@@ -200,6 +225,9 @@ async def test_handle_webhook_event_invoice_payment_failed():
 @pytest.mark.asyncio
 async def test_handle_webhook_event_subscription_updated():
     """Test customer.subscription.updated handler."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer
+    
     event = {
         "id": "evt_update",
         "type": "customer.subscription.updated",
@@ -222,7 +250,7 @@ async def test_handle_webhook_event_subscription_updated():
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
         mock_result = MagicMock()
-        mock_subscription = MagicMock(tenant_id=1, user_id=2, id=100)
+        mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
         
@@ -240,6 +268,9 @@ async def test_handle_webhook_event_subscription_updated():
 @pytest.mark.asyncio
 async def test_handle_webhook_event_subscription_deleted():
     """Test customer.subscription.deleted handler."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer
+    
     event = {
         "id": "evt_delete",
         "type": "customer.subscription.deleted",
@@ -259,7 +290,7 @@ async def test_handle_webhook_event_subscription_deleted():
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
         mock_result = MagicMock()
-        mock_subscription = MagicMock(tenant_id=1, user_id=2, id=100)
+        mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
         
@@ -280,6 +311,9 @@ async def test_handle_webhook_event_subscription_deleted():
 @pytest.mark.asyncio
 async def test_handle_webhook_event_charge_refunded():
     """Test charge.refunded handler."""
+    tenant_id = uuid.uuid4()
+    user_id = 123  # user_id is expected to be an integer
+    
     event = {
         "id": "evt_refund",
         "type": "charge.refunded",
@@ -307,7 +341,7 @@ async def test_handle_webhook_event_charge_refunded():
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
         mock_result = MagicMock()
-        mock_subscription = MagicMock(tenant_id=1, user_id=2, id=100)
+        mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
         

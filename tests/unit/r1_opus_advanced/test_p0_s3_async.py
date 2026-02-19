@@ -23,14 +23,17 @@ class TestS3AsyncUpload:
 
         storage = S3Storage(s3_client=mock_client, bucket="test-bucket")
 
-        with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-            mock_to_thread.return_value = None
+        with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
+            mock_settings.FEATURE_STREAMING_UPLOADS = False  # Use legacy path to avoid botocore import
 
-            file = BytesIO(b"test content")
-            await storage.upload(file, "test-key.txt", "text/plain")
+            with patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
+                mock_to_thread.return_value = None
 
-            # Verify asyncio.to_thread was called
-            mock_to_thread.assert_called_once()
+                file = BytesIO(b"test content")
+                await storage.upload(file, "test-key.txt", "text/plain")
+
+                # Verify asyncio.to_thread was called
+                mock_to_thread.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_event_loop_responsive_during_upload(self) -> None:

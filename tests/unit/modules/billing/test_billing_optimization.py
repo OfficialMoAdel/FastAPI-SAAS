@@ -4,11 +4,19 @@ Tests verify that _product_to_dict() and _pricing_tier_to_dict() produce
 identical output to the original Pydantic serialization path.
 """
 
+from uuid import uuid4
+
 import pytest
 
 from src.app.modules.billing.models import Pricing, Product
 from src.app.modules.billing.schemas import PricingRead, ProductRead
 from src.app.modules.billing.service import _pricing_tier_to_dict, _product_to_dict
+
+
+@pytest.fixture
+def sample_tenant_id():
+    """Generate a sample tenant UUID for testing."""
+    return uuid4()
 
 
 @pytest.fixture
@@ -31,10 +39,10 @@ def sample_pricing(db) -> Pricing:
 
 
 @pytest.fixture
-def sample_product(db, sample_pricing) -> Product:
+def sample_product(db, sample_pricing, sample_tenant_id) -> Product:
     """Create a sample product with pricing tiers for testing."""
     product = Product(
-        tenant_id=1,
+        tenant_id=sample_tenant_id,  # FIX: Changed from int to UUID
         name="Pro Package",
         description="Professional tier features",
         stripe_product_id="prod_xxx",
@@ -141,11 +149,11 @@ def test_product_to_dict_matches_original(db, sample_product):
     )
 
 
-def test_nested_structures_serialized(db):
+def test_nested_structures_serialized(db, sample_tenant_id):
     """Test that nested structures are properly serialized."""
     # Create product with multiple nested pricing tiers
     product = Product(
-        tenant_id=1,
+        tenant_id=sample_tenant_id,  # FIX: Changed from int to UUID
         name="Enterprise Package",
         description="Enterprise tier with many features",
         stripe_product_id="prod_enterprise",

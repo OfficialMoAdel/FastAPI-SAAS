@@ -8,6 +8,7 @@ for checkout session creation and management.
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 import stripe
@@ -299,7 +300,7 @@ class TestCheckoutSessionLive:
                 new_callable=AsyncMock,
             ) as mock_plan,
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_settings.return_value = {"stripe_customer_id": None}
             mock_plan.return_value = {
                 "stripe_price_id_monthly": test_price_id,

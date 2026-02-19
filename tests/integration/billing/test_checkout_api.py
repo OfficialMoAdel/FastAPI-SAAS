@@ -5,6 +5,7 @@ Tests T067: Integration test for checkout endpoints in tests/integration/billing
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 
 class TestCheckoutAPI:
@@ -38,7 +39,7 @@ class TestCheckoutAPI:
             ) as mock_create,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_create.return_value = mock_session
 
             response = client_auth.post(
@@ -62,7 +63,7 @@ class TestCheckoutAPI:
             ) as mock_get_plan,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get_plan.side_effect = Exception("Plan not found")
 
             response = client_auth.post(
@@ -130,7 +131,7 @@ class TestCheckoutAPI:
             ) as mock_create,
             patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_create.return_value = mock_session
 
             response = client_auth.post(

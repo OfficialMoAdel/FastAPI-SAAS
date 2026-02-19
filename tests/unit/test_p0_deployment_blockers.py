@@ -1,5 +1,7 @@
 import logging
 import subprocess
+import sys
+from pathlib import Path
 
 from src.app import feature_flags
 
@@ -41,20 +43,20 @@ class TestBrokenImportsFix:
     def test_no_session_module_references(self):
         """Verify no code references non-existent session module."""
         logger.info("Scanning codebase for broken references")
-        # We search for 'src.app.core.db.session' but exclude this test file itself if it were to mention it in a string
-        # and exclude coverage reports etc.
-        # simpler to just check if the string exists in src/app
-        # but we expect it to be gone from templates.py after our fix
+        # Use Python to search instead of grep (cross-platform)
+        src_path = Path("src/app")
+        broken_import = "from src.app.core.db.session"
 
-        result = subprocess.run(
-            ["grep", "-r", "from src.app.core.db.session", "src/app"], capture_output=True, text=True
-        )
+        found_files = []
+        for py_file in src_path.rglob("*.py"):
+            try:
+                content = py_file.read_text(encoding="utf-8")
+                if broken_import in content:
+                    found_files.append(str(py_file))
+            except Exception:
+                continue
 
-        # We expect NO matches.
-        # If grep finds something, it returns 0 (success). If not, 1 (fail).
-        # We want it to fail (return 1).
+        if found_files:
+            logger.error(f"Found broken imports in: {found_files}")
 
-        if result.returncode == 0:
-            logger.error(f"Found broken imports: {result.stdout}")
-
-        assert result.returncode != 0, f"Found broken imports: {result.stdout}"
+        assert not found_files, f"Found broken imports in: {found_files}"

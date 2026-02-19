@@ -370,18 +370,18 @@ class TestSessionManagerRedisUnavailable:
         assert result["reason"] == "redis_unavailable"
 
     @pytest.mark.asyncio
-    async def test_is_session_valid_without_redis_fails_open(self):
-        """Verify fail-open behavior when Redis is unavailable."""
+    async def test_is_session_valid_without_redis_fails_closed(self):
+        """Verify fail-closed behavior when Redis is unavailable for security.
+
+        SECURITY: When Redis is unavailable, sessions are rejected to prevent
+        invalidated sessions from being accepted during outages.
+        """
         # Arrange
         manager = SessionManager(redis_client=None)
 
-        # Act
-        with patch("src.app.core.security.session_manager.logger") as mock_logger:
-            is_valid = await manager.is_session_valid("user123", "session_abc")
-
-        # Assert
-        assert is_valid is True  # Fail open
-        mock_logger.critical.assert_called_once()
+        # Act & Assert - should fail closed (return False) for security
+        is_valid = await manager.is_session_valid("user123", "session_abc")
+        assert is_valid is False  # Fail closed for security
 
     @pytest.mark.asyncio
     async def test_count_sessions_without_redis_returns_zero(self):

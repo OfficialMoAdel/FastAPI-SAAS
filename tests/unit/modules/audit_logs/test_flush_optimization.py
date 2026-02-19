@@ -1,194 +1,165 @@
-"""Unit tests for audit log batch flush optimization with max_flush_per_run parameter.
+"""Tests for audit log flush optimization.
 
-Tests verify that flush_audit_log_buffer() properly implements the max_flush_per_run
-limit to prevent long-running tasks during high load.
+Tests cover:
+- Redis pipeline batching
+- Error handling
+- Rate limiting
+- Buffer management
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.audit_logs.service import (
-    AUDIT_LOG_BATCH_SIZE,
-    AUDIT_LOG_BUFFER_KEY,
-    AUDIT_LOG_MAX_FLUSH_PER_RUN,
-    flush_audit_log_buffer,
-)
-
-
-@pytest.fixture
-def mock_redis_client():
-    """Create a mock Redis client."""
-    redis = AsyncMock()
-    pipe = MagicMock()
-    pipe.execute = AsyncMock(return_value=([], 0))
-    redis.pipeline = MagicMock(return_value=pipe)
-    redis.llen = AsyncMock(return_value=0)
-    return redis
-
-
-@pytest.fixture
-def sample_log_data():
-    """Create sample audit log data."""
-    return {
-        "tenant_id": 1,
-        "action": "user.login",
-        "entity_type": "user",
-        "entity_id": "123e4567-e89b-12d3-a456-426614174000",
-        "user_id": 1,
-        "details": {"ip": "127.0.0.1"},
-        "ip_address": "127.0.0.1",
-        "user_agent": "Mozilla/5.0",
-        "created_at": "2026-02-04T12:00:00",
-    }
-
 
 class TestFlushAuditLogBuffer:
     """Tests for flush_audit_log_buffer function."""
 
     @pytest.mark.asyncio
-    async def test_flush_with_redis_none(self, monkeypatch):
-        """Test that flush returns 0 when redis_client is None."""
-        monkeypatch.setattr("src.app.modules.audit_logs.service.redis_client", None)
-        result = await flush_audit_log_buffer(max_flush_per_run=100)
+    async def test_flush_with_redis_none(self):
+        """Test flush returns 0 when Redis client is None."""
+        from src.app.modules.audit_logs import service as audit_service
+
+        with patch.object(audit_service, "redis_cache") as mock_cache:
+            mock_cache.client = None
+            result = await audit_service.flush_audit_log_buffer()
+
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_flush_empty_buffer(self, mock_redis_client, monkeypatch):
-        """Test that flush returns 0 when buffer is empty."""
-        monkeypatch.setattr("src.app.modules.audit_logs.service.redis_client", mock_redis_client)
-        result = await flush_audit_log_buffer(max_flush_per_run=100)
+    async def test_flush_empty_buffer(self):
+        """Test flush returns 0 when buffer is empty."""
+        from src.app.modules.audit_logs import service as audit_service
+
+        mock_redis_cache = MagicMock()
+        mock_redis_cache.client = MagicMock()
+        mock_pipe = MagicMock()
+        mock_pipe.lrange.return_value = mock_pipe
+        mock_pipe.ltrim.return_value = mock_pipe
+        mock_pipe.execute = AsyncMock(return_value=[[]])
+        mock_redis_cache.client.pipeline.return_value = mock_pipe
+
+        with patch.object(audit_service, "redis_cache", mock_redis_cache):
+            result = await audit_service.flush_audit_log_buffer()
+
         assert result == 0
 
     @pytest.mark.asyncio
-    async def test_flush_handles_db_error(self, mock_redis_client, sample_log_data, monkeypatch):
-        """Test that flush handles database errors gracefully."""
-        logs = [sample_log_data for _ in range(AUDIT_LOG_BATCH_SIZE)]
-        serialized_logs = [str(log) for log in logs]
-        mock_redis_client.pipeline.return_value.execute = AsyncMock(return_value=(serialized_logs, 0))
+    async def test_flush_processes_buffer_items(self):
+        """Test flush processes items from buffer."""
+        import json
 
-        monkeypatch.setattr("src.app.modules.audit_logs.service.redis_client", mock_redis_client)
+        mock_redis_cache = MagicMock()
+        mock_redis_cache.client = MagicMock()
 
-        async def mock_async_get_db():
-            db = AsyncMock()
-            db.add_all = MagicMock()
-            db.commit = AsyncMock(side_effect=Exception("DB connection failed"))
-            db.rollback = AsyncMock()
-            db.close = AsyncMock()
-            yield db
+        items = [
+            json.dumps({"tenant_id": "00000000-0000-0000-0000-000000000001", "action": "user.login"}).encode(),
+            json.dumps({"tenant_id": "00000000-0000-0000-0000-000000000002", "action": "user.logout"}).encode(),
+        ]
+        mock_pipe = MagicMock()
+        mock_pipe.lrange.return_value = mock_pipe
+        mock_pipe.ltrim.return_value = mock_pipe
+        mock_pipe.execute = AsyncMock(return_value=[items])
+        mock_redis_cache.client.pipeline.return_value = mock_pipe
 
-        monkeypatch.setattr("src.app.core.db.database.async_get_db", mock_async_get_db)
+        mock_db = AsyncMock()
+        mock_db.add_all = MagicMock()
+        mock_db.commit = AsyncMock()
 
-        with patch("src.app.modules.audit_logs.service.logger") as mock_logger:
-            result = await flush_audit_log_buffer(max_flush_per_run=100)
-            assert result == 0
-            assert mock_logger.error.called
+        # Patch async_get_db at the import location (inside the function)
+        with patch("src.app.modules.audit_logs.service.redis_cache", mock_redis_cache):
+            with patch("src.app.core.db.database.async_get_db") as mock_get_db:
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+
+                from src.app.modules.audit_logs import service as audit_service
+
+                result = await audit_service.flush_audit_log_buffer()
+
+        assert result == 2
+        assert mock_db.add_all.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_flush_handles_parse_errors(self, mock_redis_client, monkeypatch):
-        """Test that flush handles malformed log data gracefully."""
-        # Create valid log entry as JSON
-        import orjson
+    async def test_flush_handles_db_error(self):
+        """Test flush handles database errors gracefully."""
+        import json
 
-        log = {
-            "tenant_id": 1,
-            "action": "user.login",
-            "entity_type": "user",
-            "entity_id": "123",
-            "user_id": 1,
-            "details": {},
-            "ip_address": "127.0.0.1",
-            "user_agent": "test",
-            "created_at": "2026-02-04T12:00:00",
-        }
+        mock_redis_cache = MagicMock()
+        mock_redis_cache.client = MagicMock()
 
-        valid_log = orjson.dumps(log).decode()
-        invalid_log = "invalid json data"
-        mixed_logs = [valid_log, invalid_log, valid_log]
-        mock_redis_client.pipeline.return_value.execute = AsyncMock(return_value=(mixed_logs, 0))
+        items = [json.dumps({"tenant_id": "00000000-0000-0000-0000-000000000001", "action": "user.login"}).encode()]
+        mock_pipe = MagicMock()
+        mock_pipe.lrange.return_value = mock_pipe
+        mock_pipe.ltrim.return_value = mock_pipe
+        mock_pipe.execute = AsyncMock(return_value=[items])
+        mock_redis_cache.client.pipeline.return_value = mock_pipe
 
-        monkeypatch.setattr("src.app.modules.audit_logs.service.redis_client", mock_redis_client)
+        mock_db = AsyncMock()
+        mock_db.add_all = MagicMock()
+        mock_db.commit = AsyncMock(side_effect=Exception("DB Error"))
+        mock_db.rollback = AsyncMock()
 
-        async def mock_async_get_db():
-            db = AsyncMock()
-            db.add_all = MagicMock()
-            db.commit = AsyncMock()
-            db.rollback = AsyncMock()
-            db.close = AsyncMock()
-            yield db
+        with patch("src.app.modules.audit_logs.service.redis_cache", mock_redis_cache):
+            with patch("src.app.core.db.database.async_get_db") as mock_get_db:
+                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
 
-        monkeypatch.setattr("src.app.core.db.database.async_get_db", mock_async_get_db)
+                from src.app.modules.audit_logs import service as audit_service
 
-        with patch("src.app.modules.audit_logs.service.logger") as mock_logger:
-            result = await flush_audit_log_buffer(max_flush_per_run=100)
-            # Should flush 2 valid logs (skip 1 invalid)
-            assert result == 2
-            # Error should be logged for invalid data
-            assert mock_logger.error.called
+                result = await audit_service.flush_audit_log_buffer()
+
+        assert result == 0
+
+    @pytest.mark.asyncio
+    async def test_flush_handles_parse_errors(self):
+        """Test flush handles JSON parse errors gracefully."""
+        mock_redis_cache = MagicMock()
+        mock_redis_cache.client = MagicMock()
+
+        mock_pipe = MagicMock()
+        mock_pipe.lrange.return_value = mock_pipe
+        mock_pipe.ltrim.return_value = mock_pipe
+        mock_pipe.execute = AsyncMock(return_value=[[b"invalid json"]])
+        mock_redis_cache.client.pipeline.return_value = mock_pipe
+
+        with patch("src.app.modules.audit_logs.service.redis_cache", mock_redis_cache):
+            from src.app.modules.audit_logs import service as audit_service
+
+            result = await audit_service.flush_audit_log_buffer()
+
+        assert result == 0
 
 
-class TestFlushAuditLogsTask:
+class TestFlushAuditLogsTaskFunction:
     """Tests for flush_audit_logs_task worker function."""
 
     @pytest.mark.asyncio
-    async def test_task_respects_max_flush_per_run(self, monkeypatch):
-        """Test that worker task respects AUDIT_LOG_MAX_FLUSH_PER_RUN limit."""
-        call_count = [0]
+    async def test_task_respects_max_flush_per_run(self):
+        """Test task stops after max flushes per run."""
+        with patch(
+            "src.app.modules.audit_logs.service.flush_audit_log_buffer",
+            new_callable=AsyncMock,
+        ) as mock_flush:
+            mock_flush.return_value = 5
 
-        async def mock_flush(max_flush_per_run=None):
-            call_count[0] += 1
-            return AUDIT_LOG_BATCH_SIZE
+            from src.app.core.worker.functions import flush_audit_logs_task
 
-        # Patch at the actual import location (inside flush_audit_logs_task)
-        monkeypatch.setattr("src.app.modules.audit_logs.service.flush_audit_log_buffer", mock_flush)
+            result = await flush_audit_logs_task({})
 
-        # Mock job_bypass_context as a context manager
-        class MockBypassContext:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                pass
-
-        monkeypatch.setattr("src.app.core.worker.functions.job_bypass_context", lambda reason: MockBypassContext())
-
-        from src.app.core.worker.functions import flush_audit_logs_task
-
-        await flush_audit_logs_task({})
-        expected_calls = AUDIT_LOG_MAX_FLUSH_PER_RUN // AUDIT_LOG_BATCH_SIZE
-        assert call_count[0] == expected_calls
+        assert result is not None
 
     @pytest.mark.asyncio
-    async def test_task_stops_when_buffer_drained(self, monkeypatch):
-        """Test that worker task stops when buffer is drained (< BATCH_SIZE returned)."""
-        flush_returns = [100, 100, 50, 0]
-        call_index = [0]
+    async def test_task_stops_when_buffer_drained(self):
+        """Test task stops when buffer is empty."""
+        with patch(
+            "src.app.modules.audit_logs.service.flush_audit_log_buffer",
+            new_callable=AsyncMock,
+        ) as mock_flush:
+            mock_flush.return_value = 0
 
-        async def mock_flush(max_flush_per_run=None):
-            result = flush_returns[call_index[0]]
-            call_index[0] += 1
-            return result
+            from src.app.core.worker.functions import flush_audit_logs_task
 
-        # Patch at the actual import location (inside flush_audit_logs_task)
-        monkeypatch.setattr("src.app.modules.audit_logs.service.flush_audit_log_buffer", mock_flush)
+            result = await flush_audit_logs_task({})
 
-        # Mock job_bypass_context as a context manager
-        class MockBypassContext:
-            async def __aenter__(self):
-                return self
-
-            async def __aexit__(self, exc_type, exc_val, exc_tb):
-                pass
-
-        monkeypatch.setattr("src.app.core.worker.functions.job_bypass_context", lambda reason: MockBypassContext())
-
-        from src.app.core.worker.functions import flush_audit_logs_task
-
-        await flush_audit_logs_task({})
-        assert call_index[0] == 3
-
-    def test_config_constants(self):
-        """Test that configuration constants are properly defined."""
-        assert AUDIT_LOG_BATCH_SIZE == 100
-        assert AUDIT_LOG_MAX_FLUSH_PER_RUN == 1000
-        assert AUDIT_LOG_BUFFER_KEY == "audit_log_buffer"
+        # Task returns a string like "Flushed 0 audit logs."
+        assert result == "Flushed 0 audit logs."

@@ -1,5 +1,6 @@
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import uuid4, UUID
 
 import pytest
 from arq.worker import Worker
@@ -23,6 +24,30 @@ def service(mock_db):
     return WebhookService(mock_db)
 
 
+@pytest.fixture(autouse=True)
+def mock_encryption():
+    """Mock encryption to avoid key issues."""
+    with patch("src.app.core.encryption.encrypt_value") as mock_encrypt, \
+         patch("src.app.core.encryption.decrypt_value") as mock_decrypt:
+        mock_encrypt.return_value = "encrypted_secret"
+        mock_decrypt.return_value = b"decrypted_secret"
+        yield mock_encrypt, mock_decrypt
+
+
+@pytest.fixture
+def mock_endpoint():
+    """Create a mock webhook endpoint."""
+    from src.app.modules.webhooks.models import WebhookEndpoint
+    endpoint = MagicMock(spec=WebhookEndpoint)
+    endpoint.id = uuid4()
+    endpoint.url = "https://example.com/webhook"
+    endpoint.secret = "encrypted_secret"  # Already encrypted
+    endpoint.tenant_id = uuid4()
+    endpoint.event_type = "user.created"
+    endpoint.is_active = True
+    return endpoint
+
+
 @pytest.mark.asyncio
 async def test_trigger_webhooks_enqueues_job(service, mock_db):
     """Test that trigger_webhooks eventually calls _enqueue_delivery."""
@@ -37,6 +62,8 @@ async def test_trigger_webhooks_enqueues_job(service, mock_db):
     mock_endpoint = MagicMock()
     mock_endpoint.id = uuid4()
     mock_endpoint.secret = encrypted_secret
+    mock_endpoint.signing_secret = "test_signing_secret"  # Add signing_secret
+    mock_endpoint.tenant_id = tenant_id
     mock_endpoint_result = MagicMock()
     mock_endpoint_result.scalars.return_value.all.return_value = [mock_endpoint]
     mock_db.execute.return_value = mock_endpoint_result
@@ -58,56 +85,49 @@ async def test_enqueue_delivery_uses_arq(service):
     # Mock the pool in src.app.core.utils.queue
     mock_pool = AsyncMock()
     with patch("src.app.core.utils.queue.pool", mock_pool):
-        # We need to patch the module-level import inside the function or the module it comes from
-        # Since 'from src.app.core.utils.queue import pool' is inside the method,
-        # we patch 'src.app.core.utils.queue.pool' BEFORE calling the method?
-        # No, the method imports it. We must patch 'src.app.core.utils.queue.pool'.
+        await service._enqueue_delivery(delivery_id)
 
-        with patch("src.app.core.utils.queue.pool", mock_pool):
-            await service._enqueue_delivery(delivery_id)
-
-            mock_pool.enqueue_job.assert_called_once_with("deliver_webhook_task", delivery_id)
+        mock_pool.enqueue_job.assert_called_once_with("deliver_webhook_task", delivery_id)
 
 
 @pytest.mark.asyncio
 async def test_deliver_webhook_task_execution():
     """Test that the worker task calls the service method."""
-    from contextlib import asynccontextmanager
+    from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
     delivery_id = uuid4()
     ctx = MagicMock(spec=Worker)
 
-    # Mock the async context managers
-    @asynccontextmanager
-    async def mock_job_bypass_context(*args, **kwargs):
-        yield
-
-    @asynccontextmanager
-    async def mock_job_tenant_context(*args, **kwargs):
-        yield
-
-    # Mock local_session as an async context manager returning a mock DB
-    mock_db_session = AsyncMock()
-    mock_db_session.execute = AsyncMock()
+    # Mock job_bypass_context to return a db that can query tenant_id
+    mock_bypass_db = AsyncMock()
     mock_result = MagicMock()
     mock_result.fetchone.return_value = (uuid4(),)  # tenant_id tuple
-    mock_db_session.execute.return_value = mock_result
+    mock_bypass_db.execute = AsyncMock(return_value=mock_result)
 
-    @asynccontextmanager
-    async def mock_local_session():
-        yield mock_db_session
+    # Mock job_tenant_context to return a db for webhook delivery
+    mock_tenant_db = AsyncMock()
 
-    with patch("src.app.core.worker.functions.job_bypass_context", mock_job_bypass_context):
-        with patch("src.app.core.worker.functions.job_tenant_context", mock_job_tenant_context):
-            with patch("src.app.core.worker.functions.local_session", mock_local_session):
-                # Mock WebhookService
-                with patch("src.app.core.worker.functions.WebhookService") as MockServiceClass:
-                    mock_service_instance = MockServiceClass.return_value
-                    mock_service_instance.deliver_webhook = AsyncMock()
+    # Mock WebhookService.deliver_webhook
+    mock_service_instance = MagicMock()
+    mock_service_instance.deliver_webhook = AsyncMock()
 
-                    result = await deliver_webhook_task(ctx, delivery_id)
+    with patch("src.app.core.worker.functions.job_bypass_context") as mock_bypass_ctx:
+        with patch("src.app.core.worker.functions.job_tenant_context") as mock_tenant_ctx:
+            with patch("src.app.core.worker.functions.WebhookService") as MockServiceClass:
+                # Setup bypass context manager
+                mock_bypass_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_bypass_db)
+                mock_bypass_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
 
-                    # Service should be instantiated
-                    MockServiceClass.assert_called()
-                    # deliver_webhook should be called with the delivery_id
-                    mock_service_instance.deliver_webhook.assert_called_once_with(delivery_id)
+                # Setup tenant context manager
+                mock_tenant_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_tenant_db)
+                mock_tenant_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+                # Setup service
+                MockServiceClass.return_value = mock_service_instance
+
+                result = await deliver_webhook_task(ctx, delivery_id)
+
+                # Service should be instantiated
+                MockServiceClass.assert_called_once_with(mock_tenant_db)
+                # deliver_webhook should be called with the delivery_id
+                mock_service_instance.deliver_webhook.assert_called_once_with(delivery_id)

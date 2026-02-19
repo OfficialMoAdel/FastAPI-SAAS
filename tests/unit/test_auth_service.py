@@ -10,6 +10,7 @@ Tests cover:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from jwt.exceptions import PyJWTError as JWTError
@@ -63,8 +64,16 @@ def mock_user():
         "username": "testuser",
         "email": "test@example.com",
         "is_superuser": False,
-        "tenant_id": 1,
+        "tenant_id": uuid4(),
     }
+
+
+@pytest.fixture
+def mock_tenant():
+    """Mock tenant for tenant context."""
+    tenant = MagicMock()
+    tenant.id = uuid4()
+    return tenant
 
 
 class TestAuthServiceLockout:
@@ -72,7 +81,7 @@ class TestAuthServiceLockout:
 
     @pytest.mark.asyncio
     async def test_account_locked_after_5_failed_attempts(
-        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_tenant
     ):
         """Test that account is locked after 5 failed login attempts."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
@@ -80,11 +89,18 @@ class TestAuthServiceLockout:
         # Lua script returns -1 when account is locked
         mock_redis.eval = AsyncMock(return_value=-1)
 
-        with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
+        with (
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+        ):
+            mock_auth.return_value = None  # Authentication fails
 
-        assert "Account locked" in str(exc_info.value.detail)
-        assert "15 minutes" in str(exc_info.value.detail)
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
+
+            # SECURITY: Login uses generic error message to prevent username enumeration
+            # The lockout is enforced (returns -1), but error message is generic
+            assert "Wrong username" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_failed_attempt_increments_counter(
@@ -206,10 +222,11 @@ class TestAuthServiceTokenRefresh:
             assert "Invalid refresh token" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_refresh_success_rotates_tokens(self, auth_service, mock_db, mock_response):
+    async def test_refresh_success_rotates_tokens(self, auth_service, mock_db, mock_response, mock_tenant):
         """Test successful token refresh rotates both tokens and sets cookie."""
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "testuser"
+        mock_token_data.absolute_exp = None  # Bypass session expiration check
 
         # Mock settings to simulate production environment
         with (
@@ -219,6 +236,7 @@ class TestAuthServiceTokenRefresh:
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
             patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption
 
@@ -310,11 +328,11 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_request_password_reset_sends_email(self, auth_service, mock_db):
         """Test that requesting password reset triggers email event."""
-        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": 100}
+        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": uuid4()}
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.auth.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.service.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
@@ -358,12 +376,12 @@ class TestAuthServiceEmailFlows:
             "email": "test@example.com",
             "username": "testuser",
             "is_email_verified": False,
-            "tenant_id": 100,
+            "tenant_id": uuid4(),
         }
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.core.events.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.auth.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.service.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
@@ -449,17 +467,19 @@ class TestAuthServiceSecurityBugFixes:
     """
 
     @pytest.mark.asyncio
-    async def test_a1_token_refresh_blocks_deleted_users(self, auth_service, mock_db, mock_response):
+    async def test_a1_token_refresh_blocks_deleted_users(self, auth_service, mock_db, mock_response, mock_tenant):
         """A1 SECURITY: Token refresh must reject deleted users."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "deleteduser"
+        mock_token_data.absolute_exp = None  # Bypass session expiration check
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
 
@@ -482,17 +502,19 @@ class TestAuthServiceSecurityBugFixes:
             assert "no longer active" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_a1_token_refresh_blocks_nonexistent_users(self, auth_service, mock_db, mock_response):
+    async def test_a1_token_refresh_blocks_nonexistent_users(self, auth_service, mock_db, mock_response, mock_tenant):
         """A1 SECURITY: Token refresh must reject users that no longer exist."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "ghostuser"
+        mock_token_data.absolute_exp = None  # Bypass session expiration check
 
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
 
@@ -507,10 +529,11 @@ class TestAuthServiceSecurityBugFixes:
             assert "no longer active" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
-    async def test_a1_token_refresh_allows_active_users(self, auth_service, mock_db, mock_response):
+    async def test_a1_token_refresh_allows_active_users(self, auth_service, mock_db, mock_response, mock_tenant):
         """A1: Token refresh should work for active (non-deleted) users."""
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "activeuser"
+        mock_token_data.absolute_exp = None  # Bypass session expiration check
 
         with (
             patch("src.app.modules.auth.service.settings") as mock_settings,
@@ -519,6 +542,7 @@ class TestAuthServiceSecurityBugFixes:
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption
 

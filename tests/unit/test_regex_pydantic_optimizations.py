@@ -34,6 +34,7 @@ from src.app.modules.users.schemas import (
     UserCreate,
     UserRead,
 )
+from tests.conftest import MockUser
 
 logger = structlog.get_logger(__name__)
 
@@ -346,7 +347,7 @@ class TestPydanticOptimization:
             "email": "test@example.com",
             "profile_image_url": "https://example.com/img.png",
             "tier_id": 1,
-            "tenant_id": 1,
+            "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
         }
         iterations = 5000
 
@@ -379,7 +380,8 @@ class TestPydanticOptimization:
         iterations = 5000
 
         # Create a mock ORM object (UserRead uses int id from BaseRead)
-        class MockUser:
+        # Use a plain class without referencing MockUser to avoid scope issues
+        class MockUserObj:
             id = 12345
             created_at = datetime.now()
             updated_at = datetime.now()
@@ -388,9 +390,9 @@ class TestPydanticOptimization:
             email = "test@example.com"
             profile_image_url = "https://example.com/img.png"
             tier_id = 1
-            tenant_id = 1
+            tenant_id = uuid4()  # Generate fresh UUID
 
-        mock_user = MockUser()
+        mock_user = MockUserObj()
 
         # Baseline: Pydantic validate + dump (old approach)
         def pydantic_roundtrip() -> dict[str, Any]:
@@ -447,7 +449,7 @@ class TestPydanticOptimization:
     def test_direct_dict_preserves_all_fields(self) -> None:
         """Test that direct dict construction preserves all fields."""
 
-        class MockUser:
+        class MockUserObj:
             id = 12345
             created_at = datetime.now()
             updated_at = datetime.now()
@@ -456,9 +458,9 @@ class TestPydanticOptimization:
             email = "test@example.com"
             profile_image_url = "https://example.com/img.png"
             tier_id = 1
-            tenant_id = 1
+            tenant_id = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
-        mock_user = MockUser()
+        mock_user = MockUserObj()
 
         # Replicate U7 direct dict construction from UserService._cache_user
         user_data = {
@@ -501,13 +503,13 @@ class TestPydanticOptimization:
     def test_direct_dict_optional_field_handling(self) -> None:
         """Test optional/None fields handled correctly."""
 
-        class MockUser:
+        class MockUserObj:
             id = uuid4()
             created_at = None
             updated_at = None
             tier_id = None
 
-        mock_user = MockUser()
+        mock_user = MockUserObj()
 
         user_data = {
             "id": mock_user.id,
@@ -580,7 +582,7 @@ class TestBenchmarkSummary:
             "email": "test@example.com",
             "profile_image_url": "https://example.com/img.png",
             "tier_id": 1,
-            "tenant_id": 1,
+            "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
         }
 
         start = time.perf_counter_ns()

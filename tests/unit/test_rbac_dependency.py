@@ -10,6 +10,7 @@ Tests cover:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 from fastapi import HTTPException
@@ -281,7 +282,7 @@ class TestRequiresPermission:
                 return_value=True,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_db = AsyncMock()
 
             # Should not raise
@@ -304,7 +305,7 @@ class TestRequiresPermission:
                 return_value=False,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_db = AsyncMock()
 
             with pytest.raises(HTTPException) as exc_info:
@@ -330,7 +331,7 @@ class TestRequiresPermission:
                 return_value=True,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=1)
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_db = AsyncMock()
 
             # Should not raise

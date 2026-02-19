@@ -138,7 +138,7 @@ class TestARQSerializerDecimal:
     """Test Decimal serialization handling."""
 
     def test_arq_serializer_handles_decimal(self) -> None:
-        """Verify Decimal serializes (converts to float)."""
+        """Verify Decimal serializes (converts to string via custom serializer)."""
         job_args = {"amount": Decimal("123.45")}
 
         serialized = WorkerSettings.job_serializer(job_args)
@@ -147,21 +147,21 @@ class TestARQSerializerDecimal:
         logger.info(f"Decimal before: {job_args['amount']} (type: {type(job_args['amount']).__name__})")
         logger.info(f"Decimal after: {deserialized['amount']} (type: {type(deserialized['amount']).__name__})")
 
-        # Decimal becomes float after orjson roundtrip
-        assert isinstance(deserialized["amount"], float)
-        assert abs(deserialized["amount"] - 123.45) < 0.001
+        # Decimal becomes string after orjson roundtrip (json_utils converts Decimal to str)
+        assert isinstance(deserialized["amount"], str)
+        assert Decimal(deserialized["amount"]) == Decimal("123.45")
 
     def test_arq_serializer_handles_high_precision_decimal(self) -> None:
-        """Verify high precision Decimal handling (may lose precision)."""
+        """Verify high precision Decimal handling (preserves precision as string)."""
         job_args = {"precise_amount": Decimal("123.456789012345")}
 
         serialized = WorkerSettings.job_serializer(job_args)
         deserialized = WorkerSettings.job_deserializer(serialized)
 
-        # Note: Float has limited precision, some loss is expected
-        assert isinstance(deserialized["precise_amount"], float)
-        # Just verify it's approximately correct
-        assert abs(deserialized["precise_amount"] - 123.456789012345) < 0.0001
+        # Decimal becomes string after orjson roundtrip (preserves full precision)
+        assert isinstance(deserialized["precise_amount"], str)
+        # Full precision is preserved
+        assert Decimal(deserialized["precise_amount"]) == Decimal("123.456789012345")
 
 
 class TestARQSerializerErrorHandling:

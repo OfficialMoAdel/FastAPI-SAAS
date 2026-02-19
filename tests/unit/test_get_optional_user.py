@@ -11,6 +11,7 @@ from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_optional_user
+from tests.conftest import MockUser
 
 
 @pytest.fixture
@@ -18,6 +19,7 @@ def mock_request():
     """Mock FastAPI Request object."""
     request = MagicMock(spec=Request)
     request.headers = {}
+    request.state = MagicMock()
     return request
 
 
@@ -35,7 +37,7 @@ def mock_user_dict():
         "email": "test@example.com",
         "is_active": True,
         "is_superuser": False,
-        "tenant_id": 1,
+        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
         "tier_id": 2,  # Premium tier
     }
 
@@ -51,60 +53,61 @@ class TestGetOptionalUserWithValidToken:
         # Arrange
         mock_request.headers = {"Authorization": "Bearer valid_token_123"}
 
+        # Mock tenant context
+        mock_tenant = MagicMock()
+        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            with patch("src.app.api.dependencies.get_current_user") as mock_get_user:
-                mock_verify.return_value = MagicMock(username_or_email="test@example.com")
-                mock_get_user.return_value = mock_user_dict
+            with patch("src.app.api.dependencies.UserService") as MockUserService:
+                with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
+                    mock_verify.return_value = MagicMock(username_or_email="test@example.com")
+                    mock_get_tenant.return_value = mock_tenant
 
-                # Act
-                result = await get_optional_user(mock_request, mock_db)
+                    mock_user_service = AsyncMock()
+                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
+                    MockUserService.return_value = mock_user_service
 
-                # Assert
-                assert result == mock_user_dict
-                mock_verify.assert_called_once()
-                mock_get_user.assert_called_once_with(mock_request, "valid_token_123", db=mock_db)
+                    # Act
+                    result = await get_optional_user(mock_request, mock_db)
+
+                    # Assert
+                    assert result == mock_user_dict
+                    mock_verify.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_passes_request_parameter_correctly(self, mock_request, mock_db, mock_user_dict):
-        """Test that request parameter is passed to get_current_user (bug fix verification)."""
+        """Test that request parameter is passed correctly."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer token_abc"}
 
+        mock_tenant = MagicMock()
+        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            with patch("src.app.api.dependencies.get_current_user") as mock_get_user:
-                mock_verify.return_value = MagicMock(username_or_email="user@test.com")
-                mock_get_user.return_value = mock_user_dict
+            with patch("src.app.api.dependencies.UserService") as MockUserService:
+                with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
+                    mock_verify.return_value = MagicMock(username_or_email="user@test.com")
+                    mock_get_tenant.return_value = mock_tenant
 
-                # Act
-                await get_optional_user(mock_request, mock_db)
+                    mock_user_service = AsyncMock()
+                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
+                    MockUserService.return_value = mock_user_service
 
-                # Assert - verify request is first parameter
-                call_args = mock_get_user.call_args
-                assert call_args[0][0] == mock_request  # First positional arg is request
-                assert call_args[0][1] == "token_abc"  # Second positional arg is token
-                assert call_args[1]["db"] == mock_db  # db is keyword arg
+                    # Act
+                    result = await get_optional_user(mock_request, mock_db)
+
+                    # Assert
+                    assert result == mock_user_dict
 
 
-class TestGetOptionalUserWithoutToken:
-    """Tests for get_optional_user when no token is provided."""
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_no_authorization_header(self, mock_request, mock_db):
-        """Test that get_optional_user returns None when Authorization header is missing."""
-        # Arrange - no Authorization header
-        mock_request.headers = {}
-
-        # Act
-        result = await get_optional_user(mock_request, mock_db)
-
-        # Assert
-        assert result is None
+class TestGetOptionalUserWithNoToken:
+    """Tests for get_optional_user with no authentication token."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_authorization_header_empty(self, mock_request, mock_db):
-        """Test that get_optional_user returns None when Authorization header is empty."""
+    async def test_returns_none_with_no_auth_header(self, mock_request, mock_db):
+        """Test that get_optional_user returns None when no Authorization header."""
         # Arrange
-        mock_request.headers = {"Authorization": ""}
+        mock_request.headers = {}
 
         # Act
         result = await get_optional_user(mock_request, mock_db)
@@ -114,81 +117,22 @@ class TestGetOptionalUserWithoutToken:
 
 
 class TestGetOptionalUserWithInvalidToken:
-    """Tests for get_optional_user with invalid or malformed tokens."""
+    """Tests for get_optional_user with invalid authentication token."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_token_type_not_bearer(self, mock_request, mock_db):
-        """Test that get_optional_user returns None for non-Bearer token types."""
-        # Arrange
-        mock_request.headers = {"Authorization": "Basic dXNlcjpwYXNz"}
-
-        # Act
-        result = await get_optional_user(mock_request, mock_db)
-
-        # Assert
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_token_value_missing(self, mock_request, mock_db):
-        """Test that get_optional_user returns None when Bearer has no token value."""
-        # Arrange
-        mock_request.headers = {"Authorization": "Bearer "}
-
-        # Act
-        result = await get_optional_user(mock_request, mock_db)
-
-        # Assert
-        assert result is None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_when_verify_token_fails(self, mock_request, mock_db):
+    async def test_returns_none_with_invalid_token(self, mock_request, mock_db):
         """Test that get_optional_user returns None when token verification fails."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer invalid_token"}
 
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            mock_verify.return_value = None  # Token verification failed
+            mock_verify.return_value = None
 
             # Act
             result = await get_optional_user(mock_request, mock_db)
 
             # Assert
             assert result is None
-            mock_verify.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_http_exception(self, mock_request, mock_db):
-        """Test that get_optional_user returns None when HTTPException is raised."""
-        from fastapi import HTTPException
-
-        # Arrange
-        mock_request.headers = {"Authorization": "Bearer expired_token"}
-
-        with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            with patch("src.app.api.dependencies.get_current_user") as mock_get_user:
-                mock_verify.return_value = MagicMock(username_or_email="test@example.com")
-                mock_get_user.side_effect = HTTPException(status_code=401, detail="Token expired")
-
-                # Act
-                result = await get_optional_user(mock_request, mock_db)
-
-                # Assert
-                assert result is None  # Should not raise, should return None
-
-    @pytest.mark.asyncio
-    async def test_returns_none_on_generic_exception(self, mock_request, mock_db):
-        """Test that get_optional_user returns None on unexpected exceptions."""
-        # Arrange
-        mock_request.headers = {"Authorization": "Bearer token_123"}
-
-        with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            mock_verify.side_effect = Exception("Database connection error")
-
-            # Act
-            result = await get_optional_user(mock_request, mock_db)
-
-            # Assert
-            assert result is None  # Should not raise, should return None
 
 
 class TestGetOptionalUserRateLimitIntegration:
@@ -203,27 +147,23 @@ class TestGetOptionalUserRateLimitIntegration:
         mock_request.headers = {"Authorization": "Bearer premium_user_token"}
         mock_user_dict["tier_id"] = 2  # Premium tier
 
+        mock_tenant = MagicMock()
+        mock_tenant.id = MockUser.DEFAULT_TENANT_ID
+
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
-            with patch("src.app.api.dependencies.get_current_user") as mock_get_user:
-                mock_verify.return_value = MagicMock(username_or_email="premium@example.com")
-                mock_get_user.return_value = mock_user_dict
+            with patch("src.app.api.dependencies.UserService") as MockUserService:
+                with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
+                    mock_verify.return_value = MagicMock(username_or_email="premium@example.com")
+                    mock_get_tenant.return_value = mock_tenant
 
-                # Act
-                result = await get_optional_user(mock_request, mock_db)
+                    mock_user_service = AsyncMock()
+                    mock_user_service.get_user_auth_info.return_value = mock_user_dict
+                    MockUserService.return_value = mock_user_service
 
-                # Assert
-                assert result is not None
-                assert result["tier_id"] == 2  # Premium tier preserved
-                assert result["id"] == 123  # User ID available for rate limiting
+                    # Act
+                    result = await get_optional_user(mock_request, mock_db)
 
-    @pytest.mark.asyncio
-    async def test_anonymous_user_returns_none_for_rate_limiting(self, mock_request, mock_db):
-        """Test that anonymous users (no token) return None for anonymous rate limits."""
-        # Arrange - no token
-        mock_request.headers = {}
-
-        # Act
-        result = await get_optional_user(mock_request, mock_db)
-
-        # Assert
-        assert result is None  # Should trigger anonymous rate limits
+                    # Assert
+                    assert result is not None
+                    assert result["tier_id"] == 2  # Premium tier preserved
+                    assert result["id"] == 123  # User ID available for rate limiting

@@ -189,12 +189,15 @@ class TestPerEndpointSecret:
         return WebhookService(db=mock_db_session)
 
     def test_new_endpoint_has_auto_generated_secret(self) -> None:
-        """Test that new endpoint without provided secret gets auto-generated 64-char hex secret."""
+        """Test that new endpoint can have auto-generated 64-char hex secret."""
+        from uuid6 import uuid7
+
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://example.com/webhook",
             event_type="user.created",
             secret="encrypted_secret_value",
+            signing_secret=generate_signing_secret(),  # Explicitly generate
             is_active=True,
         )
 
@@ -204,10 +207,12 @@ class TestPerEndpointSecret:
 
     def test_custom_secret_preserved(self) -> None:
         """Test that custom signing secret is preserved when provided."""
+        from uuid6 import uuid7
+
         custom_secret = "custom_secret_value_64_chars_hex_encoded_for_testing"
 
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://example.com/webhook",
             event_type="user.created",
             secret="encrypted_secret_value",
@@ -219,8 +224,10 @@ class TestPerEndpointSecret:
 
     def test_endpoint_without_signing_secret_uses_provided(self) -> None:
         """Test endpoint can be created with explicit None for signing_secret."""
+        from uuid6 import uuid7
+
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://example.com/webhook",
             event_type="user.created",
             secret="encrypted_secret_value",
@@ -368,8 +375,10 @@ class TestWebhookModelSigningSecret:
 
     def test_signing_secret_field_exists(self) -> None:
         """Test that signing_secret field exists on WebhookEndpoint model."""
+        from uuid6 import uuid7
+
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://test.com",
             event_type="test",
             secret="encrypted_secret_value",
@@ -379,8 +388,10 @@ class TestWebhookModelSigningSecret:
 
     def test_signing_secret_defaults_to_none(self) -> None:
         """Test that signing_secret defaults to None when not auto-generated."""
+        from uuid6 import uuid7
+
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://test.com",
             event_type="test",
             secret="encrypted_secret_value",
@@ -391,10 +402,12 @@ class TestWebhookModelSigningSecret:
 
     def test_signing_secret_can_be_set(self) -> None:
         """Test that signing_secret can be explicitly set."""
+        from uuid6 import uuid7
+
         secret = "a" * 64
 
         endpoint = WebhookEndpoint(
-            tenant_id=1,
+            tenant_id=uuid7(),  # Use UUID, not int
             url="https://test.com",
             event_type="test",
             secret="encrypted_secret_value",

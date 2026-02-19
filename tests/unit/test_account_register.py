@@ -1,10 +1,13 @@
 """Unit tests for the /account/register endpoint."""
 
 from unittest.mock import AsyncMock
+from uuid6 import uuid7
 
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+
+from tests.conftest import MockUser
 
 
 @pytest.fixture
@@ -80,7 +83,7 @@ def test_register_endpoint_exists(client, app, get_user_service_dep):
             "is_superuser": False,
             "tier_id": None,
             "tier_name": None,
-            "tenant_id": 1,
+            "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
             "created_at": "2024-01-01T00:00:00Z",
             "profile_image_url": "https://profileimageurl.com",
         }

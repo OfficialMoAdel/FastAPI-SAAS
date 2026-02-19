@@ -17,28 +17,22 @@ async def test_async_get_db_applies_rls_when_tenant_present():
     # Mock session
     mock_session = AsyncMock(spec=AsyncSession)
 
-    # Mock local_session context manager
-    mock_local_session_cm = AsyncMock()
-    mock_local_session_cm.__aenter__.return_value = mock_session
-    mock_local_session_cm.__aexit__.return_value = None
+    # Mock local_session context manager - returns a session object
+    mock_local_session = MagicMock(return_value=mock_session)
 
     # Mock rls_context context manager
     mock_rls_cm = AsyncMock()
     mock_rls_cm.__aenter__.return_value = None
     mock_rls_cm.__aexit__.return_value = None
 
-    with patch("src.app.core.db.database.local_session", return_value=mock_local_session_cm):
+    with patch("src.app.core.db.database.local_session", mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=mock_tenant):
             with patch("src.app.core.db.database.rls_context", return_value=mock_rls_cm) as mock_rls_factory:
-                # Consume the generator
-                gen = async_get_db()
-                db = await anext(gen)
-
-                assert db is mock_session
-
-                # Verify RLS was applied
-                mock_rls_factory.assert_called_once_with(mock_session, "tenant-123")
-                mock_rls_cm.__aenter__.assert_awaited_once()
+                # Use async context manager pattern (async_get_db is @asynccontextmanager)
+                async with async_get_db() as db:
+                    assert db is mock_session
+                    # Verify RLS was applied
+                    mock_rls_factory.assert_called_once_with(mock_session, "tenant-123")
 
 
 @pytest.mark.asyncio
@@ -48,19 +42,14 @@ async def test_async_get_db_no_rls_when_no_tenant():
     # Mock session
     mock_session = AsyncMock(spec=AsyncSession)
 
-    # Mock local_session context manager
-    mock_local_session_cm = AsyncMock()
-    mock_local_session_cm.__aenter__.return_value = mock_session
-    mock_local_session_cm.__aexit__.return_value = None
+    # Mock local_session returns a session object
+    mock_local_session = MagicMock(return_value=mock_session)
 
-    with patch("src.app.core.db.database.local_session", return_value=mock_local_session_cm):
+    with patch("src.app.core.db.database.local_session", mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=None):
             with patch("src.app.core.db.database.rls_context") as mock_rls_factory:
-                # Consume the generator
-                gen = async_get_db()
-                db = await anext(gen)
-
-                assert db is mock_session
-
-                # Verify RLS was NOT applied
-                mock_rls_factory.assert_not_called()
+                # Use async context manager pattern (async_get_db is @asynccontextmanager)
+                async with async_get_db() as db:
+                    assert db is mock_session
+                    # Verify RLS was NOT applied
+                    mock_rls_factory.assert_not_called()

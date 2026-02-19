@@ -8,6 +8,7 @@ Tests cover:
 - Rate limit and tier retrieval
 """
 
+import uuid
 from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -21,13 +22,31 @@ from src.app.modules.users.service import UserService
 
 @pytest.fixture
 def mock_db():
-    """Mock async database session."""
+    """Mock async database session with FastCRUD support."""
     db = AsyncMock()
+
+    # Configure execute for count queries (FastCRUD validate_update_delete_operation)
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = 1  # Return 1 for count queries (record exists)
+    mock_result.scalars.return_value = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_result.scalars.return_value.all.return_value = []
+    db.execute.return_value = mock_result
+
+    # Configure scalar as a proper async mock
     db.scalar = AsyncMock(return_value=None)
-    db.execute = AsyncMock()
+
     db.add = MagicMock()
     db.commit = AsyncMock()
     db.refresh = AsyncMock()
+    db.rollback = AsyncMock()
+    db.flush = AsyncMock()
+    db.delete = AsyncMock()
+
+    # For session context manager
+    db.__aenter__ = AsyncMock(return_value=db)
+    db.__aexit__ = AsyncMock(return_value=None)
+
     return db
 
 
@@ -131,7 +150,7 @@ class TestUserServiceCreate:
             mock_create.return_value = created_user
 
             with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant:
-                mock_tenant.return_value = MagicMock(id=1)
+                mock_tenant.return_value = MagicMock(id=uuid.uuid4())
 
                 with patch("src.app.modules.users.service.get_password_hash", new_callable=AsyncMock) as mock_hash:
                     mock_hash.return_value = "hashed_password"
@@ -168,7 +187,9 @@ class TestUserServiceCreate:
         assert "username" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_create_duplicate_check_before_password_hash(self, user_service, mock_db, mock_user_create, mock_existing_user):
+    async def test_create_duplicate_check_before_password_hash(
+        self, user_service, mock_db, mock_user_create, mock_existing_user
+    ):
         """SECURITY TEST: Verify duplicate check happens BEFORE expensive password hash.
 
         This test verifies the DoS vulnerability fix (Issue #1 from security plan):
@@ -194,7 +215,9 @@ class TestUserServiceCreate:
             mock_hash.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_no_password_hash_for_duplicate_username(self, user_service, mock_db, mock_user_create, mock_existing_user):
+    async def test_create_no_password_hash_for_duplicate_username(
+        self, user_service, mock_db, mock_user_create, mock_existing_user
+    ):
         """SECURITY TEST: Verify duplicate username check also prevents password hashing.
 
         Tests that the DoS protection works for username duplicates as well as email duplicates.
@@ -222,7 +245,9 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_username_success(self, user_service, mock_existing_user):
         """Test successful user retrieval by username."""
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
+             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
 
             result = await user_service.get_by_username("testuser")
@@ -233,7 +258,9 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_username_not_found(self, user_service):
         """Test user retrieval when not found."""
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
+             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
@@ -252,7 +279,9 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_email_success(self, user_service, mock_existing_user):
         """Test get user by email."""
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
+             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
 
             result = await user_service.get_by_email("test@example.com")
@@ -295,23 +324,20 @@ class TestUserServiceUpdate:
                     assert result["message"] == "User updated"
 
     @pytest.mark.asyncio
-    async def test_update_other_user_forbidden(
-        self, user_service, mock_user_update, mock_current_user, mock_existing_user
-    ):
-        """Test non-superuser cannot update other user's profile."""
-        # Different user
-        mock_existing_user.id = 999
-        mock_existing_user.username = "otheruser"
+    async def test_update_other_user_forbidden(self, user_service, mock_existing_user):
+        """Test that updating another user's account is forbidden."""
+        # Set up different user to update
+        other_user = MagicMock()
+        other_user.username = "otheruser"
+        other_user.email = "other@example.com"
+
+        current_user = {"username": "testuser", "is_superuser": False}
 
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_existing_user
+            mock_get.return_value = other_user
 
             with pytest.raises(ForbiddenException):
-                await user_service.update(
-                    username="otheruser",
-                    values=mock_user_update,
-                    current_user=mock_current_user,
-                )
+                await user_service.update("otheruser", MagicMock(), current_user)
 
     @pytest.mark.asyncio
     async def test_superuser_can_update_any_user(
@@ -371,20 +397,22 @@ class TestUserServiceDelete:
                     assert "deleted" in result["message"].lower()
 
     @pytest.mark.asyncio
-    async def test_delete_other_user_forbidden(self, user_service, mock_current_user, mock_existing_user):
-        """Test non-superuser cannot delete other user."""
-        mock_existing_user.id = 999
-        mock_existing_user.username = "otheruser"
+    async def test_delete_other_user_forbidden(self, user_service, mock_existing_user):
+        """Test that deleting another user's account is forbidden."""
+        # Set up different user to delete
+        other_user = MagicMock()
+        other_user.username = "otheruser"
+        other_user.email = "other@example.com"
 
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
-            mock_get.return_value = mock_existing_user
+        current_user = {"username": "testuser", "is_superuser": False}
+        token = "test_token"
+
+        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get, \
+             patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
+            mock_get.return_value = other_user
 
             with pytest.raises(ForbiddenException):
-                await user_service.delete(
-                    username="otheruser",
-                    current_user=mock_current_user,
-                    token="test_token",
-                )
+                await user_service.delete("otheruser", current_user, token)
 
     @pytest.mark.asyncio
     async def test_hard_delete_success(self, user_service, mock_db, mock_existing_user):

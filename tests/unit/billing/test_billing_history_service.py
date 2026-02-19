@@ -5,6 +5,7 @@ Tests T101: Unit test for BillingHistoryService in tests/unit/billing/test_billi
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 
@@ -22,11 +23,19 @@ def mock_db_session():
     return session
 
 
+@pytest.fixture
+def mock_tenant():
+    """Mock tenant context."""
+    tenant = MagicMock()
+    tenant.id = uuid.uuid4()
+    return tenant
+
+
 class TestBillingHistoryService:
     """Test suite for billing history service operations."""
 
     @pytest.mark.asyncio
-    async def test_get_user_records_success(self, mock_db_session):
+    async def test_get_user_records_success(self, mock_db_session, mock_tenant):
         """Test getting billing records for a user."""
         service = BillingRecordService(mock_db_session)
 
@@ -54,7 +63,8 @@ class TestBillingHistoryService:
             "total_count": 2,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_records,
@@ -66,7 +76,7 @@ class TestBillingHistoryService:
             assert result["data"][0]["status"] == "succeeded"
 
     @pytest.mark.asyncio
-    async def test_get_user_records_pagination(self, mock_db_session):
+    async def test_get_user_records_pagination(self, mock_db_session, mock_tenant):
         """Test pagination in billing history."""
         service = BillingRecordService(mock_db_session)
 
@@ -76,7 +86,8 @@ class TestBillingHistoryService:
             "total_count": 5,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_page_1,
@@ -88,13 +99,14 @@ class TestBillingHistoryService:
             assert len(result["data"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_user_records_empty(self, mock_db_session):
+    async def test_get_user_records_empty(self, mock_db_session, mock_tenant):
         """Test getting billing records when user has none."""
         service = BillingRecordService(mock_db_session)
 
         mock_empty = {"data": [], "total_count": 0}
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_empty,
@@ -105,7 +117,7 @@ class TestBillingHistoryService:
             assert result["total_count"] == 0
 
     @pytest.mark.asyncio
-    async def test_get_user_records_with_status_filter(self, mock_db_session):
+    async def test_get_user_records_with_status_filter(self, mock_db_session, mock_tenant):
         """Test getting billing records filtered by status."""
         service = BillingRecordService(mock_db_session)
 
@@ -123,7 +135,8 @@ class TestBillingHistoryService:
             "total_count": 1,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_failed,
@@ -134,7 +147,7 @@ class TestBillingHistoryService:
             assert result["data"][0]["status"] == "failed"
 
     @pytest.mark.asyncio
-    async def test_get_record_success(self, mock_db_session):
+    async def test_get_record_success(self, mock_db_session, mock_tenant):
         """Test getting a specific billing record."""
         service = BillingRecordService(mock_db_session)
 
@@ -176,7 +189,7 @@ class TestBillingHistoryService:
                 await service.get_record(record_id=9999)
 
     @pytest.mark.asyncio
-    async def test_billing_records_sorted_by_date(self, mock_db_session):
+    async def test_billing_records_sorted_by_date(self, mock_db_session, mock_tenant):
         """Test that billing records are returned sorted by date (newest first)."""
         service = BillingRecordService(mock_db_session)
 
@@ -190,7 +203,8 @@ class TestBillingHistoryService:
             "total_count": 3,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_records,
@@ -207,7 +221,7 @@ class TestBillingRecordStatusFiltering:
     """Test suite for billing record status filtering."""
 
     @pytest.mark.asyncio
-    async def test_filter_succeeded_records(self, mock_db_session):
+    async def test_filter_succeeded_records(self, mock_db_session, mock_tenant):
         """Test filtering for succeeded billing records."""
         service = BillingRecordService(mock_db_session)
 
@@ -216,7 +230,8 @@ class TestBillingRecordStatusFiltering:
             "total_count": 2,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_succeeded,
@@ -226,7 +241,7 @@ class TestBillingRecordStatusFiltering:
             assert all(r["status"] == "succeeded" for r in result["data"])
 
     @pytest.mark.asyncio
-    async def test_filter_failed_records(self, mock_db_session):
+    async def test_filter_failed_records(self, mock_db_session, mock_tenant):
         """Test filtering for failed billing records."""
         service = BillingRecordService(mock_db_session)
 
@@ -235,7 +250,8 @@ class TestBillingRecordStatusFiltering:
             "total_count": 1,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_failed,
@@ -245,16 +261,17 @@ class TestBillingRecordStatusFiltering:
             assert all(r["status"] == "failed" for r in result["data"])
 
     @pytest.mark.asyncio
-    async def test_filter_refunded_records(self, mock_db_session):
+    async def test_filter_refunded_records(self, mock_db_session, mock_tenant):
         """Test filtering for refunded billing records."""
         service = BillingRecordService(mock_db_session)
 
         mock_refunded = {
-            "data": [{"id": 4, "status": "refunded"}],
-            "total_count": 1,
+            "data": [{"id": 4, "status": "refunded"}, {"id": 5, "status": "refunded"}],
+            "total_count": 2,
         }
 
-        with patch(
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
+             patch(
             "src.app.modules.billing.crud.crud_billing_records.get_multi",
             new_callable=AsyncMock,
             return_value=mock_refunded,

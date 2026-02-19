@@ -66,8 +66,8 @@ class TestEagerLoadingN1Elimination:
         from tests.fixtures.query_counter import count_queries
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -90,7 +90,7 @@ class TestEagerLoadingN1Elimination:
             )
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
     @pytest.mark.asyncio
     async def test_eager_load_nonexistent_relation_raises(self, db_session) -> None:
@@ -102,8 +102,8 @@ class TestEagerLoadingN1Elimination:
         from src.app.core.config import settings
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -119,7 +119,7 @@ class TestEagerLoadingN1Elimination:
             print("[WARNING] Invalid relation 'nonexistent_relation' was silently skipped due to hasattr() check")
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
     @pytest.mark.asyncio
     async def test_eager_load_preserves_data(self, db_session) -> None:
@@ -131,8 +131,8 @@ class TestEagerLoadingN1Elimination:
         from src.app.core.config import settings
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -168,7 +168,7 @@ class TestEagerLoadingN1Elimination:
             print("[DATA PRESERVATION] Data identical with/without eager loading")
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
 
 class TestEagerLoadingFeatureFlag:
@@ -180,8 +180,8 @@ class TestEagerLoadingFeatureFlag:
         from src.app.core.config import settings
 
         # Disable feature flag
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = False
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = False
 
         service = BaseService(User, db_session)
 
@@ -198,7 +198,7 @@ class TestEagerLoadingFeatureFlag:
             print(f"[FEATURE FLAG] Eager loading disabled, using original behavior. Queries: {log.count}")
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
 
 class TestEagerLoadingMultipleRelations:
@@ -211,8 +211,8 @@ class TestEagerLoadingMultipleRelations:
         from tests.fixtures.query_counter import count_queries
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -239,7 +239,7 @@ class TestEagerLoadingMultipleRelations:
             assert log.count <= 2, f"Expected <= 2 queries with multiple eager loads, got {log.count}"
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
     @pytest.mark.asyncio
     async def test_eager_load_empty_list(self, db_session) -> None:
@@ -247,8 +247,8 @@ class TestEagerLoadingMultipleRelations:
         from src.app.core.config import settings
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -262,7 +262,7 @@ class TestEagerLoadingMultipleRelations:
             print("[EMPTY LIST] Empty eager_loads uses original behavior")
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag
 
 
 class TestEagerLoadingQueryLogging:
@@ -275,8 +275,8 @@ class TestEagerLoadingQueryLogging:
         from tests.fixtures.query_counter import count_queries, log_query_summary
 
         # Ensure feature flag is enabled
-        original_flag = settings.performance.FEATURE_EAGER_LOADING
-        settings.performance.FEATURE_EAGER_LOADING = True
+        original_flag = settings.FEATURE_EAGER_LOADING
+        settings.FEATURE_EAGER_LOADING = True
 
         service = BaseService(User, db_session)
 
@@ -294,4 +294,4 @@ class TestEagerLoadingQueryLogging:
             print(f"[QUERY LOG] Query summary: total={log.count}, types={dict(log.query_types)}")
         finally:
             # Restore original flag
-            settings.performance.FEATURE_EAGER_LOADING = original_flag
+            settings.FEATURE_EAGER_LOADING = original_flag

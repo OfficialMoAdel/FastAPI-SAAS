@@ -5,6 +5,7 @@ Tests T116: Unit test for ProductService in tests/unit/billing/test_product_serv
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 
@@ -49,7 +50,7 @@ def mock_db_session():
 def mock_tenant():
     """Create a mock tenant context."""
     tenant = MagicMock()
-    tenant.id = 1
+    tenant.id = uuid.uuid4()
     return tenant
 
 

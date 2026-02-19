@@ -129,8 +129,14 @@ class TestBulkOperations:
     @pytest.mark.asyncio
     async def test_bulk_add_tokens(self) -> None:
         """Should add multiple tokens in one operation."""
-        mock_redis = AsyncMock()
-        mock_redis.zadd = AsyncMock(return_value=3)
+        # Mock pipeline for bulk add
+        mock_pipe = MagicMock()
+        mock_pipe.zadd = MagicMock()  # zadd is sync in pipeline mode
+        mock_pipe.delete = MagicMock()  # delete is sync in pipeline mode
+        mock_pipe.execute = AsyncMock(return_value=[3, 1, 1, 1])  # [zadd_result, delete1, delete2, delete3]
+
+        mock_redis = MagicMock()
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         tokens = [
             ("token1", datetime.now(UTC) + timedelta(hours=1)),
@@ -141,6 +147,9 @@ class TestBulkOperations:
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await add_tokens_to_blacklist(tokens)
             assert result == 3
+            mock_redis.pipeline.assert_called_once()
+            mock_pipe.zadd.assert_called_once()
+            mock_pipe.execute.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_remove_expired_tokens(self) -> None:
@@ -159,8 +168,14 @@ class TestCacheWarming:
     @pytest.mark.asyncio
     async def test_warm_cache_filters_expired_tokens(self) -> None:
         """Should only add non-expired tokens to cache."""
-        mock_redis = AsyncMock()
-        mock_redis.zadd = AsyncMock(return_value=1)
+        # Mock pipeline for warm_cache
+        mock_pipe = MagicMock()
+        mock_pipe.zadd = MagicMock()
+        mock_pipe.delete = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[1])  # Only 1 active token
+
+        mock_redis = MagicMock()
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         now = datetime.now(UTC)
         tokens = [
@@ -171,6 +186,7 @@ class TestCacheWarming:
         with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
             result = await warm_cache_from_db(tokens)
             assert result == 1
+            mock_redis.pipeline.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_warm_cache_empty_list(self) -> None:

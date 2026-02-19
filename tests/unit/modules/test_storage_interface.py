@@ -60,11 +60,7 @@ class TestStorageProviderInterface:
         """Test StorageResult with error."""
         from src.app.modules.storage.interfaces import StorageResult
 
-        result = StorageResult(
-            success=False,
-            path="",
-            error="File not found"
-        )
+        result = StorageResult(success=False, path="", error="File not found")
 
         assert result.success is False
         assert result.error == "File not found"
@@ -126,6 +122,8 @@ class TestS3Storage:
     @pytest.mark.asyncio
     async def test_s3_upload(self, mock_s3_client):
         """Test S3 file upload."""
+        from unittest.mock import patch
+
         from src.app.modules.storage.s3_storage import S3Storage
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
@@ -133,11 +131,9 @@ class TestS3Storage:
         file_content = b"test file content"
         file_obj = BytesIO(file_content)
 
-        result = await storage.upload(
-            file=file_obj,
-            path="uploads/test.txt",
-            mime_type="text/plain"
-        )
+        # Mock settings to disable streaming uploads (avoids botocore import)
+        with patch("src.app.modules.storage.s3_storage.settings.FEATURE_STREAMING_UPLOADS", False):
+            result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is True
         assert "uploads/test.txt" in result.path
@@ -150,19 +146,14 @@ class TestS3Storage:
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.put_object.side_effect = MockClientError(
-            {"Error": {"Code": "500", "Message": "Internal Error"}},
-            "PutObject"
+            {"Error": {"Code": "500", "Message": "Internal Error"}}, "PutObject"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
 
         file_obj = BytesIO(b"test content")
 
-        result = await storage.upload(
-            file=file_obj,
-            path="uploads/test.txt",
-            mime_type="text/plain"
-        )
+        result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is False
         assert result.error is not None
@@ -198,10 +189,7 @@ class TestS3Storage:
 
         assert result.success is True
         assert result.path == "uploads/test.txt"
-        mock_s3_client.delete_object.assert_called_once_with(
-            Bucket="test-bucket",
-            Key="uploads/test.txt"
-        )
+        mock_s3_client.delete_object.assert_called_once_with(Bucket="test-bucket", Key="uploads/test.txt")
 
     @pytest.mark.asyncio
     async def test_s3_delete_failure(self, mock_s3_client):
@@ -209,8 +197,7 @@ class TestS3Storage:
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.delete_object.side_effect = MockClientError(
-            {"Error": {"Code": "404", "Message": "Not Found"}},
-            "DeleteObject"
+            {"Error": {"Code": "404", "Message": "Not Found"}}, "DeleteObject"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
@@ -230,10 +217,7 @@ class TestS3Storage:
         exists = await storage.exists("uploads/test.txt")
 
         assert exists is True
-        mock_s3_client.head_object.assert_called_once_with(
-            Bucket="test-bucket",
-            Key="uploads/test.txt"
-        )
+        mock_s3_client.head_object.assert_called_once_with(Bucket="test-bucket", Key="uploads/test.txt")
 
     @pytest.mark.asyncio
     async def test_s3_exists_false(self, mock_s3_client):
@@ -241,8 +225,7 @@ class TestS3Storage:
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.head_object.side_effect = MockClientError(
-            {"Error": {"Code": "404", "Message": "Not Found"}},
-            "HeadObject"
+            {"Error": {"Code": "404", "Message": "Not Found"}}, "HeadObject"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
@@ -274,8 +257,7 @@ class TestS3Storage:
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.generate_presigned_url.side_effect = MockClientError(
-            {"Error": {"Code": "500", "Message": "Internal Error"}},
-            "GeneratePresignedUrl"
+            {"Error": {"Code": "500", "Message": "Internal Error"}}, "GeneratePresignedUrl"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")

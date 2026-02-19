@@ -170,7 +170,8 @@ class TestBanIP:
     @pytest.mark.asyncio
     async def test_ban_ip_success(self, mock_redis, sample_ip):
         """Test successful IP ban."""
-        mock_redis.get.return_value = None  # No previous bans
+        # get is called twice in get_ban_info: once for ban_key, once for count_key
+        mock_redis.get.side_effect = [None, None]  # Not banned, no historical count
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
@@ -210,7 +211,10 @@ class TestBanIP:
     @pytest.mark.asyncio
     async def test_ban_ip_with_escalation(self, mock_redis, sample_ip):
         """Test ban duration escalation for repeat offenders."""
-        mock_redis.get.return_value = b"2"  # 2 previous bans
+        # get is called twice in get_ban_info:
+        # 1. ban_key -> None (not currently banned)
+        # 2. count_key -> b"2" (2 previous bans)
+        mock_redis.get.side_effect = [None, b"2"]
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
@@ -228,7 +232,7 @@ class TestBanIP:
     @pytest.mark.asyncio
     async def test_ban_ip_custom_duration(self, mock_redis, sample_ip):
         """Test ban with custom duration."""
-        mock_redis.get.return_value = None
+        mock_redis.get.side_effect = [None, None]  # Not banned, no historical count
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
@@ -245,7 +249,7 @@ class TestBanIP:
     @pytest.mark.asyncio
     async def test_ban_ip_escalation_disabled(self, mock_redis, sample_ip):
         """Test that escalation respects settings."""
-        mock_redis.get.return_value = b"5"  # 5 previous bans
+        mock_redis.get.side_effect = [None, b"5"]  # Not banned, 5 previous bans
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
@@ -303,7 +307,8 @@ class TestIsIPBanned:
     @pytest.mark.asyncio
     async def test_is_ip_banned_true(self, mock_redis, sample_ip):
         """Test checking banned IP."""
-        mock_redis.get.return_value = b"Banned"
+        # get called for ban_key, then count_key
+        mock_redis.get.side_effect = [b"Banned", b"1"]
         mock_redis.ttl.return_value = 1800
 
         with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
@@ -314,7 +319,7 @@ class TestIsIPBanned:
     @pytest.mark.asyncio
     async def test_is_ip_banned_false(self, mock_redis, sample_ip):
         """Test checking non-banned IP."""
-        mock_redis.get.return_value = None
+        mock_redis.get.return_value = None  # Not banned
 
         with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
             result = await is_ip_banned(sample_ip)
@@ -376,11 +381,13 @@ class TestGetAllBannedIPs:
         mock_redis.scan.side_effect = [
             (0, [b"security:ban:192.168.1.1", b"security:ban:192.168.1.2"]),
         ]
+        # For each banned IP: get(ban_key), get(count_key) = 2 calls per IP
+        # Plus the get calls for ban data
         mock_redis.get.side_effect = [
-            b"Rate limit exceeded",
-            b"Too many requests",
-            b"1",  # ban count for first
-            b"2",  # ban count for second
+            b"Rate limit exceeded",  # ban data for IP 1
+            b"1",  # count for IP 1
+            b"Too many requests",  # ban data for IP 2
+            b"2",  # count for IP 2
         ]
         mock_redis.ttl.return_value = 1800
 
@@ -475,31 +482,35 @@ class TestIntegrationScenarios:
     @pytest.mark.asyncio
     async def test_full_ban_workflow(self, mock_redis, sample_ip):
         """Test complete ban workflow from violation to ban."""
-        # Setup: Redis returns no previous bans
-        mock_redis.get.return_value = None
-
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_THRESHOLD", 3),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", True),
+            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
         ):
-            # Violations 1 and 2 - no ban
-            mock_redis.incr.return_value = 1
+            # Violation 1 - no ban (incr returns 1, expire succeeds)
+            mock_redis.incr = AsyncMock(return_value=1)
+            mock_redis.expire = AsyncMock(return_value=True)
             banned, count = await check_and_auto_ban(sample_ip)
             assert banned is False
+            assert count == 1
 
-            mock_redis.incr.return_value = 2
+            # Violation 2 - no ban (incr returns 2)
+            mock_redis.incr = AsyncMock(return_value=2)
             banned, count = await check_and_auto_ban(sample_ip)
             assert banned is False
+            assert count == 2
 
-            # Violation 3 - triggers ban
-            mock_redis.incr.return_value = 3
-            mock_redis.setex.return_value = True
-            mock_redis.incr.return_value = 1  # For ban count
+            # Violation 3 - triggers ban (incr returns 3)
+            # check_and_auto_ban calls incr, then ban_ip which calls:
+            # - get_ban_info (get twice), setex, incr (for ban_count)
+            mock_redis.incr = AsyncMock(side_effect=[3, 1])  # [violation count, ban_count]
+            mock_redis.get.side_effect = [None, None]  # Not banned, no count
+            mock_redis.setex = AsyncMock(return_value=True)
             banned, count = await check_and_auto_ban(sample_ip)
             assert banned is True
+            assert count == 3
 
     @pytest.mark.asyncio
     async def test_escalating_bans(self, mock_redis, sample_ip):
@@ -510,17 +521,21 @@ class TestIntegrationScenarios:
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", True),
         ):
-            # First ban - no escalation
-            mock_redis.get.return_value = None
+            # First ban - no escalation (ban_count = 0)
+            mock_redis.get.side_effect = [None, None]  # Not banned, no count
+            mock_redis.setex = AsyncMock(return_value=True)
+            mock_redis.incr = AsyncMock(return_value=1)  # ban_count
             await ban_ip(sample_ip)
             assert mock_redis.setex.call_args[0][1] == 3600
 
-            # Second ban - 2x escalation (7200 seconds)
-            mock_redis.get.return_value = b"1"
+            # Second ban - 2x escalation (7200 seconds) - ban_count = 1
+            mock_redis.get.side_effect = [None, b"1"]  # Not banned, count = 1
+            mock_redis.incr = AsyncMock(return_value=2)
             await ban_ip(sample_ip)
             assert mock_redis.setex.call_args[0][1] == 7200
 
-            # Third ban - 4x escalation (14400 seconds)
-            mock_redis.get.return_value = b"2"
+            # Third ban - 4x escalation (14400 seconds) - ban_count = 2
+            mock_redis.get.side_effect = [None, b"2"]  # Not banned, count = 2
+            mock_redis.incr = AsyncMock(return_value=3)
             await ban_ip(sample_ip)
             assert mock_redis.setex.call_args[0][1] == 14400

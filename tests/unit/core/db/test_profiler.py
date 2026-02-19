@@ -283,3 +283,86 @@ class TestIntegration:
 
         assert "query_b" in patterns
         assert "query_a" not in patterns
+
+
+"""Tests for query profiler isolation.
+
+Ensures query tracking is properly isolated between requests.
+"""
+
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+
+class TestRequestTracking:
+    """Tests for request-level query tracking isolation."""
+
+    @pytest.fixture(autouse=True)
+    def reset_query_tracker(self):
+        """Reset query tracker before and after each test."""
+        from src.app.core.db.profiler import reset_query_tracker
+
+        reset_query_tracker()
+        yield
+        reset_query_tracker()
+
+    @pytest.mark.asyncio
+    async def test_request_tracking_isolation(self):
+        """Verify query stats are isolated between requests."""
+        from src.app.core.db.profiler import (
+            _query_tracker,
+            get_query_stats,
+            reset_query_tracker,
+        )
+
+        # Simulate first request with 3 queries
+        reset_query_tracker()
+        _query_tracker["SELECT * FROM users"] = {"count": 3, "first_seen_at": "2024-01-01T00:00:00"}
+        _query_tracker["SELECT * FROM posts"] = {"count": 2, "first_seen_at": "2024-01-01T00:00:00"}
+
+        stats1 = get_query_stats()
+        assert len(stats1) == 2
+
+        # Simulate second request - should start fresh
+        reset_query_tracker()
+        _query_tracker["SELECT * FROM tenants"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+
+        stats2 = get_query_stats()
+        assert len(stats2) == 1, f"Expected 1 query, got {len(stats2)}"
+
+    def test_concurrent_requests_isolated(self):
+        """Verify concurrent requests don't share query counts."""
+        from src.app.core.db.profiler import (
+            _query_tracker,
+            get_query_stats,
+            reset_query_tracker,
+        )
+
+        # Reset at start
+        reset_query_tracker()
+
+        # Simulate request A
+        _query_tracker["SELECT A"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+        stats_a = get_query_stats()
+        assert len(stats_a) == 1
+
+        # Simulate request B (concurrent - would reset in real middleware)
+        reset_query_tracker()
+        _query_tracker["SELECT B"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+        _query_tracker["SELECT B2"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+        stats_b = get_query_stats()
+        assert len(stats_b) == 2
+
+        # Request A's stats should not be affected (already captured)
+        # In real use, each request gets fresh tracker via reset
+
+    def test_empty_stats_after_reset(self):
+        """Verify stats are empty after reset."""
+        from src.app.core.db.profiler import _query_tracker, get_query_stats, reset_query_tracker
+
+        _query_tracker["Some query"] = {"count": 1, "first_seen_at": "2024-01-01T00:00:00"}
+        reset_query_tracker()
+
+        stats = get_query_stats()
+        assert len(stats) == 0

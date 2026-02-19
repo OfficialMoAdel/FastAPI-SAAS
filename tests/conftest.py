@@ -18,6 +18,7 @@ from sqlalchemy.ext.compiler import compiles
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.session import Session
 from sqlalchemy.sql.expression import TextClause
+from uuid6 import uuid7
 
 # Load environment variables from src/.env
 load_dotenv("src/.env")
@@ -151,7 +152,14 @@ from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage
 from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
-from src.app.modules.billing.models import StripeSettings, SubscriptionPlan, Product, Pricing, UserSubscription, BillingRecord
+from src.app.modules.billing.models import (
+    StripeSettings,
+    SubscriptionPlan,
+    Product,
+    Pricing,
+    UserSubscription,
+    BillingRecord,
+)
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
 from src.app.modules.magic_link.models import MagicLink
 from src.app.modules.mfa.models import MFAMethod
@@ -255,7 +263,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
     app = get_test_app
 
     fake_tenant = Mock()
-    fake_tenant.id = 1
+    fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant"
     fake_tenant.is_active = True
 
@@ -269,7 +277,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         email="test@example.com",
         is_superuser=True,
         is_active=True,
-        tenant_id=1,
+        # tenant_id defaults to DEFAULT_TENANT_ID
     )
 
     async def mock_get_current_user():
@@ -285,6 +293,12 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
             return_value=(False, 0),
+        ),
+        # Mock MFA rate limit check
+        patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
@@ -306,7 +320,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     app = get_test_app
 
     fake_tenant = Mock()
-    fake_tenant.id = 1
+    fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
@@ -322,6 +336,12 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
             return_value=(False, 0),
+        ),
+        # Mock MFA rate limit check
+        patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
@@ -354,12 +374,42 @@ def override_dependency(dependency: Callable[..., Any], mocked_response: Any, ap
 
 @pytest.fixture
 def mock_db():
-    """Mock database session for unit tests."""
-    return Mock(spec=AsyncSession)
+    """Create a properly configured mock db session for unit tests."""
+    from unittest.mock import AsyncMock, MagicMock
+
+    db = AsyncMock()
+
+    # Configure execute to return proper results for count queries
+    mock_result = MagicMock()
+    mock_result.scalar.return_value = 0  # Default count = 0
+    mock_result.scalars.return_value = MagicMock()
+    mock_result.scalars.return_value.first.return_value = None
+    mock_result.scalars.return_value.all.return_value = []
+    db.execute.return_value = mock_result
+
+    # Configure scalar for direct scalar() calls (used by services)
+    db.scalar = AsyncMock(return_value=None)
+
+    # Configure common async methods
+    db.commit = AsyncMock()
+    db.rollback = AsyncMock()
+    db.close = AsyncMock()
+    db.refresh = AsyncMock()
+    db.flush = AsyncMock()
+    db.delete = AsyncMock()
+
+    # For session context manager
+    db.__aenter__ = AsyncMock(return_value=db)
+    db.__aexit__ = AsyncMock(return_value=None)
+
+    return db
 
 
 class MockUser:
     """Mock user object that supports both attribute and dict-like access."""
+
+    # Default tenant UUID for tests
+    DEFAULT_TENANT_ID = uuid7()
 
     def __init__(
         self,
@@ -368,7 +418,7 @@ class MockUser:
         email="test@example.com",
         is_superuser=True,
         is_active=True,
-        tenant_id=1,
+        tenant_id=None,  # Default to None, will be set to DEFAULT_TENANT_ID
         roles=None,
         permissions=None,
     ):
@@ -377,7 +427,7 @@ class MockUser:
         self.email = email
         self.is_superuser = is_superuser
         self.is_active = is_active
-        self.tenant_id = tenant_id
+        self.tenant_id = tenant_id if tenant_id is not None else self.DEFAULT_TENANT_ID
         self.roles = roles or []
         # Default permissions for superuser - all common permissions
         self.permissions = (
@@ -432,7 +482,7 @@ async def full_mock_context(get_test_app):
     app = get_test_app
 
     fake_tenant = Mock()
-    fake_tenant.id = 1
+    fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
@@ -446,7 +496,7 @@ async def full_mock_context(get_test_app):
         email="test@example.com",
         is_superuser=True,
         is_active=True,
-        tenant_id=1,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
     )
 
     async def mock_get_current_user():
@@ -477,6 +527,12 @@ async def full_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=(False, 0),
         ),
+        # Mock MFA rate limit check
+        patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
         patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
             new_callable=AsyncMock,
@@ -504,7 +560,7 @@ async def unauthenticated_mock_context(get_test_app):
     app = get_test_app
 
     fake_tenant = Mock()
-    fake_tenant.id = 1
+    fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
@@ -519,6 +575,12 @@ async def unauthenticated_mock_context(get_test_app):
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
             return_value=(False, 0),
+        ),
+        # Mock MFA rate limit check
+        patch(
+            "src.app.modules.mfa.router.check_mfa_rate_limit",
+            new_callable=AsyncMock,
+            return_value=None,
         ),
         patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
@@ -605,7 +667,7 @@ async def regular_user_token_headers(get_test_app, full_mock_context):
         email="user@example.com",
         is_superuser=False,
         is_active=True,
-        tenant_id=1,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
     )
 
     # Override dependency to return regular user
@@ -958,7 +1020,7 @@ class FakeRedis:
 
     async def eval(self, script: str, numkeys: int, *keys_and_args):
         """Execute a Lua script (mock implementation).
-        
+
         For testing purposes, this delegates to evalsha since we don't
         actually execute Lua scripts - we just need the same behavior.
         """
@@ -1008,6 +1070,25 @@ class FakeRedis:
 
 
 @pytest.fixture(autouse=True)
+def mock_event_bus(monkeypatch):
+    """Mock event bus to prevent Redis connections in tests."""
+    from unittest.mock import AsyncMock, MagicMock
+    from src.app.core.events import EventBus, EventPriority
+
+    # Create a mock event bus that does nothing
+    mock_bus = MagicMock(spec=EventBus)
+    mock_bus.publish = AsyncMock()
+    mock_bus.publish_sync = MagicMock()
+    mock_bus.start = AsyncMock()
+    mock_bus.stop = AsyncMock()
+
+    # Patch the event_bus singleton
+    monkeypatch.setattr("src.app.core.events.event_bus", mock_bus)
+
+    yield mock_bus
+
+
+@pytest.fixture(autouse=True)
 def mock_redis(request):
     """Mock Redis client with in-memory state.
 
@@ -1028,6 +1109,7 @@ def mock_redis(request):
     # Ensure setup module is imported for patching
     import src.app.core.setup
     import src.app.core
+
     # Force attribute to exist for pkgutil.resolve_name used by mock.patch
     if not hasattr(src.app.core, "setup"):
         src.app.core.setup = src.app.core.setup
@@ -1043,7 +1125,6 @@ def mock_redis(request):
         patch("src.app.core.security.rate_limit_cache.redis_client", new=fake_redis),
         patch("src.app.core.security.token_blacklist_cache.redis_client", new=fake_redis),
         patch("src.app.modules.sso_settings.service.redis_client", new=fake_redis),
-        
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
         patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
@@ -1097,8 +1178,6 @@ def sample_user_data():
 @pytest.fixture
 def sample_user_read():
     """Generate a sample UserRead object."""
-    from uuid6 import uuid7
-
     from src.app.schemas.user import UserRead
 
     return UserRead(
@@ -1112,6 +1191,7 @@ def sample_user_read():
         created_at=fake.date_time(),
         updated_at=fake.date_time(),
         tier_id=None,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Add required tenant_id field
     )
 
 
@@ -1199,6 +1279,18 @@ def mock_apple_oauth():
 
     for patcher in patches:
         patcher.stop()
+
+
+@pytest.fixture
+def mock_encryption():
+    """Mock encryption functions to avoid key/bytes issues."""
+    with (
+        patch("src.app.modules.webhooks.crypto.encrypt_data") as mock_encrypt,
+        patch("src.app.modules.webhooks.crypto.decrypt_data") as mock_decrypt,
+    ):
+        mock_encrypt.return_value = b"encrypted_data"
+        mock_decrypt.return_value = b"decrypted_data"
+        yield mock_encrypt, mock_decrypt
 
 
 @pytest.fixture

@@ -9,6 +9,7 @@ Disconnect provider: Remove SSO provider from account (with last-auth-method che
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+import uuid
 
 import pytest
 
@@ -53,7 +54,7 @@ class TestConnectProviderService:
                 mock_state_mgr.return_value = mock_manager
 
                 with patch("src.app.modules.sso.service.get_tenant_context") as mock_tenant:
-                    mock_tenant.return_value = MagicMock(id=1)
+                    mock_tenant.return_value = MagicMock(id=uuid.uuid4())
 
                     await service.get_authorization_url(
                         db=mock_db,

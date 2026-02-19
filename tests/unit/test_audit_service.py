@@ -35,7 +35,7 @@ def audit_service(mock_db):
 @pytest.fixture
 def sample_tenant():
     """Sample tenant ID for testing."""
-    return 1
+    return uuid4()  # FIX: Changed from int to UUID
 
 
 @pytest.fixture
@@ -103,7 +103,7 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute = AsyncMock(return_value=mock_result)
 
-        await audit_service.get_logs(tenant_id=sample_tenant)
+        await audit_service.query_logs(tenant_id=sample_tenant)  # FIX: Changed from get_logs to query_logs
 
         audit_service.db.execute.assert_called_once()
 
@@ -115,7 +115,7 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute = AsyncMock(return_value=mock_result)
 
-        await audit_service.get_logs(
+        await audit_service.query_logs(  # FIX: Changed from get_logs to query_logs
             tenant_id=sample_tenant,
             user_id=sample_user,
         )
@@ -130,7 +130,7 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute = AsyncMock(return_value=mock_result)
 
-        await audit_service.get_logs(
+        await audit_service.query_logs(  # FIX: Changed from get_logs to query_logs
             tenant_id=sample_tenant,
             action="user.login",
         )
@@ -145,7 +145,7 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute = AsyncMock(return_value=mock_result)
 
-        await audit_service.get_logs(
+        await audit_service.query_logs(  # FIX: Changed from get_logs to query_logs
             tenant_id=sample_tenant,
             entity_type="post",
         )
@@ -163,7 +163,7 @@ class TestAuditLogServiceQueries:
         start_date = datetime(2024, 1, 1, tzinfo=UTC)
         end_date = datetime(2024, 12, 31, tzinfo=UTC)
 
-        await audit_service.get_logs(
+        await audit_service.query_logs(  # FIX: Changed from get_logs to query_logs
             tenant_id=sample_tenant,
             start_date=start_date,
             end_date=end_date,
@@ -179,7 +179,7 @@ class TestAuditLogServiceQueries:
 
         audit_service.db.execute = AsyncMock(return_value=mock_result)
 
-        await audit_service.get_logs(
+        await audit_service.query_logs(  # FIX: Changed from get_logs to query_logs
             tenant_id=sample_tenant,
             limit=50,
             offset=100,

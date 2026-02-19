@@ -81,13 +81,13 @@ class TestL1CacheIntegration:
         mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called on L1 hit"))
 
         # Act - call internal method with mocked Redis
-        with patch("src.app.core.utils.cache.client", mock_redis):
+        with patch("src.app.middleware.tenant.redis_client", mock_redis):
             result = await middleware._get_tenant_by_slug("cached-tenant")
 
-        # Assert - got result from L1 cache
+        # Assert - got result from L1 cache (returns TenantContext)
         assert result is not None
-        assert result.id == "t-001"
-        assert result.slug == "cached-tenant"
+        assert result.tenant_id == "t-001"
+        assert result.tenant_slug == "cached-tenant"
 
     @pytest.mark.asyncio
     async def test_l1_negative_cache_hit_skips_redis(self):
@@ -101,7 +101,7 @@ class TestL1CacheIntegration:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called"))
 
-        with patch("src.app.core.utils.cache.client", mock_redis):
+        with patch("src.app.middleware.tenant.redis_client", mock_redis):
             result = await middleware._get_tenant_by_slug("ghost-tenant")
 
         assert result is None
@@ -116,15 +116,17 @@ class TestL1CacheIntegration:
 
         middleware = TenantMiddleware(MagicMock())
         mock_redis = AsyncMock()
+        # Use proper JSON string with lowercase true (valid JSON)
         mock_redis.get = AsyncMock(return_value='{"id": "t-002", "slug": "redis-tenant", "is_active": true}')
 
-        with patch("src.app.core.utils.cache.client", mock_redis):
+        with patch("src.app.middleware.tenant.redis_client", mock_redis):
             result = await middleware._get_tenant_by_slug("redis-tenant")
 
         # Assert L1 is now populated
         assert "redis-tenant" in _L1_TENANT_CACHE
         assert _L1_TENANT_CACHE["redis-tenant"]["id"] == "t-002"
-        assert result.id == "t-002"
+        # Result is TenantContext, check tenant_id
+        assert result.tenant_id == "t-002"
 
 
 class TestSlugValidation:

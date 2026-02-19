@@ -8,6 +8,7 @@ from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, Mod
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.rbac.service import RoleService
+from tests.conftest import MockUser
 
 
 @pytest.fixture
@@ -22,14 +23,14 @@ def mock_db():
 @pytest.fixture
 def role_service(mock_db):
     """RoleService instance."""
-    return RoleService(db=mock_db, tenant_id=1)
+    return RoleService(db=mock_db, tenant_id=MockUser.DEFAULT_TENANT_ID)
 
 
 @pytest.fixture
 def mock_role():
     """Mock Role object."""
     role = Role(
-        tenant_id=1,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,
         name="Test Role",
         description="Test Description",
         is_system=False,
@@ -43,7 +44,7 @@ def mock_role():
 def mock_system_role():
     """Mock System Role object."""
     role = Role(
-        tenant_id=1,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,
         name="Admin",
         description="System Admin",
         is_system=True,
@@ -128,7 +129,7 @@ class TestRoleServiceCreate:
         result = await role_service.create_role(role_in)
 
         assert result.name == "New Role"
-        assert result.tenant_id == 1
+        assert result.tenant_id == MockUser.DEFAULT_TENANT_ID
         mock_db.add.assert_called_once()
         mock_db.commit.assert_called_once()
         mock_db.refresh.assert_called_once()
@@ -182,7 +183,7 @@ class TestRoleServiceUpdate:
         """Test update fails if name exists."""
         role_service.get_role = AsyncMock(return_value=mock_role)
         # Mock collision
-        other_role = Role(tenant_id=1, name="Existing Role", description="Desc")
+        other_role = Role(tenant_id=MockUser.DEFAULT_TENANT_ID, name="Existing Role", description="Desc")
         other_role.id = 2
         role_service.get_role_by_name = AsyncMock(return_value=other_role)
 
@@ -341,31 +342,50 @@ class TestRoleServiceUserAssignment:
         """Test assigning role to user."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        # Mock existing assignment query (None)
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = None
-        mock_db.execute.return_value = mock_result
+        # Mock user query result (user exists)
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
+
+        # Mock existing assignment query (None - not assigned yet)
+        mock_assignment_result = MagicMock()
+        mock_assignment_result.scalar_one_or_none.return_value = None
+
+        # First call: user check, Second call: assignment check
+        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result])
+
+        # Mock add to accept sync call
+        mock_db.add = MagicMock()
 
         with patch(
             "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
         ) as mock_cache:
-            await role_service.assign_role_to_user(user_id=123, role_id=1)
+            await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
             mock_db.add.assert_called_once()
             mock_db.commit.assert_called_once()
-            mock_cache.assert_called_once_with(123, 1)
+            mock_cache.assert_called_once_with(123, MockUser.DEFAULT_TENANT_ID)
 
     @pytest.mark.asyncio
     async def test_assign_role_already_exists(self, role_service, mock_db, mock_role):
         """Test assigning already assigned role."""
         role_service.get_role = AsyncMock(return_value=mock_role)
 
-        # Mock existing assignment query (Found)
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = UserRole(user_id=123, role_id=1, tenant_id=1)
-        mock_db.execute.return_value = mock_result
+        # Mock user query result (user exists)
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
 
-        await role_service.assign_role_to_user(user_id=123, role_id=1)
+        # Mock existing assignment query (Found)
+        mock_assignment_result = MagicMock()
+        mock_assignment_result.scalar_one_or_none.return_value = UserRole(
+            user_id=123,
+            role_id=mock_role.id,
+            tenant_id=MockUser.DEFAULT_TENANT_ID,
+        )
+
+        # First call: user check, Second call: assignment check
+        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result])
+
+        await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
         mock_db.add.assert_not_called()
 
@@ -374,7 +394,7 @@ class TestRoleServiceUserAssignment:
         """Test getting user roles."""
         mock_result = MagicMock()
         mock_result.scalars.return_value.all.return_value = [mock_role]
-        mock_db.execute.return_value = mock_result
+        mock_db.execute = AsyncMock(return_value=mock_result)
 
         result = await role_service.get_user_roles(123)
 
@@ -384,11 +404,15 @@ class TestRoleServiceUserAssignment:
     @pytest.mark.asyncio
     async def test_remove_role_success(self, role_service, mock_db):
         """Test removing role from user."""
-        mock_user_role = UserRole(user_id=123, role_id=1, tenant_id=1)
+        mock_user_role = UserRole(
+            user_id=123,
+            role_id=1,
+            tenant_id=MockUser.DEFAULT_TENANT_ID,
+        )
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_user_role
-        mock_db.execute.return_value = mock_result
+        mock_db.execute = AsyncMock(return_value=mock_result)
 
         with patch(
             "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock

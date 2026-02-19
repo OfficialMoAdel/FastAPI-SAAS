@@ -10,11 +10,12 @@ Tests cover:
 """
 
 from datetime import UTC, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 
 from src.app.modules.posts.schemas import PostCreate, PostUpdate
+from tests.conftest import MockUser
 
 
 @pytest.fixture
@@ -31,7 +32,7 @@ def mock_user():
         "username": "testuser",
         "email": "test@example.com",
         "is_superuser": False,
-        "tenant_id": 1,
+        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
     }
 
 
@@ -43,7 +44,7 @@ def mock_superuser():
         "username": "admin",
         "email": "admin@example.com",
         "is_superuser": True,
-        "tenant_id": 1,
+        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
     }
 
 
@@ -57,7 +58,7 @@ def mock_post():
         "media_url": None,
         "created_by_user_id": 1,
         "user_id": 1,
-        "tenant_id": 1,
+        "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
         "created_at": datetime.now(UTC),
         "updated_at": None,
         "is_deleted": False,
@@ -92,8 +93,8 @@ class TestPostServiceCreate:
             patch("src.app.modules.posts.service.get_tenant_context") as mock_context,
         ):
             mock_crud.create.return_value = mock_post
-            mock_tenant = AsyncMock()
-            mock_tenant.id = 1
+            mock_tenant = MagicMock()
+            mock_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
             mock_context.return_value = mock_tenant
 
             result = await service.create_post(
