@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
+from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseReadUUID, BaseUpdate
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 RESERVED_SLUGS = frozenset({"host", "admin", "api"})
@@ -91,7 +91,7 @@ class TenantDelete(BaseUpdate):
     is_active: bool
 
 
-class TenantResponse(BaseRead):
+class TenantResponse(BaseReadUUID):
     """Schema for tenant response."""
 
     model_config = ConfigDict(from_attributes=True)

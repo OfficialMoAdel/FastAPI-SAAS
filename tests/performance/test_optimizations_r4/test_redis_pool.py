@@ -71,16 +71,15 @@ class TestP22RedisQueuePoolConfiguration:
         assert settings.REDIS_QUEUE_CONN_RETRIES == 5
 
     def test_create_pool_uses_explicit_settings(self) -> None:
-        """create_redis_queue_pool should use explicit configuration."""
+        """create_redis_queue_pool should reuse shared pool from redis_factory."""
         from src.app.core.setup import create_redis_queue_pool
 
         source = inspect.getsource(create_redis_queue_pool)
 
-        # Verify explicit settings are used
-        assert "max_connections" in source
-        assert "conn_timeout" in source
-        assert "conn_retries" in source
-        assert "REDIS_QUEUE_MAX_CONNECTIONS" in source
+        # P2-2: Verify pool reuse pattern (not creating separate pool)
+        assert "redis_factory" in source or "get_redis_pool" in source
+        assert "ArqRedis" in source
+        assert "connection_pool" in source
 
 
 class TestP22RedisQueuePoolValidation:
@@ -125,22 +124,21 @@ class TestP22RedisQueuePoolIsomorphism:
     """Isomorphism tests for queue pool behavior."""
 
     def test_password_handling_unchanged(self) -> None:
-        """Password should still be passed to RedisSettings."""
+        """Password should be handled by shared pool configuration."""
         from src.app.core.setup import create_redis_queue_pool
 
         source = inspect.getsource(create_redis_queue_pool)
 
-        # Should pass password to RedisSettings
-        assert "password=" in source
-        assert "REDIS_QUEUE_PASSWORD" in source
+        # P2-2: Password is handled by redis_factory, not directly in this function
+        # Verify the function uses the shared pool pattern
+        assert "redis_factory" in source or "get_redis_pool" in source
 
     def test_host_port_handling_unchanged(self) -> None:
-        """Host and port should still be configured."""
+        """Host and port should be handled by shared pool configuration."""
         from src.app.core.setup import create_redis_queue_pool
 
         source = inspect.getsource(create_redis_queue_pool)
 
-        assert "host=" in source
-        assert "port=" in source
-        assert "REDIS_QUEUE_HOST" in source
-        assert "REDIS_QUEUE_PORT" in source
+        # P2-2: Host/port are handled by redis_factory, not directly in this function
+        # Verify the function uses the shared pool pattern
+        assert "redis_factory" in source or "get_redis_pool" in source

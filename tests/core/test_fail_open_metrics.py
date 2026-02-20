@@ -33,10 +33,12 @@ async def test_session_manager_fail_open():
     # Initialize without Redis client
     manager = SessionManager(redis_client=None)
 
-    # Check session validity (should fail open)
+    # Check session validity (should fail closed for security)
+    # When Redis is unavailable, session validation MUST reject to prevent
+    # invalidated sessions from being accepted during outages
     result = await manager.is_session_valid("user1", "sess1")
 
-    assert result is True
+    assert result is False  # Fail-closed for security
     assert metrics.get_counter("r1_security_fail_open_total") == 1
 
 

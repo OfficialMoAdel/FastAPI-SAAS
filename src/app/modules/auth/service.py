@@ -501,45 +501,19 @@ return new_attempts
     async def _invalidate_all_user_sessions(self, user: dict[str, Any], db: AsyncSession) -> None:
         """Invalidate all active sessions for a user.
 
-        Blacklists any tokens that might be active for this user.
-        Note: This is a safety net. Ideally, we would track all active sessions
-        in the database and revoke them individually.
+        This implementation uses token_versioning for instant global invalidation.
+        When token_version is incremented in the DB, all previously issued tokens
+        (which contain the old version) will be rejected by verify_token().
         """
         # SECURITY FIX: Increment token_version to invalidate all existing tokens
-        # This ensures any tokens issued before password change are invalid
+        # This ensures any tokens issued before password change are invalid.
+        # FIXED: Removed redundant creation/blacklisting of dummy tokens (Item 11b).
+        # Token version check in verify_token() is the primary and sufficient mechanism.
         user_id = user.get("id")
         await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
         await db.commit()
 
-        # Get identifiers that could be in tokens
-        identifiers = [
-            user.get("username"),
-            user.get("email"),
-        ]
-
-        # Create tokens with common expiration scenarios and blacklist them
-        # This is a defense-in-depth approach
-        for identifier in identifiers:
-            if not identifier:
-                continue
-
-            # We create token signatures and blacklist them
-            token_data = {"sub": identifier}
-
-            try:
-                # Attempt to create and immediately blacklist tokens
-                # This ensures any tokens issued before password change are invalid
-                access_token = await create_access_token(
-                    data=token_data,
-                    expires_delta=timedelta(seconds=1),  # Expire immediately
-                )
-                refresh_token = await create_refresh_token(data=token_data, expires_delta=timedelta(seconds=1))
-
-                await blacklist_token(token=access_token, db=db)
-                await blacklist_token(token=refresh_token, db=db)
-            except (DatabaseError, RedisError) as e:
-                # If blacklisting fails, log but continue - password already changed
-                logger.warning("Token blacklisting failed after password change", error=str(e))
+        logger.info("invalidated_all_user_sessions", user_id=user_id)
 
     async def request_password_reset(
         self,

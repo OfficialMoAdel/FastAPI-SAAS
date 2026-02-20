@@ -299,7 +299,27 @@ class UserService(BaseService[User]):
             except Exception as e:
                 logger.warning(f"Failed to cache auth info for {identifier}: {e}")
 
-        return user_with_tier  # type: ignore[return-value]
+        # FIXED: Ensure return type is dict as expected by callers and hinted in signature.
+        # This resolves the type mismatch between ORM objects and dictionaries.
+        if hasattr(user_with_tier, "__dict__") and not isinstance(user_with_tier, dict):
+            # Convert ORM object to dict
+            return {
+                "id": user_with_tier.id,
+                "username": user_with_tier.username,
+                "email": user_with_tier.email,
+                "hashed_password": user_with_tier.hashed_password,
+                "tenant_id": user_with_tier.tenant_id,
+                "is_superuser": user_with_tier.is_superuser,
+                "is_deleted": user_with_tier.is_deleted,
+                "is_active": user_with_tier.is_active,
+                "token_version": user_with_tier.token_version,
+                "tier": {
+                    "id": user_with_tier.tier.id,
+                    "name": user_with_tier.tier.name,
+                } if user_with_tier.tier else None
+            }
+
+        return user_with_tier
 
     async def get_by_username(self, username: str) -> User | dict[str, Any]:
         """Get a user by username with Redis caching.

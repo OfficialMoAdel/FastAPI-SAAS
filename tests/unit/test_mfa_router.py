@@ -311,52 +311,52 @@ class TestMFAEndpointAuthentication:
     The tenant middleware runs before auth, so we must provide a valid tenant header.
     """
 
-    def test_setup_requires_authentication(self, client_auth):
+    def test_setup_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.post("/api/v1/mfa/setup", headers=headers)
+        response = unauthenticated_client.post("/api/v1/mfa/setup", headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_enable_requires_authentication(self, client_auth):
+    def test_enable_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.post(
+        response = unauthenticated_client.post(
             "/api/v1/mfa/enable",
             json={"secret": "test_secret", "totp_token": "123456"},
             headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_verify_requires_authentication(self, client_auth):
+    def test_verify_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.post(
+        response = unauthenticated_client.post(
             "/api/v1/mfa/verify",
             json={"totp_token": "123456", "backup_code": None},
             headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_disable_requires_authentication(self, client_auth):
+    def test_disable_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.post(
+        response = unauthenticated_client.post(
             "/api/v1/mfa/disable",
             json={"password": "test_password", "totp_token": "123456"},
             headers=headers,
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_status_requires_authentication(self, client_auth):
+    def test_status_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.get("/api/v1/mfa/status", headers=headers)
+        response = unauthenticated_client.get("/api/v1/mfa/status", headers=headers)
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
-    def test_backup_codes_requires_authentication(self, client_auth):
+    def test_backup_codes_requires_authentication(self, unauthenticated_client):
         """Should return 401 when not authenticated."""
         headers = {"X-Tenant-ID": "test-tenant-integration"}
-        response = client_auth.post(
+        response = unauthenticated_client.post(
             "/api/v1/mfa/backup-codes",
             json={"password": "test_password", "totp_token": "123456"},
             headers=headers,

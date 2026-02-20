@@ -5,6 +5,7 @@ Verifies that optimized code paths produce identical results to baseline impleme
 
 import asyncio
 import json
+from uuid import uuid4
 
 import pytest
 import structlog
@@ -28,7 +29,7 @@ class TestUserFlowIsomorphism:
             "username": "testuser",
             "email": "test@example.com",
             "name": "Test User",
-            "tenant_id": 100,
+            "tenant_id": str(uuid4()),
         }
 
         # Write to cache (simulating optimized path)

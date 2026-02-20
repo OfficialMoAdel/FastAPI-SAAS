@@ -1,6 +1,7 @@
 import os
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
+from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -22,6 +23,9 @@ from uuid6 import uuid7
 
 # Load environment variables from src/.env
 load_dotenv("src/.env")
+
+# Disable bad bot filter for tests (httpx is used by test clients)
+os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
 
 from src.app.core.config import settings
 
@@ -252,7 +256,11 @@ def db(setup_db) -> Generator[Session, Any, None]:
 
 
 async def override_get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Override database dependency to use test async session."""
+    """Override database dependency to use test async session.
+
+    Note: This is a plain async generator, NOT an async context manager.
+    FastAPI's Depends() expects an async generator function.
+    """
     async with get_testing_session_local()() as session:
         yield session
 
@@ -283,12 +291,22 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
     async def mock_get_current_user():
         return fake_superuser
 
-    app.dependency_overrides[async_get_db] = override_get_db
+    # Mock for _get_current_user_from_token used by RBAC dependencies
+    async def mock_get_current_user_from_token(token: str = None, db=None):
+        return fake_superuser
+
+    # Note: We use dependency_overrides for async_get_db because FastAPI
+    # needs to properly handle the async generator in dependency injection
+    from src.app.core.db.database import async_get_db
+
     app.dependency_overrides[get_current_user] = mock_get_current_user
+    app.dependency_overrides[async_get_db] = override_get_db
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
+        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -305,12 +323,56 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+        patch(
+            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
+        ),
+        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
-        with TestClient(app) as _client:
+        with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
 
     # Explicit cleanup - critical for test isolation
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture
+def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
+    """Unauthenticated client fixture for testing auth-required endpoints."""
+    app = get_test_app
+
+    # Create fake tenant for tenant middleware
+    fake_tenant = Mock()
+    fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
+    fake_tenant.slug = "test-tenant-integration"
+    fake_tenant.is_active = True
+
+    from src.app.core.db.database import async_get_db
+
+    # Override DB but NOT authentication - this is an unauthenticated client
+    app.dependency_overrides[async_get_db] = override_get_db
+
+    with (
+        patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch(
+            "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
+            new_callable=AsyncMock,
+            return_value=(False, 0),
+        ),
+        # Mock tenant lookup to return our fake tenant
+        patch(
+            "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+            new_callable=AsyncMock,
+            return_value=fake_tenant,
+        ),
+        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
+        patch("src.app.middleware.ip_filter.settings.BAD_BOT_FILTER_ENABLED", False),
+    ):
+        with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
+            yield _client
+
+    # Explicit cleanup
     app.dependency_overrides.clear()
 
 
@@ -324,14 +386,35 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
 
+    from src.app.api.dependencies import get_current_user
     from src.app.core.db.database import async_get_db
 
-    # Override DB to use SQLite
+    # Mock superuser with dict-like access for routes using current_user["id"]
+    fake_superuser = MockUser(
+        id=1,
+        username="testuser",
+        email="test@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,  # Use UUID
+    )
+
+    async def mock_get_current_user():
+        return fake_superuser
+
+    async def mock_get_current_user_from_token(token: str = None, db=None):
+        return fake_superuser
+
+    # Note: We use dependency_overrides for async_get_db because FastAPI
+    # needs to properly handle the async generator in dependency injection
+    app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[async_get_db] = override_get_db
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
+        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -348,9 +431,12 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
+        patch(
+            "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
+        ),
+        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
-        with TestClient(app) as _client:
+        with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
 
     # Explicit cleanup - critical for test isolation
@@ -502,26 +588,22 @@ async def full_mock_context(get_test_app):
     async def mock_get_current_user():
         return fake_superuser
 
-    app.dependency_overrides[async_get_db] = override_get_db
-    app.dependency_overrides[get_current_user] = mock_get_current_user
-
-    # PATCH RBAC dependency to respect the get_current_user override
-    # This is needed because RBAC dependencies call _get_current_user_from_token directly
-    # instead of using the get_current_user dependency
-    import inspect
-
-    async def mock_get_current_user_from_token(token: str, db: Any) -> dict:
-        # Check if get_current_user is overridden
-        override = app.dependency_overrides.get(get_current_user)
-        if override:
-            if inspect.iscoroutinefunction(override):
-                return await override()
-            return override()
+    # Mock for _get_current_user_from_token used by RBAC dependencies
+    async def mock_get_current_user_from_token(token: str = None, db=None):
         return fake_superuser
+
+    # Note: We use dependency_overrides for async_get_db because FastAPI
+    # needs to properly handle the async generator in dependency injection
+    from src.app.core.db.database import async_get_db
+
+    app.dependency_overrides[get_current_user] = mock_get_current_user
+    app.dependency_overrides[async_get_db] = override_get_db
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
+        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -538,7 +620,6 @@ async def full_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
@@ -566,11 +647,14 @@ async def unauthenticated_mock_context(get_test_app):
 
     from src.app.core.db.database import async_get_db
 
-    app.dependency_overrides[async_get_db] = override_get_db
+    # Note: We use dependency_overrides for async_get_db instead of patch
+    # because override_get_db is an async context manager
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
+        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -587,7 +671,6 @@ async def unauthenticated_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
         patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
@@ -1021,9 +1104,20 @@ class FakeRedis:
     async def eval(self, script: str, numkeys: int, *keys_and_args):
         """Execute a Lua script (mock implementation).
 
-        For testing purposes, this delegates to evalsha since we don't
-        actually execute Lua scripts - we just need the same behavior.
+        Handles common Redis Lua patterns:
+        - GETDEL: Get and delete a key atomically
+        - Rate limit scripts: Increment counter
+        - Token blacklist scripts: Check blacklist status
         """
+        # Detect GETDEL pattern: "local value = redis.call('GET', KEYS[1])"
+        if "GET" in script and "DEL" in script and numkeys >= 1:
+            key = keys_and_args[0]
+            value = self.store.get(key)
+            if key in self.store:
+                del self.store[key]
+            return value
+
+        # Delegate to evalsha for other patterns
         return await self.evalsha("mock_script_sha", numkeys, *keys_and_args)
 
     async def zscore(self, key, member):
@@ -1081,6 +1175,7 @@ def mock_event_bus(monkeypatch):
     mock_bus.publish_sync = MagicMock()
     mock_bus.start = AsyncMock()
     mock_bus.stop = AsyncMock()
+    mock_bus._handlers = {}  # Required for handler registry tests
 
     # Patch the event_bus singleton
     monkeypatch.setattr("src.app.core.events.event_bus", mock_bus)
@@ -1107,12 +1202,14 @@ def mock_redis(request):
     fake_redis = FakeRedis()
 
     # Ensure setup module is imported for patching
-    import src.app.core.setup
-    import src.app.core
+    import os
+
+    from src.app.core import setup
+    from src.app.core import redis_factory
 
     # Force attribute to exist for pkgutil.resolve_name used by mock.patch
-    if not hasattr(src.app.core, "setup"):
-        src.app.core.setup = src.app.core.setup
+    if not hasattr(setup, "create_redis_cache_pool"):
+        setup.create_redis_cache_pool = setup.create_redis_cache_pool
 
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),

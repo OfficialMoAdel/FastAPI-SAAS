@@ -113,15 +113,17 @@ class TestP11PostUserServicesUnchanged:
     """
 
     def test_post_update_returns_message(self) -> None:
-        """PostService.update should return message dict."""
+        """PostService.update_post should return message dict."""
         from src.app.modules.posts.service import PostService
-        source = inspect.getsource(PostService.update)
+
+        source = inspect.getsource(PostService.update_post)
         # Verify it returns a message dict
         assert '{"message": "Post updated"}' in source or "Post updated" in source
 
     def test_user_update_returns_message(self) -> None:
         """UserService.update should return message dict."""
         from src.app.modules.users.service import UserService
+
         source = inspect.getsource(UserService.update)
         # Verify it returns a message dict
         assert '{"message": "User updated"}' in source or "User updated" in source

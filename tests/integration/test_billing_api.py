@@ -9,6 +9,7 @@ Tests cover:
 """
 
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -39,7 +40,7 @@ class TestStripeSettingsAPI:
             new_callable=AsyncMock,
             return_value={
                 "id": 1,
-                "tenant_id": 1,
+                "tenant_id": str(uuid4()),
                 "stripe_mode": "test",
                 "is_configured": True,
             },

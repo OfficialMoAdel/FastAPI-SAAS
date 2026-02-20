@@ -4,6 +4,7 @@ Tests verify that user preferences are respected when sending notifications.
 """
 
 from datetime import UTC, datetime
+from uuid import UUID
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.modules.notifications.models import NotificationStatus
 from src.app.modules.notifications.service import NotificationService
 from src.app.modules.user_preferences.models import UserPreferences
+from tests.conftest import MockUser
 
 
 @pytest.fixture
@@ -26,7 +28,7 @@ async def async_db(setup_db):
 async def test_notification_skipped_when_email_disabled(async_db: AsyncSession):
     """Test that notifications are skipped when email notifications are disabled."""
     user_id = 1001
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with email notifications disabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -59,7 +61,7 @@ async def test_notification_skipped_when_email_disabled(async_db: AsyncSession):
 async def test_notification_sent_when_email_enabled(async_db: AsyncSession):
     """Test that notifications are sent when email notifications are enabled."""
     user_id = 1002
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with email notifications enabled (default)
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -92,7 +94,7 @@ async def test_notification_sent_when_email_enabled(async_db: AsyncSession):
 async def test_notification_skipped_when_type_disabled(async_db: AsyncSession):
     """Test that notifications are skipped when the type is in disabled list."""
     user_id = 1003
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with marketing notifications disabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -125,7 +127,7 @@ async def test_notification_skipped_when_type_disabled(async_db: AsyncSession):
 async def test_notification_sent_when_type_not_disabled(async_db: AsyncSession):
     """Test that notifications are sent when the type is not in disabled list."""
     user_id = 1004
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with some types disabled but not the one we're sending
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -157,7 +159,7 @@ async def test_notification_sent_when_type_not_disabled(async_db: AsyncSession):
 async def test_notification_skipped_during_quiet_hours(async_db: AsyncSession):
     """Test that notifications are skipped during quiet hours."""
     user_id = 1005
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours enabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -186,7 +188,7 @@ async def test_notification_skipped_during_quiet_hours(async_db: AsyncSession):
 async def test_notification_sent_outside_quiet_hours(async_db: AsyncSession):
     """Test that notifications are sent outside quiet hours."""
     user_id = 1006
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours enabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -215,7 +217,7 @@ async def test_notification_sent_outside_quiet_hours(async_db: AsyncSession):
 async def test_notification_sent_when_quiet_hours_disabled(async_db: AsyncSession):
     """Test that notifications are sent when quiet hours are disabled."""
     user_id = 1007
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours disabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -241,7 +243,7 @@ async def test_notification_sent_when_quiet_hours_disabled(async_db: AsyncSessio
 async def test_default_preferences_allow_notifications(async_db: AsyncSession):
     """Test that default preferences allow notifications."""
     user_id = 1008
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with defaults
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -275,7 +277,7 @@ async def test_default_preferences_allow_notifications(async_db: AsyncSession):
 async def test_cross_day_quiet_hours(async_db: AsyncSession):
     """Test quiet hours that cross midnight."""
     user_id = 1009
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with cross-day quiet hours (22:00 - 07:00)
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -308,7 +310,7 @@ async def test_cross_day_quiet_hours(async_db: AsyncSession):
 async def test_same_day_quiet_hours(async_db: AsyncSession):
     """Test quiet hours within the same day."""
     user_id = 1010
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with same-day quiet hours (13:00 - 14:00)
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -341,7 +343,7 @@ async def test_same_day_quiet_hours(async_db: AsyncSession):
 async def test_no_user_preferences_defaults_to_send(async_db: AsyncSession):
     """Test that notifications are sent when user has no preferences."""
     user_id = 1011
-    tenant_id = 1
+    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Don't create user preferences - simulate new user
 

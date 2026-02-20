@@ -166,9 +166,7 @@ class TestP14EventBusParallelEnqueue:
         bus._arq_queue = mock_queue
 
         # Create 5 handlers
-        handlers = [
-            AsyncMock(__name__=f"handler{i}", __module__="test") for i in range(5)
-        ]
+        handlers = [AsyncMock(__name__=f"handler{i}", __module__="test") for i in range(5)]
 
         with patch("src.app.core.events.arq_circuit") as mock_circuit:
             mock_circuit.is_closed = True
@@ -203,8 +201,13 @@ class TestP14EventBusIsomorphism:
         handler2 = AsyncMock(__name__="handler2", __module__="test")
         handlers = [handler1, handler2]
 
-        with patch("src.app.core.events.arq_circuit") as mock_circuit:
+        # Disable batch enqueue to test the parallel enqueue fallback path
+        with (
+            patch("src.app.core.events.arq_circuit") as mock_circuit,
+            patch("src.app.core.events.settings") as mock_settings,
+        ):
             mock_circuit.is_closed = False  # Circuit OPEN
+            mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             await bus._publish_async(
                 "test.event",

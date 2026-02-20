@@ -5,6 +5,7 @@ Tests T102: Integration test for billing history endpoint in tests/integration/b
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 
 class TestBillingHistoryEndpoint:
@@ -21,7 +22,7 @@ class TestBillingHistoryEndpoint:
             "data": [
                 {
                     "id": 1,
-                    "tenant_id": 1,
+                    "tenant_id": str(uuid4()),
                     "user_id": 1,
                     "amount_cents": 9900,
                     "currency": "usd",
@@ -104,7 +105,7 @@ class TestBillingHistoryEndpoint:
             "data": [
                 {
                     "id": 1,
-                    "tenant_id": 1,
+                    "tenant_id": str(uuid4()),
                     "user_id": 1,
                     "user_subscription_id": 1,
                     "stripe_payment_intent_id": "pi_test_123",
@@ -149,7 +150,7 @@ class TestBillingRecordDetailEndpoint:
         """GET /billing/records/{record_id} should return record details."""
         mock_record = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "user_id": 1,
             "amount_cents": 9900,
             "currency": "usd",
@@ -187,7 +188,7 @@ class TestBillingRecordDetailEndpoint:
         # Record belongs to user_id=2, but authenticated user is user_id=1
         mock_record = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "user_id": 2,  # Different user
             "amount_cents": 9900,
             "currency": "usd",

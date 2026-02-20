@@ -285,11 +285,19 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 else:
                     try:
                         body = await request.body()
-                        if body and len(body) < 1024 * 1024:
-                            # Scan raw bytes directly — no UTF-8 decode needed
-                            self._check_for_patterns(body, "request_body", detected_attacks)
-                    except Exception:
-                        pass
+                        if body:
+                            # Re-inject body into a new receive channel so downstream handlers can read it.
+                            # This is necessary because await request.body() consumes the stream.
+                            async def receive():
+                                return {"type": "http.request", "body": body, "more_body": False}
+
+                            request._receive = receive
+
+                            if len(body) < 1024 * 1024:
+                                # Scan raw bytes directly — no UTF-8 decode needed
+                                self._check_for_patterns(body, "request_body", detected_attacks)
+                    except Exception as e:
+                        logger.error(f"Error reading request body in AttackDetectionMiddleware: {e}")
 
         return detected_attacks
 

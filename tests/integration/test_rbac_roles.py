@@ -5,11 +5,15 @@ to avoid async database connection contention.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.app.main import app
+
+# Test user-agent to avoid IP filter blocking
+TEST_USER_AGENT = "TestClient/1.0"
 
 
 @pytest.fixture
@@ -31,7 +35,7 @@ def mock_superuser():
         "username": "admin",
         "email": "admin@test.com",
         "is_superuser": True,
-        "tenant_id": 1,
+        "tenant_id": str(uuid4()),
     }
 
 
@@ -43,7 +47,7 @@ def mock_regular_user():
         "username": "user",
         "email": "user@test.com",
         "is_superuser": False,
-        "tenant_id": 1,
+        "tenant_id": str(uuid4()),
     }
 
 
@@ -76,7 +80,7 @@ class TestRBACRolesAccess:
             ) as client:
                 response = await client.get(
                     "/api/v1/roles",
-                    headers={"X-Tenant-ID": "test-tenant"},
+                    headers={"X-Tenant-ID": "test-tenant", "User-Agent": TEST_USER_AGENT},
                 )
                 assert response.status_code == 401
 
@@ -109,6 +113,7 @@ class TestRBACRolesAccess:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 200
@@ -144,6 +149,7 @@ class TestRBACRolesAccess:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 403
@@ -189,6 +195,7 @@ class TestRBACRolesCRUD:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 201
@@ -225,6 +232,7 @@ class TestRBACRolesCRUD:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 200
@@ -261,6 +269,7 @@ class TestRBACRolesCRUD:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 404
@@ -302,6 +311,7 @@ class TestRBACRolesCRUD:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 200
@@ -337,6 +347,7 @@ class TestRBACRolesCRUD:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 204
@@ -370,6 +381,7 @@ class TestRBACRolesValidation:
                     headers={
                         "Authorization": "Bearer test-token",
                         "X-Tenant-ID": "test-tenant",
+                        "User-Agent": TEST_USER_AGENT,
                     },
                 )
                 assert response.status_code == 422

@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import inspect
 import time
+import uuid
 from datetime import UTC, datetime
 from unittest.mock import MagicMock
 
@@ -127,7 +128,7 @@ class TestP21DirectDictIsomorphism:
 
         # Create mock ORM object with realistic values
         mock_tenant = MagicMock()
-        mock_tenant.id = 42
+        mock_tenant.id = uuid.UUID("00000000-0000-0000-0000-000000000042")
         mock_tenant.created_at = datetime(2024, 6, 15, 10, 30, 0)
         mock_tenant.updated_at = datetime(2024, 6, 16, 14, 45, 0)
         mock_tenant.name = "Acme Corporation"
@@ -149,7 +150,7 @@ class TestP21DirectDictIsomorphism:
         from src.app.modules.tenants.service import _tenant_to_dict
 
         mock_tenant = MagicMock()
-        mock_tenant.id = 99
+        mock_tenant.id = uuid.UUID("00000000-0000-0000-0000-000000000099")
         mock_tenant.created_at = datetime(2023, 1, 1, 0, 0, 0)
         mock_tenant.updated_at = None
         mock_tenant.name = "Deactivated Org"
@@ -172,7 +173,7 @@ class TestP21PerformanceValidation:
 
         # Create a mock tenant
         mock_tenant = MagicMock()
-        mock_tenant.id = 1
+        mock_tenant.id = uuid.UUID("00000000-0000-0000-0000-000000000001")
         mock_tenant.created_at = datetime.now(UTC).replace(tzinfo=None)
         mock_tenant.updated_at = datetime.now(UTC).replace(tzinfo=None)
         mock_tenant.name = "Performance Test Tenant"

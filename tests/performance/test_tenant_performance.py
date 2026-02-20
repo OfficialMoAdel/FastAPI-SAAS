@@ -27,11 +27,13 @@ async def async_client():
 
 
 @pytest.mark.asyncio
+@pytest.mark.requires_postgres
 class TestTenantResolutionPerformance:
     """Performance tests for tenant context resolution."""
 
     async def test_context_operations_latency(self) -> None:
         """Test that context operations are fast (<1ms each)."""
+
         # Create a mock tenant-like object
         class MockTenant:
             id = 1
@@ -73,6 +75,7 @@ class TestTenantResolutionPerformance:
 
         async def task_with_tenant(tenant_id: int, results: dict) -> None:
             """Simulate request with specific tenant."""
+
             class MockTenant:
                 def __init__(self, tid: int):
                     self.id = tid

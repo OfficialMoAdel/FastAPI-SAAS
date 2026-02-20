@@ -14,6 +14,7 @@ Tests verify:
 
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 import pytest
 from fastapi import status
@@ -149,7 +150,7 @@ class TestGoogleSSOE2EFlow:
     def test_google_oauth_missing_code(self, client, mock_user, auth_headers):
         """Test that missing authorization code returns 422."""
         mock_state_manager = Mock()
-        mock_state_manager.validate_state = AsyncMock(return_value={"tenant_id": 1, "provider": "google"})
+        mock_state_manager.validate_state = AsyncMock(return_value={"tenant_id": str(uuid4()), "provider": "google"})
 
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):
             response = client.get(
@@ -163,7 +164,11 @@ class TestGoogleSSOE2EFlow:
         """Test that unknown provider returns 422."""
         mock_state_manager = Mock()
         mock_state_manager.validate_state = AsyncMock(
-            return_value={"tenant_id": 1, "redirect_uri": "https://example.com", "provider": "unknown_provider"}
+            return_value={
+                "tenant_id": str(uuid4()),
+                "redirect_uri": "https://example.com",
+                "provider": "unknown_provider",
+            }
         )
 
         with patch("src.app.modules.sso.service.get_sso_state_manager", return_value=mock_state_manager):

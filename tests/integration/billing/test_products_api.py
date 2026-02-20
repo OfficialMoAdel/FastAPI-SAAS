@@ -5,6 +5,7 @@ Tests T117: Integration test for product endpoints in tests/integration/billing/
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 
 class TestProductListEndpoint:
@@ -21,7 +22,7 @@ class TestProductListEndpoint:
         mock_products = [
             {
                 "id": 1,
-                "tenant_id": 1,
+                "tenant_id": str(uuid4()),
                 "name": "Product 1",
                 "description": "Description 1",
                 "stripe_product_id": "prod_123",
@@ -31,7 +32,7 @@ class TestProductListEndpoint:
             },
             {
                 "id": 2,
-                "tenant_id": 1,
+                "tenant_id": str(uuid4()),
                 "name": "Product 2",
                 "description": "Description 2",
                 "stripe_product_id": None,
@@ -87,7 +88,7 @@ class TestProductCreateEndpoint:
 
         mock_result = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "name": product_data["name"],
             "description": product_data["description"],
             "stripe_product_id": None,
@@ -135,7 +136,7 @@ class TestProductDetailEndpoint:
         """GET /billing/products/{id} should return product details."""
         mock_product = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "name": "Test Product",
             "description": "Test description",
             "stripe_product_id": "prod_123",
@@ -185,7 +186,7 @@ class TestProductUpdateEndpoint:
 
         mock_result = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "name": update_data["name"],
             "description": "Original description",
             "is_active": True,
@@ -213,10 +214,7 @@ class TestProductUpdateEndpoint:
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("Product", 9999),
         ):
-            response = client_auth.patch(
-                "/api/v1/billing/products/9999",
-                json={"name": "New Name"}
-            )
+            response = client_auth.patch("/api/v1/billing/products/9999", json={"name": "New Name"})
             assert response.status_code in [400, 401, 404, 405, 422, 500]
 
 
@@ -257,10 +255,7 @@ class TestProductPricingEndpoint:
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
-            response = client_auth.post(
-                "/api/v1/billing/products/1/pricing",
-                json=pricing_data
-            )
+            response = client_auth.post("/api/v1/billing/products/1/pricing", json=pricing_data)
             assert response.status_code in [200, 201, 400, 401, 403, 404, 405, 422]
 
             if response.status_code in [200, 201]:
@@ -272,10 +267,7 @@ class TestProductPricingEndpoint:
         """POST /billing/products/{id}/pricing should fail without required fields."""
         incomplete_data = {"name": "Test"}  # Missing amount_cents and interval
 
-        response = client_auth.post(
-            "/api/v1/billing/products/1/pricing",
-            json=incomplete_data
-        )
+        response = client_auth.post("/api/v1/billing/products/1/pricing", json=incomplete_data)
         assert response.status_code in [400, 404, 405, 422]
 
     def test_add_pricing_to_nonexistent_product(self, client_auth) -> None:
@@ -294,10 +286,7 @@ class TestProductPricingEndpoint:
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("Product", 9999),
         ):
-            response = client_auth.post(
-                "/api/v1/billing/products/9999/pricing",
-                json=pricing_data
-            )
+            response = client_auth.post("/api/v1/billing/products/9999/pricing", json=pricing_data)
             assert response.status_code in [400, 401, 404, 405, 422, 500]
 
 
@@ -308,7 +297,7 @@ class TestProductWithPricingResponse:
         """GET /billing/products/{id} should include pricing tiers."""
         mock_product = {
             "id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "name": "Test Product",
             "description": "Test description",
             "stripe_product_id": "prod_123",
@@ -374,10 +363,7 @@ class TestProductValidation:
             "interval": "monthly",
         }
 
-        response = client_auth.post(
-            "/api/v1/billing/products/1/pricing",
-            json=pricing_data
-        )
+        response = client_auth.post("/api/v1/billing/products/1/pricing", json=pricing_data)
         assert response.status_code in [400, 404, 405, 422]
 
     def test_pricing_invalid_interval(self, client_auth) -> None:
@@ -389,8 +375,5 @@ class TestProductValidation:
             "interval": "weekly",  # Invalid interval
         }
 
-        response = client_auth.post(
-            "/api/v1/billing/products/1/pricing",
-            json=pricing_data
-        )
+        response = client_auth.post("/api/v1/billing/products/1/pricing", json=pricing_data)
         assert response.status_code in [400, 404, 405, 422]

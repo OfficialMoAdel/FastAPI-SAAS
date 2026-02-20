@@ -246,8 +246,7 @@ class MFAService:
                 user_id,
             )
 
-        if result == -1:
-            raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
+        # FIXED: Removed redundant duplicate check for result == -1 (Item 11a)
 
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")

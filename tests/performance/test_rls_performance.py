@@ -22,8 +22,8 @@ from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 from src.app.modules.notifications.models import Notification
 
-# Mark all tests as async
-pytestmark = pytest.mark.asyncio
+# Mark all tests as async and requiring PostgreSQL (RLS is PostgreSQL-specific)
+pytestmark = [pytest.mark.asyncio, pytest.mark.requires_postgres]
 
 
 @pytest.fixture
@@ -141,9 +141,7 @@ class TestRLSPerformance:
         times = []
         for _ in range(iterations):
             start = time.perf_counter()
-            result = await db_session.execute(
-                select(Post).where(not Post.is_deleted).limit(20)
-            )
+            result = await db_session.execute(select(Post).where(not Post.is_deleted).limit(20))
             _ = result.scalars().all()
             times.append(time.perf_counter() - start)
 
@@ -176,9 +174,7 @@ class TestRLSPerformance:
         times = []
         for _ in range(iterations):
             start = time.perf_counter()
-            result = await db_session.execute(
-                select(Post).where(not Post.is_deleted).limit(20)
-            )
+            result = await db_session.execute(select(Post).where(not Post.is_deleted).limit(20))
             _ = result.scalars().all()
             times.append(time.perf_counter() - start)
 
@@ -213,9 +209,7 @@ class TestRLSPerformance:
         times = []
         for _ in range(iterations):
             start = time.perf_counter()
-            result = await db_session.execute(
-                text("SELECT COUNT(*) FROM post WHERE is_deleted = false")
-            )
+            result = await db_session.execute(text("SELECT COUNT(*) FROM post WHERE is_deleted = false"))
             _ = result.scalar()
             times.append(time.perf_counter() - start)
 
@@ -247,17 +241,14 @@ class TestRLSPerformance:
         )
 
         # Get query plan
-        result = await db_session.execute(
-            text("EXPLAIN (FORMAT TEXT) SELECT * FROM post WHERE is_deleted = false")
-        )
+        result = await db_session.execute(text("EXPLAIN (FORMAT TEXT) SELECT * FROM post WHERE is_deleted = false"))
         plan = "\n".join([row[0] for row in result.fetchall()])
 
         print(f"\nQuery Plan with RLS:\n{plan}")
 
         # Verify plan includes tenant filtering
         # The plan should show RLS policy is being enforced
-        assert "tenant_id" in plan.lower() or "policy" in plan.lower(), \
-            "Query plan should show tenant filtering"
+        assert "tenant_id" in plan.lower() or "policy" in plan.lower(), "Query plan should show tenant filtering"
 
     async def test_concurrent_query_performance(
         self,
@@ -278,9 +269,7 @@ class TestRLSPerformance:
                 {"tenant_id": str(tenant_id)},
             )
 
-            result = await db_session.execute(
-                select(Post).where(not Post.is_deleted).limit(10)
-            )
+            result = await db_session.execute(select(Post).where(not Post.is_deleted).limit(10))
             return result.scalars().all()
 
         # Run 10 concurrent queries
@@ -296,8 +285,7 @@ class TestRLSPerformance:
         assert all(len(r) > 0 for r in results), "All queries should return data"
 
         # Total time should be reasonable (not 10x sequential)
-        assert elapsed_ms < 500.0, \
-            f"Concurrent queries too slow: {elapsed_ms:.3f}ms"
+        assert elapsed_ms < 500.0, f"Concurrent queries too slow: {elapsed_ms:.3f}ms"
 
 
 class TestRLSPerformanceComparison:
@@ -320,9 +308,7 @@ class TestRLSPerformanceComparison:
         baseline_times = []
         for _ in range(iterations):
             start = time.perf_counter()
-            result = await db_session.execute(
-                select(Post).where(not Post.is_deleted).limit(20)
-            )
+            result = await db_session.execute(select(Post).where(not Post.is_deleted).limit(20))
             _ = result.scalars().all()
             baseline_times.append(time.perf_counter() - start)
 
@@ -338,9 +324,7 @@ class TestRLSPerformanceComparison:
         rls_times = []
         for _ in range(iterations):
             start = time.perf_counter()
-            result = await db_session.execute(
-                select(Post).where(not Post.is_deleted).limit(20)
-            )
+            result = await db_session.execute(select(Post).where(not Post.is_deleted).limit(20))
             _ = result.scalars().all()
             rls_times.append(time.perf_counter() - start)
 
@@ -356,14 +340,13 @@ class TestRLSPerformanceComparison:
 
         # Assert overhead is acceptable (< 10% for initial implementation)
         # Note: Target is < 5%, but allowing 10% for initial version
-        assert overhead_pct < 10.0, \
-            f"RLS overhead too high: {overhead_pct:.2f}% (target < 10%)"
+        assert overhead_pct < 10.0, f"RLS overhead too high: {overhead_pct:.2f}% (target < 10%)"
 
         # Print performance report
-        print(f"\n{'='*60}")
+        print(f"\n{'=' * 60}")
         print("RLS Performance Report")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")
         print(f"{'Query Type':<20} {'Baseline (ms)':<15} {'With RLS (ms)':<15} {'Overhead':<10}")
-        print(f"{'-'*60}")
+        print(f"{'-' * 60}")
         print(f"{'SELECT (20 rows)':<20} {baseline_avg:<15.3f} {rls_avg:<15.3f} {overhead_pct:<10.2f}%")
-        print(f"{'='*60}")
+        print(f"{'=' * 60}")

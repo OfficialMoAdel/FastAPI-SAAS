@@ -45,6 +45,15 @@ from src.app.modules.passkey.schemas import PasskeyCredentialCreate
 
 logger = logging.getLogger(__name__)
 
+# Lua script for atomic GETDEL (get and delete) to prevent race conditions.
+_GETDEL_LUA = """
+    local value = redis.call('GET', KEYS[1])
+    if value then
+        redis.call('DEL', KEYS[1])
+    end
+    return value
+"""
+
 # Constants
 CHALLENGE_TTL = 300  # 5 minutes
 AUTH_CHALLENGE_TTL = 300  # 5 minutes for authentication challenges
@@ -196,9 +205,7 @@ class PasskeyService:
 
         created_cred = await self._store_credential(db, cred_in)
 
-        # 5. Cleanup
-        if redis:
-            await self._delete_challenge(redis, user_id)
+        # 5. Cleanup - Handled atomically by _get_stored_challenge
 
         return created_cred
 
@@ -328,9 +335,7 @@ class PasskeyService:
 
         tokens = await self._generate_auth_tokens(user)
 
-        # 7. Cleanup
-        if redis:
-            await self._delete_auth_challenge(redis, challenge_id)
+        # 7. Cleanup - Handled atomically by _get_stored_auth_challenge
 
         return tokens
 
@@ -442,9 +447,10 @@ class PasskeyService:
         await redis.setex(key, CHALLENGE_TTL, json_dumps(data, as_str=True))
 
     async def _get_stored_challenge(self, redis: Redis, user_id: int) -> dict[str, Any] | None:
-        """Retrieve registration challenge from Redis."""
+        """Retrieve and atomically delete registration challenge from Redis."""
         key = f"passkey:challenge:{user_id}"
-        data = await redis.get(key)
+        # Atomic get and delete to prevent race conditions
+        data = await redis.eval(_GETDEL_LUA, 1, key)
         if not data:
             return None
 
@@ -537,9 +543,10 @@ class PasskeyService:
         await redis.setex(key, AUTH_CHALLENGE_TTL, bytes_to_base64url(challenge))
 
     async def _get_stored_auth_challenge(self, redis: Redis, challenge_id: str) -> bytes | None:
-        """Retrieve authentication challenge from Redis by challenge_id."""
+        """Retrieve and atomically delete authentication challenge from Redis."""
         key = f"passkey:auth_challenge:{challenge_id}"
-        data = await redis.get(key)
+        # Atomic get and delete to prevent race conditions
+        data = await redis.eval(_GETDEL_LUA, 1, key)
         if not data:
             return None
         return base64url_to_bytes(data)

@@ -97,10 +97,7 @@ class TestSSOStateAsync:
         mock_redis = AsyncMock()
         manager = SSOStateManager(redis=mock_redis)
 
-        state = await manager.create_state(
-            provider="google",
-            redirect_uri="https://app.example.com/callback"
-        )
+        state = await manager.create_state(provider="google", redirect_uri="https://app.example.com/callback")
 
         # Verify state was generated
         assert state is not None
@@ -117,7 +114,8 @@ class TestSSOStateAsync:
         from src.app.core.security.tokens import SSOStateManager
 
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = b'{"provider": "google", "redirect_uri": "https://app.example.com/callback"}'
+        # Mock eval() for GETDEL Lua script (atomic get-and-delete)
+        mock_redis.eval.return_value = b'{"provider": "google", "redirect_uri": "https://app.example.com/callback"}'
 
         manager = SSOStateManager(redis=mock_redis)
 
@@ -125,8 +123,8 @@ class TestSSOStateAsync:
 
         assert result is not None
         assert result["provider"] == "google"
-        # State should be deleted after validation (one-time use)
-        mock_redis.delete.assert_called_once_with("sso_state:valid_state")
+        # eval() should be called for atomic GETDEL
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_validate_sso_state_expired(self):
@@ -150,11 +148,8 @@ class TestSSOStateAsync:
         from src.app.core.security.tokens import SSOStateManager
 
         mock_redis = AsyncMock()
-        # First call returns data, second returns None (state was deleted)
-        mock_redis.get.side_effect = [
-            b'{"provider": "google"}',
-            None
-        ]
+        # First eval() call returns data (GETDEL), second returns None (key deleted)
+        mock_redis.eval.side_effect = [b'{"provider": "google"}', None]
 
         manager = SSOStateManager(redis=mock_redis)
 
@@ -177,9 +172,7 @@ class TestSSOStateAsync:
         manager = SSOStateManager(redis=mock_redis)
 
         await manager.create_state(
-            provider="github",
-            redirect_uri="https://app.example.com/github/callback",
-            extra_data={"org_id": "123"}
+            provider="github", redirect_uri="https://app.example.com/github/callback", extra_data={"org_id": "123"}
         )
 
         # Verify the stored data includes metadata
@@ -203,10 +196,7 @@ class TestMagicLinkManager:
         mock_redis = AsyncMock()
         manager = MagicLinkManager(redis=mock_redis)
 
-        token = await manager.create_token(
-            email="user@example.com",
-            action="login"
-        )
+        token = await manager.create_token(email="user@example.com", action="login")
 
         assert token is not None
         assert len(token) == 43
@@ -222,7 +212,8 @@ class TestMagicLinkManager:
         from src.app.core.security.tokens import MagicLinkManager
 
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = b'{"email": "user@example.com", "action": "login"}'
+        # Mock eval() for GETDEL Lua script (atomic get-and-delete)
+        mock_redis.eval.return_value = b'{"email": "user@example.com", "action": "login"}'
 
         manager = MagicLinkManager(redis=mock_redis)
 
@@ -231,8 +222,8 @@ class TestMagicLinkManager:
         assert result is not None
         assert result["email"] == "user@example.com"
         assert result["action"] == "login"
-        # Token should be deleted after use
-        mock_redis.delete.assert_called_once()
+        # eval() should be called for atomic GETDEL
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_validate_magic_link_expired(self):
@@ -254,9 +245,10 @@ class TestMagicLinkManager:
         from src.app.core.security.tokens import MagicLinkManager
 
         mock_redis = AsyncMock()
-        mock_redis.get.side_effect = [
+        # First eval() call returns data (GETDEL), second returns None (key deleted)
+        mock_redis.eval.side_effect = [
             b'{"email": "user@example.com"}',
-            None  # Deleted after first use
+            None,  # Deleted after first use
         ]
 
         manager = MagicLinkManager(redis=mock_redis)
@@ -311,8 +303,9 @@ class TestTokenAuditLogging:
         with caplog.at_level(logging.DEBUG, logger="src.app.core.security.tokens"):
             await manager.create_state(provider="google", redirect_uri="https://example.com")
 
-        assert any("sso_state" in record.message.lower() or "create" in record.message.lower()
-                   for record in caplog.records)
+        assert any(
+            "sso_state" in record.message.lower() or "create" in record.message.lower() for record in caplog.records
+        )
 
     @pytest.mark.asyncio
     async def test_sso_state_validation_logged(self, caplog):
@@ -329,5 +322,4 @@ class TestTokenAuditLogging:
         with caplog.at_level(logging.DEBUG, logger="src.app.core.security.tokens"):
             await manager.validate_state("test_state")
 
-        assert any("validate" in record.message.lower() or "sso" in record.message.lower()
-                   for record in caplog.records)
+        assert any("validate" in record.message.lower() or "sso" in record.message.lower() for record in caplog.records)

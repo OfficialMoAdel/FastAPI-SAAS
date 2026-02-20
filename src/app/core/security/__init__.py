@@ -38,6 +38,16 @@ JWT_AUDIENCE: str = getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api")
 
 _jwt_logger = logging.getLogger(__name__)
 
+# Lua script for atomic GETDEL (get and delete) to prevent race conditions.
+# Returns the value if key existed, None otherwise.
+_GETDEL_LUA = """
+    local value = redis.call('GET', KEYS[1])
+    if value then
+        redis.call('DEL', KEYS[1])
+    end
+    return value
+"""
+
 # Dedicated thread pool for bcrypt operations to prevent event loop blocking
 # bcrypt.checkpw takes ~50-100ms depending on rounds, so we use a thread pool
 # to avoid blocking the async event loop during high-concurrency authentication
@@ -64,7 +74,7 @@ def _get_verification_key() -> str:
     return SECRET_KEY.get_secret_value()
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 
 
 class TokenType(str, Enum):
@@ -276,15 +286,12 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 # Token version mismatch - user changed password or was invalidated
                 return None
 
-            # Cache the token_version using SETNX to prevent race condition
+            # Cache the token_version using atomic SET with NX and EX to prevent race conditions
             # Multiple concurrent requests may fetch from DB, but only first wins cache write
             if redis_client:
                 try:
-                    # SETNX only sets if key doesn't exist (atomic operation)
-                    was_set = await redis_client.setnx(cache_key, str(user.token_version))
-                    if was_set:
-                        # Set TTL only if we won the race
-                        await redis_client.expire(cache_key, 300)  # 5 min TTL
+                    # SET with nx=True only sets if key doesn't exist (atomic with EX)
+                    await redis_client.set(cache_key, str(user.token_version), nx=True, ex=300)
                 except Exception:
                     pass  # Don't fail on cache error
 
@@ -419,14 +426,11 @@ class MFAPendingTokenManager:
         """
         key = f"mfa_pending:{token}"
 
-        # Get token data
-        data = await self._redis.get(key)
+        # Get and delete token data atomically to prevent race conditions
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)
 
         if data is None:
             return None
-
-        # Delete immediately (one-time use)
-        await self._redis.delete(key)
 
         try:
             token_data = cast(dict[str, Any], json_loads(data))

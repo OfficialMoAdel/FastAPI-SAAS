@@ -16,7 +16,7 @@ from src.app.core.exceptions.http_exceptions import (
 from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.service_registry import get_service
-from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
+from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
@@ -151,171 +151,174 @@ class SSOService:
         if state_data["provider"] != provider:
             raise BadRequestException("State provider mismatch")
 
-        redirect_uri = state_data["redirect_uri"]
+        try:
+            redirect_uri = state_data["redirect_uri"]
 
-        extra_data = state_data.get("extra_data") or {}
-        tenant_id: int | None = extra_data.get("tenant_id")
+            extra_data = state_data.get("extra_data") or {}
+            tenant_id: int | None = extra_data.get("tenant_id")
 
-        if tenant_id:
-            from src.app.modules.tenants.crud import crud_tenants
+            if tenant_id:
+                from src.app.modules.tenants.crud import crud_tenants
 
-            tenant_result = await crud_tenants.get(db, id=tenant_id)
-            if tenant_result:
-                # tenant_result may be dict or model - handle both
-                if isinstance(tenant_result, dict):
-                    # Need to fetch actual model for set_tenant_context
-                    from sqlalchemy import select
+                tenant_result = await crud_tenants.get(db, id=tenant_id)
+                if tenant_result:
+                    # tenant_result may be dict or model - handle both
+                    if isinstance(tenant_result, dict):
+                        # Need to fetch actual model for set_tenant_context
+                        from sqlalchemy import select
 
-                    from src.app.modules.tenants.models import Tenant as TenantModel
+                        from src.app.modules.tenants.models import Tenant as TenantModel
 
-                    query = select(TenantModel).where(TenantModel.id == tenant_id)
-                    result = await db.execute(query)
-                    tenant_model = result.scalar_one_or_none()
-                    if tenant_model:
-                        set_tenant_context(tenant_model)
+                        query = select(TenantModel).where(TenantModel.id == tenant_id)
+                        result = await db.execute(query)
+                        tenant_model = result.scalar_one_or_none()
+                        if tenant_model:
+                            set_tenant_context(tenant_model)
+                        else:
+                            raise BadRequestException("Tenant context not found")
                     else:
-                        raise BadRequestException("Tenant context not found")
+                        set_tenant_context(cast(Tenant, tenant_result))
                 else:
-                    set_tenant_context(cast(Tenant, tenant_result))
-            else:
-                raise BadRequestException("Tenant context not found")
+                    raise BadRequestException("Tenant context not found")
 
-        from src.app.modules.sso_settings.service import sso_settings_service
+            from src.app.modules.sso_settings.service import sso_settings_service
 
-        settings_data = await sso_settings_service.get_decrypted_settings(db, provider)
+            settings_data = await sso_settings_service.get_decrypted_settings(db, provider)
 
-        oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
-        try:
-            token_response = await oauth_provider.exchange_code_for_token(code)
-        except Exception as e:
-            raise BadRequestException(f"Failed to exchange code: {str(e)}")
+            oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
+            try:
+                token_response = await oauth_provider.exchange_code_for_token(code)
+            except Exception as e:
+                raise BadRequestException(f"Failed to exchange code: {str(e)}")
 
-        access_token = token_response.get("access_token")
-        if not access_token:
-            raise BadRequestException("No access token received from provider")
+            access_token = token_response.get("access_token")
+            if not access_token:
+                raise BadRequestException("No access token received from provider")
 
-        # Apple uses id_token for user info (no userinfo endpoint)
-        user_info: Any
-        try:
-            if provider == SSOProvider.APPLE:
-                id_token = token_response.get("id_token")
-                if not id_token:
-                    raise BadRequestException("No id_token received from Apple")
-                # Apple provider has different signature, cast to access it
-                apple_provider = cast(AppleProvider, oauth_provider)
-                user_info = await apple_provider.get_user_info(id_token, user_data=user_data)
-            else:
-                user_info = await oauth_provider.get_user_info(access_token)
-        except Exception as e:
-            raise BadRequestException(f"Failed to fetch user info: {str(e)}")
+            # Apple uses id_token for user info (no userinfo endpoint)
+            user_info: Any
+            try:
+                if provider == SSOProvider.APPLE:
+                    id_token = token_response.get("id_token")
+                    if not id_token:
+                        raise BadRequestException("No id_token received from Apple")
+                    # Apple provider has different signature, cast to access it
+                    apple_provider = cast(AppleProvider, oauth_provider)
+                    user_info = await apple_provider.get_user_info(id_token, user_data=user_data)
+                else:
+                    user_info = await oauth_provider.get_user_info(access_token)
+            except Exception as e:
+                raise BadRequestException(f"Failed to fetch user info: {str(e)}")
 
-        connection = await crud_user_sso_connections.get_by_criteria(
-            db=db,
-            provider=provider,
-            provider_user_id=user_info.provider_user_id,
-        )
-
-        found_user_data = None
-
-        if connection:
-            await crud_user_sso_connections.update(
+            connection = await crud_user_sso_connections.get_by_criteria(
                 db=db,
-                object=UserSSOConnectionUpdate(
-                    provider_email=user_info.email,
-                ),
-                id=connection.id,
+                provider=provider,
+                provider_user_id=user_info.provider_user_id,
             )
-            found_user_data = await get_service("user", db).get(connection.user_id)
-            if not found_user_data:
-                raise NotFoundException("Associated user not found")
-        else:
-            if not user_info.email:
-                raise BadRequestException("Email required from provider")
 
-            user_by_email = await get_service("user", db).get_by_email(user_info.email)
+            found_user_data = None
 
-            if user_by_email:
-                found_user_data = user_by_email
-                user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                await self._link_account(db, user_id, provider, user_info)
-            else:
-                current_tenant = get_tenant_context()
-                if not current_tenant:
-                    raise BadRequestException("Cannot register new user without tenant context")
-
-                found_user_data = await self._create_sso_user(db, user_info)
-                user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                await self._link_account(db, user_id, provider, user_info)
-
-        if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
-            raise UnauthorizedException("Account is disabled")
-        elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
-            raise UnauthorizedException("Account is disabled")
-
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-        token_data = {
-            "sub": found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"],
-            "id": found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"],
-            "email": found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"],
-            "tenant_id": found_user_data.tenant_id
-            if hasattr(found_user_data, "tenant_id")
-            else found_user_data["tenant_id"],
-        }
-
-        access_token = await create_access_token(
-            data=token_data,
-            expires_delta=access_token_expires,
-        )
-
-        refresh_token = await create_refresh_token(
-            data={"sub": token_data["sub"]},
-        )
-
-        # Audit log SSO login success
-        try:
-            from structlog import get_logger
-
-            from src.app.core.events import EventPriority, event_bus
-
-            logger = get_logger(__name__)
-
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "auth.sso_login",
-                    "entity_type": "user",
-                    "entity_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
-                    "tenant_id": str(
-                        found_user_data.tenant_id
-                        if hasattr(found_user_data, "tenant_id")
-                        else found_user_data["tenant_id"]
+            if connection:
+                await crud_user_sso_connections.update(
+                    db=db,
+                    object=UserSSOConnectionUpdate(
+                        provider_email=user_info.email,
                     ),
-                    "user_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
-                    "details": {
-                        "provider": provider,
-                        "email": found_user_data.email
-                        if hasattr(found_user_data, "email")
-                        else found_user_data["email"],
-                        "username": found_user_data.username
-                        if hasattr(found_user_data, "username")
-                        else found_user_data["username"],
-                        "success": True,
-                    },
-                    "ip_address": request.client.host if request.client else None,
-                    "user_agent": request.headers.get("user-agent"),
-                },
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.error("failed_to_publish_sso_audit_log", error=str(e))
+                    id=connection.id,
+                )
+                found_user_data = await get_service("user", db).get(connection.user_id)
+                if not found_user_data:
+                    raise NotFoundException("Associated user not found")
+            else:
+                if not user_info.email:
+                    raise BadRequestException("Email required from provider")
 
-        return AuthTokenResponse(
-            access_token=access_token,
-            refresh_token=refresh_token,
-            expires_in=int(access_token_expires.total_seconds()),
-            token_type="bearer",
-        )
+                user_by_email = await get_service("user", db).get_by_email(user_info.email)
+
+                if user_by_email:
+                    found_user_data = user_by_email
+                    user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                    await self._link_account(db, user_id, provider, user_info)
+                else:
+                    current_tenant = get_tenant_context()
+                    if not current_tenant:
+                        raise BadRequestException("Cannot register new user without tenant context")
+
+                    found_user_data = await self._create_sso_user(db, user_info)
+                    user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                    await self._link_account(db, user_id, provider, user_info)
+
+            if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
+                raise UnauthorizedException("Account is disabled")
+            elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
+                raise UnauthorizedException("Account is disabled")
+
+            access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+
+            token_data = {
+                "sub": found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"],
+                "id": found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"],
+                "email": found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"],
+                "tenant_id": found_user_data.tenant_id
+                if hasattr(found_user_data, "tenant_id")
+                else found_user_data["tenant_id"],
+            }
+
+            access_token = await create_access_token(
+                data=token_data,
+                expires_delta=access_token_expires,
+            )
+
+            refresh_token = await create_refresh_token(
+                data={"sub": token_data["sub"]},
+            )
+
+            # Audit log SSO login success
+            try:
+                from structlog import get_logger
+
+                from src.app.core.events import EventPriority, event_bus
+
+                logger = get_logger(__name__)
+
+                await event_bus.publish(
+                    "audit.log",
+                    {
+                        "action": "auth.sso_login",
+                        "entity_type": "user",
+                        "entity_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
+                        "tenant_id": str(
+                            found_user_data.tenant_id
+                            if hasattr(found_user_data, "tenant_id")
+                            else found_user_data["tenant_id"]
+                        ),
+                        "user_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
+                        "details": {
+                            "provider": provider,
+                            "email": found_user_data.email
+                            if hasattr(found_user_data, "email")
+                            else found_user_data["email"],
+                            "username": found_user_data.username
+                            if hasattr(found_user_data, "username")
+                            else found_user_data["username"],
+                            "success": True,
+                        },
+                        "ip_address": request.client.host if request.client else None,
+                        "user_agent": request.headers.get("user-agent"),
+                    },
+                    priority=EventPriority.NORMAL,
+                )
+            except Exception as e:
+                logger.error("failed_to_publish_sso_audit_log", error=str(e))
+
+            return AuthTokenResponse(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                expires_in=int(access_token_expires.total_seconds()),
+                token_type="bearer",
+            )
+        finally:
+            clear_tenant_context()
 
     async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any) -> None:
         """Create UserSSOConnection."""

@@ -5,6 +5,7 @@ Tests T128: Integration test for session management endpoints in tests/integrati
 
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 
 class TestSessionListEndpoint:
@@ -23,7 +24,7 @@ class TestSessionListEndpoint:
                 {
                     "id": 1,
                     "user_id": 1,
-                    "tenant_id": 1,
+                    "tenant_id": str(uuid4()),
                     "title": "Test Session 1",
                     "model": "gemma3",
                     "created_at": datetime.now(UTC).isoformat(),
@@ -32,7 +33,7 @@ class TestSessionListEndpoint:
                 {
                     "id": 2,
                     "user_id": 1,
-                    "tenant_id": 1,
+                    "tenant_id": str(uuid4()),
                     "title": "Test Session 2",
                     "model": "llama2",
                     "created_at": datetime.now(UTC).isoformat(),
@@ -101,7 +102,7 @@ class TestSessionDetailEndpoint:
         mock_session = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "title": "Test Session",
             "model": "gemma3",
             "created_at": datetime.now(UTC).isoformat(),
@@ -148,7 +149,7 @@ class TestSessionUpdateEndpoint:
         mock_result = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "title": update_data["title"],
             "model": "gemma3",
             "created_at": datetime.now(UTC).isoformat(),
@@ -345,7 +346,7 @@ class TestSessionValidation:
         mock_result = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "title": None,
             "model": "gemma3",
         }

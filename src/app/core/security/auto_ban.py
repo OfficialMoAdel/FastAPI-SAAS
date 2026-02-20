@@ -64,7 +64,8 @@ async def increment_violations(client_ip: str) -> int:
     try:
         # Increment counter and set/update TTL
         count = await redis_client.incr(key)
-        await redis_client.expire(key, VIOLATIONS_TTL)
+        # FIXED: Use configurable TTL from settings instead of hardcoded constant
+        await redis_client.expire(key, get_violations_ttl())
         return int(count)
     except Exception as e:
         logger.error("Failed to increment violations for %s: %s", client_ip, e)

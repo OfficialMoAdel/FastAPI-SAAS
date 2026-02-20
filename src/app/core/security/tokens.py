@@ -40,6 +40,16 @@ from src.app.core.json_utils import json_dumps, json_loads
 
 logger = logging.getLogger(__name__)
 
+# Lua script for atomic GETDEL (get and delete) to prevent race conditions.
+# Returns the value if key existed, None otherwise.
+_GETDEL_LUA = """
+    local value = redis.call('GET', KEYS[1])
+    if value then
+        redis.call('DEL', KEYS[1])
+    end
+    return value
+"""
+
 
 class TokenGenerator:
     """Static utilities for secure token generation.
@@ -183,8 +193,8 @@ class SSOStateManager:
         """
         key = f"sso_state:{state}"
 
-        # Get state data
-        data = await self._redis.get(key)
+        # Get and delete state data atomically to prevent race conditions
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)
 
         if data is None:
             logger.debug(
@@ -192,9 +202,6 @@ class SSOStateManager:
                 extra={"operation": "validate_sso_state", "found": False},
             )
             return None
-
-        # Delete immediately (one-time use)
-        await self._redis.delete(key)
 
         try:
             state_data = cast(dict[str, Any], json_loads(data))
@@ -291,8 +298,8 @@ class MagicLinkManager:
         """
         key = f"magic_link:{token}"
 
-        # Get token data
-        data = await self._redis.get(key)
+        # Get and delete token data atomically to prevent race conditions
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)
 
         if data is None:
             logger.debug(
@@ -300,9 +307,6 @@ class MagicLinkManager:
                 extra={"operation": "validate_magic_link", "found": False},
             )
             return None
-
-        # Delete immediately (one-time use)
-        await self._redis.delete(key)
 
         try:
             token_data = cast(dict[str, Any], json_loads(data))

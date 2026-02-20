@@ -554,7 +554,8 @@ class SessionManager:
                         # Parse ISO timestamp to Unix timestamp
                         if created_at:
                             try:
-                                dt = datetime.fromisoformat(created_at.replace("Z", "+00:00"))
+                                # FIXED: Use more robust ISO parsing (Item 12)
+                                dt = datetime.fromisoformat(created_at)
                                 timestamp = dt.timestamp()
                             except ValueError:
                                 timestamp = datetime.now(UTC).timestamp()

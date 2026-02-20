@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.modules.auth.service import AuthService
+from uuid import uuid4
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ class TestTokenRefreshWithCaching:
             "is_deleted": False,
             "is_email_verified": True,
             "tier_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
         }
 
         import json
@@ -74,7 +75,7 @@ class TestTokenRefreshWithCaching:
             "is_deleted": True,  # User was soft-deleted
             "is_email_verified": True,
             "tier_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
         }
 
         import json

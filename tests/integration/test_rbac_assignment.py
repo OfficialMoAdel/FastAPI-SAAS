@@ -15,14 +15,18 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app.main import app
 
+# Test user-agent to avoid IP filter blocking
+TEST_USER_AGENT = "TestClient/1.0"
+
 
 @pytest_asyncio.fixture
 async def client():
-    """Create async test client."""
+    """Create async test client with proper headers."""
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
     ) as ac:
+        ac.headers["User-Agent"] = TEST_USER_AGENT
         yield ac
 
 

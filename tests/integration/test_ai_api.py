@@ -8,7 +8,12 @@ Tests cover:
 - Authentication and authorization
 """
 
+from uuid import uuid4
+
 from unittest.mock import AsyncMock, patch
+
+# Test constants for consistent UUID usage
+TEST_TENANT_ID = uuid4()
 
 
 class TestChatSessionAPI:
@@ -17,15 +22,17 @@ class TestChatSessionAPI:
     def test_create_session_requires_auth(self, client, regular_user_token_headers) -> None:
         """Creating a session requires authentication."""
         mock_service = AsyncMock()
-        mock_service.create_session = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "tenant_id": 1,
-            "title": "Test Session",
-            "model": "gemma3",
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.create_session = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "tenant_id": str(TEST_TENANT_ID),
+                "title": "Test Session",
+                "model": "gemma3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_chat_session_service",
             return_value=mock_service,
@@ -41,15 +48,17 @@ class TestChatSessionAPI:
     def test_create_session_with_auth(self, client, regular_user_token_headers) -> None:
         """Create a chat session with authentication."""
         mock_service = AsyncMock()
-        mock_service.create_session = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "tenant_id": 1,
-            "title": "Test Session",
-            "model": "gemma3",
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.create_session = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "tenant_id": str(TEST_TENANT_ID),
+                "title": "Test Session",
+                "model": "gemma3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_chat_session_service",
             return_value=mock_service,
@@ -94,23 +103,28 @@ class TestChatSessionAPI:
     def test_get_session_by_id(self, client, regular_user_token_headers) -> None:
         """Get a single session by ID."""
         mock_session_service = AsyncMock()
-        mock_session_service.get_session = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "tenant_id": 1,
-            "title": "Test Session",
-            "model": "gemma3",
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_session_service.get_session = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "tenant_id": str(TEST_TENANT_ID),
+                "title": "Test Session",
+                "model": "gemma3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         mock_message_service = AsyncMock()
         mock_message_service.get_session_messages = AsyncMock(return_value={"data": []})
-        with patch(
-            "src.app.modules.ai.router.get_chat_session_service",
-            return_value=mock_session_service,
-        ), patch(
-            "src.app.modules.ai.router.get_chat_message_service",
-            return_value=mock_message_service,
+        with (
+            patch(
+                "src.app.modules.ai.router.get_chat_session_service",
+                return_value=mock_session_service,
+            ),
+            patch(
+                "src.app.modules.ai.router.get_chat_message_service",
+                return_value=mock_message_service,
+            ),
         ):
             response = client.get(
                 "/api/v1/ai/sessions/1",
@@ -121,15 +135,17 @@ class TestChatSessionAPI:
     def test_update_session(self, client, regular_user_token_headers) -> None:
         """Update a chat session."""
         mock_service = AsyncMock()
-        mock_service.update_session = AsyncMock(return_value={
-            "id": 1,
-            "tenant_id": 1,
-            "user_id": 1,
-            "title": "Updated Session",
-            "model": "gemma3",
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.update_session = AsyncMock(
+            return_value={
+                "id": 1,
+                "tenant_id": str(TEST_TENANT_ID),
+                "user_id": 1,
+                "title": "Updated Session",
+                "model": "gemma3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_chat_session_service",
             return_value=mock_service,
@@ -160,14 +176,17 @@ class TestChatMessageAPI:
 
     def test_list_session_messages(self, client, regular_user_token_headers) -> None:
         """List messages in a session."""
-        with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session",
-            new_callable=AsyncMock,
-            return_value={"id": 1, "user_id": 1},
-        ), patch(
-            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
-            new_callable=AsyncMock,
-            return_value={"data": [], "total_count": 0},
+        with (
+            patch(
+                "src.app.modules.ai.service.ChatSessionService.get_session",
+                new_callable=AsyncMock,
+                return_value={"id": 1, "user_id": 1},
+            ),
+            patch(
+                "src.app.modules.ai.service.ChatMessageService.get_session_messages",
+                new_callable=AsyncMock,
+                return_value={"data": [], "total_count": 0},
+            ),
         ):
             response = client.get(
                 "/api/v1/ai/sessions/1/messages",
@@ -177,14 +196,17 @@ class TestChatMessageAPI:
 
     def test_list_messages_pagination(self, client, regular_user_token_headers) -> None:
         """List messages should support pagination."""
-        with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session",
-            new_callable=AsyncMock,
-            return_value={"id": 1, "user_id": 1},
-        ), patch(
-            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
-            new_callable=AsyncMock,
-            return_value={"data": [], "total_count": 0},
+        with (
+            patch(
+                "src.app.modules.ai.service.ChatSessionService.get_session",
+                new_callable=AsyncMock,
+                return_value={"id": 1, "user_id": 1},
+            ),
+            patch(
+                "src.app.modules.ai.service.ChatMessageService.get_session_messages",
+                new_callable=AsyncMock,
+                return_value={"data": [], "total_count": 0},
+            ),
         ):
             response = client.get(
                 "/api/v1/ai/sessions/1/messages",
@@ -200,16 +222,18 @@ class TestAISettingsAPI:
     def test_get_ai_settings(self, client, regular_user_token_headers) -> None:
         """Get AI settings for current user."""
         mock_service = AsyncMock()
-        mock_service.get_or_create_settings = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "model": "gemma3",
-            "temperature": 0.7,
-            "max_tokens": 2048,
-            "system_prompt": None,
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.get_or_create_settings = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "model": "gemma3",
+                "temperature": 0.7,
+                "max_tokens": 2048,
+                "system_prompt": None,
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_ai_settings_service",
             return_value=mock_service,
@@ -223,16 +247,18 @@ class TestAISettingsAPI:
     def test_update_ai_settings(self, client, regular_user_token_headers) -> None:
         """Update AI settings."""
         mock_service = AsyncMock()
-        mock_service.update_settings = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "model": "llama3",
-            "temperature": 0.5,
-            "max_tokens": 4096,
-            "system_prompt": None,
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.update_settings = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "model": "llama3",
+                "temperature": 0.5,
+                "max_tokens": 4096,
+                "system_prompt": None,
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_ai_settings_service",
             return_value=mock_service,
@@ -285,9 +311,7 @@ class TestChatCompletionAPI:
                 data = response.json()
                 assert "message" in data
 
-    def test_chat_completion_with_model_override(
-        self, client, regular_user_token_headers
-    ) -> None:
+    def test_chat_completion_with_model_override(self, client, regular_user_token_headers) -> None:
         """Chat completion with model override."""
         with patch(
             "src.app.modules.ai.service.ChatCompletionService.complete",
@@ -309,9 +333,7 @@ class TestChatCompletionAPI:
             )
             assert response.status_code in [200, 404, 503]
 
-    def test_chat_completion_service_unavailable(
-        self, client, regular_user_token_headers
-    ) -> None:
+    def test_chat_completion_service_unavailable(self, client, regular_user_token_headers) -> None:
         """Chat completion when AI service is unavailable."""
         from src.app.modules.ai.service import ChatCompletionError
 
@@ -369,20 +391,21 @@ class TestAITenantIsolation:
             )
             assert response.status_code in [200, 422]
 
-    def test_cannot_access_other_user_session(
-        self, client, regular_user_token_headers
-    ) -> None:
+    def test_cannot_access_other_user_session(self, client, regular_user_token_headers) -> None:
         """Should not be able to access another user's session."""
         from src.app.modules._base.exceptions import ModelNotFoundError
 
-        with patch(
-            "src.app.modules.ai.service.ChatSessionService.get_session",
-            new_callable=AsyncMock,
-            side_effect=ModelNotFoundError("ChatSession", 999),
-        ), patch(
-            "src.app.modules.ai.service.ChatMessageService.get_session_messages",
-            new_callable=AsyncMock,
-            return_value={"data": []},
+        with (
+            patch(
+                "src.app.modules.ai.service.ChatSessionService.get_session",
+                new_callable=AsyncMock,
+                side_effect=ModelNotFoundError("ChatSession", 999),
+            ),
+            patch(
+                "src.app.modules.ai.service.ChatMessageService.get_session_messages",
+                new_callable=AsyncMock,
+                return_value={"data": []},
+            ),
         ):
             response = client.get(
                 "/api/v1/ai/sessions/999",
@@ -397,15 +420,17 @@ class TestAISchemaValidation:
     def test_create_session_validation(self, client, regular_user_token_headers) -> None:
         """Create session should validate input."""
         mock_service = AsyncMock()
-        mock_service.create_session = AsyncMock(return_value={
-            "id": 1,
-            "user_id": 1,
-            "tenant_id": 1,
-            "title": "Untitled",
-            "model": "gemma3",
-            "created_at": "2024-01-01T00:00:00",
-            "updated_at": "2024-01-01T00:00:00",
-        })
+        mock_service.create_session = AsyncMock(
+            return_value={
+                "id": 1,
+                "user_id": 1,
+                "tenant_id": str(TEST_TENANT_ID),
+                "title": "Untitled",
+                "model": "gemma3",
+                "created_at": "2024-01-01T00:00:00",
+                "updated_at": "2024-01-01T00:00:00",
+            }
+        )
         with patch(
             "src.app.modules.ai.router.get_chat_session_service",
             return_value=mock_service,
@@ -419,9 +444,7 @@ class TestAISchemaValidation:
             # Either 422 (validation error) or accepts empty and uses default
             assert response.status_code in [200, 201, 422]
 
-    def test_chat_completion_message_required(
-        self, client, regular_user_token_headers
-    ) -> None:
+    def test_chat_completion_message_required(self, client, regular_user_token_headers) -> None:
         """Chat completion should require message."""
         response = client.post(
             "/api/v1/ai/sessions/1/chat",
@@ -431,9 +454,7 @@ class TestAISchemaValidation:
         # Should return 422 for missing required field
         assert response.status_code in [404, 422]
 
-    def test_update_settings_validation(
-        self, client, regular_user_token_headers
-    ) -> None:
+    def test_update_settings_validation(self, client, regular_user_token_headers) -> None:
         """Update settings should validate temperature range."""
         response = client.patch(
             "/api/v1/ai/settings",

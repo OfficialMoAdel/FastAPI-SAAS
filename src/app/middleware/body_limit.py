@@ -112,8 +112,8 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                         path=request.url.path,
                         client=request.client.host if request.client else "unknown",
                     )
-                    # Return empty body to stop further reading
-                    return {"type": "http.request", "body": b"", "more_body": False}
+                    # FIXED: Stop request processing immediately (Item 13)
+                    raise BodySizeLimitExceeded(f"Request body exceeded limit of {max_size} bytes")
 
             return message
 
@@ -121,15 +121,6 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
 
         try:
             response: Response = await call_next(request)
-
-            # Check if we exceeded during streaming
-            if bytes_received > self.max_body_size:
-                return Response(
-                    content="Request body too large",
-                    status_code=413,
-                    headers={"X-Max-Body-Size": str(self.max_body_size)},
-                )
-
             return response
         except BodySizeLimitExceeded:
             return Response(

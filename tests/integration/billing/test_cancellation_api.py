@@ -5,6 +5,7 @@ Tests T108: Integration test for cancellation endpoint in tests/integration/bill
 
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 
 class TestCancellationEndpoint:
@@ -20,7 +21,7 @@ class TestCancellationEndpoint:
         mock_result = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "subscription_plan_id": 1,
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
@@ -58,7 +59,7 @@ class TestCancellationEndpoint:
         mock_result = {
             "id": 1,
             "user_id": 2,  # Different user
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "status": "active",
         }
 
@@ -76,7 +77,7 @@ class TestCancellationEndpoint:
         mock_result = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "status": "canceled",
             "cancel_at_period_end": True,
             "canceled_at": datetime.now(UTC).isoformat(),
@@ -100,7 +101,7 @@ class TestCancellationWithStripeIntegration:
         mock_subscription = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
             "cancel_at_period_end": True,
@@ -130,7 +131,7 @@ class TestCancellationResponse:
         mock_result = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "subscription_plan_id": 1,
             "stripe_subscription_id": "sub_test_123",
             "status": "active",
@@ -189,7 +190,7 @@ class TestSubscriptionStatusEndpoint:
         mock_subscription = {
             "id": 1,
             "user_id": 1,
-            "tenant_id": 1,
+            "tenant_id": str(uuid4()),
             "subscription_plan_id": 1,
             "status": "active",
             "billing_interval": "monthly",

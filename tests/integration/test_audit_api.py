@@ -158,11 +158,11 @@ class TestAuditLogAPISchemas:
         """AuditLogResponse schema should validate correctly."""
         audit_log_data = {
             "id": str(uuid4()),
-            "tenant_id": 1,  # Must be integer, not UUID
+            "tenant_id": str(uuid4()),  # UUID for tenant_id
             "action": "user.login",
             "entity_type": "user",
             "entity_id": str(uuid4()),
-            "user_id": 1,  # Must be integer, not UUID
+            "user_id": 1,  # Integer for user_id
             "details": {"ip": "192.168.1.1"},
             "ip_address": "192.168.1.1",
             "user_agent": "Mozilla/5.0",
@@ -177,7 +177,7 @@ class TestAuditLogAPISchemas:
         from src.app.modules.audit_logs.schemas import AuditLogCreate
 
         data = {
-            "tenant_id": 1,  # Must be integer, not UUID
+            "tenant_id": str(uuid4()),  # UUID for tenant_id
             "action": "user.login",
         }
         create_schema = AuditLogCreate(**data)
