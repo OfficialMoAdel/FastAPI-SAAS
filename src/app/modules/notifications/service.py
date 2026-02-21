@@ -18,6 +18,7 @@ from structlog import get_logger
 from src.app.core.json_utils import json_dumps, json_loads
 
 from ...core.config import settings
+from ...core.db.database import get_db_context
 from ...core.events import EventPriority, event_bus
 from ...core.utils.cache import client as redis_client
 from ...core.utils.rate_limit import rate_limiter

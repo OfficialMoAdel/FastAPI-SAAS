@@ -61,7 +61,7 @@ class TestCheckoutAPI:
                 "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
                 new_callable=AsyncMock,
             ) as mock_get_plan,
-            patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
+            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
         ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get_plan.side_effect = Exception("Plan not found")
@@ -129,7 +129,7 @@ class TestCheckoutAPI:
             patch(
                 "src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock
             ) as mock_create,
-            patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
+            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
         ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_create.return_value = mock_session

@@ -1408,3 +1408,46 @@ def tenant(db):
     db.commit()
     db.refresh(tenant)
     return tenant
+
+
+@pytest.fixture
+async def e2e_client() -> AsyncGenerator[AsyncClient, None]:
+    """E2E client fixture with real database and Redis connections.
+    
+    This fixture is used by E2E tests that need actual infrastructure.
+    It uses the real app with actual dependencies (not mocked).
+    """
+    from src.app.main import app
+    
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://test",
+        headers={"X-Tenant-ID": "test-tenant-e2e"},
+    ) as ac:
+        yield ac
+
+
+@pytest.fixture
+def override_settings():
+    """Fixture to temporarily override settings for tests.
+    
+    Returns a context manager that allows temporary setting overrides.
+    """
+    from contextlib import contextmanager
+    from unittest.mock import patch
+    
+    @contextmanager
+    def _override(**kwargs):
+        patches = []
+        for key, value in kwargs.items():
+            if hasattr(settings, key):
+                patcher = patch.object(settings, key, value)
+                patcher.start()
+                patches.append(patcher)
+        try:
+            yield
+        finally:
+            for patcher in patches:
+                patcher.stop()
+    
+    return _override

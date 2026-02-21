@@ -307,10 +307,12 @@ def render_template(template_name: str, context: ModuleContext) -> str:
     template = env.get_template(f"{template_name}.j2")
     return template.render(
         module_name=context.module_name,
-        model_name=context.model_name,
+        ModelName=context.model_name,  # PascalCase for class names
+        model_name=context.module_name,  # snake_case for variable names
         table_name=context.table_name,
         fields=context.fields,
         tenant_aware=context.tenant_aware,
+        no_tenant=not context.tenant_aware,  # For template conditionals
         has_decimal=context.has_decimal,
         has_datetime=context.has_datetime,
         has_json=context.has_json,
@@ -323,6 +325,7 @@ def generate_module(
     context: ModuleContext,
     dry_run: bool = False,
     force: bool = False,
+    output_dir: str | None = None,
 ) -> dict[str, Path]:
     """Generate all module files.
 
@@ -330,25 +333,29 @@ def generate_module(
         context: Module context
         dry_run: If True, print what would be created without creating files
         force: If True, overwrite existing files
+        output_dir: Optional output directory (default: src/app/modules/{module_name})
 
     Returns:
         Dictionary of file names to file paths
     """
     # Define the module directory
-    module_dir = Path("src/app/modules") / context.module_name
+    if output_dir:
+        module_dir = Path(output_dir)
+    else:
+        module_dir = Path("src/app/modules") / context.module_name
 
     if dry_run:
         print(f"\n{'=' * 60}")
         print("DRY RUN: Would create the following structure:")
         print(f"{'=' * 60}")
         print(f"\n{module_dir}/")
-        print("  ├── __init__.py")
-        print("  ├── models.py")
-        print("  ├── schemas.py")
-        print("  ├── crud.py")
-        print("  ├── service.py")
-        print("  ├── router.py")
-        print("  └── AGENTS.md")
+        print("  |-- __init__.py")
+        print("  |-- models.py")
+        print("  |-- schemas.py")
+        print("  |-- crud.py")
+        print("  |-- service.py")
+        print("  |-- router.py")
+        print("  `-- AGENTS.md")
         print(f"\n{'=' * 60}")
         return {}
 
@@ -359,13 +366,13 @@ def generate_module(
 
     # Generate files
     files_to_generate = {
-        "__init__.py": render_template("init", context),
-        "models.py": render_template("models", context),
-        "schemas.py": render_template("schemas", context),
-        "crud.py": render_template("crud", context),
-        "service.py": render_template("service", context),
-        "router.py": render_template("router", context),
-        "AGENTS.md": render_template("agents", context),
+        "__init__.py": render_template("__init__.py", context),
+        "models.py": render_template("models.py", context),
+        "schemas.py": render_template("schemas.py", context),
+        "crud.py": render_template("crud.py", context),
+        "service.py": render_template("service.py", context),
+        "router.py": render_template("router.py", context),
+        "AGENTS.md": render_template("AGENTS.md", context),
     }
 
     generated_files: dict[str, Path] = {}
@@ -452,6 +459,13 @@ Optional fields: Add '?' suffix (e.g., 'description:text?')
         help="Overwrite existing files",
     )
 
+    parser.add_argument(
+        "--output-dir",
+        type=str,
+        default=None,
+        help="Output directory for generated files (default: src/app/modules/{module_name})",
+    )
+
     args = parser.parse_args()
 
     try:
@@ -467,6 +481,7 @@ Optional fields: Add '?' suffix (e.g., 'description:text?')
             context=context,
             dry_run=args.dry_run,
             force=args.force,
+            output_dir=args.output_dir,
         )
 
         if not args.dry_run and generated:

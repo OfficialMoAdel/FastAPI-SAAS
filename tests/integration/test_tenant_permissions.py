@@ -74,16 +74,17 @@ class TestTenantPermissions:
         self, async_client: AsyncClient, regular_user_token_headers: dict, tenant
     ) -> None:
         """Test that regular users cannot access other tenants."""
+        import uuid
+        
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
         
-        # Accessing a different tenant ID (tenant.id + 1)
+        # Accessing a different tenant ID (random UUID that doesn't exist)
         # MockUser is in tenant 1 (from regular_user_token_headers default)
-        # But we should probably rely on the default override here which has tenant_id=1
         # The created tenant likely has ID=1.
-        # So we try to access tenant.id + 1.
+        # So we try to access a random UUID that the user doesn't belong to.
         
-        forbidden_id = tenant.id + 1
+        forbidden_id = uuid.uuid4()  # Random UUID that doesn't match user's tenant
         response = await async_client.get(f"/api/v1/tenants/{forbidden_id}")
         
         assert response.status_code == status.HTTP_403_FORBIDDEN

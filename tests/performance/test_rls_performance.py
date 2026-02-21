@@ -3,6 +3,9 @@
 Measures query performance impact of Row Level Security to ensure overhead
 stays within acceptable limits (< 5%).
 
+IMPORTANT: These tests require PostgreSQL with RLS configured.
+They will be skipped when running against SQLite (default test database).
+
 Usage:
     uv run pytest tests/performance/test_rls_performance.py -v -s
 """
@@ -22,8 +25,21 @@ from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 from src.app.modules.notifications.models import Notification
 
-# Mark all tests as async and requiring PostgreSQL (RLS is PostgreSQL-specific)
-pytestmark = [pytest.mark.asyncio, pytest.mark.requires_postgres]
+# Check if we're running against PostgreSQL
+# These tests require PostgreSQL-specific features (SET LOCAL for RLS)
+# SQLite doesn't support these, so we skip when using SQLite
+try:
+    from src.app.core.config import settings
+
+    _IS_POSTGRES = "postgresql" in str(settings.DATABASE_URL).lower()
+except Exception:
+    _IS_POSTGRES = False
+
+# Mark all tests as async and skip if not PostgreSQL
+pytestmark = [
+    pytest.mark.asyncio,
+    pytest.mark.skipif(not _IS_POSTGRES, reason="RLS tests require PostgreSQL"),
+]
 
 
 @pytest.fixture

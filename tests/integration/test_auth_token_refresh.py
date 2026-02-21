@@ -85,6 +85,7 @@ class TestTokenRefreshWithCaching:
         # Mock the token verification and user service
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "deleteduser"
+        mock_token_data.absolute_exp = None  # No absolute expiration
 
         mock_db = AsyncMock()
 

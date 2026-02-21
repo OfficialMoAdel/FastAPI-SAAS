@@ -4,7 +4,7 @@ from crudadmin import CRUDAdmin
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..core.config import EnvironmentOption, settings
-from ..core.db.database import async_get_db
+from ..core.db.database import get_db_context
 from .views import register_admin_views
 
 
@@ -14,7 +14,7 @@ async def _get_db_session() -> AsyncGenerator[AsyncSession, None]:
     CRUDAdmin expects Callable[[], AsyncGenerator[AsyncSession, None]]
     but async_get_db returns _AsyncGeneratorContextManager due to @asynccontextmanager.
     """
-    async with async_get_db() as session:
+    async with get_db_context() as session:
         yield session
 
 

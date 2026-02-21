@@ -51,6 +51,7 @@ TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
         "/api/v1/ready",
         "/api/v1/app_configuration",  # Public frontend configuration
         "/api/v1/billing/webhook",  # Stripe webhooks (authenticated by signature)
+        "/api/v1/account/register",  # Registration (no tenant before account creation)
     ]
 )
 

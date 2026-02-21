@@ -302,9 +302,9 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
 
 async def _get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
-    from ...core.db.database import async_get_db
+    from ...core.db.database import get_db_context
 
-    async with async_get_db() as db:
+    async with get_db_context() as db:
         yield db
 
 

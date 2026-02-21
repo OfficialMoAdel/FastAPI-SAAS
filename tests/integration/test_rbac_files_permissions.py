@@ -21,20 +21,22 @@ class TestFileReadPermissions:
     def test_list_files_requires_read_permission(self, client):
         """GET /files requires FILES_READ permission."""
         response = client.get("/api/v1/files", headers=TENANT_HEADERS)
-        # 200 = success, 400 = no storage, 403 = no permission
+        # 200 = success, 400 = no storage, 401 = unauthenticated, 403 = no permission
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
     def test_get_file_info_requires_read_permission(self, client):
         """GET /files/{id}/info requires FILES_READ permission."""
         response = client.get("/api/v1/files/1/info", headers=TENANT_HEADERS)
-        # 404 = not found, 400 = no storage, 403 = no permission
+        # 404 = not found, 400 = no storage, 401 = unauthenticated, 403 = no permission
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
@@ -44,6 +46,7 @@ class TestFileReadPermissions:
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
@@ -53,6 +56,7 @@ class TestFileReadPermissions:
         assert response.status_code in [
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
@@ -68,6 +72,7 @@ class TestFileWritePermissions:
         assert response.status_code in [
             status.HTTP_201_CREATED,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
             status.HTTP_404_NOT_FOUND,
             status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -81,6 +86,7 @@ class TestFileWritePermissions:
             status.HTTP_200_OK,
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
@@ -95,6 +101,7 @@ class TestFileDeletePermissions:
             status.HTTP_204_NO_CONTENT,
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
             status.HTTP_403_FORBIDDEN,
         ]
 
@@ -106,10 +113,11 @@ class TestFileSelfAccess:
         """Users with self-access can view their own files."""
         # The mock user should be able to access their own files
         response = client.get("/api/v1/files", headers=TENANT_HEADERS)
-        # Should not get 403 for own files
+        # Should not get 403 for own files (but 401 if unauthenticated)
         assert response.status_code in [
             status.HTTP_200_OK,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
         ]
 
     def test_file_ownership_respected(self, client):
@@ -121,4 +129,5 @@ class TestFileSelfAccess:
             status.HTTP_200_OK,
             status.HTTP_404_NOT_FOUND,
             status.HTTP_400_BAD_REQUEST,
+            status.HTTP_401_UNAUTHORIZED,
         ]

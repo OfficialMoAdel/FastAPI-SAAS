@@ -1,6 +1,5 @@
 import os
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import event
@@ -13,6 +12,7 @@ from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context, rls_context
 from src.app.core.tenancy.context import get_current_tenant
+from contextlib import asynccontextmanager
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
@@ -92,7 +92,6 @@ if not event.contains(Session, "after_begin", restore_rls_context):
 async_session_maker = local_session
 
 
-@asynccontextmanager
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get database session with RLS context and proper cleanup.
 
@@ -105,6 +104,39 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     Example:
         >>> async def get_user(db: AsyncSession = Depends(async_get_db)):
         ...     return await crud_users.get(db, id=1)
+    """
+    db = local_session()
+    try:
+        tenant = get_current_tenant()
+        if tenant:
+            # Apply RLS context for the current tenant
+            async with rls_context(db, str(tenant.id)):
+                yield db
+        else:
+            yield db
+    except Exception:
+        # Rollback on exception before re-raising
+        await db.rollback()
+        raise
+    finally:
+        # Always close session to prevent connection pool exhaustion
+        await db.close()
+
+
+@asynccontextmanager
+async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
+    """Get database session with RLS context for manual context manager usage.
+
+    Use this when you need to use `async with` syntax outside of FastAPI dependency injection.
+    For FastAPI route handlers, use async_get_db with Depends() instead.
+
+    Yields:
+        AsyncSession: Database session with RLS context set
+
+    Example:
+        >>> async with get_db_context() as db:
+        ...     result = await db.execute(select(User))
+        ...     return result.scalars().all()
     """
     db = local_session()
     try:

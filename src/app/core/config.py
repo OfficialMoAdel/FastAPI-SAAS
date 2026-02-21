@@ -30,8 +30,7 @@ class CryptSettings(BaseSettings):
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
     # SECURITY FIX: Maximum absolute session duration to prevent indefinite refresh
     MAX_SESSION_DURATION_DAYS: int = Field(
-        default=30, ge=1, le=365,
-        description="Maximum absolute session duration before forcing re-auth"
+        default=30, ge=1, le=365, description="Maximum absolute session duration before forcing re-auth"
     )
     # Bcrypt work factor: 8=30ms(dev), 10=100ms, 12=250ms(default), 14=1000ms
     BCRYPT_ROUNDS: int = Field(default=12, ge=8, le=14)
@@ -228,7 +227,7 @@ class AuthSettings(BaseSettings):
     # "fail_closed": Raise exception and block operation (security focused, compliance)
     AUDIT_LOG_FAILURE_MODE: Literal["fail_open", "fail_closed"] = Field(
         default="fail_open",
-        description="How to handle audit log failures: 'fail_open' (allow) or 'fail_closed' (block)"
+        description="How to handle audit log failures: 'fail_open' (allow) or 'fail_closed' (block)",
     )
 
 
@@ -671,6 +670,12 @@ class Settings(
     # Override model_config to ensure no env_prefix is applied to base fields
     # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
     # have env_prefix which would otherwise be inherited and break field resolution
-    model_config = SettingsConfigDict(env_prefix="", env_file=".env", env_file_encoding="utf-8")
+    model_config = SettingsConfigDict(
+        env_prefix="",
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # Ignore unknown env vars for backward compatibility
+    )
+
 
 settings = Settings()  # type: ignore

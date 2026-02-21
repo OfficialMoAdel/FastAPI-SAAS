@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from structlog import get_logger
 
+from src.app.core.db.database import get_db_context
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.utils import cache as redis_cache
 from src.app.modules.audit_logs.models import AuditLog
@@ -145,6 +146,32 @@ class AuditLogService:
 
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    async def get_audit_logs_for_tenant_async(
+        self,
+        tenant_id: UUID,
+        user_id: int | None = None,  # FIX: Changed from UUID to int to match model
+        action: str | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        limit: int = 100,
+        offset: int = 0,
+    ) -> list[AuditLog]:
+        """Get audit logs for a specific tenant in background context."""
+        async with get_db_context() as db:
+            return await self.query_logs(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                action=action,
+                entity_type=entity_type,
+                entity_id=entity_id,
+                start_date=start_date,
+                end_date=end_date,
+                limit=limit,
+                offset=offset,
+            )
 
 
 async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = None) -> None:

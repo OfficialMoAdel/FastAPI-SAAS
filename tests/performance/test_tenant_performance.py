@@ -7,7 +7,7 @@ Success Criteria:
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -19,25 +19,58 @@ from src.app.main import app
 
 @pytest_asyncio.fixture
 async def async_client():
-    """Create async test client."""
-    # Mock Redis rate limiter to avoid rate limiting during performance tests
-    with patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", new=AsyncMock(return_value=(False, 0))):
+    """Create async test client with Redis mocked."""
+    # Create a mock Redis client that can be used as context manager
+    mock_redis = AsyncMock()
+    mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.set = AsyncMock(return_value=True)
+    mock_redis.incr = AsyncMock(return_value=1)
+    mock_redis.expire = AsyncMock(return_value=True)
+    mock_redis.delete = AsyncMock(return_value=True)
+    mock_redis.aclose = AsyncMock()
+
+    # Mock rate limiter
+    mock_rate_check = AsyncMock(return_value=(False, 0))
+
+    # Mock IP filter service to avoid Redis dependency
+    mock_filter_service = AsyncMock()
+    mock_filter_service.is_blacklisted = AsyncMock(return_value=False)
+    mock_filter_service.is_whitelisted = AsyncMock(return_value=True)
+
+    with (
+        patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", mock_rate_check),
+        patch("src.app.modules.security.service.get_redis_client", return_value=mock_redis),
+        patch("src.app.middleware.ip_filter.IPFilterService", return_value=mock_filter_service),
+    ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             yield client
 
 
-@pytest.mark.asyncio
-@pytest.mark.requires_postgres
+# Skip these tests if not using PostgreSQL (optional - can run without DB)
+try:
+    from src.app.core.config import settings
+
+    _IS_POSTGRES = "postgresql" in str(settings.DATABASE_URL).lower()
+except Exception:
+    _IS_POSTGRES = False
+
+pytestmark = [
+    pytest.mark.asyncio,
+]
+
+
 class TestTenantResolutionPerformance:
     """Performance tests for tenant context resolution."""
 
     async def test_context_operations_latency(self) -> None:
         """Test that context operations are fast (<1ms each)."""
 
-        # Create a mock tenant-like object
+        # Create a mock tenant-like object with all required attributes
         class MockTenant:
             id = 1
             slug = "test"
+            name = "Test Tenant"
+            is_active = True
 
         tenant = MockTenant()
         iterations = 1000
@@ -80,6 +113,8 @@ class TestTenantResolutionPerformance:
                 def __init__(self, tid: int):
                     self.id = tid
                     self.slug = f"tenant-{tid}"
+                    self.name = f"Tenant {tid}"
+                    self.is_active = True
 
             tenant = MockTenant(tenant_id)
             set_tenant_context(tenant)  # type: ignore

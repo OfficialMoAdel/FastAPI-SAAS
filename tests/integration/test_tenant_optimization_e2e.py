@@ -99,7 +99,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert response.status_code == 200, f"Alpha failed: {response.text}"
             data = response.json()
             assert data["email"] == user_alpha.email
-            assert data["tenant_id"] == tenant_alpha.id
+            assert data["tenant_id"] == str(tenant_alpha.id)  # Compare as string
 
             # 2. Login as Beta
             app.dependency_overrides[get_current_user] = lambda: user_beta
@@ -109,7 +109,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert response.status_code == 200, f"Beta failed: {response.text}"
             data = response.json()
             assert data["email"] == user_beta.email
-            assert data["tenant_id"] == tenant_beta.id
+            assert data["tenant_id"] == str(tenant_beta.id)  # Compare as string
 
             # Clean up
             app.dependency_overrides = {}
