@@ -2,6 +2,7 @@
 
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from pydantic import SecretStr
 
@@ -118,7 +119,7 @@ class EmailService:
         """Log notification to database."""
         async with self._session_maker() as session:
             notification = Notification(
-                tenant_id=tenant_id,
+                tenant_id=UUID(str(tenant_id)) if isinstance(tenant_id, int) else tenant_id,
                 user_id=user_id,
                 template_name=template_name,
                 to_email=to_email,

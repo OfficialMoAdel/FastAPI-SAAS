@@ -67,7 +67,7 @@ async def create_redis_cache_pool() -> None:
 
 async def close_redis_cache_pool() -> None:
     if cache.client is not None:
-        await cache.client.aclose()
+        await cache.client.close()
 
     # We close the shared pool separately or via factory
     # But since cache.pool IS the shared pool, closing it here might affect others if not careful.
@@ -88,7 +88,7 @@ async def create_redis_queue_pool() -> None:
 
 async def close_redis_queue_pool() -> None:
     if queue.pool is not None:
-        await queue.pool.aclose()
+        await queue.pool.close()
         # Note: We don't close the shared pool here because close_redis_cache_pool handles it.
         # Ideally, we should have a centralized shutdown, but lifespan calls both.
         # Calling close on the pool multiple times is safe.

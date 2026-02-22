@@ -4,7 +4,7 @@ from typing import Annotated, Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .._base.schemas import BaseCreate, BaseList, BaseRead, BaseReadUUID, BaseUpdate
+from .._base.schemas import BaseCreate, BaseList, BaseReadUUID, BaseUpdate
 
 SLUG_PATTERN = re.compile(r"^[a-z0-9][a-z0-9-]*[a-z0-9]$")
 RESERVED_SLUGS = frozenset({"host", "admin", "api"})

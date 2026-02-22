@@ -9,7 +9,6 @@ from collections.abc import AsyncGenerator, Callable
 from contextlib import asynccontextmanager
 from functools import wraps
 from typing import Any, TypeVar
-from uuid import UUID
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
@@ -280,10 +279,10 @@ def with_tenant_context(tenant_id: str, user_id: str | None = None) -> Callable[
         @wraps(func)
         async def wrapper(*args: Any, **kwargs: Any) -> Any:
             # Import here to avoid circular dependency
-            from src.app.core.db.database import async_get_db
+            from src.app.core.db.database import get_db_context
 
             # Get session and set RLS context using proper async context manager
-            async with async_get_db() as session:
+            async with get_db_context() as session:
                 async with rls_context(session, tenant_id, user_id):
                     # Call the original function
                     return await func(*args, **kwargs)

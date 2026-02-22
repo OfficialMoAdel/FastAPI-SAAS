@@ -228,7 +228,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         # It exists, we'll fall through to the update logic below
                         # But we raise a dummy error to trigger the shared update path
                         # OR just handle it here. Let's handle it here for clarity.
-                        raise IntegrityError("Already exists", params=None, orig=None)
+                        raise IntegrityError("Already exists", {}, Exception("Subscription exists"))
 
                     await db.commit()
 

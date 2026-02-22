@@ -9,9 +9,7 @@ from fastapi import Request, Response
 from jwt import ExpiredSignatureError
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
-from redis.exceptions import RedisError
 from sqlalchemy import select, update
-from sqlalchemy.exc import DatabaseError
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 

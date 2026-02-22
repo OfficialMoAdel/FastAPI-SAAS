@@ -20,8 +20,10 @@ blacklist update. Relying on Redis + negative cache instead.
 import asyncio
 import logging
 import time
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import lru_cache
+from typing import cast
 
 import xxhash
 
@@ -255,7 +257,7 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
         pipe = redis_client.pipeline()
-        pipe.zadd(BLACKLIST_KEY, {token: score})
+        pipe.zadd(BLACKLIST_KEY, cast(Mapping[str | bytes, bytes | float | int | str], {token: score}))
         pipe.delete(negative_key)
         await pipe.execute()
         return True
@@ -284,7 +286,7 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         pipe = redis_client.pipeline()
         # Build mapping of token -> expiry score
         mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
-        pipe.zadd(BLACKLIST_KEY, mapping)
+        pipe.zadd(BLACKLIST_KEY, cast(Mapping[str | bytes, bytes | float | int | str], mapping))
         # M1: Invalidate negative cache for all tokens being blacklisted
         for token, _ in tokens:
             negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"

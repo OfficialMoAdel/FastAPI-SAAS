@@ -125,9 +125,13 @@ class AuditLogService:
             List of audit log entries with eager-loaded user data
         """
         # P2-5: Eager load user relationship to prevent N+1 queries
-        query = select(AuditLog).options(
-            joinedload(AuditLog.user),  # type: ignore[arg-type]
-        ).where(AuditLog.tenant_id == tenant_id)
+        query = (
+            select(AuditLog)
+            .options(
+                joinedload(AuditLog.user),  # type: ignore[arg-type]
+            )
+            .where(AuditLog.tenant_id == tenant_id)
+        )
 
         if user_id:
             query = query.where(AuditLog.user_id == user_id)
@@ -160,7 +164,7 @@ class AuditLogService:
         offset: int = 0,
     ) -> list[AuditLog]:
         """Get audit logs for a specific tenant in background context."""
-        async with get_db_context() as db:
+        async with get_db_context() as _:
             return await self.query_logs(
                 tenant_id=tenant_id,
                 user_id=user_id,
@@ -224,9 +228,9 @@ async def _direct_insert_log(log_data: dict[str, Any], db: AsyncSession | None =
         return
 
     # Fallback to creating new session
-    from src.app.core.db.database import async_get_db
+    from src.app.core.db.database import get_db_context
 
-    async with async_get_db() as db:
+    async with get_db_context() as db:
         try:
             service = AuditLogService(db)
             await service.create_log(
@@ -318,9 +322,9 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if db:
         inserted = await _perform_bulk_insert(db)
     else:
-        from src.app.core.db.database import async_get_db
+        from src.app.core.db.database import get_db_context
 
-        async with async_get_db() as session:
+        async with get_db_context() as session:
             try:
                 inserted = await _perform_bulk_insert(session)
             finally:

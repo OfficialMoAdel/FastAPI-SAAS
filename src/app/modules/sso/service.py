@@ -256,9 +256,11 @@ class SSOService:
             access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
             token_data = {
-                "sub": found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"],
+                "sub": (
+                    found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"]
+                ),
                 "id": found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"],
-                "email": found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"],
+                "email": (found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]),
                 "tenant_id": found_user_data.tenant_id
                 if hasattr(found_user_data, "tenant_id")
                 else found_user_data["tenant_id"],
@@ -286,7 +288,9 @@ class SSOService:
                     {
                         "action": "auth.sso_login",
                         "entity_type": "user",
-                        "entity_id": str(found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]),
+                        "entity_id": str(
+                            found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                        ),
                         "tenant_id": str(
                             found_user_data.tenant_id
                             if hasattr(found_user_data, "tenant_id")

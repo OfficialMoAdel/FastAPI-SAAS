@@ -1,5 +1,6 @@
 import os
 from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import event
@@ -12,7 +13,6 @@ from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context, rls_context
 from src.app.core.tenancy.context import get_current_tenant
-from contextlib import asynccontextmanager
 
 
 class Base(DeclarativeBase, MappedAsDataclass):

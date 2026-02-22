@@ -54,7 +54,7 @@ _MFA_CHECK_LUA = """
     local key = KEYS[1]
     local max_attempts = tonumber(ARGV[1])
     local lockout_duration = tonumber(ARGV[2])
-    
+
     local current = redis.call('GET', key)
     if current and tonumber(current) >= max_attempts then
         local ttl = redis.call('TTL', key)
@@ -62,7 +62,7 @@ _MFA_CHECK_LUA = """
             return -1
         end
     end
-    
+
     local new_count = redis.call('INCR', key)
     if new_count == 1 then
         redis.call('EXPIRE', key, lockout_duration)
