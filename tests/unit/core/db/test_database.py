@@ -28,11 +28,22 @@ async def test_async_get_db_applies_rls_when_tenant_present():
     with patch("src.app.core.db.database.local_session", mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=mock_tenant):
             with patch("src.app.core.db.database.rls_context", return_value=mock_rls_cm) as mock_rls_factory:
-                # Use async context manager pattern (async_get_db is @asynccontextmanager)
-                async with async_get_db() as db:
-                    assert db is mock_session
-                    # Verify RLS was applied
-                    mock_rls_factory.assert_called_once_with(mock_session, "tenant-123")
+                # async_get_db is an async generator, so we iterate it manually
+                gen = async_get_db()
+                db = await anext(gen)
+                assert db is mock_session
+                # Verify RLS was applied
+                mock_rls_factory.assert_called_once_with(mock_session, "tenant-123")
+                # Verify context manager entered
+                mock_rls_cm.__aenter__.assert_awaited_once()
+
+                # Cleanup
+                try:
+                    await anext(gen)
+                except StopAsyncIteration:
+                    pass
+                # Verify context manager exited
+                mock_rls_cm.__aexit__.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -48,8 +59,14 @@ async def test_async_get_db_no_rls_when_no_tenant():
     with patch("src.app.core.db.database.local_session", mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=None):
             with patch("src.app.core.db.database.rls_context") as mock_rls_factory:
-                # Use async context manager pattern (async_get_db is @asynccontextmanager)
-                async with async_get_db() as db:
-                    assert db is mock_session
-                    # Verify RLS was NOT applied
-                    mock_rls_factory.assert_not_called()
+                # async_get_db is an async generator
+                gen = async_get_db()
+                db = await anext(gen)
+                assert db is mock_session
+                # Verify RLS was NOT applied
+                mock_rls_factory.assert_not_called()
+
+                try:
+                    await anext(gen)
+                except StopAsyncIteration:
+                    pass

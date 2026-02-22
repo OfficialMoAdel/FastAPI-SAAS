@@ -73,6 +73,14 @@ async def get_current_user(
         user = await user_service.get_user_auth_info(username=username_or_email)
 
     if user:
+        # SECURITY FIX: Verify token_version if using cached payload
+        # This ensures revoked sessions (e.g. password change) are rejected even if JWT is cached
+        if cached_payload:
+            payload_version = cached_payload.get("token_version", 0)
+            user_version = user.get("token_version", 0)
+            if payload_version != user_version:
+                raise UnauthorizedException("Session expired. Please log in again.")
+
         # Verify user belongs to current tenant context
         current_tenant = get_tenant_context()
         if current_tenant and user["tenant_id"] != current_tenant.id:

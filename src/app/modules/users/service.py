@@ -9,6 +9,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
+from ...core.events import EventPriority, event_bus
 from ...core.exceptions.http_exceptions import ForbiddenException
 from ...core.json_utils import json_dumps, json_loads
 from ...core.security import blacklist_token, get_password_hash
@@ -247,6 +248,18 @@ class UserService(BaseService[User]):
 
         try:
             result = await self.crud.create(db=self.db, object=user_internal)
+
+            # Publish user.created event for webhooks and other integrations
+            await event_bus.publish(
+                "user.created",
+                {
+                    "user_id": result.id,
+                    "email": result.email,
+                    "username": result.username,
+                    "tenant_id": str(result.tenant_id),
+                },
+                priority=EventPriority.NORMAL,
+            )
         except IntegrityError as e:
             # Handle race condition: duplicate was created between our check and insert
             await self.db.rollback()

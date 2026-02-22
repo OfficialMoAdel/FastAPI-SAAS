@@ -66,11 +66,14 @@ class TestFlushAuditLogBuffer:
         mock_db.add_all = MagicMock()
         mock_db.commit = AsyncMock()
 
-        # Patch async_get_db at the import location (inside the function)
+        # Patch get_db_context (used by flush_audit_log_buffer)
         with patch("src.app.modules.audit_logs.service.redis_cache", mock_redis_cache):
-            with patch("src.app.core.db.database.async_get_db") as mock_get_db:
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+            with patch("src.app.core.db.database.get_db_context") as mock_get_db:
+                # get_db_context returns an async context manager
+                mock_ctx = AsyncMock()
+                mock_ctx.__aenter__.return_value = mock_db
+                mock_ctx.__aexit__.return_value = None
+                mock_get_db.return_value = mock_ctx
 
                 from src.app.modules.audit_logs import service as audit_service
 
@@ -100,9 +103,11 @@ class TestFlushAuditLogBuffer:
         mock_db.rollback = AsyncMock()
 
         with patch("src.app.modules.audit_logs.service.redis_cache", mock_redis_cache):
-            with patch("src.app.core.db.database.async_get_db") as mock_get_db:
-                mock_get_db.return_value.__aenter__ = AsyncMock(return_value=mock_db)
-                mock_get_db.return_value.__aexit__ = AsyncMock(return_value=None)
+            with patch("src.app.core.db.database.get_db_context") as mock_get_db:
+                mock_ctx = AsyncMock()
+                mock_ctx.__aenter__.return_value = mock_db
+                mock_ctx.__aexit__.return_value = None
+                mock_get_db.return_value = mock_ctx
 
                 from src.app.modules.audit_logs import service as audit_service
 

@@ -13,6 +13,8 @@ Performance Optimization (R2-HYBRID MED-1):
 - Negative caching prevents cache penetration DoS
 """
 
+import asyncio
+from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
@@ -41,6 +43,11 @@ logger = get_logger(__name__)
 # - Thread-safe: cachetools TTLCache is safe for async context
 # - Stores: dict with {id, slug, is_active} or None for negative cache
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
+
+# Cache stampede protection: per-slug locks
+# Prevents "thundering herd" where multiple concurrent requests for a cold tenant
+# all bypass cache and hit the DB simultaneously.
+_TENANT_LOCKS: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
     [
@@ -305,72 +312,82 @@ class TenantMiddleware(BaseHTTPMiddleware):
         except Exception as e:
             logger.warning("Tenant L1 cache read error: %s", e)
 
-        cache_key = f"tenant:slug:{slug}"
+        # Cache Stampede Protection: Acquire lock for this slug
+        # This ensures only ONE request hits Redis/DB, while others wait
+        async with _TENANT_LOCKS[slug]:
+            # Double-check L1 cache inside lock (in case another request populated it while we waited)
+            if slug in _L1_TENANT_CACHE:
+                cached_data = _L1_TENANT_CACHE.get(slug)
+                if cached_data is not None:
+                    return await self._get_tenant_from_cache_data(cached_data)
+                return None
 
-        # L2: Try Redis cache
-        if redis_client:
-            try:
-                cached = await redis_client.get(cache_key)
-                if cached:
-                    # Deserialize cached tenant data
-                    data = json_loads(cached)
+            cache_key = f"tenant:slug:{slug}"
 
-                    # Handle negative cache
-                    if data is None:
-                        logger.debug("Tenant L2 negative cache hit | slug=%s", slug)
-                        # Populate L1 negative cache
-                        _L1_TENANT_CACHE[slug] = None
-                        return None
-
-                    logger.debug("Tenant L2 cache hit | slug=%s", slug)
-                    # Populate L1 cache
-                    _L1_TENANT_CACHE[slug] = data
-                    # Reconstruct minimal Tenant object for validation
-                    return await self._get_tenant_from_cache_data(data)
-            except Exception as e:
-                logger.warning("Tenant L2 cache read error: %s", e)
-
-        # L3: Cache miss - query DB
-        async with local_session() as session:
-            stmt = select(Tenant).where(Tenant.slug == slug)
-            result = await session.execute(stmt)
-            tenant = result.scalar_one_or_none()
-
-            # Prepare cache data
-            cache_data: dict | None = None
-            if tenant:
-                cache_data = {
-                    "id": tenant.id,
-                    "slug": tenant.slug,
-                    "is_active": tenant.is_active,
-                }
-
-            # Populate L1 cache (always, even on DB miss for negative caching)
-            try:
-                _L1_TENANT_CACHE[slug] = cache_data
-            except Exception as e:
-                logger.warning("Tenant L1 cache write error: %s", e)
-
-            # Populate L2 Redis cache
+            # L2: Try Redis cache
             if redis_client:
                 try:
-                    if tenant:
-                        # Cache Success (1 hour)
-                        # OPT-7: Use bytes directly (skip as_str=True decode)
-                        serialized = json_dumps(cache_data)
-                        await redis_client.setex(cache_key, 3600, serialized)
-                        logger.debug("Tenant L2 cached | slug=%s | tenant_id=%s", slug, tenant.id)
-                    else:
-                        # Cache Failure (Negative Cache)
-                        # Prevent Cache Penetration DoS
-                        ttl = settings.TENANT_NEGATIVE_CACHE_TTL
-                        await redis_client.setex(cache_key, ttl, "null")
-                        logger.debug("Tenant L2 negative cache set | slug=%s | ttl=%s", slug, ttl)
+                    cached = await redis_client.get(cache_key)
+                    if cached:
+                        # Deserialize cached tenant data
+                        data = json_loads(cached)
 
+                        # Handle negative cache
+                        if data is None:
+                            logger.debug("Tenant L2 negative cache hit | slug=%s", slug)
+                            # Populate L1 negative cache
+                            _L1_TENANT_CACHE[slug] = None
+                            return None
+
+                        logger.debug("Tenant L2 cache hit | slug=%s", slug)
+                        # Populate L1 cache
+                        _L1_TENANT_CACHE[slug] = data
+                        # Reconstruct minimal Tenant object for validation
+                        return await self._get_tenant_from_cache_data(data)
                 except Exception as e:
-                    logger.warning("Tenant L2 cache write error: %s", e)
+                    logger.warning("Tenant L2 cache read error: %s", e)
 
-            return tenant
+            # L3: Cache miss - query DB
+            async with local_session() as session:
+                stmt = select(Tenant).where(Tenant.slug == slug)
+                result = await session.execute(stmt)
+                tenant = result.scalar_one_or_none()
+
+                # Prepare cache data
+                cache_data: dict | None = None
+                if tenant:
+                    cache_data = {
+                        "id": tenant.id,
+                        "slug": tenant.slug,
+                        "is_active": tenant.is_active,
+                    }
+
+                # Populate L1 cache (always, even on DB miss for negative caching)
+                try:
+                    _L1_TENANT_CACHE[slug] = cache_data
+                except Exception as e:
+                    logger.warning("Tenant L1 cache write error: %s", e)
+
+                # Populate L2 Redis cache
+                if redis_client:
+                    try:
+                        if tenant:
+                            # Cache Success (1 hour)
+                            # OPT-7: Use bytes directly (skip as_str=True decode)
+                            serialized = json_dumps(cache_data)
+                            await redis_client.setex(cache_key, 3600, serialized)
+                            logger.debug("Tenant L2 cached | slug=%s | tenant_id=%s", slug, tenant.id)
+                        else:
+                            # Cache Failure (Negative Cache)
+                            # Prevent Cache Penetration DoS
+                            ttl = settings.TENANT_NEGATIVE_CACHE_TTL
+                            await redis_client.setex(cache_key, ttl, "null")
+                            logger.debug("Tenant L2 negative cache set | slug=%s | ttl=%s", slug, ttl)
+
+                    except Exception as e:
+                        logger.warning("Tenant L2 cache write error: %s", e)
+
+                return tenant
 
     async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext | None:
         """Create a TenantContext directly from cached data, skipping ORM overhead.

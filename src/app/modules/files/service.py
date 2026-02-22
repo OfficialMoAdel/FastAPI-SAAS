@@ -227,7 +227,7 @@ class FileService:
     async def list_files(
         self,
         tenant_id: UUID,
-        user_id: UUID | None = None,
+        user_id: int | None = None,
         mime_type: str | None = None,
         limit: int = 50,
         offset: int = 0,

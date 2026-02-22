@@ -13,6 +13,7 @@ from typing import Any
 
 import pyotp
 from cryptography.fernet import Fernet
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -348,9 +349,13 @@ class MFAService:
         if normalized_code.startswith("BC"):
             normalized_code = normalized_code[2:]
 
-        # Get user's MFA method (FastCRUD returns dict)
-        mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
-        if not mfa_method_dict or not mfa_method_dict.get("backup_codes"):
+        # SECURITY FIX: Use row-level locking to prevent race conditions (double spending)
+        # Fetch MFA method with FOR UPDATE to lock the row during verification
+        stmt = select(MFAMethod).where(MFAMethod.user_id == user_id, MFAMethod.type == "totp").with_for_update()
+        result = await db.execute(stmt)
+        mfa_method = result.scalar_one_or_none()
+
+        if not mfa_method or not mfa_method.backup_codes:
             return {"valid": False, "message": "Invalid code", "backup_codes_remaining": None}
 
         # Reconstruct full code with prefix for verification
@@ -358,50 +363,51 @@ class MFAService:
 
         # Check each stored hash against the provided code (bcrypt requires verification, not comparison)
         matched_hash = None
-        for stored_hash in mfa_method_dict["backup_codes"]:
+        for stored_hash in mfa_method.backup_codes:
             if await verify_password(formatted_code, stored_hash):
                 matched_hash = stored_hash
                 break
 
         if matched_hash:
-            # Fetch model instance to update
-            mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
-            if mfa_method and mfa_method.backup_codes:
-                # Remove used backup code
-                mfa_method.backup_codes.remove(matched_hash)
-                mfa_method.last_used_at = datetime.now()
-                await db.commit()
+            # Remove used backup code (we have the lock, so this is safe)
+            # Create a new list to ensure SQLAlchemy detects the change (for JSON/ARRAY types)
+            new_backup_codes = list(mfa_method.backup_codes)
+            new_backup_codes.remove(matched_hash)
+            mfa_method.backup_codes = new_backup_codes
 
-                remaining = len(mfa_method.backup_codes)
-                logger.info("mfa_backup_code_used", user_id=user_id, remaining=remaining)
+            mfa_method.last_used_at = datetime.now()
+            await db.commit()
 
-                # Audit log: Backup code used
-                try:
-                    from src.app.core.events import EventPriority, event_bus
-                    from src.app.modules.users.crud import crud_users
+            remaining = len(mfa_method.backup_codes)
+            logger.info("mfa_backup_code_used", user_id=user_id, remaining=remaining)
 
-                    user = await crud_users.get(db=db, id=user_id)
-                    if user:
-                        await event_bus.publish(
-                            "audit.log",
-                            {
-                                "action": MFA_ACTION_BACKUP_CODE_USED,
-                                "entity_type": "mfa",
-                                "entity_id": str(mfa_method_dict["id"]),
-                                "tenant_id": str(user.get("tenant_id", "")),
-                                "user_id": str(user_id),
-                                "details": {"backup_codes_remaining": remaining},
-                            },
-                            priority=EventPriority.CRITICAL,
-                        )
-                except Exception as e:
-                    logger.debug("Audit logging failed (non-critical): %s", e)
+            # Audit log: Backup code used
+            try:
+                from src.app.core.events import EventPriority, event_bus
+                from src.app.modules.users.crud import crud_users
 
-                return {
-                    "valid": True,
-                    "message": "Verification successful",
-                    "backup_codes_remaining": remaining,
-                }
+                user = await crud_users.get(db=db, id=user_id)
+                if user:
+                    await event_bus.publish(
+                        "audit.log",
+                        {
+                            "action": MFA_ACTION_BACKUP_CODE_USED,
+                            "entity_type": "mfa",
+                            "entity_id": str(mfa_method.id),
+                            "tenant_id": str(user.get("tenant_id", "")),
+                            "user_id": str(user_id),
+                            "details": {"backup_codes_remaining": remaining},
+                        },
+                        priority=EventPriority.CRITICAL,
+                    )
+            except Exception as e:
+                logger.debug("Audit logging failed (non-critical): %s", e)
+
+            return {
+                "valid": True,
+                "message": "Verification successful",
+                "backup_codes_remaining": remaining,
+            }
 
         return {"valid": False, "message": "Invalid code", "backup_codes_remaining": None}
 

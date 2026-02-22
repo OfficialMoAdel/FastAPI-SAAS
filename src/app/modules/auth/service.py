@@ -192,13 +192,10 @@ return new_attempts
         normalized_username = username.lower().strip()
         login_attempts_key = f"login_attempts:{normalized_username}"
 
-        # Authenticate first (this takes time due to bcrypt)
-        # We do this BEFORE checking lockout to prevent timing attacks
-        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
-
-        # SECURITY FIX: Check lockout AFTER authentication to prevent username enumeration
+        # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
         # Atomic Lua script: check lockout + increment in single roundtrip
         # Returns: -1 if locked out, otherwise the new attempt count
+        # This records the attempt tentatively. If login succeeds, we clear it.
         result = await redis.eval(  # type: ignore[misc]
             self._LOGIN_CHECK_LUA,
             1,
@@ -207,10 +204,12 @@ return new_attempts
             str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
         )
 
-        # Use same error message regardless of whether account exists or is locked
         if result == -1:
             await self._publish_login_audit(request, username, False, reason="account_locked")
             raise UnauthorizedException("Wrong username, email or password.")
+
+        # Authenticate (this takes time due to bcrypt)
+        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
 
         if not user:
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")

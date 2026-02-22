@@ -6,6 +6,8 @@ Endpoints require appropriate FILES_* permissions.
 
 from __future__ import annotations
 
+from urllib.parse import quote
+
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 
@@ -105,7 +107,7 @@ async def upload_file(
 
 @router.get("", response_model=FileList)
 async def list_files(
-    user_id: str | None = Query(None, description="Filter by owner user ID"),
+    user_id: int | None = Query(None, description="Filter by owner user ID"),
     mime_type: str | None = Query(None, description="Filter by MIME type"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Page size"),
@@ -120,14 +122,11 @@ async def list_files(
     Returns:
         FileList: Paginated file list.
     """
-    from uuid import UUID
-
-    user_uuid = UUID(user_id) if user_id else None
     offset = (page - 1) * per_page
 
     files_data = await service.list_files(
         tenant_id=tenant.id,
-        user_id=user_uuid,
+        user_id=user_id,
         mime_type=mime_type,
         limit=per_page,
         offset=offset,
@@ -169,11 +168,13 @@ async def download_file(
     try:
         file = await service.get_file_or_raise(tenant.id, file_id)
 
+        # SECURITY FIX: RFC 5987 content-disposition
+        filename_encoded = quote(file.original_name)
         return StreamingResponse(
             service.download_file(tenant.id, file_id),
             media_type=file.mime_type,
             headers={
-                "Content-Disposition": f'attachment; filename="{file.original_name}"',
+                "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
                 "Content-Length": str(file.size_bytes),
             },
         )

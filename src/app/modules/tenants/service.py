@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 from typing import Any
 from uuid import UUID
 
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
@@ -160,10 +161,17 @@ class TenantService(BaseService[Tenant]):
             )
             raise DuplicateError("slug", tenant.slug)
 
-        created_tenant = await self.crud.create(
-            db=self.db,
-            object=tenant,
-        )
+        try:
+            created_tenant = await self.crud.create(
+                db=self.db,
+                object=tenant,
+            )
+        except IntegrityError:
+            logger.warning(
+                "Tenant creation failed: race_condition_duplicate_slug | slug=%s",
+                tenant.slug,
+            )
+            raise DuplicateError("slug", tenant.slug)
 
         # P2-1: Use optimized dict construction if feature flag is enabled
         if FEATURE_TENANT_DICT_OPTIMIZATION:

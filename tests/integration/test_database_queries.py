@@ -52,7 +52,7 @@ class TestCompositeIndexes:
             text("""
                 EXPLAIN (FORMAT JSON)
                 SELECT * FROM "user"
-                WHERE tenant_id = 1 AND email = 'test@example.com'
+                WHERE tenant_id = '00000000-0000-0000-0000-000000000001' AND email = 'test@example.com'
             """)
         )
         plan = result.fetchone()
@@ -66,8 +66,8 @@ class TestCompositeIndexes:
         """Verify indexed query returns same results as non-indexed."""
         # Both queries should return same results
         # Index only affects performance, not correctness
-        query1 = text('SELECT id FROM "user" WHERE tenant_id = 1 ORDER BY id')
-        query2 = text('SELECT id FROM "user" WHERE tenant_id = 1 ORDER BY id')
+        query1 = text("SELECT id FROM \"user\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
+        query2 = text("SELECT id FROM \"user\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
 
         result1 = await real_postgres.execute(query1)
         result2 = await real_postgres.execute(query2)
@@ -142,7 +142,7 @@ class TestFilesQuotaFusion:
             text("""
                 SELECT COUNT(*) as file_count, COALESCE(SUM(size_bytes), 0) as total_size
                 FROM files
-                WHERE tenant_id = 1
+                WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
             """)
         )
         row = result.fetchone()
@@ -160,15 +160,15 @@ class TestFilesQuotaFusion:
         fused = await real_postgres.execute(
             text("""
                 SELECT COUNT(*), COALESCE(SUM(size_bytes), 0)
-                FROM files WHERE tenant_id = 1
+                FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
             """)
         )
         fused_row = fused.fetchone()
 
         # Separate (baseline)
-        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM files WHERE tenant_id = 1"))
+        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
         size_result = await real_postgres.execute(
-            text("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE tenant_id = 1")
+            text("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'")
         )
 
         count_row = count_result.fetchone()
@@ -278,7 +278,7 @@ class TestStorageSettingsN1:
         await real_postgres.execute(
             text("""
                 SELECT * FROM storage_settings
-                WHERE tenant_id = 1
+                WHERE tenant_id = '00000000-0000-0000-0000-000000000001'
             """)
         )
 
@@ -299,8 +299,8 @@ class TestStorageSettingsN1:
             pytest.skip("storage_settings table not found - run scripts/init_test_db.py")
 
         # Two queries for same tenant should return same result
-        result1 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = 1"))
-        result2 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = 1"))
+        result1 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
+        result2 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
 
         row1 = result1.fetchone()
         row2 = result2.fetchone()

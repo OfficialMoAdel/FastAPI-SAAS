@@ -89,13 +89,14 @@ async def stripe_webhook(
 
     # Idempotency check (T050)
     event_id = event["id"]
-    key = f"stripe_webhook:{event_id}"
+    # FIXED: Use consistent key prefix and TTL with webhook worker
+    key = f"stripe:webhook:processed:{event_id}"
     if await redis.exists(key):
         logger.info(f"Duplicate webhook event ignored: {event_id}")
         return {"status": "success", "message": "Already processed"}
 
-    # Set key with expiry (24h) - at-most-once semantics for now
-    await redis.setex(key, 86400, "1")
+    # Set key with expiry (7 days) - matches worker retention
+    await redis.setex(key, 604800, "1")
 
     # Handle event in background task (T051)
     background_tasks.add_task(handle_webhook_event, event, background_tasks)
