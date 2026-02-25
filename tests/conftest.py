@@ -1220,7 +1220,8 @@ def mock_redis(request):
         patch("src.app.modules.mfa.router.redis_client", new=fake_redis),
         patch("src.app.core.security.auto_ban.redis_client", new=fake_redis),
         patch("src.app.core.security.rate_limit_cache.redis_client", new=fake_redis),
-        patch("src.app.core.security.token_blacklist_cache.redis_client", new=fake_redis),
+        # REMOVED: token_blacklist_cache refactored to use cache.client dynamically
+        # patch("src.app.core.security.token_blacklist_cache.redis_client", new=fake_redis),
         patch("src.app.modules.sso_settings.service.redis_client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
@@ -1228,6 +1229,67 @@ def mock_redis(request):
         patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()),  # Add this
     ):
         yield fake_redis
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_real_redis(request):
+    """Clean up real Redis after integration/e2e tests.
+
+    This fixture runs AFTER tests that use real Redis connections
+    (marked with @pytest.mark.integration, @pytest.mark.e2e, or @pytest.mark.uses_real_redis).
+
+    Cleans rate limit keys, auth cache, tenant cache, and token blacklist
+    to prevent test isolation issues.
+    """
+    yield
+
+    # Only cleanup for tests that use real Redis
+    markers = [m.name for m in request.node.iter_markers()]
+    if not any(m in markers for m in ("integration", "e2e", "uses_real_redis")):
+        return
+
+    from src.app.core.utils import cache
+
+    if not cache.client:
+        return
+
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    # Patterns to clean - covers all rate limit and auth keys
+    patterns_to_clean = [
+        "ratelimit:*",  # Fixed window rate limit keys
+        "gcra:*",  # GCRA rate limit keys
+        "user:auth:*",  # Auth cache
+        "tenant:*",  # Tenant cache
+        "blacklist:*",  # Token blacklist
+        "cache:*",  # General cache keys
+    ]
+
+    total_deleted = 0
+    for pattern in patterns_to_clean:
+        keys_to_delete = []
+        try:
+            async for key in cache.client.scan_iter(match=pattern):
+                keys_to_delete.append(key)
+
+            if keys_to_delete:
+                await cache.client.delete(*keys_to_delete)
+                total_deleted += len(keys_to_delete)
+        except Exception as e:
+            logger.warning(f"Failed to clean Redis pattern {pattern}: {e}")
+
+    if total_deleted:
+        logger.info(f"cleanup_real_redis: Deleted {total_deleted} keys")
+
+    # Clear tenant context to prevent leakage between tests
+    try:
+        from src.app.core.tenancy.context import clear_tenant_context
+
+        clear_tenant_context()
+    except Exception:
+        pass
 
 
 @pytest.fixture
@@ -1413,12 +1475,12 @@ def tenant(db):
 @pytest.fixture
 async def e2e_client() -> AsyncGenerator[AsyncClient, None]:
     """E2E client fixture with real database and Redis connections.
-    
+
     This fixture is used by E2E tests that need actual infrastructure.
     It uses the real app with actual dependencies (not mocked).
     """
     from src.app.main import app
-    
+
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
@@ -1430,12 +1492,12 @@ async def e2e_client() -> AsyncGenerator[AsyncClient, None]:
 @pytest.fixture
 def override_settings():
     """Fixture to temporarily override settings for tests.
-    
+
     Returns a context manager that allows temporary setting overrides.
     """
     from contextlib import contextmanager
     from unittest.mock import patch
-    
+
     @contextmanager
     def _override(**kwargs):
         patches = []
@@ -1449,5 +1511,5 @@ def override_settings():
         finally:
             for patcher in patches:
                 patcher.stop()
-    
+
     return _override

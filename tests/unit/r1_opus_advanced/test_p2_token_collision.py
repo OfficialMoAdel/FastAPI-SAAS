@@ -70,7 +70,7 @@ class TestTokenCacheKeyCollision:
         mock_redis.evalsha = AsyncMock(return_value=0)
 
         with (
-            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch(
                 "src.app.core.security.token_blacklist_cache._ensure_script_loaded", new_callable=AsyncMock
             ) as mock_script,

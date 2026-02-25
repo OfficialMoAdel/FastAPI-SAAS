@@ -85,11 +85,16 @@ async def get_current_user(
         current_tenant = get_tenant_context()
         if current_tenant and user["tenant_id"] != current_tenant.id:
             if not user.get("is_superuser"):
-                logger.warning(
-                    f"Tenant mismatch: User {user['id']} (tenant {user['tenant_id']}) "
-                    f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
-                )
-                raise ForbiddenException("User does not belong to the current tenant.")
+                # Convert to UUID for comparison (JWT tenant_id is string)
+                user_tenant_id = user["tenant_id"]
+                current_tenant_id = current_tenant.id
+                # Handle both UUID and string comparisons
+                if str(user_tenant_id) != str(current_tenant_id):
+                    logger.warning(
+                        f"Tenant mismatch: User {user['id']} (tenant {user['tenant_id']}) "
+                        f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
+                    )
+                    raise ForbiddenException("User does not belong to the current tenant.")
 
         return user
 

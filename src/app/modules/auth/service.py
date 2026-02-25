@@ -1,6 +1,7 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 import asyncio
+import secrets
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -249,10 +250,12 @@ return new_attempts
         # Include tier info in JWT claims for Zero-DB rate limiting
         # tier_name allows middleware to apply correct limits without DB lookup
         # SECURITY FIX: Include token_version for session invalidation on password change
+        # SECURITY FIX: Include tenant_id for tenant context validation
         tier = user.get("tier")
         tier_name = tier.get("name") if tier else None
         token_data = {
             "sub": user["username"],
+            "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
             "tier_id": user.get("tier_id"),
             "tier_name": tier_name,
             "token_version": user.get("token_version", 0),
@@ -282,6 +285,25 @@ return new_attempts
 
         # Audit log success
         await self._publish_login_audit(request, username, True, tenant_id=user["tenant_id"], user_id=user["id"])
+
+        # Register session for tracking using the singleton session_manager
+        try:
+            from ...core.security.session_manager import session_manager as global_session_manager
+
+            # Extract jti from access token for session ID
+            import jwt
+
+            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+            session_id = decoded_token.get("jti", access_token[:32])
+            device_info_str = f"{request.headers.get('user-agent', 'Unknown')} | IP: {request.client.host if request.client else 'Unknown'}"
+            await global_session_manager.register_session(
+                user_id=user["id"],
+                session_id=session_id,
+                device_info=device_info_str,
+            )
+        except Exception as e:
+            # Session registration failure should not block login
+            logger.warning("session_registration_failed", error=str(e))
 
         return {"access_token": access_token, "token_type": "bearer"}
 

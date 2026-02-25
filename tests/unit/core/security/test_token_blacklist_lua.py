@@ -43,7 +43,7 @@ class TestLuaScriptLoading:
     async def test_lua_script_syntax_valid(self, mock_redis):
         """Verify Lua script loads without syntax errors."""
         # Arrange
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", None):
                 # Act
                 sha = await _ensure_script_loaded()
@@ -56,7 +56,7 @@ class TestLuaScriptLoading:
     async def test_script_sha_cached_after_first_load(self, mock_redis):
         """Verify script SHA is cached and not reloaded."""
         # Arrange
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"):
                 # Act
                 sha = await _ensure_script_loaded()
@@ -75,7 +75,7 @@ class TestLuaScriptLoading:
             0,  # Success after reload
         ]
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "old_sha"):
                 # Act
                 result = await is_token_blacklisted(token)
@@ -98,7 +98,7 @@ class TestLuaScriptBehavior:
         token = "valid_token_123"
         mock_redis.evalsha.return_value = 0  # Not blacklisted
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
                 # Act
                 result = await is_token_blacklisted(token)
@@ -114,7 +114,7 @@ class TestLuaScriptBehavior:
         token = "blacklisted_token_123"
         mock_redis.evalsha.return_value = 1  # IS blacklisted
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
                 # Act
                 result = await is_token_blacklisted(token)
@@ -130,7 +130,7 @@ class TestLuaScriptBehavior:
         token = "test_token_abc"
         mock_redis.evalsha.return_value = 0
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
                 # Act
                 await is_token_blacklisted(token)
@@ -161,7 +161,7 @@ class TestSingleRoundtrip:
         token = "test_token_123"
         mock_redis.evalsha.return_value = 0
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
                 # Act
                 await is_token_blacklisted(token)
@@ -187,7 +187,7 @@ class TestFallbackBehavior:
         mock_redis.exists.return_value = False
         mock_redis.zscore.return_value = None
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", None):
                 # Act
                 result = await is_token_blacklisted(token)
@@ -209,7 +209,7 @@ class TestFallbackBehavior:
         mock_redis.exists.return_value = False
         mock_redis.zscore.return_value = future_time  # Token is blacklisted
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             # Act
             result = await _is_token_blacklisted_fallback(token)
 
@@ -225,7 +225,7 @@ class TestFallbackBehavior:
         mock_redis.exists.return_value = False
         mock_redis.zscore.return_value = past_time  # Token expired
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             # Act
             result = await _is_token_blacklisted_fallback(token)
 
@@ -244,7 +244,7 @@ class TestRedisUnavailable:
         # Arrange
         token = "test_token_123"
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             # Act
             result = await is_token_blacklisted(token)
 
@@ -255,7 +255,7 @@ class TestRedisUnavailable:
     async def test_script_load_returns_none_when_redis_unavailable(self):
         """Verify script loading returns None when Redis unavailable."""
         # Arrange
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             # Act
             sha = await _ensure_script_loaded()
 
@@ -277,7 +277,7 @@ class TestNegativeCachePopulation:
         token = "test_token_123"
         mock_redis.evalsha.return_value = 0  # Not blacklisted
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             with patch("src.app.core.security.token_blacklist_cache._script_sha", "test_sha"):
                 # Act
                 await is_token_blacklisted(token)

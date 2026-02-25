@@ -27,7 +27,7 @@ class TestTokenBlacklistPerformance:
         """Token blacklist check should complete under threshold."""
         from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             start = time.perf_counter()
             for _ in range(100):
                 result = await is_token_blacklisted("test-token-12345")
@@ -44,7 +44,7 @@ class TestTokenBlacklistPerformance:
         mock_redis.zadd = AsyncMock(return_value=1)
         expires = datetime.now(UTC) + timedelta(hours=1)
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             start = time.perf_counter()
             for _ in range(100):
                 result = await add_token_to_blacklist("test-token", expires)

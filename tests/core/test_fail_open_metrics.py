@@ -50,8 +50,8 @@ async def test_token_blacklist_fail_open():
     reset_r1_metrics()
     metrics = get_r1_metrics()
 
-    # Mock redis_client being None in the module
-    with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
+    # Mock cache.client being None (simulates Redis unavailable)
+    with patch("src.app.core.utils.cache.client", None):
         result = await token_blacklist_cache.is_token_blacklisted("token")
 
         assert result is None

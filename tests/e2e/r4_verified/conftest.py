@@ -172,8 +172,42 @@ async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
 
 @pytest.fixture
 async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
-    """Provide async HTTP client for E2E tests."""
+    """Provide async HTTP client for E2E tests with initialized Redis."""
     from src.app.main import app
+    from src.app.core.security.session_manager import session_manager
+    from redis import asyncio as aioredis
+
+    # Initialize Redis client for session manager (ASGITransport doesn't trigger lifespan)
+    redis_client = aioredis.from_url(
+        settings.REDIS_CACHE_URL,
+        encoding="utf-8",
+        decode_responses=True,
+    )
+    session_manager.set_redis_client(redis_client)
+    logger.info("Initialized Redis client for session manager")
+
+    # Set cache.client for other Redis operations
+    cache.client = redis_client
+    logger.info("Initialized cache.client for Redis operations")
+
+    # CRITICAL: Clear rate limits BEFORE any test fixtures run
+    # This prevents rate limit accumulation across test runs
+    logger.info("Pre-test rate limit cleanup")
+    pre_patterns = [
+        "ratelimit:*",
+        "gcra:*",
+        "user:auth:*",
+    ]
+    for pattern in pre_patterns:
+        try:
+            keys = []
+            async for key in cache.client.scan_iter(match=pattern):
+                keys.append(key)
+            if keys:
+                await cache.client.delete(*keys)
+                logger.info(f"Pre-cleaned {len(keys)} keys matching: {pattern}")
+        except Exception as e:
+            logger.warning(f"Pre-cleanup failed for {pattern}: {e}")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(
@@ -185,10 +219,17 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
         yield ac
         logger.info("Closed HTTP client")
 
+    # Cleanup
+    await redis_client.close()
+    cache.client = None
+    logger.info("Closed Redis client")
+
 
 @pytest.fixture
-async def authenticated_user(client: AsyncClient) -> dict[str, Any]:
+async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any]:
     """Create and authenticate a test user.
+
+    Creates user directly in DB to bypass tenant middleware exemption on /register.
 
     Returns:
         Dict with user data and access token
@@ -203,34 +244,52 @@ async def authenticated_user(client: AsyncClient) -> dict[str, Any]:
 
     logger.info(f"Creating test user: {user_data['email']}")
 
-    # Clean up existing user if any
+    # Get tenant ID first
     async with _get_test_session_maker()() as session:
+        result = await session.execute(
+            text("SELECT id FROM tenants WHERE slug = :slug"),
+            {"slug": TEST_TENANT_SLUG},
+        )
+        tenant_id = result.scalar()
+        logger.info(f"Found tenant_id: {tenant_id} for slug: {TEST_TENANT_SLUG}")
+
+        # Clean up existing user if any
         await session.execute(
             text('DELETE FROM "user" WHERE email = :email'),
             {"email": user_data["email"]},
         )
         await session.commit()
 
-    # Register user
-    response = await client.post("/api/v1/account/register", json=user_data)
-    assert response.status_code == 201, f"Registration failed: {response.text}"
-    logger.info(f"User registered successfully: {response.json()}")
+        # Create user directly in DB with explicit tenant_id and all required fields
+        from src.app.core.security import get_password_hash
+        from uuid6 import uuid7
 
-    # Assign to Free tier (tier_id=1) explicitely BEFORE login
-    async with _get_test_session_maker()() as session:
+        hashed_password = await get_password_hash(user_data["password"])
+
         await session.execute(
-            text('UPDATE "user" SET tier_id = 1 WHERE email = :email'),
-            {"email": user_data["email"]},
+            text("""
+                INSERT INTO "user" (
+                    name, email, username, hashed_password, tenant_id, tier_id, 
+                    profile_image_url, uuid, is_active, is_deleted, is_superuser, 
+                    is_email_verified, token_version, created_at, updated_at
+                )
+                VALUES (
+                    :name, :email, :username, :password, :tenant_id, 1,
+                    'https://profileimageurl.com', :uuid, true, false, false,
+                    false, 0, NOW(), NOW()
+                )
+            """),
+            {
+                "name": user_data["name"],
+                "email": user_data["email"],
+                "username": user_data["username"],
+                "password": hashed_password,
+                "tenant_id": tenant_id,
+                "uuid": uuid7(),
+            },
         )
         await session.commit()
-        logger.info(f"User assigned to Free tier: {user_data['email']}")
-
-        # Verify DB state
-        result = await session.execute(
-            text('SELECT tier_id FROM "user" WHERE email = :email'), {"email": user_data["email"]}
-        )
-        curr_tier = result.scalar()
-        logger.info(f"DB Verification - User tier_id: {curr_tier}")
+        logger.info(f"Created user directly in DB with tenant_id={tenant_id}")
 
     # Invalidate auth cache to ensure login fetches fresh tier info
     if getattr(cache, "client", None):
@@ -267,8 +326,10 @@ async def authenticated_user(client: AsyncClient) -> dict[str, Any]:
 
 
 @pytest.fixture
-async def premium_user(client: AsyncClient) -> dict[str, Any]:
+async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any]:
     """Create and authenticate a premium tier user.
+
+    Creates user directly in DB to bypass tenant middleware exemption on /register.
 
     Returns:
         Dict with user data and access token
@@ -283,33 +344,52 @@ async def premium_user(client: AsyncClient) -> dict[str, Any]:
 
     logger.info(f"Creating premium test user: {user_data['email']}")
 
-    # Clean up existing user if any
+    # Get tenant ID first
     async with _get_test_session_maker()() as session:
+        result = await session.execute(
+            text("SELECT id FROM tenants WHERE slug = :slug"),
+            {"slug": TEST_TENANT_SLUG},
+        )
+        tenant_id = result.scalar()
+        logger.info(f"Found tenant_id: {tenant_id} for slug: {TEST_TENANT_SLUG}")
+
+        # Clean up existing user if any
         await session.execute(
             text('DELETE FROM "user" WHERE email = :email'),
             {"email": user_data["email"]},
         )
         await session.commit()
 
-    # Register user
-    response = await client.post("/api/v1/account/register", json=user_data)
-    assert response.status_code == 201, f"Registration failed: {response.text}"
+        # Create user directly in DB with explicit tenant_id and tier_id=2 (Pro)
+        from src.app.core.security import get_password_hash
+        from uuid6 import uuid7
 
-    # Upgrade to premium tier (tier_id=2) BEFORE login
-    async with _get_test_session_maker()() as session:
+        hashed_password = await get_password_hash(user_data["password"])
+
         await session.execute(
-            text('UPDATE "user" SET tier_id = 2 WHERE email = :email'),
-            {"email": user_data["email"]},
+            text("""
+                INSERT INTO "user" (
+                    name, email, username, hashed_password, tenant_id, tier_id, 
+                    profile_image_url, uuid, is_active, is_deleted, is_superuser, 
+                    is_email_verified, token_version, created_at, updated_at
+                )
+                VALUES (
+                    :name, :email, :username, :password, :tenant_id, 2,
+                    'https://profileimageurl.com', :uuid, true, false, false,
+                    false, 0, NOW(), NOW()
+                )
+            """),
+            {
+                "name": user_data["name"],
+                "email": user_data["email"],
+                "username": user_data["username"],
+                "password": hashed_password,
+                "tenant_id": tenant_id,
+                "uuid": uuid7(),
+            },
         )
         await session.commit()
-        logger.info(f"User assigned to Free tier: {user_data['email']}")
-
-        # Verify DB state
-        result = await session.execute(
-            text('SELECT tier_id FROM "user" WHERE email = :email'), {"email": user_data["email"]}
-        )
-        curr_tier = result.scalar()
-        logger.info(f"DB Verification - User tier_id: {curr_tier}")
+        logger.info(f"Created premium user directly in DB with tenant_id={tenant_id}, tier_id=2")
 
     # Invalidate auth cache to ensure login fetches fresh tier info
     if getattr(cache, "client", None):
@@ -348,20 +428,77 @@ async def premium_user(client: AsyncClient) -> dict[str, Any]:
 
 @pytest.fixture(autouse=True)
 async def cleanup_redis():
-    """Clean up Redis test data after each test."""
-    yield
-    if cache.client:
-        logger.info("Cleaning up Redis test data")
-        # Clean up test-related keys
-        keys_to_delete = []
-        async for key in cache.client.scan_iter(match="*e2e_test*"):
-            keys_to_delete.append(key)
-        async for key in cache.client.scan_iter(match="*premium_e2e*"):
-            keys_to_delete.append(key)
+    """Clean up Redis test data before and after each test.
 
-        if keys_to_delete:
-            await cache.client.delete(*keys_to_delete)
-            logger.info(f"Deleted {len(keys_to_delete)} Redis keys")
+    Cleans all test-related keys including:
+    - Test-specific keys (e2e_test, premium_e2e)
+    - Rate limit keys (ratelimit:*, gcra:*)
+    - Auth cache keys (user:auth:*)
+    - Tenant cache keys
+    - Token blacklist keys
+    """
+    # BEFORE test: Clear rate limits to prevent interference
+    if cache.client:
+        logger.info("Pre-test Redis cleanup")
+        pre_patterns = [
+            "ratelimit:*",  # Fixed window rate limit keys
+            "gcra:*",  # GCRA rate limit keys
+            "user:auth:*",  # Auth cache
+        ]
+        for pattern in pre_patterns:
+            try:
+                keys = []
+                async for key in cache.client.scan_iter(match=pattern):
+                    keys.append(key)
+                if keys:
+                    await cache.client.delete(*keys)
+                    logger.info(f"Pre-cleaned {len(keys)} keys matching: {pattern}")
+            except Exception as e:
+                logger.warning(f"Pre-cleanup failed for {pattern}: {e}")
+
+    yield
+
+    # AFTER test: Full cleanup
+    if cache.client:
+        logger.info("Post-test Redis cleanup")
+
+        # Patterns to clean - covers all rate limit and auth keys
+        patterns_to_clean = [
+            "*e2e_test*",
+            "*premium_e2e*",
+            "ratelimit:*",  # Fixed window rate limit keys
+            "gcra:*",  # GCRA rate limit keys
+            "user:auth:*",  # Auth cache
+            "tenant:*",  # Tenant cache
+            "blacklist:*",  # Token blacklist
+            "cache:*",  # General cache keys
+        ]
+
+        total_deleted = 0
+        for pattern in patterns_to_clean:
+            keys_to_delete = []
+            try:
+                async for key in cache.client.scan_iter(match=pattern):
+                    keys_to_delete.append(key)
+
+                if keys_to_delete:
+                    await cache.client.delete(*keys_to_delete)
+                    total_deleted += len(keys_to_delete)
+                    logger.info(f"Deleted {len(keys_to_delete)} keys matching pattern: {pattern}")
+            except Exception as e:
+                logger.warning(f"Failed to clean pattern {pattern}: {e}")
+
+        if total_deleted:
+            logger.info(f"Total Redis keys deleted: {total_deleted}")
+
+        # Clear tenant context to prevent leakage between tests
+        try:
+            from src.app.core.tenancy.context import clear_tenant_context
+
+            clear_tenant_context()
+            logger.info("Cleared tenant context")
+        except Exception as e:
+            logger.warning(f"Failed to clear tenant context: {e}")
 
 
 @pytest.fixture

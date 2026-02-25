@@ -24,7 +24,7 @@ class TestIsTokenBlacklisted:
     @pytest.mark.asyncio
     async def test_returns_none_when_redis_unavailable(self) -> None:
         """Should fail open (return None) when Redis is not configured."""
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             result = await is_token_blacklisted("some-token")
             assert result is None
 
@@ -39,7 +39,7 @@ class TestIsTokenBlacklisted:
         mock_redis.script.return_value.load = AsyncMock(return_value="script_sha")
 
         with (
-            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
         ):
             result = await is_token_blacklisted("clean-token")
@@ -57,7 +57,7 @@ class TestIsTokenBlacklisted:
         future_expiry = (datetime.now(UTC) + timedelta(hours=1)).timestamp()
         mock_redis.zscore = AsyncMock(return_value=future_expiry)
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await is_token_blacklisted("bad-token")
             assert result is True
 
@@ -69,7 +69,7 @@ class TestIsTokenBlacklisted:
         mock_redis.evalsha = AsyncMock(return_value=0)
 
         with (
-            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
         ):
             result = await is_token_blacklisted("expired-token")
@@ -84,7 +84,7 @@ class TestIsTokenBlacklisted:
         mock_redis.evalsha = AsyncMock(side_effect=Exception("Connection error"))
 
         with (
-            patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
         ):
             result = await is_token_blacklisted("any-token")
@@ -107,7 +107,7 @@ class TestAddTokenToBlacklist:
 
         expires_at = datetime.now(UTC) + timedelta(hours=1)
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await add_token_to_blacklist("token123", expires_at)
             assert result is True
             mock_redis.pipeline.assert_called_once()
@@ -118,7 +118,7 @@ class TestAddTokenToBlacklist:
     @pytest.mark.asyncio
     async def test_returns_false_when_redis_unavailable(self) -> None:
         """Should return False when Redis is not configured."""
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             result = await add_token_to_blacklist("token", datetime.now(UTC))
             assert result is False
 
@@ -144,7 +144,7 @@ class TestBulkOperations:
             ("token3", datetime.now(UTC) + timedelta(hours=3)),
         ]
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await add_tokens_to_blacklist(tokens)
             assert result == 3
             mock_redis.pipeline.assert_called_once()
@@ -157,7 +157,7 @@ class TestBulkOperations:
         mock_redis = AsyncMock()
         mock_redis.zremrangebyscore = AsyncMock(return_value=5)
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await remove_expired_tokens()
             assert result == 5
 
@@ -183,7 +183,7 @@ class TestCacheWarming:
             ("active", now + timedelta(hours=1)),  # Should be added
         ]
 
-        with patch("src.app.core.security.token_blacklist_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await warm_cache_from_db(tokens)
             assert result == 1
             mock_redis.pipeline.assert_called_once()

@@ -276,13 +276,13 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 return None
         else:
             # Cache miss - fetch from DB and cache for 5 minutes
-            from ..modules.users.crud import crud_users
+            from src.app.modules.users.crud import crud_users
 
             user = await crud_users.get(db, username=username_or_email)
             if not user:
                 # Try by email if username lookup failed
                 user = await crud_users.get(db, email=username_or_email)
-            if not user or user.token_version != token_version:
+            if not user or user.get("token_version") != token_version:
                 # Token version mismatch - user changed password or was invalidated
                 return None
 
@@ -291,7 +291,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             if redis_client:
                 try:
                     # SET with nx=True only sets if key doesn't exist (atomic with EX)
-                    await redis_client.set(cache_key, str(user.token_version), nx=True, ex=300)
+                    await redis_client.set(cache_key, str(user.get("token_version")), nx=True, ex=300)
                 except Exception:
                     pass  # Don't fail on cache error
 

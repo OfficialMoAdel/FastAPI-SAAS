@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from ...api.dependencies import get_current_user
 from ...core.db.database import async_get_db
 from ...core.security import oauth2_scheme
+from ...core.security.session_manager import SessionManager
 from ...core.utils.cache import async_get_redis
 from ..users.models import User
 from ..users.schemas import UserCreate, UserRead
@@ -152,3 +153,25 @@ async def verify_email(
     """Verify email using verification token."""
     result = await auth_service.verify_email(token=body.token, db=db)
     return EmailVerificationResponse(**result)
+
+
+@router.get("/sessions")
+async def list_sessions(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    redis: Annotated[Redis, Depends(async_get_redis)],
+) -> list[dict]:
+    """List all active sessions for current user."""
+    session_manager = SessionManager(redis)
+    sessions = await session_manager.get_active_sessions(user_id=current_user["id"])
+    return sessions
+
+
+@router.get("/sessions/count")
+async def count_sessions(
+    current_user: Annotated[dict, Depends(get_current_user)],
+    redis: Annotated[Redis, Depends(async_get_redis)],
+) -> dict[str, int]:
+    """Count active sessions for current user."""
+    session_manager = SessionManager(redis)
+    count = await session_manager.count_active_sessions(user_id=current_user["id"])
+    return {"count": count}
