@@ -1425,16 +1425,15 @@ async def cleanup_real_redis(request):
     Cleans rate limit keys, auth cache, tenant cache, and token blacklist
     to prevent test isolation issues.
     """
-    yield
-
-    # Only cleanup for tests that use real Redis
+    # Check markers FIRST - skip if not a real Redis test
     markers = [m.name for m in request.node.iter_markers()]
-    if not any(m in markers for m in ("integration", "e2e", "uses_real_redis")):
+    needs_real_redis = any(m in markers for m in ("integration", "e2e", "uses_real_redis"))
+
+    if not needs_real_redis:
+        yield
         return
 
-    from src.app.core.utils import cache
-
-    # Clear L1 caches BEFORE test (in-memory caches that persist across tests)
+    # SETUP: Clear L1 caches BEFORE test (in-memory caches that persist across tests)
     try:
         from src.app.middleware.tenant import _L1_TENANT_CACHE
 
@@ -1448,7 +1447,10 @@ async def cleanup_real_redis(request):
     except ImportError:
         pass
 
-    yield  # Test runs here
+    yield  # Test runs here - SINGLE YIELD
+
+    # TEARDOWN: Clean Redis AFTER test
+    from src.app.core.utils import cache
 
     if not cache.client:
         return
