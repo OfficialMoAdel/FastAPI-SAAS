@@ -150,12 +150,14 @@ dev = [
     "mkdocs-material>=9.7.1",
     "mkdocstrings[python]>=1.0.0",
     "pre-commit>=4.3.0",
-    "pytest-asyncio==0.24.0",  # 0.24.0 supports loop_scope; 0.25+ has event loop bugs
+    "pytest-asyncio==0.24.0", # 0.24.0 supports loop_scope; 0.25+ has event loop bugs
     "pytest-cov>=4.1.0",
     "pytest-benchmark>=4.0.0",
     "structlog>=25.5.0",
     "types-aiofiles>=25.1.0.20251011",
     "types-cachetools>=6.2.0.20251022",
+    "ruff>=0.11.13",
+    "mypy>=1.16.0",
 ]
 
 [tool.mypy]

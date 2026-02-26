@@ -1,7 +1,6 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 import asyncio
-import secrets
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -288,14 +287,15 @@ return new_attempts
 
         # Register session for tracking using the singleton session_manager
         try:
-            from ...core.security.session_manager import session_manager as global_session_manager
-
             # Extract jti from access token for session ID
             import jwt
 
+            from ...core.security.session_manager import session_manager as global_session_manager
+
             decoded_token = jwt.decode(access_token, options={"verify_signature": False})
             session_id = decoded_token.get("jti", access_token[:32])
-            device_info_str = f"{request.headers.get('user-agent', 'Unknown')} | IP: {request.client.host if request.client else 'Unknown'}"
+            client_ip = request.client.host if request.client else "Unknown"
+            device_info_str = f"{request.headers.get('user-agent', 'Unknown')} | IP: {client_ip}"
             await global_session_manager.register_session(
                 user_id=user["id"],
                 session_id=session_id,

@@ -427,7 +427,7 @@ class MFAPendingTokenManager:
         key = f"mfa_pending:{token}"
 
         # Get and delete token data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
 
         if data is None:
             return None

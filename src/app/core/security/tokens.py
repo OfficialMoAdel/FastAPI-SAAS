@@ -194,7 +194,7 @@ class SSOStateManager:
         key = f"sso_state:{state}"
 
         # Get and delete state data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
 
         if data is None:
             logger.debug(
@@ -299,7 +299,7 @@ class MagicLinkManager:
         key = f"magic_link:{token}"
 
         # Get and delete token data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)
+        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
 
         if data is None:
             logger.debug(

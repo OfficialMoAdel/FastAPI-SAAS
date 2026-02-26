@@ -128,7 +128,7 @@ class GCRARateLimiter:
                 str(period_ms),
             )
             # Ensure result is a tuple/list
-            if not isinstance(result, (list, tuple)):
+            if not isinstance(result, list | tuple):
                 raise TypeError(f"Unexpected result type: {type(result)}, value: {result}")
             return tuple(result)  # type: ignore[return-value]
         except Exception as e:
@@ -150,7 +150,7 @@ class GCRARateLimiter:
                     str(limit),
                     str(period_ms),
                 )
-                if not isinstance(result, (list, tuple)):
+                if not isinstance(result, list | tuple):
                     raise TypeError(f"Unexpected result type after reload: {type(result)}")
                 return tuple(result)  # type: ignore[return-value]
             raise

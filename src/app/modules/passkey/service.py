@@ -450,7 +450,7 @@ class PasskeyService:
         """Retrieve and atomically delete registration challenge from Redis."""
         key = f"passkey:challenge:{user_id}"
         # Atomic get and delete to prevent race conditions
-        data = await redis.eval(_GETDEL_LUA, 1, key)
+        data = await redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
         if not data:
             return None
 
@@ -546,7 +546,7 @@ class PasskeyService:
         """Retrieve and atomically delete authentication challenge from Redis."""
         key = f"passkey:auth_challenge:{challenge_id}"
         # Atomic get and delete to prevent race conditions
-        data = await redis.eval(_GETDEL_LUA, 1, key)
+        data = await redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
         if not data:
             return None
         return base64url_to_bytes(data)

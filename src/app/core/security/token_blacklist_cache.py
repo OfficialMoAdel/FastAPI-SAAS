@@ -20,17 +20,16 @@ blacklist update. Relying on Redis + negative cache instead.
 import asyncio
 import logging
 import time
-from collections.abc import Mapping
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import cast
 
 import xxhash
+from redis.asyncio import Redis
 
 from src.app.core.utils import cache
 
 
-def _get_redis_client():
+def _get_redis_client() -> Redis | None:
     """Get Redis client dynamically to support test fixtures that set cache.client."""
     return cache.client
 
@@ -58,7 +57,7 @@ _script_locks: dict[int, tuple[asyncio.Lock, int | None]] = {}
 
 async def _acquire_script_lock() -> bool:
     """Acquire script reload lock with re-entrancy support.
-    
+
     Returns True if lock was acquired (caller must release), False if already held.
     """
     try:
@@ -67,16 +66,16 @@ async def _acquire_script_lock() -> bool:
         task_id = id(asyncio.current_task()) if asyncio.current_task() else None
     except RuntimeError:
         return True  # No loop, proceed without lock
-    
+
     if loop_id not in _script_locks:
         _script_locks[loop_id] = (asyncio.Lock(), None)
-    
+
     lock, holding_task = _script_locks[loop_id]
-    
+
     # Re-entrancy: if current task already holds the lock, proceed
     if holding_task == task_id:
         return False  # Already holding, don't release
-    
+
     await lock.acquire()
     _script_locks[loop_id] = (lock, task_id)
     return True
@@ -91,7 +90,7 @@ def _release_script_lock(release: bool = True) -> None:
         loop_id = id(loop)
     except RuntimeError:
         return
-    
+
     if loop_id in _script_locks:
         lock, _ = _script_locks[loop_id]
         if lock.locked():
@@ -164,7 +163,7 @@ async def _ensure_script_loaded() -> str | None:
         try:
             if _script_sha is None:
                 _script_sha = await redis_client.script_load(BLACKLIST_CHECK_LUA_SCRIPT)
-                logger.debug("blacklist_check_script_loaded", sha=_script_sha)
+                logger.debug("blacklist_check_script_loaded", extra={"sha": _script_sha})
         finally:
             _release_script_lock(should_release)
         return _script_sha
@@ -318,7 +317,7 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
         pipe = redis_client.pipeline()
-        pipe.zadd(BLACKLIST_KEY, cast(Mapping[str | bytes, bytes | float | int | str], {token: score}))
+        pipe.zadd(BLACKLIST_KEY, {token: score})  # type: ignore[misc]
         pipe.delete(negative_key)
         await pipe.execute()
         return True
@@ -348,7 +347,7 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         pipe = redis_client.pipeline()
         # Build mapping of token -> expiry score
         mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
-        pipe.zadd(BLACKLIST_KEY, cast(Mapping[str | bytes, bytes | float | int | str], mapping))
+        pipe.zadd(BLACKLIST_KEY, mapping)  # type: ignore[misc]
         # M1: Invalidate negative cache for all tokens being blacklisted
         for token, _ in tokens:
             negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
