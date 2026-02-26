@@ -60,21 +60,22 @@ class TestL1CacheE2E:
 
         middleware = TenantMiddleware(MagicMock())
 
-        # First call - should hit Redis
-        logger.info("Call 1: Expecting Redis hit...")
-        with patch("src.app.core.utils.cache.client", mock_redis):
+        # CRITICAL: Patch where the name is USED, not where it's DEFINED
+        # tenant.py imports: from src.app.core.utils.cache import client as redis_client
+        # So we must patch "src.app.middleware.tenant.redis_client"
+        # NOT "src.app.core.utils.cache.client" (that won't affect the imported reference)
+        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+            # First call - should hit Redis
+            logger.info("Call 1: Expecting Redis hit...")
             result1 = await middleware._get_tenant_by_slug("test")
+            assert redis_call_count == 1, f"Expected 1 Redis call, got {redis_call_count}"
+            logger.info(f"Call 1 result: tenant_id={result1.id}, Redis calls={redis_call_count}")
 
-        assert redis_call_count == 1
-        logger.info(f"Call 1 result: tenant_id={result1.id}, Redis calls={redis_call_count}")
-
-        # Second call - should hit L1 cache, NOT Redis
-        logger.info("Call 2: Expecting L1 cache hit...")
-        with patch("src.app.core.utils.cache.client", mock_redis):
+            # Second call - should hit L1 cache, NOT Redis
+            logger.info("Call 2: Expecting L1 cache hit...")
             result2 = await middleware._get_tenant_by_slug("test")
-
-        assert redis_call_count == 1, "Redis should NOT be called on L1 cache hit"
-        logger.info(f"Call 2 result: tenant_id={result2.id}, Redis calls={redis_call_count}")
+            assert redis_call_count == 1, "Redis should NOT be called on L1 cache hit"
+            logger.info(f"Call 2 result: tenant_id={result2.id}, Redis calls={redis_call_count}")
 
         # Verify L1 cache is populated
         assert "test" in _L1_TENANT_CACHE

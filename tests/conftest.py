@@ -1394,6 +1394,13 @@ async def init_real_redis_async(request):
 
         # Flush before test for isolation
         await cache.client.flushdb()
+
+        # Clear L1 caches (in-memory caches that persist across tests)
+        from src.app.middleware.tenant import _L1_TENANT_CACHE
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE
+
+        _L1_TENANT_CACHE.clear()
+        _L1_RBAC_CACHE.clear()
     except Exception as e:
         print(f"Warning: Failed to initialize real Redis: {e}")
         raise
@@ -1426,6 +1433,22 @@ async def cleanup_real_redis(request):
         return
 
     from src.app.core.utils import cache
+
+    # Clear L1 caches BEFORE test (in-memory caches that persist across tests)
+    try:
+        from src.app.middleware.tenant import _L1_TENANT_CACHE
+
+        _L1_TENANT_CACHE.clear()
+    except ImportError:
+        pass
+    try:
+        from src.app.modules.rbac.service import _L1_RBAC_CACHE
+
+        _L1_RBAC_CACHE.clear()
+    except ImportError:
+        pass
+
+    yield  # Test runs here
 
     if not cache.client:
         return
