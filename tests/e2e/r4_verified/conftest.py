@@ -190,6 +190,13 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
     cache.client = redis_client
     logger.info("Initialized cache.client for Redis operations")
 
+    # CRITICAL: Reinitialize GCRA rate limiter with new Redis client
+    # The global rate limiter may have a stale Redis connection from a previous test
+    from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
+
+    init_gcra_rate_limiter(redis_client)
+    logger.info("Initialized GCRA rate limiter")
+
     # CRITICAL: Clear rate limits BEFORE any test fixtures run
     # This prevents rate limit accumulation across test runs
     logger.info("Pre-test rate limit cleanup")

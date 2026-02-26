@@ -99,6 +99,62 @@ class GCRARateLimiter:
             self._script_sha = await self._redis.script_load(GCRA_LUA_SCRIPT)  # type: ignore[misc]
         return self._script_sha or ""
 
+    async def _execute_gcra_script(
+        self,
+        rate_limit_key: str,
+        now_ms: int,
+        emission_interval_ms: int,
+        limit: int,
+        period_ms: int,
+    ) -> tuple:
+        """Execute GCRA script with automatic script reload on failure.
+
+        Handles the case where script SHA becomes invalid (e.g., Redis restart,
+        new connection, or script eviction).
+        """
+        if not self._redis:
+            raise ValueError("Redis client not initialized")
+
+        script_sha = await self._ensure_script_loaded()
+
+        try:
+            result = await self._redis.evalsha(  # type: ignore[misc,union-attr]
+                script_sha,
+                1,  # Number of keys
+                rate_limit_key,
+                str(int(now_ms)),
+                str(int(emission_interval_ms)),
+                str(limit),
+                str(period_ms),
+            )
+            # Ensure result is a tuple/list
+            if not isinstance(result, (list, tuple)):
+                raise TypeError(f"Unexpected result type: {type(result)}, value: {result}")
+            return tuple(result)  # type: ignore[return-value]
+        except Exception as e:
+            # Script might have been evicted or SHA is invalid
+            # Clear cached SHA and reload
+            error_msg = str(e).lower()
+            if "script" in error_msg or "sha" in error_msg or "not found" in error_msg:
+                logger.warning(f"GCRA script SHA invalid, reloading: {e}")
+                self._script_sha = None
+                script_sha = await self._ensure_script_loaded()
+
+                # Retry once
+                result = await self._redis.evalsha(  # type: ignore[misc,union-attr]
+                    script_sha,
+                    1,
+                    rate_limit_key,
+                    str(int(now_ms)),
+                    str(int(emission_interval_ms)),
+                    str(limit),
+                    str(period_ms),
+                )
+                if not isinstance(result, (list, tuple)):
+                    raise TypeError(f"Unexpected result type after reload: {type(result)}")
+                return tuple(result)  # type: ignore[return-value]
+            raise
+
     async def check_rate_limit(
         self,
         key: str,
@@ -130,19 +186,14 @@ class GCRARateLimiter:
             emission_interval_ms = period_ms / limit
             now_ms = time.time() * 1000
 
-            # Ensure script is loaded
-            script_sha = await self._ensure_script_loaded()
-
             # Execute atomic GCRA check
             rate_limit_key = f"gcra:{key}"
-            result = await self._redis.evalsha(  # type: ignore[misc,union-attr]
-                script_sha,
-                1,  # Number of keys
+            result = await self._execute_gcra_script(
                 rate_limit_key,
-                str(int(now_ms)),
-                str(int(emission_interval_ms)),
-                str(limit),
-                str(period_ms),
+                int(now_ms),
+                int(emission_interval_ms),
+                limit,
+                int(period_ms),
             )
 
             is_allowed, remaining, retry_after_ms, reset_at_ms = result
