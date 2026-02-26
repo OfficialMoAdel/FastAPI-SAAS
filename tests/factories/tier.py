@@ -4,6 +4,8 @@ Tier Factory
 Creates Tier model instances for testing.
 """
 
+from datetime import UTC, datetime
+
 from src.app.modules.tiers.models import Tier
 from tests.factories.base import AsyncFactory, random_string
 
@@ -19,6 +21,8 @@ class TierFactory(AsyncFactory):
     model = Tier
     defaults = {
         "name": lambda: f"Tier_{random_string(length=6)}",
+        "created_at": lambda: datetime.now(UTC),
+        "updated_at": lambda: datetime.now(UTC),
     }
 
     @classmethod

@@ -4,6 +4,8 @@ Tenant Factory
 Creates Tenant model instances for testing with automatic slug generation.
 """
 
+from datetime import UTC, datetime
+
 from src.app.modules.tenants.models import Tenant
 from tests.factories.base import AsyncFactory, random_string
 
@@ -24,6 +26,8 @@ class TenantFactory(AsyncFactory):
         "feature_flags": lambda: {},
         "storage_usage_bytes": 0,
         "file_count": 0,
+        "created_at": lambda: datetime.now(UTC),
+        "updated_at": lambda: datetime.now(UTC),
     }
 
     @classmethod

@@ -4,6 +4,7 @@ User Factory
 Creates User model instances for testing with automatic relationship handling.
 """
 
+from datetime import UTC, datetime
 from uuid import uuid4
 
 from src.app.modules.users.models import User
@@ -33,6 +34,8 @@ class UserFactory(AsyncFactory):
         "is_deleted": False,
         "is_superuser": False,
         "is_email_verified": True,
+        "created_at": lambda: datetime.now(UTC),
+        "updated_at": lambda: datetime.now(UTC),
     }
 
     @classmethod

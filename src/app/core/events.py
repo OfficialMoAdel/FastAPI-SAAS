@@ -739,6 +739,17 @@ class EventBus:
 event_bus = EventBus()
 
 
+def reset_event_bus() -> None:
+    """Reset the event bus singleton for test isolation.
+
+    Creates a fresh EventBus instance, clearing all handlers and state.
+    Use this in test fixtures to ensure clean state between tests.
+    """
+    global event_bus
+    event_bus = EventBus()
+    logger.debug("Event bus singleton reset")
+
+
 # ARQ worker function to process queued event handlers
 async def process_event_handler(
     ctx: dict[str, Any],

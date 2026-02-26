@@ -99,5 +99,33 @@ class RateLimiter:
         is_limited, _ = await self.check_rate_limit(key, limit, period)
         return is_limited
 
+    @classmethod
+    def reset(cls) -> None:
+        """Reset the singleton instance and script cache.
 
+        Used for test isolation to prevent state leakage between tests.
+        """
+        cls._instance = None
+        cls._rate_limit_script_sha = None
+        logger.debug("RateLimiter singleton reset")
+
+
+def get_rate_limiter() -> RateLimiter:
+    """Get the singleton rate limiter instance.
+
+    Returns:
+        The global RateLimiter instance.
+    """
+    return RateLimiter()
+
+
+def reset_rate_limiter() -> None:
+    """Reset the rate limiter singleton for test isolation.
+
+    Call this in test fixtures to ensure clean state between tests.
+    """
+    RateLimiter.reset()
+
+
+# Module-level instance for backward compatibility
 rate_limiter = RateLimiter()

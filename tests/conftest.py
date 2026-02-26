@@ -6,6 +6,7 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+import pytest_asyncio
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from faker import Faker
@@ -246,6 +247,116 @@ def reset_circuit_breaker_registry():
     yield
     reset_registry()
     reset_all_circuit_breakers()
+
+
+@pytest.fixture(autouse=True)
+def reset_singletons():
+    """Reset all singleton instances before and after each test.
+
+    This fixture ensures test isolation by resetting module-level singletons
+    that can retain state between tests. Critical for coverage runs where
+    tests share the same Python process.
+
+    Singletons reset:
+    - RateLimiter (Redis Lua script cache)
+    - TokenBlacklistCache (script SHA, locks)
+    - EventBus (handlers, registration state)
+    """
+    # Import reset functions - these are added for test isolation
+    from src.app.core.events import reset_event_bus
+    from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
+    from src.app.core.utils.rate_limit import reset_rate_limiter
+
+    # Pre-test reset
+    reset_rate_limiter()
+    reset_token_blacklist_cache()
+    reset_event_bus()
+
+    yield
+
+    # Post-test cleanup
+    reset_rate_limiter()
+    reset_token_blacklist_cache()
+    reset_event_bus()
+
+
+@pytest.fixture(autouse=True)
+async def cleanup_async_tasks():
+    """Ensure all async tasks are cancelled after each test.
+
+    Prevents 'Task was destroyed but it is pending' errors when background
+    tasks from one test continue running during subsequent tests.
+
+    This is particularly important for tests using EventBus, ARQ, or other
+    async background processing.
+    """
+    import asyncio
+
+    yield
+
+    # Cancel all pending tasks except current
+    try:
+        current = asyncio.current_task()
+        pending = [t for t in asyncio.all_tasks() if t is not current]
+
+        for task in pending:
+            task.cancel()
+
+        if pending:
+            # Wait for cancellation to complete
+            await asyncio.gather(*pending, return_exceptions=True)
+    except RuntimeError:
+        # No event loop in sync tests
+        pass
+
+
+@pytest.fixture
+def test_redis_prefix(request):
+    """Generate unique Redis key prefix for each test.
+
+    This prefix can be used to isolate Redis keys between tests,
+    preventing key collisions during parallel or batch test runs.
+
+    Usage:
+        @pytest.mark.asyncio
+        async def test_something(test_redis_prefix):
+            key = f"{test_redis_prefix}my_key"
+            await redis.set(key, "value")
+    """
+    return f"test:{request.module.__name__}:{request.node.name}:"
+
+
+@pytest.fixture
+async def isolate_redis_keys(test_redis_prefix):
+    """Ensure Redis keys don't collide between tests.
+
+    This fixture provides automatic Redis key isolation by:
+    1. Providing a unique prefix for each test
+    2. Cleaning up all keys with that prefix after the test
+
+    Usage:
+        @pytest.mark.asyncio
+        async def test_something(isolate_redis_keys):
+            # All keys created with the prefix will be cleaned up
+            prefix = isolate_redis_keys
+            await redis.set(f"{prefix}my_key", "value")
+    """
+    from src.app.core.utils import cache
+
+    prefix = test_redis_prefix
+
+    yield prefix
+
+    # Cleanup all keys with this test's prefix
+    if cache.client:
+        try:
+            keys = []
+            async for key in cache.client.scan_iter(match=f"{prefix}*"):
+                keys.append(key)
+            if keys:
+                await cache.client.delete(*keys)
+        except Exception:
+            pass  # Redis may not be available in all tests
 
 
 @pytest.fixture
@@ -1197,8 +1308,10 @@ def mock_redis(request):
     # Skip mocking for tests that need real Redis
     markers = [m.name for m in request.node.iter_markers()]
     if any(m in markers for m in ("integration", "e2e", "uses_real_redis")):
+        # Real Redis initialization is handled by init_real_redis_async fixture
         yield None
         return
+
     fake_redis = FakeRedis()
 
     # Ensure setup module is imported for patching
@@ -1229,6 +1342,58 @@ def mock_redis(request):
         patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()),  # Add this
     ):
         yield fake_redis
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def init_real_redis_async(request):
+    """Initialize real Redis client for tests that need it.
+
+    This fixture runs BEFORE tests marked with:
+    - @pytest.mark.integration
+    - @pytest.mark.e2e
+    - @pytest.mark.uses_real_redis
+
+    It initializes cache.client with a real Redis connection.
+    """
+    markers = [m.name for m in request.node.iter_markers()]
+    needs_real_redis = any(m in markers for m in ("integration", "e2e", "uses_real_redis"))
+
+    if not needs_real_redis:
+        yield
+        return
+
+    # Initialize real Redis client
+    from src.app.core.utils import cache
+    from src.app.core import redis_factory
+    import redis.asyncio as redis
+
+    # CRITICAL: Reset ALL global state to prevent "Event loop is closed" errors
+    # The redis_factory caches the pool globally, and that pool gets bound to
+    # a specific event loop. When that loop closes, the pool becomes unusable.
+    # We must reset BOTH cache.client/pool AND redis_factory._redis_pool
+    cache.client = None
+    cache.pool = None
+    redis_factory._redis_pool = None  # Reset the global pool in redis_factory
+
+    try:
+        # Create NEW connection pool for THIS event loop
+        pool = await redis_factory.get_redis_pool()
+        cache.pool = pool
+        cache.client = redis.Redis(connection_pool=pool, decode_responses=True)
+
+        # Flush before test for isolation
+        await cache.client.flushdb()
+    except Exception as e:
+        print(f"Warning: Failed to initialize real Redis: {e}")
+        raise
+
+    yield
+
+    # Cleanup after test - just reset globals, don't try to close
+    # (the event loop may be closing and we can't operate on closed loops)
+    cache.client = None
+    cache.pool = None
+    redis_factory._redis_pool = None
 
 
 @pytest.fixture(autouse=True)
@@ -1470,6 +1635,279 @@ def tenant(db):
     db.commit()
     db.refresh(tenant)
     return tenant
+
+
+# -----------------------------------------------------------------------------
+# Real PostgreSQL Fixtures (for integration/e2e tests)
+# Moved from tests/integration/conftest.py to be available to all test types
+# -----------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def real_postgres_engine():
+    """Create real PostgreSQL engine for integration/e2e tests.
+
+    Uses function scope to prevent event loop binding issues.
+    """
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.orm import sessionmaker
+    from sqlalchemy.pool import NullPool
+
+    # Build full async URL with scheme prefix
+    # Use TEST_POSTGRES_PORT env var if set, otherwise use main POSTGRES_PORT
+    test_port = os.getenv("TEST_POSTGRES_PORT", str(settings.POSTGRES_PORT))
+    test_db = os.getenv("TEST_POSTGRES_DB", "test_db")
+
+    base_uri = str(settings.POSTGRES_URI)
+    # Replace port if TEST_POSTGRES_PORT is different
+    if test_port != str(settings.POSTGRES_PORT):
+        base_uri = base_uri.replace(f":{settings.POSTGRES_PORT}", f":{test_port}")
+    # Replace database name with test database
+    base_uri = base_uri.replace(f"/{settings.POSTGRES_DB}", f"/{test_db}")
+
+    # Add async scheme prefix
+    test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{base_uri}"
+
+    engine = create_async_engine(
+        test_db_url,
+        echo=True,  # Log all SQL
+        poolclass=NullPool,  # Critical: prevents connection caching across event loops
+    )
+
+    yield engine
+
+    # Handle event loop closed during teardown
+    try:
+        await engine.dispose()
+    except RuntimeError:
+        # Event loop may be closed during test session teardown
+        pass
+
+
+@pytest_asyncio.fixture
+async def real_postgres(real_postgres_engine) -> AsyncGenerator[AsyncSession, None]:
+    """Real PostgreSQL session for integration/e2e tests.
+
+    Uses function scope (default) to ensure each test gets a fresh session,
+    preventing 'another operation is in progress' errors from shared connections.
+    """
+    from sqlalchemy.ext.asyncio import AsyncSession
+    from sqlalchemy.orm import sessionmaker
+
+    async_session = sessionmaker(
+        real_postgres_engine,
+        class_=AsyncSession,
+        expire_on_commit=False,
+    )
+
+    async with async_session() as session:
+        yield session
+        # Session context manager handles cleanup automatically
+
+
+# -----------------------------------------------------------------------------
+# Real Redis Fixtures (for integration/e2e tests)
+# -----------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def real_redis() -> AsyncGenerator[Any, None]:
+    """Real Redis connection for integration/e2e tests.
+
+    Uses function scope (default) to create fresh connections per test,
+    preventing 'Future attached to different loop' errors.
+    """
+    from redis.asyncio import Redis
+
+    # Use TEST_REDIS_PORT env var if set, otherwise use main REDIS_CACHE_PORT
+    test_port = int(os.getenv("TEST_REDIS_PORT", str(settings.REDIS_CACHE_PORT)))
+    test_password = os.getenv("TEST_REDIS_PASSWORD", settings.REDIS_CACHE_PASSWORD)
+
+    redis = Redis(
+        host=settings.REDIS_CACHE_HOST,
+        port=test_port,
+        password=test_password if test_password else None,
+        db=0,
+        decode_responses=True,
+    )
+
+    # Flush before test for isolation
+    try:
+        await redis.flushdb()
+    except Exception:
+        pass
+
+    yield redis
+
+    # Cleanup after test
+    try:
+        await redis.flushdb()
+        await redis.aclose()
+    except Exception:
+        pass
+
+
+@pytest_asyncio.fixture
+async def redis_client(real_redis):
+    """Alias for real_redis for backward compatibility.
+
+    Many tests use 'redis_client' as the fixture name, while others use 'real_redis'.
+    This alias ensures both work identically.
+    """
+    return real_redis
+
+
+# -----------------------------------------------------------------------------
+# Factory Fixtures (for integration/e2e tests)
+# These use real_postgres to create test entities in the database
+# -----------------------------------------------------------------------------
+@pytest_asyncio.fixture
+async def test_tier(real_postgres):
+    """Create a test tier in real PostgreSQL."""
+    from tests.factories import TierFactory
+
+    return await TierFactory.create_async(real_postgres, name="TestTier")
+
+
+@pytest_asyncio.fixture
+async def test_tenant(real_postgres):
+    """Create a test tenant in real PostgreSQL.
+
+    Returns the tenant object directly for backward compatibility.
+    Tests can access test_tenant.id, test_tenant.slug, etc.
+    """
+    from tests.factories import TenantFactory
+
+    return await TenantFactory.create_async(real_postgres)
+
+
+@pytest_asyncio.fixture
+async def other_tenant(real_postgres):
+    """Create a second test tenant for multi-tenant security tests.
+
+    This fixture is used by tests that verify tenant isolation
+    (e.g., webhook security tests that ensure users can't access
+    other tenants' resources).
+
+    Returns:
+        Tenant: A different tenant than test_tenant
+    """
+    from tests.factories import TenantFactory
+
+    return await TenantFactory.create_async(
+        real_postgres,
+        name="Other Tenant",
+        slug="other-tenant",
+    )
+
+
+@pytest_asyncio.fixture
+async def other_user(real_postgres, other_tenant):
+    """Create a test user for the other tenant.
+
+    Returns a dict with access_token for authenticated requests.
+    """
+    from tests.factories import UserFactory
+    from src.app.core.security import create_access_token, create_refresh_token
+
+    user = await UserFactory.create_async(
+        real_postgres,
+        tenant_id=other_tenant.id,
+        email="other@test.com",
+        username="other_user",
+    )
+
+    access_token = await create_access_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(other_tenant.id)}
+    )
+    refresh_token = await create_refresh_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(other_tenant.id)}
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": user,
+        "tenant": other_tenant,
+    }
+
+
+@pytest_asyncio.fixture
+async def other_auth_headers(other_user):
+    """Authentication headers for the other tenant.
+
+    Used for multi-tenant security tests to verify tenant isolation.
+    """
+    return {
+        "Authorization": f"Bearer {other_user['access_token']}",
+        "X-Tenant-ID": other_user["tenant"].slug,
+    }
+
+
+@pytest_asyncio.fixture
+async def test_user(real_postgres, test_tenant):
+    """Create a test user with associated tenant in real PostgreSQL.
+
+    This fixture returns a dict with 'access_token' for authenticated requests
+    and the user object for direct access.
+
+    Returns:
+        dict: {"access_token": str, "user": User, "refresh_token": str, "tenant": Tenant}
+    """
+    from tests.factories import UserFactory
+    from src.app.core.security import create_access_token, create_refresh_token
+
+    # Create test user
+    user = await UserFactory.create_async(real_postgres, tenant_id=test_tenant.id)
+
+    # Generate tokens for authentication (async functions)
+    access_token = await create_access_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+    )
+    refresh_token = await create_refresh_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": user,
+        "tenant": test_tenant,
+    }
+
+
+@pytest_asyncio.fixture
+async def admin_user(real_postgres, test_tenant):
+    """Create an admin user with superuser privileges in real PostgreSQL.
+
+    This fixture returns a dict with 'access_token' for authenticated requests
+    and the user object for direct access.
+
+    Returns:
+        dict: {"access_token": str, "user": User, "refresh_token": str, "tenant": Tenant}
+    """
+    from tests.factories import UserFactory
+    from src.app.core.security import create_access_token, create_refresh_token
+
+    # Create admin user with superuser privileges
+    user = await UserFactory.create_async(
+        real_postgres,
+        tenant_id=test_tenant.id,
+        is_superuser=True,
+        email="admin@test.com",
+        username="admin_test",
+    )
+
+    # Generate tokens (async functions)
+    access_token = await create_access_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+    )
+    refresh_token = await create_refresh_token(
+        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+    )
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "user": user,
+        "tenant": test_tenant,
+    }
 
 
 @pytest.fixture

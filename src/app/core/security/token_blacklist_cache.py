@@ -434,3 +434,23 @@ async def get_cache_stats() -> dict:
     except Exception as e:
         logger.warning(f"Failed to get cache stats: {e}")
         return {"enabled": True, "error": str(e)}
+
+
+def reset_token_blacklist_cache() -> None:
+    """Reset the token blacklist cache state.
+
+    Used for test isolation to prevent state leakage between tests.
+    Clears:
+    - Lua script SHA cache
+    - Script locks per event loop
+    - Token cache key LRU cache
+    """
+    global _script_sha, _script_locks
+
+    _script_sha = None
+    _script_locks.clear()
+
+    # Clear the LRU cache for token keys
+    _token_cache_key.cache_clear()
+
+    logger.debug("Token blacklist cache state reset")
