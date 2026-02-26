@@ -1365,21 +1365,32 @@ async def init_real_redis_async(request):
     # Initialize real Redis client
     from src.app.core.utils import cache
     from src.app.core import redis_factory
+    from src.app.core.utils.gcra_rate_limit import gcra_rate_limiter as gcra_global, GCRARateLimiter
     import redis.asyncio as redis
 
     # CRITICAL: Reset ALL global state to prevent "Event loop is closed" errors
     # The redis_factory caches the pool globally, and that pool gets bound to
     # a specific event loop. When that loop closes, the pool becomes unusable.
     # We must reset BOTH cache.client/pool AND redis_factory._redis_pool
+    # Also reset GCRA rate limiter which caches script SHAs per connection
     cache.client = None
     cache.pool = None
-    redis_factory._redis_pool = None  # Reset the global pool in redis_factory
+    redis_factory._redis_pool = None
+
+    # Reset GCRA rate limiter to force fresh initialization
+    # The script SHA is bound to a specific Redis connection
+    import src.app.core.utils.gcra_rate_limit as gcra_module
+
+    gcra_module.gcra_rate_limiter = None
 
     try:
         # Create NEW connection pool for THIS event loop
         pool = await redis_factory.get_redis_pool()
         cache.pool = pool
         cache.client = redis.Redis(connection_pool=pool, decode_responses=True)
+
+        # Initialize GCRA rate limiter with new client
+        gcra_module.gcra_rate_limiter = GCRARateLimiter(cache.client)
 
         # Flush before test for isolation
         await cache.client.flushdb()
@@ -1394,6 +1405,7 @@ async def init_real_redis_async(request):
     cache.client = None
     cache.pool = None
     redis_factory._redis_pool = None
+    gcra_module.gcra_rate_limiter = None
 
 
 @pytest.fixture(autouse=True)
