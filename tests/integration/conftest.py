@@ -274,11 +274,48 @@ async def real_redis() -> AsyncGenerator[Redis, None]:
         pass
 
 
+from src.app.core.utils import cache
+
 @pytest_asyncio.fixture
-async def clean_redis(real_redis):
-    """Clean Redis state between tests."""
-    await real_redis.flushdb()
+async def clean_redis(real_redis) -> AsyncGenerator[Redis, None]:
+    """Alias for real_redis for backward compatibility with existing tests.
+    real_redis already flushes the DB before and after.
+    """
     yield real_redis
+
+
+@pytest_asyncio.fixture(autouse=True)
+async def cleanup_redis():
+    """Clean up Redis test data before and after each test.
+
+    Cleans all test-related keys including:
+    - Test-specific keys (e2e_test, premium_e2e)
+    - Rate limit keys (ratelimit:*, gcra:*)
+    - Auth cache keys (user:auth:*)
+    - Tenant cache keys
+    - Token blacklist keys
+    """
+    # BEFORE test: Clear rate limits to prevent interference
+    if getattr(cache, "client", None):
+        keys_to_delete = []
+        for pattern in ["ratelimit:*", "gcra:*", "user:auth:*", "tenant:*", "blacklist:*"]:
+            async for key in cache.client.scan_iter(match=pattern):
+                keys_to_delete.append(key)
+        
+        if keys_to_delete:
+            await cache.client.delete(*keys_to_delete)
+
+    yield
+
+    # AFTER test: Clean up all keys
+    if getattr(cache, "client", None):
+        keys_to_delete = []
+        for pattern in ["ratelimit:*", "gcra:*", "user:auth:*", "tenant:*", "blacklist:*"]:
+            async for key in cache.client.scan_iter(match=pattern):
+                keys_to_delete.append(key)
+        
+        if keys_to_delete:
+            await cache.client.delete(*keys_to_delete)
 
 
 @pytest.fixture

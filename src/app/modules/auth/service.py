@@ -430,6 +430,26 @@ return new_attempts
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
 
+            # Try to invalidate the specific session to decrement active sessions
+            if user_data:
+                try:
+                    user_service = get_user_service(db)
+                    if "@" in user_data.username_or_email:
+                        db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
+                    else:
+                        db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
+
+                    if db_user:
+                        import jwt
+
+                        from ...core.security.session_manager import session_manager as global_session_manager
+
+                        decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+                        session_id = decoded_token.get("jti", access_token[:32])
+                        await global_session_manager.invalidate_session(db_user["id"], session_id)
+                except Exception as e:
+                    logger.warning("failed_to_invalidate_session_on_logout", error=str(e))
+
             # Audit log logout
             try:
                 username = user_data.username_or_email if user_data else "unknown"

@@ -273,7 +273,7 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
 
         hashed_password = await get_password_hash(user_data["password"])
 
-        await session.execute(
+        insert_result = await session.execute(
             text("""
                 INSERT INTO "user" (
                     name, email, username, hashed_password, tenant_id, tier_id, 
@@ -282,9 +282,10 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
                 )
                 VALUES (
                     :name, :email, :username, :password, :tenant_id, 1,
-                    'https://profileimageurl.com', :uuid, true, false, false,
+                    'https://profileimageurl.com', :uuid, true, false, true,
                     false, 0, NOW(), NOW()
                 )
+                RETURNING id
             """),
             {
                 "name": user_data["name"],
@@ -295,6 +296,21 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
                 "uuid": uuid7(),
             },
         )
+        user_id = insert_result.scalar()
+
+        # Assign admin role explicitly
+        role_result = await session.execute(
+            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"),
+            {"tenant_id": tenant_id}
+        )
+        role_id = role_result.scalar()
+        
+        if user_id and role_id:
+            await session.execute(
+                text("INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
+                {"user_id": user_id, "role_id": role_id}
+            )
+
         await session.commit()
         logger.info(f"Created user directly in DB with tenant_id={tenant_id}")
 
@@ -328,6 +344,7 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
         "email": user_data["email"],
         "username": user_data["username"],
         "access_token": access_token,
+        "refresh_token": response.cookies.get("refresh_token"),
         "user_id": result.get("user_id"),
     }
 
@@ -373,7 +390,7 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
 
         hashed_password = await get_password_hash(user_data["password"])
 
-        await session.execute(
+        insert_result = await session.execute(
             text("""
                 INSERT INTO "user" (
                     name, email, username, hashed_password, tenant_id, tier_id, 
@@ -382,9 +399,10 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
                 )
                 VALUES (
                     :name, :email, :username, :password, :tenant_id, 2,
-                    'https://profileimageurl.com', :uuid, true, false, false,
+                    'https://profileimageurl.com', :uuid, true, false, true,
                     false, 0, NOW(), NOW()
                 )
+                RETURNING id
             """),
             {
                 "name": user_data["name"],
@@ -395,6 +413,21 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
                 "uuid": uuid7(),
             },
         )
+        user_id = insert_result.scalar()
+
+        # Assign admin role explicitly
+        role_result = await session.execute(
+            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"),
+            {"tenant_id": tenant_id}
+        )
+        role_id = role_result.scalar()
+        
+        if user_id and role_id:
+            await session.execute(
+                text("INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
+                {"user_id": user_id, "role_id": role_id}
+            )
+
         await session.commit()
         logger.info(f"Created premium user directly in DB with tenant_id={tenant_id}, tier_id=2")
 
@@ -428,6 +461,7 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
         "email": user_data["email"],
         "username": user_data["username"],
         "access_token": access_token,
+        "refresh_token": response.cookies.get("refresh_token"),
         "user_id": result.get("user_id"),
         "tier_id": 2,
     }

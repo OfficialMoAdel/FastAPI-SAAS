@@ -165,7 +165,6 @@ Specify.md
 .agent
 .claude
 specs
-specs/0*
 .specify
 .archived
 claudedocs
@@ -177,7 +176,6 @@ Constitution.txt
 IMPLEMENTATION_TASKS
 routes.txt
 Constitution.txt
-coverage_report*
 sql_app.db*
 # Auto Claude data directory
 .auto-claude/
@@ -196,9 +194,10 @@ PLAN_FOR_ADVANCED_*
 CONTRIBUTING.md
 SECURITY.md
 Phase*
+coverage_report*
 final_failed*
-baseline*
 unique_failed*
+baseline*
 failed.txt
 storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py
@@ -210,3 +209,6 @@ FINAL_REPORT.md
 tasks
 CODE_REVIEW_REPORT.md
 VERIFIED_*
+storage_test
+file1.md
+IMPROVEMENTS.md
