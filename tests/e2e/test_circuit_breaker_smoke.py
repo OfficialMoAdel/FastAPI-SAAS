@@ -36,7 +36,7 @@ async def test_smoke_circuit_breaker_registry(e2e_client):
 
     # 2. Access the circuit breaker registry directly
     from src.app.core.resilience.registry import CircuitState, get_registry
-    import src.app.core.resilience.db_circuit_breaker  # Ensure registered
+    from src.app.core.resilience.db_circuit_breaker import db_circuit
 
     registry = get_registry()
 

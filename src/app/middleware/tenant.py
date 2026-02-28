@@ -14,7 +14,6 @@ Performance Optimization (R2-HYBRID MED-1):
 """
 
 import asyncio
-from collections import defaultdict
 from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
@@ -44,10 +43,29 @@ logger = get_logger(__name__)
 # - Stores: dict with {id, slug, is_active} or None for negative cache
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
 
-# Cache stampede protection: per-slug locks
+# Cache stampede protection: per-slug locks, keyed by event loop ID.
 # Prevents "thundering herd" where multiple concurrent requests for a cold tenant
 # all bypass cache and hit the DB simultaneously.
-_TENANT_LOCKS: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
+# NOTE: We key by loop ID to avoid RuntimeError when tests run in separate event loops.
+# Each event loop gets its own dict of locks so locks are never shared across loops.
+_TENANT_LOCKS: dict[int, dict[str, asyncio.Lock]] = {}
+
+
+def _get_tenant_lock(slug: str) -> asyncio.Lock:
+    """Get or create an asyncio.Lock for the given slug, bound to the current event loop.
+
+    Keying by event loop ID prevents the 'is bound to a different event loop'
+    RuntimeError that occurs when a module-level Lock is created in one loop
+    but used in another (common in pytest-asyncio with function-scoped loops).
+    """
+    loop = asyncio.get_running_loop()
+    loop_id = id(loop)
+    if loop_id not in _TENANT_LOCKS:
+        _TENANT_LOCKS[loop_id] = {}
+    loop_locks = _TENANT_LOCKS[loop_id]
+    if slug not in loop_locks:
+        loop_locks[slug] = asyncio.Lock()
+    return loop_locks[slug]
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
     [
@@ -313,7 +331,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # Cache Stampede Protection: Acquire lock for this slug
         # This ensures only ONE request hits Redis/DB, while others wait
-        async with _TENANT_LOCKS[slug]:
+        async with _get_tenant_lock(slug):
             # Double-check L1 cache inside lock (in case another request populated it while we waited)
             if slug in _L1_TENANT_CACHE:
                 cached_data = _L1_TENANT_CACHE.get(slug)

@@ -114,15 +114,21 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
         """Process request with query profiling."""
         if not self._is_enabled:
             response = await call_next(request)
-            return cast(Response, response)
+            response = cast(Response, response)
+            response.headers["X-Query-Count"] = "0"
+            response.headers["X-Query-Time"] = "0"
+            return response
 
         stats = QueryStats()
         engine = self._get_engine()
 
         if not engine:
-            # Can't profile without engine access
+            # Can't profile without engine access - still add zero-value headers
             response = await call_next(request)
-            return cast(Response, response)
+            response = cast(Response, response)
+            response.headers["X-Query-Count"] = "0"
+            response.headers["X-Query-Time"] = "0"
+            return response
 
         # Set up query listener
         self._attach_listener(engine, stats)
@@ -141,7 +147,14 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
             # Log profiling results
             self._log_results(request, stats, total_time_ms)
 
-        return cast(Response, response)
+        # Add profiling headers to response
+        response = cast(Response, response)
+        response.headers["X-Query-Count"] = str(len(stats.queries))
+        response.headers["X-Query-Time"] = str(round(stats.total_time_ms, 3))
+        if stats.slow_queries:
+            response.headers["X-Slow-Queries"] = str(len(stats.slow_queries))
+
+        return response
 
     def _attach_listener(self, engine: Engine, stats: QueryStats) -> None:
         """Attach SQL execution event listener."""
@@ -155,9 +168,17 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
             start_time = conn.info.get("query_start_time")
             if start_time:
                 duration_ms = (time.perf_counter() - start_time) * 1000
+                # SQLAlchemy parameters may be a dict (named params) OR a tuple/list
+                # (positional params). Safely convert to dict only when possible.
+                if isinstance(parameters, dict):
+                    safe_params = parameters
+                elif parameters:
+                    safe_params = {"positional": list(parameters)}
+                else:
+                    safe_params = {}
                 stats.add_query(
                     statement=str(statement),
-                    params=dict(parameters) if parameters else {},
+                    params=safe_params,
                     duration_ms=duration_ms,
                 )
 

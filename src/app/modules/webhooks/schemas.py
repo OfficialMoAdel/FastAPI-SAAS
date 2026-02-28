@@ -32,7 +32,7 @@ class WebhookEndpointBase(BaseModel):
 class WebhookEndpointCreate(WebhookEndpointBase, BaseCreate):
     """Schema for creating webhook endpoint."""
 
-    tenant_id: UUID
+    tenant_id: UUID | None = Field(None, description="Tenant ID (populated from request context if not provided)")
     secret: str | None = Field(
         None, description="Optional custom secret for signature (auto-generated if not provided)"
     )
@@ -57,6 +57,20 @@ class WebhookEndpointRead(BaseReadUUID):
     event_type: str
     is_active: bool
     # Note: secret and signing_secret NOT included for security
+
+
+class WebhookEndpointCreateResponse(BaseReadUUID):
+    """Schema for webhook endpoint creation response — includes secret once.
+
+    The ``secret`` is returned only on creation so the caller can store it.
+    It will NOT be returned by any other endpoint.
+    """
+
+    tenant_id: UUID
+    url: str
+    event_type: str
+    is_active: bool
+    secret: str | None = Field(None, description="Auto-generated HMAC secret for signature verification")
 
 
 class WebhookEndpointAdminRead(BaseReadUUID):

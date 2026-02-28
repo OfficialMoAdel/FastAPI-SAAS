@@ -23,7 +23,7 @@ class TestIPWhitelistE2E:
 
         try:
             # Execute: Make request from whitelisted IP
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "127.0.0.1"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "127.0.0.1"})
 
             # Verify: Should be allowed
             assert response.status_code == 200
@@ -40,7 +40,7 @@ class TestIPWhitelistE2E:
             await ip_filter_service.clear_whitelist()
 
             # Execute: Make request from non-whitelisted IP
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.100"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "192.168.1.100"})
 
             # Verify: Should be blocked
             assert response.status_code == 403
@@ -56,7 +56,7 @@ class TestIPWhitelistE2E:
 
         try:
             # Execute: Request before expiration
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "10.0.0.1"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "10.0.0.1"})
 
             # Verify: Should be allowed
             assert response.status_code == 200
@@ -67,7 +67,7 @@ class TestIPWhitelistE2E:
             await asyncio.sleep(2)
 
             # Execute: Request after expiration
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "10.0.0.1"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "10.0.0.1"})
 
             # Verify: Should be blocked (whitelist mode)
             # Note: This test assumes whitelist mode is enabled
@@ -87,7 +87,7 @@ class TestIPBlacklistE2E:
 
             try:
                 # Execute: Make request from blacklisted IP
-                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.50"})
+                response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "192.168.1.50"})
 
                 # Verify: Should be blocked
                 assert response.status_code == 403
@@ -102,7 +102,7 @@ class TestIPBlacklistE2E:
             await ip_filter_service.clear_blacklist()
 
             # Execute: Make request from non-blacklisted IP
-            response = await async_client.get("/api/v1/health")
+            response = await async_client.get("/openapi.json")
 
             # Verify: Should be allowed
             assert response.status_code == 200
@@ -114,42 +114,45 @@ class TestIPBlacklistE2E:
             await ip_filter_service.add_to_blacklist(ip_address="192.168.1.60", reason="Temporary block")
 
             # Verify: Initially blocked
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "192.168.1.60"})
             assert response.status_code == 403
 
             # Remove from blacklist
             await ip_filter_service.remove_from_blacklist("192.168.1.60")
 
             # Verify: Now allowed
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
+            response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "192.168.1.60"})
             assert response.status_code == 200
 
 
 class TestBadBotFilteringE2E:
     """E2E tests for bad bot detection."""
 
-    async def test_sqlmap_user_agent_blocked(self, async_client: AsyncClient):
+    async def test_sqlmap_user_agent_blocked(self, async_client: AsyncClient, override_settings):
         """Test that SQLMap user agent is blocked."""
-        response = await async_client.get("/api/v1/health", headers={"User-Agent": "sqlmap/1.7.6#stable"})
+        with override_settings(BAD_BOT_FILTER_ENABLED=True, IP_WHITELIST_ENABLED=False):
+            response = await async_client.get("/openapi.json", headers={"User-Agent": "sqlmap/1.7.6#stable"})
 
-        assert response.status_code == 403
-        assert "Bad bot detected" in response.text
+            assert response.status_code == 403
+            assert "Bad bot detected" in response.text
 
-    async def test_nikto_user_agent_blocked(self, async_client: AsyncClient):
+    async def test_nikto_user_agent_blocked(self, async_client: AsyncClient, override_settings):
         """Test that Nikto user agent is blocked."""
-        response = await async_client.get(
-            "/api/v1/health", headers={"User-Agent": "Mozilla/5.0 (compatible; Nikto/2.1.6;)"}
-        )
+        with override_settings(BAD_BOT_FILTER_ENABLED=True, IP_WHITELIST_ENABLED=False):
+            response = await async_client.get(
+                "/openapi.json", headers={"User-Agent": "Mozilla/5.0 (compatible; Nikto/2.1.6;)"}
+            )
 
-        assert response.status_code == 403
+            assert response.status_code == 403
 
-    async def test_nmap_user_agent_blocked(self, async_client: AsyncClient):
+    async def test_nmap_user_agent_blocked(self, async_client: AsyncClient, override_settings):
         """Test that Nmap user agent is blocked."""
-        response = await async_client.get(
-            "/api/v1/health", headers={"User-Agent": "Mozilla/5.0 (Nmap Scripting Engine)"}
-        )
+        with override_settings(BAD_BOT_FILTER_ENABLED=True, IP_WHITELIST_ENABLED=False):
+            response = await async_client.get(
+                "/openapi.json", headers={"User-Agent": "Mozilla/5.0 (Nmap Scripting Engine)"}
+            )
 
-        assert response.status_code == 403
+            assert response.status_code == 403
 
     async def test_chrome_user_agent_allowed(self, async_client: AsyncClient):
         """Test that normal Chrome browser is allowed."""
@@ -177,7 +180,7 @@ class TestBadBotFilteringE2E:
 
     async def test_curl_user_agent_allowed(self, async_client: AsyncClient):
         """Test that curl requests are allowed."""
-        response = await async_client.get("/api/v1/health", headers={"User-Agent": "curl/7.68.0"})
+        response = await async_client.get("/openapi.json", headers={"User-Agent": "curl/7.68.0"})
 
         assert response.status_code == 200
 
@@ -193,7 +196,7 @@ class TestCombinedFilteringE2E:
 
             try:
                 # Execute: Make request
-                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "10.0.0.100"})
+                response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "10.0.0.100"})
 
                 # Verify: Whitelist allows access
                 assert response.status_code == 200
@@ -209,7 +212,7 @@ class TestCombinedFilteringE2E:
             try:
                 # Execute: Request with bad bot UA from whitelisted IP
                 response = await async_client.get(
-                    "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.200", "User-Agent": "sqlmap/1.0"}
+                    "/openapi.json", headers={"X-Forwarded-For": "10.0.0.200", "User-Agent": "sqlmap/1.0"}
                 )
 
                 # Verify: Whitelist allows despite bad bot UA
@@ -266,7 +269,7 @@ class TestProxyHeadersE2E:
             try:
                 # Execute: Request with X-Forwarded-For showing blacklisted IP
                 response = await async_client.get(
-                    "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.50, 192.168.1.1", "X-Real-IP": "192.168.1.2"}
+                    "/openapi.json", headers={"X-Forwarded-For": "10.0.0.50, 192.168.1.1", "X-Real-IP": "192.168.1.2"}
                 )
 
                 # Verify: First IP in X-Forwarded-For is checked
@@ -281,7 +284,7 @@ class TestProxyHeadersE2E:
 
             try:
                 # Execute: Request with only X-Real-IP
-                response = await async_client.get("/api/v1/health", headers={"X-Real-IP": "10.0.0.60"})
+                response = await async_client.get("/openapi.json", headers={"X-Real-IP": "10.0.0.60"})
 
                 # Verify: X-Real-IP is checked
                 assert response.status_code == 403

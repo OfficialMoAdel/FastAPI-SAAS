@@ -23,8 +23,10 @@ async def e2e_client(get_test_app):
     app.dependency_overrides[async_get_db] = override_get_db
 
     # Patch async_engine in places where it's imported directly
+    from tests.conftest import TestingSessionLocal
     with (
         patch("src.app.middleware.tenant.async_engine", new=test_async_engine),
+        patch("src.app.middleware.tenant.local_session", new=TestingSessionLocal),
         patch("src.app.core.db.database.async_engine", new=test_async_engine),
         patch(
             "src.app.core.utils.rate_limit.RateLimiter.check_rate_limit",

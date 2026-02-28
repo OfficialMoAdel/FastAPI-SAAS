@@ -11,69 +11,19 @@ from src.app.main import app
 from tests.conftest import TestingSessionLocal, override_get_db
 
 
-def create_simple_mock_engine():
-    """Create a simple mock engine for middleware."""
-    mock_conn = AsyncMock()
-    mock_conn.execute = AsyncMock()
 
-    mock_cm = AsyncMock()
-    mock_cm.__aenter__.return_value = mock_conn
-    mock_cm.__aexit__.return_value = None
-
-    mock_engine = Mock()
-    mock_engine.connect.return_value = mock_cm
-    return mock_engine
 
 
 @pytest.mark.asyncio
-async def test_job_monitoring_e2e_flow(e2e_client):
+async def test_job_monitoring_e2e_flow(e2e_client, auth_headers):
     """
     E2E Test for Job Monitoring.
     """
     # Override dependency to use test DB
     app.dependency_overrides[async_get_db] = override_get_db
 
-    # Patch middleware engine to avoid RLS errors
-    with patch("src.app.middleware.tenant.async_engine", new=create_simple_mock_engine()):
-        # Seeding user:
-        from src.app.core.security import get_password_hash
-        from src.app.modules.tenants.models import Tenant
-        from src.app.modules.users.models import User
-
-        # Use TestingSessionLocal for seeding to write to test DB
-        async with TestingSessionLocal() as db:
-            # Create tenant first
-            tenant = Tenant(name="Test Tenant", slug="test-tenant-e2e")  # distinct slug
-            # Check if exists to avoid duplication errors on re-run if DB persists
-            # (Though setup_db should clear it session-wide, local_session uses persistent file)
-            # Actually, TestingSessionLocal uses memory-shared or file?
-            # In conftest: sqlite+aiosqlite:///./test.db
-            # So it persists on disk.
-            # We should check or try/except.
-            from sqlalchemy import select
-
-            result = await db.execute(select(Tenant).where(Tenant.slug == "test-tenant-e2e"))
-            existing = result.scalar_one_or_none()
-
-            if not existing:
-                db.add(tenant)
-                await db.flush()
-                tenant_id = tenant.id
-
-                user = User(
-                    email="admin@example.com",
-                    username="admin",
-                    name="Admin User",
-                    hashed_password=await get_password_hash("password"),
-                    is_superuser=True,
-                    is_email_verified=True,
-                    tenant_id=tenant_id,
-                )
-                db.add(user)
-                await db.commit()
-            else:
-                tenant_id = existing.id
-
+    from contextlib import nullcontext
+    with nullcontext():
         # Patch local_session in functions.py so workers use test DB too
         with patch("src.app.core.db.database.local_session", TestingSessionLocal):
             # Now call workers
@@ -86,12 +36,7 @@ async def test_job_monitoring_e2e_flow(e2e_client):
             assert result == "Task e2e_test is complete!"
 
             # 2. Verify metrics via API
-            from src.app.core.security import create_access_token
-
-            token = await create_access_token(data={"sub": "admin@example.com"})
-            headers = {"Authorization": f"Bearer {token}", "X-Tenant-ID": "test-tenant-e2e"}
-
-            response = await e2e_client.get("/api/v1/admin/jobs/metrics", headers=headers)
+            response = await e2e_client.get("/api/v1/admin/jobs/metrics", headers=auth_headers)
             assert response.status_code == 200
             data = response.json()
 
@@ -113,7 +58,7 @@ async def test_job_monitoring_e2e_flow(e2e_client):
                 pass
 
             # 4. Verify DLQ
-            response = await e2e_client.get("/api/v1/admin/jobs/dlq", headers=headers)
+            response = await e2e_client.get("/api/v1/admin/jobs/dlq", headers=auth_headers)
             assert response.status_code == 200
             dlq = response.json()
 

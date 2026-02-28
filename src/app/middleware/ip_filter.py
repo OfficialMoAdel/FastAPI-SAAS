@@ -17,13 +17,17 @@ from src.app.modules.security.service import IPFilterService
 
 logger = logging.getLogger(__name__)
 
-# Paths exempt from IP filtering (health checks, admin APIs for management)
 EXEMPT_PATHS: frozenset[str] = frozenset(
     [
+        # Full API paths (used at runtime via Starlette route matching)
+        "/api/v1/health",
+        "/api/v1/health/live",
+        "/api/v1/health/ready",
+        "/metrics",
+        # Short paths (used in unit tests and some proxy setups)
         "/health",
         "/health/live",
         "/health/ready",
-        "/metrics",
     ]
 )
 

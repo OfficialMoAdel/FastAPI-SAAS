@@ -17,6 +17,7 @@ from .core.setup import create_application, lifespan_factory
 from .middleware.attack_detection import AttackDetectionMiddleware
 from .middleware.body_limit import RequestBodyLimitMiddleware
 from .middleware.ip_filter import IPFilterMiddleware
+from .middleware.query_profiler import QueryProfilerMiddleware
 from .middleware.rate_limit import RateLimitMiddleware
 from .middleware.request_id import RequestIDMiddleware
 from .middleware.security_headers import SecurityHeadersMiddleware
@@ -170,6 +171,7 @@ app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
+app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
 
 # Mount admin interface if enabled

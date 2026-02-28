@@ -247,12 +247,16 @@ def reset_circuit_breaker_registry():
     Prevents asyncio.Lock binding issues when event loops change between tests.
     This is critical for test isolation during coverage runs.
     """
-    from src.app.core.resilience.registry import reset_registry
+    from src.app.core.resilience.registry import reset_registry, get_registry, ServiceType
     from src.app.core.utils.circuit_breaker import reset_all_circuit_breakers
+    from src.app.core.resilience.db_circuit_breaker import db_circuit
 
     reset_registry()
     reset_all_circuit_breakers()
+    get_registry().register("database", db_circuit, service_type=ServiceType.DATABASE)
+    
     yield
+    
     reset_registry()
     reset_all_circuit_breakers()
 
@@ -1909,10 +1913,10 @@ async def test_user(real_postgres, test_tenant):
 
     # Generate tokens for authentication (async functions)
     access_token = await create_access_token(
-        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+        data={"sub": user.username, "email": user.email, "tenant_id": str(test_tenant.id)}
     )
     refresh_token = await create_refresh_token(
-        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+        data={"sub": user.username, "email": user.email, "tenant_id": str(test_tenant.id)}
     )
 
     return {
@@ -1947,10 +1951,10 @@ async def admin_user(real_postgres, test_tenant):
 
     # Generate tokens (async functions)
     access_token = await create_access_token(
-        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+        data={"sub": user.username, "email": user.email, "tenant_id": str(test_tenant.id)}
     )
     refresh_token = await create_refresh_token(
-        data={"sub": str(user.uuid), "email": user.email, "tenant_id": str(test_tenant.id)}
+        data={"sub": user.username, "email": user.email, "tenant_id": str(test_tenant.id)}
     )
 
     return {

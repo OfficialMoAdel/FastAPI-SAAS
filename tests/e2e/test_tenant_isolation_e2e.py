@@ -315,7 +315,7 @@ class TestTenantIsolationE2E:
             headers={"X-Tenant-ID": tenant_a.slug, "Authorization": "Bearer dummy-token"},
         )
         assert delete_response.status_code == 200, f"Failed to delete user: {delete_response.text}"
-        assert delete_response.json()["message"] == "User deleted"
+        assert delete_response.json()["message"] == "User deleted successfully"
         logger.info(f"Successfully deleted user {user_id}")
 
         # Verify user is soft deleted (should return 404 or not in list)

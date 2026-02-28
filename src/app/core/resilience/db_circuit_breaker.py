@@ -78,8 +78,12 @@ async def execute_query_with_circuit_breaker(
     # The HALF_OPEN state requires single-request testing - allow one operation through
     if current_state == CircuitState.HALF_OPEN:
         # In HALF_OPEN state, we allow only one test request
-        # The circuit breaker state machine handles this, but we log it
         logger.debug("Database circuit HALF_OPEN - allowing test request")
+        # Handle HALF_OPEN transition manually so record_success works
+        if db_circuit._state == CircuitState.OPEN:
+            async with db_circuit._lock:
+                if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
+                    db_circuit._state = CircuitState.HALF_OPEN
         # If we succeed, record_success() will transition to CLOSED
         # If we fail, record_failure() will transition back to OPEN
 

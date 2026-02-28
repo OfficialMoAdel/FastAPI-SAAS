@@ -19,6 +19,7 @@ from .schemas import (
     WebhookDeliveryList,
     WebhookDeliveryResponse,
     WebhookEndpointCreate,
+    WebhookEndpointCreateResponse,
     WebhookEndpointList,
     WebhookEndpointResponse,
     WebhookEndpointUpdate,
@@ -71,13 +72,13 @@ async def list_webhook_endpoints(
     }
 
 
-@router.post("/", response_model=WebhookEndpointResponse, status_code=201)
+@router.post("/", response_model=WebhookEndpointCreateResponse, status_code=201)
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> WebhookEndpointResponse:
+) -> WebhookEndpointCreateResponse:
     """
     Create a new webhook endpoint.
 
@@ -93,7 +94,59 @@ async def create_webhook_endpoint(
         secret=request.secret,
     )
 
-    return WebhookEndpointResponse.model_validate(endpoint)
+    return WebhookEndpointCreateResponse.model_validate(endpoint)
+
+
+@router.get("/deliveries", response_model=WebhookDeliveryList)
+async def list_webhook_deliveries_route(
+    endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
+    status: str | None = Query(None, description="Filter by status"),
+    event_type: str | None = Query(None, description="Filter by event type"),
+    start_date: datetime | None = Query(None, description="Filter from date"),
+    end_date: datetime | None = Query(None, description="Filter to date"),
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> dict:
+    """
+    List webhook delivery history.
+
+    Returns delivery attempts with status, response codes, and retry information.
+    """
+    query = select(WebhookDelivery).join(WebhookEndpoint).where(WebhookEndpoint.tenant_id == current_tenant.id)
+
+    if endpoint_id:
+        query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
+    if status:
+        query = query.where(WebhookDelivery.status == status)
+    if event_type:
+        query = query.where(WebhookDelivery.event_type == event_type)
+    if start_date:
+        query = query.where(WebhookDelivery.created_at >= start_date)
+    if end_date:
+        query = query.where(WebhookDelivery.created_at <= end_date)
+
+    query = query.order_by(WebhookDelivery.created_at.desc())
+
+    count_query = select(func.count()).select_from(query.subquery())
+    total_result = await db.execute(count_query)
+    total = total_result.scalar_one()
+
+    offset = (page - 1) * per_page
+    query = query.limit(per_page).offset(offset)
+    result = await db.execute(query)
+    deliveries = result.scalars().all()
+
+    return {
+        "items": [WebhookDeliveryResponse.model_validate(d) for d in deliveries],
+        "total": total,
+        "page": page,
+        "per_page": per_page,
+        "has_next": page * per_page < total,
+        "has_previous": page > 1,
+    }
 
 
 @router.get("/{endpoint_id}", response_model=WebhookEndpointResponse)
@@ -169,60 +222,6 @@ async def delete_webhook_endpoint(
     await db.commit()
 
 
-@router.get("/deliveries", response_model=WebhookDeliveryList)
-async def list_webhook_deliveries(
-    endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
-    status: str | None = Query(None, description="Filter by status"),
-    event_type: str | None = Query(None, description="Filter by event type"),
-    start_date: datetime | None = Query(None, description="Filter from date"),
-    end_date: datetime | None = Query(None, description="Filter to date"),
-    page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
-) -> dict:
-    """
-    List webhook delivery history.
-
-    Returns delivery attempts with status, response codes, and retry information.
-    """
-    # Join with webhook_endpoints to enforce tenant isolation
-    query = select(WebhookDelivery).join(WebhookEndpoint).where(WebhookEndpoint.tenant_id == current_tenant.id)
-
-    if endpoint_id:
-        query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
-    if status:
-        query = query.where(WebhookDelivery.status == status)
-    if event_type:
-        query = query.where(WebhookDelivery.event_type == event_type)
-    if start_date:
-        query = query.where(WebhookDelivery.created_at >= start_date)
-    if end_date:
-        query = query.where(WebhookDelivery.created_at <= end_date)
-
-    query = query.order_by(WebhookDelivery.created_at.desc())
-
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
-
-    # Apply pagination
-    offset = (page - 1) * per_page
-    query = query.limit(per_page).offset(offset)
-
-    result = await db.execute(query)
-    deliveries = result.scalars().all()
-
-    return {
-        "items": [WebhookDeliveryResponse.model_validate(d) for d in deliveries],
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
 
 
 @router.get("/deliveries/{delivery_id}", response_model=WebhookDeliveryResponse)

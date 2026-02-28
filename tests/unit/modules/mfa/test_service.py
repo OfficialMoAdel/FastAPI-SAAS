@@ -275,10 +275,13 @@ class TestVerifyBackupCode:
         }
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
-            # Mock the model instance
+            # Mock the model instance for db.execute().scalar_one_or_none()
             mock_model = MagicMock()
             mock_model.backup_codes = [code_hash]
-            mock_db.get = AsyncMock(return_value=mock_model)
+            
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
 
             # Patch verify_password in the core.security module where it's imported from
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
@@ -306,7 +309,13 @@ class TestVerifyBackupCode:
             "backup_codes": [wrong_hash],
         }
 
+        mock_model = MagicMock()
+        mock_model.backup_codes = [wrong_hash]
+
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
             # Patch verify_password in the core.security module where it's imported from
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=False):
                 result = await mfa_service._verify_backup_code(
@@ -335,7 +344,9 @@ class TestVerifyBackupCode:
         mock_model.backup_codes = [code_hash]
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
-            mock_db.get = AsyncMock(return_value=mock_model)
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
 
             # Patch verify_password in the core.security module where it's imported from
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
@@ -620,7 +631,9 @@ class TestBackupCodeUsage:
         mock_model.backup_codes = code_hashes.copy()
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
-            mock_db.get = AsyncMock(return_value=mock_model)
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
 
             # Use first backup code
             result = await mfa_service._verify_backup_code(
@@ -652,7 +665,9 @@ class TestBackupCodeUsage:
         mock_model.backup_codes = [code_hash]
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
-            mock_db.get = AsyncMock(return_value=mock_model)
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
 
             # Use backup code first time
             result1 = await mfa_service._verify_backup_code(
@@ -695,7 +710,9 @@ class TestBackupCodeUsage:
         mock_model.last_used_at = None
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
-            mock_db.get = AsyncMock(return_value=mock_model)
+            mock_result = MagicMock()
+            mock_result.scalar_one_or_none.return_value = mock_model
+            mock_db.execute = AsyncMock(return_value=mock_result)
 
             await mfa_service._verify_backup_code(
                 user_id=mock_user_id,

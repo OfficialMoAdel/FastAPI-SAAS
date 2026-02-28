@@ -385,7 +385,7 @@ class TestAPIKeySecurity:
     async def test_api_key_creation_requires_auth(self, async_client: AsyncClient) -> None:
         """Test API key creation requires authentication."""
         response = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "Test Key", "scopes": ["read:users"]},
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -398,7 +398,7 @@ class TestAPIKeySecurity:
         """Test that created API keys are valid and usable."""
         # Create API key
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={
                 "name": "Test API Key",
                 "scopes": ["read:users"],
@@ -409,11 +409,11 @@ class TestAPIKeySecurity:
 
         assert create_resp.status_code == status.HTTP_201_CREATED
         api_key_data = create_resp.json()
-        assert "api_key" in api_key_data
+        assert "key" in api_key_data
         assert api_key_data["name"] == "Test API Key"
 
         # The full API key should be returned only once
-        full_key = api_key_data["api_key"]
+        full_key = api_key_data["key"]
         assert len(full_key) > 20  # Should be a substantial key
 
     async def test_api_key_prefix_is_stored(
@@ -423,7 +423,7 @@ class TestAPIKeySecurity:
     ) -> None:
         """Test that API key prefix is stored and returned."""
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "Test Key", "scopes": ["read:users"]},
             headers=auth_headers,
         )
@@ -434,7 +434,7 @@ class TestAPIKeySecurity:
 
     async def test_api_key_list_requires_auth(self, async_client: AsyncClient) -> None:
         """Test API key listing requires authentication."""
-        response = await async_client.get("/api/v1/api-keys/")
+        response = await async_client.get("/api/v1/api-keys")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     async def test_api_key_list_shows_only_own_keys(
@@ -445,14 +445,14 @@ class TestAPIKeySecurity:
         """Test users can only see their own API keys."""
         # Create a key
         await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "My Key", "scopes": ["read:users"]},
             headers=auth_headers,
         )
 
         # List keys
         list_resp = await async_client.get(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             headers=auth_headers,
         )
 
@@ -466,7 +466,7 @@ class TestAPIKeySecurity:
         # Verify keys don't expose full API key (only prefix)
         for key in data["items"]:
             assert "key_prefix" in key
-            assert "api_key" not in key  # Full key should not be returned
+            assert "key" not in key  # Full key should not be returned
 
     async def test_api_key_rotation_with_grace_period(
         self,
@@ -476,7 +476,7 @@ class TestAPIKeySecurity:
         """Test API key rotation with grace period."""
         # Create initial key
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "Rotatable Key", "scopes": ["read:users"]},
             headers=auth_headers,
         )
@@ -486,7 +486,7 @@ class TestAPIKeySecurity:
 
         # Rotate key
         rotate_resp = await async_client.post(
-            f"/api/v1/api-keys/{key_id}/rotate",
+            f"/api/v1/api-keys{key_id}/rotate",
             json={"grace_period_days": 7},
             headers=auth_headers,
         )
@@ -507,7 +507,7 @@ class TestAPIKeySecurity:
         """Test API key revocation."""
         # Create key
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "Revocable Key", "scopes": ["read:users"]},
             headers=auth_headers,
         )
@@ -516,7 +516,7 @@ class TestAPIKeySecurity:
 
         # Revoke key
         revoke_resp = await async_client.post(
-            f"/api/v1/api-keys/{key_id}/revoke",
+            f"/api/v1/api-keys{key_id}/revoke",
             headers=auth_headers,
         )
 
@@ -524,7 +524,7 @@ class TestAPIKeySecurity:
 
         # Verify key is revoked
         get_resp = await async_client.get(
-            f"/api/v1/api-keys/{key_id}",
+            f"/api/v1/api-keys{key_id}",
             headers=auth_headers,
         )
 
@@ -538,17 +538,17 @@ class TestAPIKeySecurity:
         """Test that revoked API keys cannot be used for authentication."""
         # Create and revoke key
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "To Revoke", "scopes": ["read:users"]},
             headers=auth_headers,
         )
 
         key_id = create_resp.json()["id"]
-        api_key = create_resp.json()["api_key"]
+        api_key = create_resp.json()["key"]
 
         # Revoke
         await async_client.post(
-            f"/api/v1/api-keys/{key_id}/revoke",
+            f"/api/v1/api-keys{key_id}/revoke",
             headers=auth_headers,
         )
 
@@ -577,7 +577,7 @@ class TestWebhookAPIKeyIntegration:
         """Test that API key scopes are enforced for webhook operations."""
         # Create API key with limited scope
         create_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={
                 "name": "Limited Scope Key",
                 "scopes": ["read:users"],  # No webhook:write scope
@@ -585,7 +585,7 @@ class TestWebhookAPIKeyIntegration:
             headers=auth_headers,
         )
 
-        limited_key = create_resp.json()["api_key"]
+        limited_key = create_resp.json()["key"]
         limited_auth = {"Authorization": f"Bearer {limited_key}"}
 
         # Try to create webhook with limited scope key
@@ -620,7 +620,7 @@ class TestWebhookAPIKeyIntegration:
 
         # Create API key
         apikey_resp = await async_client.post(
-            "/api/v1/api-keys/",
+            "/api/v1/api-keys",
             json={"name": "Audit Test Key", "scopes": ["read:users"]},
             headers=auth_headers,
         )
@@ -657,9 +657,10 @@ class TestWebhookSecurityEvents:
         if create_resp.status_code == status.HTTP_201_CREATED:
             endpoint_id = create_resp.json()["id"]
 
-            # Rotate secret
+            # Rotate secret using the correct endpoint path
             rotate_resp = await async_client.post(
-                f"/api/v1/webhooks/{endpoint_id}/rotate-secret",
+                f"/api/v1/webhooks/{endpoint_id}/signing-secret/rotate",
+                json={"grace_period_seconds": 0},
                 headers=auth_headers,
             )
 
