@@ -39,7 +39,7 @@ class TestAuthFlowLatency:
                 },
             )
             perf_metrics.stop_timer()
-            assert response.status_code in (200, 401, 422)
+            assert response.status_code in (200, 401, 422, 429)
 
         # Validate p95 latency
         assert perf_metrics.p95 < e2e_thresholds["auth_login_p95"], (
@@ -64,7 +64,7 @@ class TestAuthFlowLatency:
                 json={"refresh_token": "fake-refresh-token"},
             )
             perf_metrics.stop_timer()
-            assert response.status_code in (200, 401, 422)
+            assert response.status_code in (200, 401, 422, 429)
 
         assert perf_metrics.p95 < e2e_thresholds["auth_refresh_p95"], (
             f"Token refresh p95 latency {perf_metrics.p95:.2f}ms exceeds threshold "

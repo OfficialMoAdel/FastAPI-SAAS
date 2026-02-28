@@ -165,7 +165,8 @@ class TestMFALoginWithTOTP:
         assert enable_response.status_code == 200
 
         # Logout to invalidate session
-        logout_response = await async_client.post("/api/v1/account/logout", headers=headers)
+        cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
+        logout_response = await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
         assert logout_response.status_code == 200
 
         # [STEP 1] Login again with MFA
@@ -177,8 +178,8 @@ class TestMFALoginWithTOTP:
         login_data = login_response.json()
 
         assert "mfa_token" in login_data
-        assert "requires_mfa" in login_data
-        assert login_data["requires_mfa"] is True
+        assert "mfa_required" in login_data
+        assert login_data["mfa_required"] == "true"
 
         mfa_token = login_data["mfa_token"]
 
@@ -195,7 +196,8 @@ class TestMFALoginWithTOTP:
         complete_data = complete_response.json()
 
         assert "access_token" in complete_data
-        assert "refresh_token" in complete_data
+        # refresh_token is set as a cookie by the complete-login endpoint
+        assert complete_response.cookies.get("refresh_token") is not None or "refresh_token" in complete_response.headers.get("set-cookie", "")
 
         # Verify MFA last_used_at is updated
         new_headers = {"Authorization": f"Bearer {complete_data['access_token']}"}
@@ -251,7 +253,7 @@ class TestMFALoginWithBackupCode:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_token": totp.now()},
+            json={"totp_secret": secret, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
@@ -265,7 +267,8 @@ class TestMFALoginWithBackupCode:
         backup_codes = backup_codes_response.json()["backup_codes"]
 
         # Logout
-        await async_client.post("/api/v1/account/logout", headers=headers)
+        cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
+        await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
         # Login to get MFA token
         login_response = await async_client.post(
@@ -360,12 +363,13 @@ class TestMFALockoutFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_token": totp.now()},
+            json={"totp_secret": secret, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
         # Logout
-        await async_client.post("/api/v1/account/logout", headers=headers)
+        cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
+        await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
         # Login to get MFA token
         login_response = await async_client.post(
@@ -463,11 +467,12 @@ class TestMFADisableFlow:
         assert status_response.status_code == 200
         status_data = status_response.json()
 
-        # Note: backup_codes may not be returned in status endpoint
-        assert status_data["is_enabled"] is True
+        # Note: MFA is now disabled, so is_enabled should be False
+        assert status_data["is_enabled"] is False
 
         # [STEP 3] Login should not require MFA
-        await async_client.post("/api/v1/account/logout", headers=headers)
+        cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
+        await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
         login_response = await async_client.post(
             "/api/v1/account/login",
@@ -524,16 +529,21 @@ class TestMFARegenerateBackupCodes:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_token": totp.now()},
+            json={"totp_secret": secret, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
         # Get backup codes
-        backup_codes_response = await async_client.get("/api/v1/mfa/backup-codes", headers=headers)
+        backup_codes_response = await async_client.post(
+            "/api/v1/mfa/backup-codes",
+            headers=headers,
+            json={"password": test_password, "totp_token": None},
+        )
         old_backup_codes = backup_codes_response.json()["backup_codes"]
 
         # Use one backup code
-        await async_client.post("/api/v1/account/logout", headers=headers)
+        cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
+        await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
         login_response = await async_client.post(
             "/api/v1/account/login",

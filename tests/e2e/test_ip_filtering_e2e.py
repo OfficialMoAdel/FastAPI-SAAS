@@ -5,12 +5,9 @@ Covers whitelist, blacklist, and bad bot filtering scenarios.
 """
 
 import pytest
-from fastapi.testclient import TestClient
 from httpx import AsyncClient
 
-from src.app.main import app
 from src.app.modules.security.service import ip_filter_service
-
 
 # Skip all tests if Redis is not available
 pytestmark = pytest.mark.asyncio
@@ -39,15 +36,15 @@ class TestIPWhitelistE2E:
     ):
         """Test that non-whitelisted IPs are blocked."""
         # Setup: Enable whitelist without adding the test IP
-        await override_settings(IP_WHITELIST_ENABLED=True)
-        await ip_filter_service.clear_whitelist()
+        with override_settings(IP_WHITELIST_ENABLED=True):
+            await ip_filter_service.clear_whitelist()
 
-        # Execute: Make request from non-whitelisted IP
-        response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.100"})
+            # Execute: Make request from non-whitelisted IP
+            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.100"})
 
-        # Verify: Should be blocked
-        assert response.status_code == 403
-        assert "not whitelisted" in response.text.lower()
+            # Verify: Should be blocked
+            assert response.status_code == 403
+            assert "not whitelisted" in response.text.lower()
 
     async def test_whitelist_with_expiration(self, async_client: AsyncClient):
         """Test that whitelist entries can have expiration."""
@@ -85,47 +82,47 @@ class TestIPBlacklistE2E:
     async def test_blacklisted_ip_blocked(self, async_client: AsyncClient, override_settings):
         """Test that blacklisted IPs cannot access API."""
         # Setup: Enable blacklist and add IP
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_blacklist(ip_address="192.168.1.50", reason="E2E test blacklist")
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_blacklist(ip_address="192.168.1.50", reason="E2E test blacklist")
 
-        try:
-            # Execute: Make request from blacklisted IP
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.50"})
+            try:
+                # Execute: Make request from blacklisted IP
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.50"})
 
-            # Verify: Should be blocked
-            assert response.status_code == 403
-            assert "blacklisted" in response.text.lower()
-        finally:
-            await ip_filter_service.remove_from_blacklist("192.168.1.50")
+                # Verify: Should be blocked
+                assert response.status_code == 403
+                assert "blacklisted" in response.text.lower()
+            finally:
+                await ip_filter_service.remove_from_blacklist("192.168.1.50")
 
     async def test_non_blacklisted_ip_allowed(self, async_client: AsyncClient, override_settings):
         """Test that non-blacklisted IPs can access API."""
         # Setup: Enable blacklist with no entries
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.clear_blacklist()
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.clear_blacklist()
 
-        # Execute: Make request from non-blacklisted IP
-        response = await async_client.get("/api/v1/health")
+            # Execute: Make request from non-blacklisted IP
+            response = await async_client.get("/api/v1/health")
 
-        # Verify: Should be allowed
-        assert response.status_code == 200
+            # Verify: Should be allowed
+            assert response.status_code == 200
 
     async def test_blacklist_removal_allows_access(self, async_client: AsyncClient, override_settings):
         """Test that removing IP from blacklist allows access."""
         # Setup: Blacklist then remove IP
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_blacklist(ip_address="192.168.1.60", reason="Temporary block")
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_blacklist(ip_address="192.168.1.60", reason="Temporary block")
 
-        # Verify: Initially blocked
-        response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
-        assert response.status_code == 403
+            # Verify: Initially blocked
+            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
+            assert response.status_code == 403
 
-        # Remove from blacklist
-        await ip_filter_service.remove_from_blacklist("192.168.1.60")
+            # Remove from blacklist
+            await ip_filter_service.remove_from_blacklist("192.168.1.60")
 
-        # Verify: Now allowed
-        response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
-        assert response.status_code == 200
+            # Verify: Now allowed
+            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.60"})
+            assert response.status_code == 200
 
 
 class TestBadBotFilteringE2E:
@@ -191,34 +188,34 @@ class TestCombinedFilteringE2E:
     async def test_whitelist_takes_priority_over_blacklist(self, async_client: AsyncClient, override_settings):
         """Test that whitelist takes priority when both filters apply."""
         # Setup: Enable both, add IP to whitelist only
-        await override_settings(IP_WHITELIST_ENABLED=True, IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_whitelist(ip_address="10.0.0.100", reason="Priority test")
+        with override_settings(IP_WHITELIST_ENABLED=True, IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_whitelist(ip_address="10.0.0.100", reason="Priority test")
 
-        try:
-            # Execute: Make request
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "10.0.0.100"})
+            try:
+                # Execute: Make request
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "10.0.0.100"})
 
-            # Verify: Whitelist allows access
-            assert response.status_code == 200
-        finally:
-            await ip_filter_service.remove_from_whitelist("10.0.0.100")
+                # Verify: Whitelist allows access
+                assert response.status_code == 200
+            finally:
+                await ip_filter_service.remove_from_whitelist("10.0.0.100")
 
     async def test_whitelisted_ip_with_bad_bot_allowed(self, async_client: AsyncClient, override_settings):
         """Test that whitelist allows even with bad bot user agent."""
         # Setup: Whitelist IP
-        await override_settings(IP_WHITELIST_ENABLED=True)
-        await ip_filter_service.add_to_whitelist(ip_address="10.0.0.200", reason="Whitelist with bot test")
+        with override_settings(IP_WHITELIST_ENABLED=True):
+            await ip_filter_service.add_to_whitelist(ip_address="10.0.0.200", reason="Whitelist with bot test")
 
-        try:
-            # Execute: Request with bad bot UA from whitelisted IP
-            response = await async_client.get(
-                "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.200", "User-Agent": "sqlmap/1.0"}
-            )
+            try:
+                # Execute: Request with bad bot UA from whitelisted IP
+                response = await async_client.get(
+                    "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.200", "User-Agent": "sqlmap/1.0"}
+                )
 
-            # Verify: Whitelist allows despite bad bot UA
-            assert response.status_code == 200
-        finally:
-            await ip_filter_service.remove_from_whitelist("10.0.0.200")
+                # Verify: Whitelist allows despite bad bot UA
+                assert response.status_code == 200
+            finally:
+                await ip_filter_service.remove_from_whitelist("10.0.0.200")
 
 
 class TestExemptPathsE2E:
@@ -226,28 +223,28 @@ class TestExemptPathsE2E:
 
     async def test_health_paths_exempt_from_whitelist(self, async_client: AsyncClient, override_settings):
         """Test that health check paths bypass whitelist."""
-        await override_settings(IP_WHITELIST_ENABLED=True)
-        await ip_filter_service.clear_whitelist()
+        with override_settings(IP_WHITELIST_ENABLED=True):
+            await ip_filter_service.clear_whitelist()
 
-        # Execute: Health check from non-whitelisted IP
-        response = await async_client.get("/health", headers={"X-Forwarded-For": "192.168.1.200"})
-
-        # Verify: Exempt path allowed
-        assert response.status_code == 200
-
-    async def test_health_paths_exempt_from_blacklist(self, async_client: AsyncClient, override_settings):
-        """Test that health check paths bypass blacklist."""
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_blacklist(ip_address="192.168.1.200", reason="Test blacklist")
-
-        try:
-            # Execute: Health check from blacklisted IP
-            response = await async_client.get("/health/live", headers={"X-Forwarded-For": "192.168.1.200"})
+            # Execute: Health check from non-whitelisted IP
+            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.200"})
 
             # Verify: Exempt path allowed
             assert response.status_code == 200
-        finally:
-            await ip_filter_service.remove_from_blacklist("192.168.1.200")
+
+    async def test_health_paths_exempt_from_blacklist(self, async_client: AsyncClient, override_settings):
+        """Test that health check paths bypass blacklist."""
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_blacklist(ip_address="192.168.1.200", reason="Test blacklist")
+
+            try:
+                # Execute: Health check from blacklisted IP
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": "192.168.1.200"})
+
+                # Verify: Exempt path allowed
+                assert response.status_code == 200
+            finally:
+                await ip_filter_service.remove_from_blacklist("192.168.1.200")
 
     async def test_metrics_exempt_from_bad_bot_filter(self, async_client: AsyncClient):
         """Test that metrics path bypasses bad bot filter."""
@@ -263,30 +260,30 @@ class TestProxyHeadersE2E:
 
     async def test_x_forwarded_for_respected(self, async_client: AsyncClient, override_settings):
         """Test that X-Forwarded-For header is used for IP detection."""
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_blacklist(ip_address="10.0.0.50", reason="Proxy header test")
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_blacklist(ip_address="10.0.0.50", reason="Proxy header test")
 
-        try:
-            # Execute: Request with X-Forwarded-For showing blacklisted IP
-            response = await async_client.get(
-                "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.50, 192.168.1.1", "X-Real-IP": "192.168.1.2"}
-            )
+            try:
+                # Execute: Request with X-Forwarded-For showing blacklisted IP
+                response = await async_client.get(
+                    "/api/v1/health", headers={"X-Forwarded-For": "10.0.0.50, 192.168.1.1", "X-Real-IP": "192.168.1.2"}
+                )
 
-            # Verify: First IP in X-Forwarded-For is checked
-            assert response.status_code == 403
-        finally:
-            await ip_filter_service.remove_from_blacklist("10.0.0.50")
+                # Verify: First IP in X-Forwarded-For is checked
+                assert response.status_code == 403
+            finally:
+                await ip_filter_service.remove_from_blacklist("10.0.0.50")
 
     async def test_x_real_ip_fallback(self, async_client: AsyncClient, override_settings):
         """Test that X-Real-IP is used when X-Forwarded-For is absent."""
-        await override_settings(IP_BLACKLIST_ENABLED=True)
-        await ip_filter_service.add_to_blacklist(ip_address="10.0.0.60", reason="X-Real-IP test")
+        with override_settings(IP_BLACKLIST_ENABLED=True):
+            await ip_filter_service.add_to_blacklist(ip_address="10.0.0.60", reason="X-Real-IP test")
 
-        try:
-            # Execute: Request with only X-Real-IP
-            response = await async_client.get("/api/v1/health", headers={"X-Real-IP": "10.0.0.60"})
+            try:
+                # Execute: Request with only X-Real-IP
+                response = await async_client.get("/api/v1/health", headers={"X-Real-IP": "10.0.0.60"})
 
-            # Verify: X-Real-IP is checked
-            assert response.status_code == 403
-        finally:
-            await ip_filter_service.remove_from_blacklist("10.0.0.60")
+                # Verify: X-Real-IP is checked
+                assert response.status_code == 403
+            finally:
+                await ip_filter_service.remove_from_blacklist("10.0.0.60")

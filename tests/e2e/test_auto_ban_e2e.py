@@ -5,12 +5,11 @@ Covers threshold detection, ban enforcement, escalation, and unban operations.
 """
 
 import asyncio
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
 
-from src.app.core.config import settings
 from src.app.core.security.auto_ban import (
     ban_ip,
     check_and_auto_ban,
@@ -22,7 +21,6 @@ from src.app.core.security.auto_ban import (
     unban_ip,
 )
 
-
 pytestmark = pytest.mark.asyncio
 
 
@@ -31,53 +29,53 @@ class TestAutoBanThresholdE2E:
 
     async def test_violations_accumulate(self, async_client: AsyncClient, override_settings):
         """Test that violations accumulate across requests."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_THRESHOLD=10,  # High threshold so we don't trigger ban
-        )
+        ):
 
-        test_ip = "192.168.10.1"
+            test_ip = "192.168.10.1"
 
-        # Make requests that trigger rate limits (but not ban)
-        # Note: This assumes rate limiting is configured for the test endpoint
-        for i in range(3):
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
+            # Make requests that trigger rate limits (but not ban)
+            # Note: This assumes rate limiting is configured for the test endpoint
+            for i in range(3):
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
 
-        # Check violation stats
-        stats = await get_violation_stats(test_ip)
-        assert stats["violations"] >= 0  # May be 0 if rate limit not hit
+            # Check violation stats
+            stats = await get_violation_stats(test_ip)
+            assert stats["violations"] >= 0  # May be 0 if rate limit not hit
 
     async def test_ban_triggered_at_threshold(self, override_settings):
         """Test that ban is triggered when violation threshold is met."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_THRESHOLD=3,
             AUTO_BAN_DURATION=3600,
-        )
+        ):
 
-        test_ip = "192.168.10.2"
+            test_ip = "192.168.10.2"
 
-        # Reset any existing violations
-        await reset_violations(test_ip)
+            # Reset any existing violations
+            await reset_violations(test_ip)
 
-        # Simulate threshold violations
-        banned, count = await check_and_auto_ban(test_ip)
-        assert banned is False
-        assert count == 1
+            # Simulate threshold violations
+            banned, count = await check_and_auto_ban(test_ip)
+            assert banned is False
+            assert count == 1
 
-        banned, count = await check_and_auto_ban(test_ip)
-        assert banned is False
-        assert count == 2
+            banned, count = await check_and_auto_ban(test_ip)
+            assert banned is False
+            assert count == 2
 
-        banned, count = await check_and_auto_ban(test_ip)
-        assert banned is True
-        assert count == 3
+            banned, count = await check_and_auto_ban(test_ip)
+            assert banned is True
+            assert count == 3
 
-        # Verify ban is active
-        assert await is_ip_banned(test_ip) is True
+            # Verify ban is active
+            assert await is_ip_banned(test_ip) is True
 
-        # Cleanup
-        await unban_ip(test_ip)
+            # Cleanup
+            await unban_ip(test_ip)
 
 
 class TestBanEnforcementE2E:
@@ -85,48 +83,48 @@ class TestBanEnforcementE2E:
 
     async def test_banned_ip_blocked_from_api(self, async_client: AsyncClient, override_settings):
         """Test that banned IPs are blocked from API access."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_DURATION=60,  # 1 minute for test
-        )
+        ):
 
-        test_ip = "192.168.10.10"
+            test_ip = "192.168.10.10"
 
-        # Ban the IP
-        await ban_ip(test_ip, duration=60, reason="E2E test ban")
+            # Ban the IP
+            await ban_ip(test_ip, duration=60, reason="E2E test ban")
 
-        try:
-            # Attempt API access
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
+            try:
+                # Attempt API access
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
 
-            # Banned IPs should be blocked at middleware level
-            # Note: Actual behavior depends on IPFilterMiddleware integration
-            # If auto-ban and IP filter are separate, this might pass
-        finally:
-            await unban_ip(test_ip)
+                # Banned IPs should be blocked at middleware level
+                # Note: Actual behavior depends on IPFilterMiddleware integration
+                # If auto-ban and IP filter are separate, this might pass
+            finally:
+                await unban_ip(test_ip)
 
     async def test_ban_info_accuracy(self, override_settings):
         """Test that ban info is accurate after banning."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_DURATION=3600,
-        )
+        ):
 
-        test_ip = "192.168.10.20"
+            test_ip = "192.168.10.20"
 
-        # Ban the IP
-        await ban_ip(test_ip, duration=3600, reason="E2E ban info test")
+            # Ban the IP
+            await ban_ip(test_ip, duration=3600, reason="E2E ban info test")
 
-        try:
-            # Get ban info
-            info = await get_ban_info(test_ip)
+            try:
+                # Get ban info
+                info = await get_ban_info(test_ip)
 
-            assert info.is_banned is True
-            assert info.reason == "E2E ban info test"
-            assert info.expires_at is not None
-            assert info.expires_at > datetime.now(UTC).timestamp()
-        finally:
-            await unban_ip(test_ip)
+                assert info.is_banned is True
+                assert info.reason == "E2E ban info test"
+                assert info.expires_at is not None
+                assert info.expires_at > datetime.now(UTC).timestamp()
+            finally:
+                await unban_ip(test_ip)
 
 
 class TestBanEscalationE2E:
@@ -134,50 +132,50 @@ class TestBanEscalationE2E:
 
     async def test_escalation_doubles_duration(self, override_settings):
         """Test that repeated bans double the duration."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_DURATION=300,  # 5 minutes
             AUTO_BAN_ESCALATION=True,
-        )
+        ):
 
-        test_ip = "192.168.10.30"
+            test_ip = "192.168.10.30"
 
-        # First ban - 300 seconds
-        await ban_ip(test_ip, duration=300)
-        info1 = await get_ban_info(test_ip)
-        await unban_ip(test_ip)
+            # First ban - 300 seconds
+            await ban_ip(test_ip, duration=300)
+            info1 = await get_ban_info(test_ip)
+            await unban_ip(test_ip)
 
-        # Second ban - should be 600 seconds (2x)
-        await ban_ip(test_ip, duration=300)
-        info2 = await get_ban_info(test_ip)
-        await unban_ip(test_ip)
+            # Second ban - should be 600 seconds (2x)
+            await ban_ip(test_ip, duration=300)
+            info2 = await get_ban_info(test_ip)
+            await unban_ip(test_ip)
 
-        # Verify escalation
-        assert info2.ban_count > info1.ban_count
+            # Verify escalation
+            assert info2.ban_count > info1.ban_count
 
-        # Cleanup
-        await unban_ip(test_ip)
+            # Cleanup
+            await unban_ip(test_ip)
 
     async def test_no_escalation_when_disabled(self, override_settings):
         """Test that escalation is disabled when setting is off."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_DURATION=300,
             AUTO_BAN_ESCALATION=False,
-        )
+        ):
 
-        test_ip = "192.168.10.31"
+            test_ip = "192.168.10.31"
 
-        # Ban multiple times
-        await ban_ip(test_ip, duration=300)
-        await unban_ip(test_ip)
+            # Ban multiple times
+            await ban_ip(test_ip, duration=300)
+            await unban_ip(test_ip)
 
-        await ban_ip(test_ip, duration=300)
+            await ban_ip(test_ip, duration=300)
 
-        # Both bans should have same duration
-        # (no escalation when disabled)
+            # Both bans should have same duration
+            # (no escalation when disabled)
 
-        await unban_ip(test_ip)
+            await unban_ip(test_ip)
 
 
 class TestUnbanOperationsE2E:
@@ -185,28 +183,28 @@ class TestUnbanOperationsE2E:
 
     async def test_unban_removes_ban(self, override_settings):
         """Test that unban removes active ban."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.40"
+            test_ip = "192.168.10.40"
 
-        # Ban then unban
-        await ban_ip(test_ip, duration=3600)
-        assert await is_ip_banned(test_ip) is True
+            # Ban then unban
+            await ban_ip(test_ip, duration=3600)
+            assert await is_ip_banned(test_ip) is True
 
-        result = await unban_ip(test_ip)
-        assert result is True
+            result = await unban_ip(test_ip)
+            assert result is True
 
-        assert await is_ip_banned(test_ip) is False
+            assert await is_ip_banned(test_ip) is False
 
     async def test_unban_non_banned_ip(self, override_settings):
         """Test unban on IP that isn't banned."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.41"
+            test_ip = "192.168.10.41"
 
-        # Try to unban IP that was never banned
-        result = await unban_ip(test_ip)
-        assert result is True  # Should succeed (no-op)
+            # Try to unban IP that was never banned
+            result = await unban_ip(test_ip)
+            assert result is True  # Should succeed (no-op)
 
 
 class TestViolationTrackingE2E:
@@ -214,52 +212,52 @@ class TestViolationTrackingE2E:
 
     async def test_violation_counter_persists(self, override_settings):
         """Test that violations persist across checks."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_THRESHOLD=10,
-        )
+        ):
 
-        test_ip = "192.168.10.50"
+            test_ip = "192.168.10.50"
 
-        # Clear any existing violations
-        await reset_violations(test_ip)
+            # Clear any existing violations
+            await reset_violations(test_ip)
 
-        # Add violations
-        from src.app.core.security.auto_ban import increment_violations
+            # Add violations
+            from src.app.core.security.auto_ban import increment_violations
 
-        count1 = await increment_violations(test_ip)
-        count2 = await increment_violations(test_ip)
-        count3 = await increment_violations(test_ip)
+            count1 = await increment_violations(test_ip)
+            count2 = await increment_violations(test_ip)
+            count3 = await increment_violations(test_ip)
 
-        assert count3 > count2 > count1
+            assert count3 > count2 > count1
 
-        # Cleanup
-        await reset_violations(test_ip)
+            # Cleanup
+            await reset_violations(test_ip)
 
     async def test_violation_stats_accuracy(self, override_settings):
         """Test that violation stats are accurate."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        # Clear existing violations
-        await reset_violations("192.168.10.60")
-        await reset_violations("192.168.10.61")
+            # Clear existing violations
+            await reset_violations("192.168.10.60")
+            await reset_violations("192.168.10.61")
 
-        from src.app.core.security.auto_ban import increment_violations
+            from src.app.core.security.auto_ban import increment_violations
 
-        # Add violations for multiple IPs
-        await increment_violations("192.168.10.60")
-        await increment_violations("192.168.10.60")
-        await increment_violations("192.168.10.61")
+            # Add violations for multiple IPs
+            await increment_violations("192.168.10.60")
+            await increment_violations("192.168.10.60")
+            await increment_violations("192.168.10.61")
 
-        # Get stats
-        stats = await get_violation_stats()
+            # Get stats
+            stats = await get_violation_stats()
 
-        assert stats["total_ips"] >= 2
-        assert stats["total_violations"] >= 3
+            assert stats["total_ips"] >= 2
+            assert stats["total_violations"] >= 3
 
-        # Cleanup
-        await reset_violations("192.168.10.60")
-        await reset_violations("192.168.10.61")
+            # Cleanup
+            await reset_violations("192.168.10.60")
+            await reset_violations("192.168.10.61")
 
 
 class TestGetAllBannedIPsE2E:
@@ -267,46 +265,46 @@ class TestGetAllBannedIPsE2E:
 
     async def test_list_banned_ips(self, override_settings):
         """Test listing all currently banned IPs."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ips = ["192.168.10.70", "192.168.10.71", "192.168.10.72"]
+            test_ips = ["192.168.10.70", "192.168.10.71", "192.168.10.72"]
 
-        # Ban multiple IPs
-        for ip in test_ips:
-            await ban_ip(ip, duration=3600, reason=f"Test ban for {ip}")
-
-        try:
-            # Get all banned IPs
-            banned = await get_all_banned_ips()
-
-            # Verify our test IPs are in the list
-            banned_ips = {b["ip"] for b in banned}
+            # Ban multiple IPs
             for ip in test_ips:
-                assert ip in banned_ips
+                await ban_ip(ip, duration=3600, reason=f"Test ban for {ip}")
 
-            # Verify structure
-            for record in banned:
-                assert "ip" in record
-                assert "reason" in record
-                assert "ttl_seconds" in record
-                assert "ban_count" in record
-        finally:
-            # Cleanup
-            for ip in test_ips:
-                await unban_ip(ip)
+            try:
+                # Get all banned IPs
+                banned = await get_all_banned_ips()
+
+                # Verify our test IPs are in the list
+                banned_ips = {b["ip"] for b in banned}
+                for ip in test_ips:
+                    assert ip in banned_ips
+
+                # Verify structure
+                for record in banned:
+                    assert "ip" in record
+                    assert "reason" in record
+                    assert "ttl_seconds" in record
+                    assert "ban_count" in record
+            finally:
+                # Cleanup
+                for ip in test_ips:
+                    await unban_ip(ip)
 
     async def test_empty_banned_list(self, override_settings):
         """Test getting banned IPs when none are banned."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        # First clear any existing bans
-        banned = await get_all_banned_ips()
-        for record in banned:
-            await unban_ip(record["ip"])
+            # First clear any existing bans
+            banned = await get_all_banned_ips()
+            for record in banned:
+                await unban_ip(record["ip"])
 
-        # Now get list (should be empty or minimal)
-        banned = await get_all_banned_ips()
-        assert isinstance(banned, list)
+            # Now get list (should be empty or minimal)
+            banned = await get_all_banned_ips()
+            assert isinstance(banned, list)
 
 
 class TestBanTTLExpirationE2E:
@@ -314,44 +312,44 @@ class TestBanTTLExpirationE2E:
 
     async def test_ban_expires_after_ttl(self, override_settings):
         """Test that bans expire after TTL."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.80"
+            test_ip = "192.168.10.80"
 
-        # Ban with very short duration (2 seconds)
-        await ban_ip(test_ip, duration=2)
+            # Ban with very short duration (2 seconds)
+            await ban_ip(test_ip, duration=2)
 
-        # Verify immediately banned
-        assert await is_ip_banned(test_ip) is True
+            # Verify immediately banned
+            assert await is_ip_banned(test_ip) is True
 
-        # Wait for expiration
-        await asyncio.sleep(3)
+            # Wait for expiration
+            await asyncio.sleep(3)
 
-        # Verify expired
-        assert await is_ip_banned(test_ip) is False
+            # Verify expired
+            assert await is_ip_banned(test_ip) is False
 
     async def test_ban_info_shows_ttl(self, override_settings):
         """Test that ban info includes TTL information."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.81"
+            test_ip = "192.168.10.81"
 
-        # Ban with known duration
-        await ban_ip(test_ip, duration=3600)
+            # Ban with known duration
+            await ban_ip(test_ip, duration=3600)
 
-        try:
-            # Get ban info
-            info = await get_ban_info(test_ip)
+            try:
+                # Get ban info
+                info = await get_ban_info(test_ip)
 
-            assert info.is_banned is True
-            assert info.expires_at is not None
+                assert info.is_banned is True
+                assert info.expires_at is not None
 
-            # TTL should be approximately 1 hour from now
-            now = datetime.now(UTC).timestamp()
-            assert info.expires_at > now
-            assert info.expires_at < now + 3700  # Allow some margin
-        finally:
-            await unban_ip(test_ip)
+                # TTL should be approximately 1 hour from now
+                now = datetime.now(UTC).timestamp()
+                assert info.expires_at > now
+                assert info.expires_at < now + 3700  # Allow some margin
+            finally:
+                await unban_ip(test_ip)
 
 
 class TestAutoBanDisabledE2E:
@@ -359,34 +357,34 @@ class TestAutoBanDisabledE2E:
 
     async def test_no_ban_when_disabled(self, override_settings):
         """Test that bans don't occur when auto-ban is disabled."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=False,
             AUTO_BAN_THRESHOLD=1,  # Would trigger immediately if enabled
-        )
+        ):
 
-        test_ip = "192.168.10.90"
+            test_ip = "192.168.10.90"
 
-        # Attempt to ban
-        result = await ban_ip(test_ip, duration=3600)
+            # Attempt to ban
+            result = await ban_ip(test_ip, duration=3600)
 
-        # Should return False when disabled
-        assert result is False
-        assert await is_ip_banned(test_ip) is False
+            # Should return False when disabled
+            assert result is False
+            assert await is_ip_banned(test_ip) is False
 
     async def test_violations_not_tracked_when_disabled(self, override_settings):
         """Test that violations aren't tracked when disabled."""
-        await override_settings(AUTO_BAN_ENABLED=False)
+        with override_settings(AUTO_BAN_ENABLED=False):
 
-        test_ip = "192.168.10.91"
+            test_ip = "192.168.10.91"
 
-        # Clear existing
-        await reset_violations(test_ip)
+            # Clear existing
+            await reset_violations(test_ip)
 
-        # Try to check and auto-ban
-        banned, count = await check_and_auto_ban(test_ip)
+            # Try to check and auto-ban
+            banned, count = await check_and_auto_ban(test_ip)
 
-        assert banned is False
-        assert count == 0  # No violations tracked
+            assert banned is False
+            assert count == 0  # No violations tracked
 
 
 class TestIntegrationWithRateLimitE2E:
@@ -394,29 +392,29 @@ class TestIntegrationWithRateLimitE2E:
 
     async def test_violation_integration(self, async_client: AsyncClient, override_settings):
         """Test that rate limit violations trigger auto-ban tracking."""
-        await override_settings(
+        with override_settings(
             AUTO_BAN_ENABLED=True,
             AUTO_BAN_THRESHOLD=100,  # High threshold for this test
-        )
+        ):
 
-        test_ip = "192.168.10.100"
+            test_ip = "192.168.10.100"
 
-        # Reset violations
-        await reset_violations(test_ip)
+            # Reset violations
+            await reset_violations(test_ip)
 
-        # Make requests (assuming rate limit is lower than request count)
-        # This test may need adjustment based on actual rate limit configuration
-        responses = []
-        for _ in range(5):
-            response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
-            responses.append(response.status_code)
+            # Make requests (assuming rate limit is lower than request count)
+            # This test may need adjustment based on actual rate limit configuration
+            responses = []
+            for _ in range(5):
+                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
+                responses.append(response.status_code)
 
-        # Check if any violations were tracked
-        # Note: Actual behavior depends on rate limit configuration
-        stats = await get_violation_stats(test_ip)
+            # Check if any violations were tracked
+            # Note: Actual behavior depends on rate limit configuration
+            stats = await get_violation_stats(test_ip)
 
-        # Cleanup
-        await reset_violations(test_ip)
+            # Cleanup
+            await reset_violations(test_ip)
 
 
 class TestSecurityEventLoggingE2E:
@@ -424,32 +422,32 @@ class TestSecurityEventLoggingE2E:
 
     async def test_ban_creates_security_event(self, override_settings):
         """Test that banning creates a security event log."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.110"
+            test_ip = "192.168.10.110"
 
-        # Ban the IP (should log security event)
-        await ban_ip(test_ip, duration=3600, reason="E2E security event test")
+            # Ban the IP (should log security event)
+            await ban_ip(test_ip, duration=3600, reason="E2E security event test")
 
-        try:
-            # Security events are logged - in a real test we might query
-            # the audit log or check a log aggregator
-            # For now, we verify the ban succeeded
-            assert await is_ip_banned(test_ip) is True
-        finally:
-            await unban_ip(test_ip)
+            try:
+                # Security events are logged - in a real test we might query
+                # the audit log or check a log aggregator
+                # For now, we verify the ban succeeded
+                assert await is_ip_banned(test_ip) is True
+            finally:
+                await unban_ip(test_ip)
 
     async def test_unban_creates_security_event(self, override_settings):
         """Test that unbanning creates a security event log."""
-        await override_settings(AUTO_BAN_ENABLED=True)
+        with override_settings(AUTO_BAN_ENABLED=True):
 
-        test_ip = "192.168.10.111"
+            test_ip = "192.168.10.111"
 
-        # Setup: Ban first
-        await ban_ip(test_ip, duration=3600)
+            # Setup: Ban first
+            await ban_ip(test_ip, duration=3600)
 
-        # Unban (should log security event)
-        result = await unban_ip(test_ip)
+            # Unban (should log security event)
+            result = await unban_ip(test_ip)
 
-        assert result is True
-        assert await is_ip_banned(test_ip) is False
+            assert result is True
+            assert await is_ip_banned(test_ip) is False

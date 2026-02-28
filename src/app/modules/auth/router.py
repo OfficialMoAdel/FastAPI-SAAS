@@ -45,7 +45,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 router = APIRouter(prefix="/account", tags=["account"])
 
 
-@router.post("/login", response_model=Token)
+@router.post("/login")
 async def login_for_access_token(
     response: Response,
     request: Request,

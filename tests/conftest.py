@@ -157,6 +157,7 @@ from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage
 from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
+from src.app.core.db.token_blacklist import TokenBlacklist
 from src.app.modules.billing.models import (
     StripeSettings,
     SubscriptionPlan,
@@ -208,6 +209,13 @@ def get_test_app():
 @pytest.fixture(scope="session", autouse=True)
 def setup_db():
     """Ensure fresh database schema for tests."""
+    # Delete database if exists to ensure clean state
+    try:
+        if os.path.exists(DATABASE_PATH):
+            os.remove(DATABASE_PATH)
+    except Exception:
+        pass
+        
     # Create all tables
     Base.metadata.create_all(bind=sync_engine)
 
@@ -801,12 +809,18 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def async_client(get_test_app) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture for all tests."""
     app = get_test_app
+    
+    from src.app.core.db.database import async_get_db
+    app.dependency_overrides[async_get_db] = override_get_db
+    
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
-        headers={"User-Agent": "TestClient/1.0"},
+        headers={"User-Agent": "TestClient/1.0", "X-Tenant-ID": "test-tenant-e2e"},
     ) as ac:
         yield ac
+        
+    app.dependency_overrides.clear()
 
 
 @pytest.fixture
