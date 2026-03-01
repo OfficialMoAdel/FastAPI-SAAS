@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...api.dependencies import get_current_user
@@ -40,7 +40,7 @@ def _get_tenant_id() -> UUID:
     return context.id
 
 
-@router.post("", response_model=APIKeyResponse)
+@router.post("", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     body: APIKeyCreate,
     current_user: Annotated[dict, Depends(get_current_user)],

@@ -168,7 +168,6 @@ class APIKeyService(BaseService[APIKey]):
             db=self.db,
             user_id=user_id,
             tenant_id=tenant_id,
-            is_deleted=False,
             offset=(page - 1) * items_per_page,
             limit=items_per_page,
             schema_to_select=APIKeyRead,  # type: ignore[arg-type]
@@ -203,12 +202,11 @@ class APIKeyService(BaseService[APIKey]):
         ForbiddenException
             If user doesn't own the key
         """
-        key = await crud_api_keys.get(
-            db=self.db,
-            id=key_id,
-            is_deleted=False,
-            return_as_model=True,  # type: ignore[call-overload]
-        )
+        from sqlalchemy import select
+
+        key_stmt = select(APIKey).where(APIKey.id == key_id)
+        key_result = await self.db.execute(key_stmt)
+        key = key_result.scalar_one_or_none()
 
         if not key:
             raise ModelNotFoundError("APIKey", key_id)
@@ -428,12 +426,11 @@ class APIKeyService(BaseService[APIKey]):
         from datetime import timedelta
 
         # Get the existing key
-        old_key = await crud_api_keys.get(
-            db=self.db,
-            id=key_id,
-            is_deleted=False,
-            return_as_model=True,
-        )
+        from sqlalchemy import select
+
+        old_key_stmt = select(APIKey).where(APIKey.id == key_id)
+        old_key_result = await self.db.execute(old_key_stmt)
+        old_key = old_key_result.scalar_one_or_none()
 
         if not old_key:
             raise ModelNotFoundError("APIKey", key_id)

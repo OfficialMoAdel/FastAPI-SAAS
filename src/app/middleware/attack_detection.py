@@ -258,9 +258,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         query = str(request.query_params)
         if query:
-            self._check_for_patterns(
-                query.encode("utf-8", errors="replace"), "query_string", detected_attacks
-            )
+            self._check_for_patterns(query.encode("utf-8", errors="replace"), "query_string", detected_attacks)
 
         # Check specific headers
         headers_to_check = ["user-agent", "referer", "x-requested-with"]
@@ -317,9 +315,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         "pattern_name": pattern_name,
                         "location": location,
                         "matched_content": (
-                            content[:100].decode("utf-8", errors="replace")
-                            if self._log_full_request
-                            else "[redacted]"
+                            content[:100].decode("utf-8", errors="replace") if self._log_full_request else "[redacted]"
                         ),
                     }
                 )
@@ -409,6 +405,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request through attack detection."""
         path = request.url.path
+
+        # Refresh runtime-configurable flags each request so tests and
+        # dynamic settings overrides are respected without app restart.
+        self._mode = getattr(settings, "ATTACK_DETECTION_MODE", "log")
+        self._log_full_request = getattr(settings, "ATTACK_DETECTION_LOG_FULL_REQUEST", False)
+        self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
 
         # Skip if attack detection is disabled
         if not self._enabled:

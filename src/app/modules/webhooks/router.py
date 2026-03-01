@@ -4,6 +4,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from pydantic import HttpUrl
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -192,6 +193,8 @@ async def update_webhook_endpoint(
     # Update fields
     update_data = request.model_dump(exclude_unset=True)
     for field, value in update_data.items():
+        if isinstance(value, HttpUrl):
+            value = str(value)
         setattr(endpoint, field, value)
 
     await db.commit()
@@ -220,8 +223,6 @@ async def delete_webhook_endpoint(
 
     await db.delete(endpoint)
     await db.commit()
-
-
 
 
 @router.get("/deliveries/{delivery_id}", response_model=WebhookDeliveryResponse)
