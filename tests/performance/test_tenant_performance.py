@@ -7,7 +7,8 @@ Success Criteria:
 
 import asyncio
 import time
-from unittest.mock import AsyncMock, patch, MagicMock
+from contextlib import asynccontextmanager
+from unittest.mock import AsyncMock, patch
 
 import pytest
 import pytest_asyncio
@@ -23,6 +24,7 @@ async def async_client():
     # Create a mock Redis client that can be used as context manager
     mock_redis = AsyncMock()
     mock_redis.get = AsyncMock(return_value=None)
+    mock_redis.exists = AsyncMock(return_value=0)
     mock_redis.set = AsyncMock(return_value=True)
     mock_redis.incr = AsyncMock(return_value=1)
     mock_redis.expire = AsyncMock(return_value=True)
@@ -37,9 +39,13 @@ async def async_client():
     mock_filter_service.is_blacklisted = AsyncMock(return_value=False)
     mock_filter_service.is_whitelisted = AsyncMock(return_value=True)
 
+    @asynccontextmanager
+    async def mock_redis_context():
+        yield mock_redis
+
     with (
         patch("src.app.core.utils.rate_limit.rate_limiter.check_rate_limit", mock_rate_check),
-        patch("src.app.modules.security.service.get_redis_client", return_value=mock_redis),
+        patch("src.app.modules.security.service.get_redis_client", mock_redis_context),
         patch("src.app.middleware.ip_filter.IPFilterService", return_value=mock_filter_service),
     ):
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:

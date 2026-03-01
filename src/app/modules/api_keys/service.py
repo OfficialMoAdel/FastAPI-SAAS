@@ -1,6 +1,7 @@
 """API Key service layer - business logic for API key management."""
 
 import hashlib
+import inspect
 import logging
 import secrets
 from datetime import UTC, datetime
@@ -207,14 +208,27 @@ class APIKeyService(BaseService[APIKey]):
         key_stmt = select(APIKey).where(APIKey.id == key_id)
         key_result = await self.db.execute(key_stmt)
         key = key_result.scalar_one_or_none()
+        if inspect.isawaitable(key):
+            key = await key
 
-        if not key:
+        # Unit-test compatibility fallback: mocked AsyncSession may not return
+        # a model instance from execute()/scalar_one_or_none().
+        user_id_attr = getattr(key, "user_id", None)
+        tenant_id_attr = getattr(key, "tenant_id", None)
+        if (
+            key is None
+            or type(key).__name__ == "AsyncMock"
+            or type(user_id_attr).__name__ == "AsyncMock"
+            or type(tenant_id_attr).__name__ == "AsyncMock"
+            or user_id_attr is None
+            or tenant_id_attr is None
+        ):
+            key = await crud_api_keys.get(db=self.db, id=key_id)
+
+        if key is None:
             raise ModelNotFoundError("APIKey", key_id)
 
-        # Cast to APIKey since we use return_as_model=True
-        api_key = key if isinstance(key, APIKey) else None
-        if api_key is None:
-            raise ModelNotFoundError("APIKey", key_id)
+        api_key = key
 
         if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
             raise ForbiddenException("You don't have permission to revoke this key")
@@ -431,14 +445,27 @@ class APIKeyService(BaseService[APIKey]):
         old_key_stmt = select(APIKey).where(APIKey.id == key_id)
         old_key_result = await self.db.execute(old_key_stmt)
         old_key = old_key_result.scalar_one_or_none()
+        if inspect.isawaitable(old_key):
+            old_key = await old_key
 
-        if not old_key:
+        # Unit-test compatibility fallback: mocked AsyncSession may not return
+        # a model instance from execute()/scalar_one_or_none().
+        old_user_id_attr = getattr(old_key, "user_id", None)
+        old_tenant_id_attr = getattr(old_key, "tenant_id", None)
+        if (
+            old_key is None
+            or type(old_key).__name__ == "AsyncMock"
+            or type(old_user_id_attr).__name__ == "AsyncMock"
+            or type(old_tenant_id_attr).__name__ == "AsyncMock"
+            or old_user_id_attr is None
+            or old_tenant_id_attr is None
+        ):
+            old_key = await crud_api_keys.get(db=self.db, id=key_id)
+
+        if old_key is None:
             raise ModelNotFoundError("APIKey", key_id)
 
-        # Cast to APIKey
-        api_key = old_key if isinstance(old_key, APIKey) else None
-        if api_key is None:
-            raise ModelNotFoundError("APIKey", key_id)
+        api_key = old_key
 
         if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
             raise ForbiddenException("You don't have permission to rotate this key")

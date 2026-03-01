@@ -20,16 +20,18 @@ class TestAuthFlowLatency:
         e2e_thresholds: dict,
     ):
         """Test login endpoint latency meets p95 threshold."""
-        # Skip first request (cold start)
-        await async_client.post(
-            "/api/v1/account/login",
-            data={"username": "warmup@example.com", "password": "Warmup123!"},
-        )
+        # Warm up a few requests to reduce cold-start variance.
+        for i in range(3):
+            await async_client.post(
+                "/api/v1/account/login",
+                data={"username": "warmup@example.com", "password": "Warmup123!"},
+                headers={"X-Forwarded-For": f"10.10.1.{i + 1}"},
+            )
 
         # Run iterations for statistical significance
         iterations = 15
 
-        for _ in range(iterations):
+        for i in range(iterations):
             perf_metrics.start_timer()
             response = await async_client.post(
                 "/api/v1/account/login",
@@ -37,6 +39,7 @@ class TestAuthFlowLatency:
                     "username": "test@example.com",
                     "password": "TestPassword123!",
                 },
+                headers={"X-Forwarded-For": f"10.20.1.{i + 1}"},
             )
             perf_metrics.stop_timer()
             assert response.status_code in (200, 401, 422, 429)
@@ -57,11 +60,12 @@ class TestAuthFlowLatency:
         """Test token refresh endpoint latency meets p95 threshold."""
         iterations = 15
 
-        for _ in range(iterations):
+        for i in range(iterations):
             perf_metrics.start_timer()
             response = await async_client.post(
                 "/api/v1/account/refresh",
                 json={"refresh_token": "fake-refresh-token"},
+                headers={"X-Forwarded-For": f"10.30.1.{i + 1}"},
             )
             perf_metrics.stop_timer()
             assert response.status_code in (200, 401, 422, 429)
@@ -85,13 +89,14 @@ class TestAuthFlowLatency:
         """
         iterations = 15
 
-        for _ in range(iterations):
+        for i in range(iterations):
             perf_metrics.start_timer()
             try:
                 response = await async_client.get(
                     "/api/v1/users/me",
                     headers={
                         "Authorization": "Bearer test-token",
+                        "X-Forwarded-For": f"10.40.1.{i + 1}",
                     },
                 )
                 # Any response is fine for latency measurement

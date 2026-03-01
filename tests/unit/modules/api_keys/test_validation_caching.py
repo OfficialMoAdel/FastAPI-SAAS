@@ -16,10 +16,9 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.modules.api_keys.service import APIKeyService
 from src.app.modules.api_keys.models import APIKey
+from src.app.modules.api_keys.service import APIKeyService
 
 
 class TestAPIKeyValidationCaching:
@@ -229,7 +228,7 @@ class TestAPIKeyValidationWithoutRedis:
         """Test that validation works even if Redis is unavailable."""
         # Ensure redis is mocked
         api_key_service.redis = MagicMock()
-        
+
         # Mock Redis to raise connection error
         api_key_service.redis.get.side_effect = ConnectionError("Redis down")
         api_key_service.redis.setex.side_effect = ConnectionError("Redis down")

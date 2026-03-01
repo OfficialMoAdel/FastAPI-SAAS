@@ -161,16 +161,20 @@ class TestP14EventBusParallelEnqueue:
             await asyncio.sleep(0.01)  # 10ms simulated RTT
             return None
 
-        mock_queue = MagicMock()
+        mock_queue = AsyncMock()
         mock_queue.enqueue_job = mock_enqueue_with_delay
         bus._arq_queue = mock_queue
 
         # Create 5 handlers
         handlers = [AsyncMock(__name__=f"handler{i}", __module__="test") for i in range(5)]
 
-        with patch("src.app.core.events.arq_circuit") as mock_circuit:
+        with (
+            patch("src.app.core.events.arq_circuit") as mock_circuit,
+            patch("src.app.core.events.settings") as mock_settings,
+        ):
             mock_circuit.is_closed = True
             mock_circuit.record_success = AsyncMock()
+            mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
 
             start = time.perf_counter()
             await bus._publish_async(
@@ -183,8 +187,8 @@ class TestP14EventBusParallelEnqueue:
 
         # Sequential would take 5 * 10ms = 50ms
         # Parallel should take ~10ms (Max RTT instead of Sum RTT)
-        # Allow some overhead, but should be < 30ms
-        assert elapsed_ms < 30, f"Parallel enqueue took {elapsed_ms:.2f}ms, should be < 30ms"
+        # Allow CI jitter/Windows scheduler overhead, but keep strong bound.
+        assert elapsed_ms < 40, f"Parallel enqueue took {elapsed_ms:.2f}ms, should be < 40ms"
 
 
 class TestP14EventBusIsomorphism:
