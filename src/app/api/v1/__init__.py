@@ -1,41 +1,41 @@
 from fastapi import APIRouter, Depends
 
-from ...modules.ai.router import router as ai_router
-from ...modules.api_keys.router import router as api_keys_router
-from ...modules.app_configuration.router import router as app_configuration_router
-from ...modules.audit_logs.router import router as audit_logs_router
-from ...modules.auth.router import router as auth_router
-from ...modules.billing.router import router as billing_router
-from ...modules.billing.routes.checkouts import router as checkouts_router
-from ...modules.billing.routes.invoices import router as invoices_router
-from ...modules.billing.routes.prices import router as prices_router
-from ...modules.billing.routes.products import router as products_router
-from ...modules.configurations import router as configurations_router
-from ...modules.dashboard.router import router as dashboard_router
-from ...modules.feature_flags.router import router as feature_flags_router
-from ...modules.files.router import router as files_router
-from ...modules.health.router import router as health_router
-from ...modules.magic_link.router import router as magic_link_router
-from ...modules.mfa.router import router as mfa_router
-from ...modules.notifications.router import router as notifications_router
-from ...modules.passkey.router import router as passkey_router
-from ...modules.posts.router import router as posts_router
-from ...modules.rate_limits.router import router as rate_limits_router
-from ...modules.rbac.permissions_router import router as permissions_router
-from ...modules.rbac.router import router as rbac_router
-from ...modules.security.router import router as security_router
-from ...modules.sso.router import router as sso_router
-from ...modules.sso_settings.router import router as sso_settings_router
-from ...modules.storage_settings.router import router as storage_settings_router
-from ...modules.tasks.router import router as tasks_router
-from ...modules.tenants.router import router as tenants_router
-from ...modules.tiers.router import router as tiers_router
-from ...modules.user_preferences.router import router as user_preferences_router
-from ...modules.users.router import router as users_router
-from ...modules.webhooks.router import router as webhooks_router
-from ..dependencies import get_current_superuser
-from ..v1.admin.circuit_breakers import router as circuit_breakers_router
-from ..v1.admin.jobs import router as jobs_router
+from src.app.api.dependencies import get_current_superuser
+from src.app.api.v1.admin.circuit_breakers import router as circuit_breakers_router
+from src.app.api.v1.admin.jobs import router as jobs_router
+from src.app.modules.ai.router import router as ai_router
+from src.app.modules.api_keys.router import router as api_keys_router
+from src.app.modules.app_configuration.router import router as app_configuration_router
+from src.app.modules.audit_logs.router import router as audit_logs_router
+from src.app.modules.auth.router import router as auth_router
+from src.app.modules.billing.router import router as billing_router
+from src.app.modules.billing.routes.checkouts import router as checkouts_router
+from src.app.modules.billing.routes.invoices import router as invoices_router
+from src.app.modules.billing.routes.prices import router as prices_router
+from src.app.modules.billing.routes.products import router as products_router
+from src.app.modules.configurations import router as configurations_router
+from src.app.modules.dashboard.router import router as dashboard_router
+from src.app.modules.feature_flags.router import router as feature_flags_router
+from src.app.modules.files.router import router as files_router
+from src.app.modules.health.router import router as health_router
+from src.app.modules.magic_link.router import router as magic_link_router
+from src.app.modules.mfa.router import router as mfa_router
+from src.app.modules.notifications.router import router as notifications_router
+from src.app.modules.passkey.router import router as passkey_router
+from src.app.modules.posts.router import router as posts_router
+from src.app.modules.rate_limits.router import router as rate_limits_router
+from src.app.modules.rbac.permissions_router import router as permissions_router
+from src.app.modules.rbac.router import router as rbac_router
+from src.app.modules.security.router import router as security_router
+from src.app.modules.sso.router import router as sso_router
+from src.app.modules.sso_settings.router import router as sso_settings_router
+from src.app.modules.storage_settings.router import router as storage_settings_router
+from src.app.modules.tasks.router import router as tasks_router
+from src.app.modules.tenants.router import router as tenants_router
+from src.app.modules.tiers.router import router as tiers_router
+from src.app.modules.user_preferences.router import router as user_preferences_router
+from src.app.modules.users.router import router as users_router
+from src.app.modules.webhooks.router import router as webhooks_router
 
 router = APIRouter(prefix="/v1")
 router.include_router(health_router)

@@ -18,16 +18,15 @@ from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.sso.crud import crud_user_sso_connections
+from src.app.modules.sso.providers.apple import AppleProvider
+from src.app.modules.sso.providers.base import BaseOAuthProvider
+from src.app.modules.sso.providers.github import GitHubProvider
+from src.app.modules.sso.providers.google import GoogleProvider
+from src.app.modules.sso.providers.microsoft import MicrosoftProvider
+from src.app.modules.sso.schemas import SSOProvider, UserSSOConnectionCreate, UserSSOConnectionUpdate
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
-
-from .crud import crud_user_sso_connections
-from .providers.apple import AppleProvider
-from .providers.base import BaseOAuthProvider
-from .providers.github import GitHubProvider
-from .providers.google import GoogleProvider
-from .providers.microsoft import MicrosoftProvider
-from .schemas import SSOProvider, UserSSOConnectionCreate, UserSSOConnectionUpdate
 
 logger = logging.getLogger(__name__)
 

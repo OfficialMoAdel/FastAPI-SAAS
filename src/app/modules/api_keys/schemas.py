@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base.schemas import BaseCreate, BaseList, BaseRead
+from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead
 
 
 class APIKeyBase(BaseModel):

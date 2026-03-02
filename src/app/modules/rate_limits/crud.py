@@ -1,7 +1,7 @@
 from fastcrud import FastCRUD
 
-from .models import RateLimit
-from .schemas import (
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.rate_limits.schemas import (
     RateLimitCreateInternal,
     RateLimitDelete,
     RateLimitRead,

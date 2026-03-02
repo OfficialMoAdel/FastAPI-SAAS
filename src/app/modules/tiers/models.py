@@ -4,10 +4,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, String
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
-    from ...app.modules.rate_limits.models import RateLimit
+    from src.app.app.modules.rate_limits.models import RateLimit
 
 
 class Tier(Base):

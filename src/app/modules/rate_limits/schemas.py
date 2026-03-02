@@ -3,7 +3,7 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
-from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
 
 def sanitize_path(path: str) -> str:

@@ -13,8 +13,8 @@ from typing import cast
 import structlog
 from structlog.types import Processor
 
-from .config import EnvironmentOption, settings
-from .observability.log_sanitizer import SanitizingProcessor
+from src.app.core.config import EnvironmentOption, settings
+from src.app.core.observability.log_sanitizer import SanitizingProcessor
 
 # Log directory setup
 LOG_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "logs")

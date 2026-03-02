@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Local filesystem storage provider implementation.
 
 This module implements the StorageProvider interface for local filesystem,
@@ -10,7 +12,6 @@ Usage:
     result = await storage.upload(file, "path/to/file.pdf", "application/pdf")
 """
 
-from __future__ import annotations
 
 import asyncio
 import logging

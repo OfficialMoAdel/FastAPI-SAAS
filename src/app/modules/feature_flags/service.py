@@ -14,15 +14,14 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 from src.app.modules._base import BaseService, ModelNotFoundError
-from src.app.modules.tenants.models import Tenant
-
-from .models import FeatureFlag, FeatureFlagOverride
-from .schemas import (
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.feature_flags.schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
     FeatureFlagOverrideUpdate,
     FeatureFlagUpdate,
 )
+from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
 
@@ -433,7 +432,7 @@ async def warm_feature_flags(session: AsyncSession) -> int:
     """
     from sqlalchemy import select
 
-    from .models import FeatureFlag
+    from src.app.modules.feature_flags.models import FeatureFlag
 
     query = select(FeatureFlag)
     result = await session.execute(query)

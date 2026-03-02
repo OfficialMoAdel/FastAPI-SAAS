@@ -6,7 +6,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, Field, HttpUrl, field_validator
 
-from .._base import BaseCreate, BaseList, BaseReadUUID, BaseUpdate
+from src.app.modules._base import BaseCreate, BaseList, BaseReadUUID, BaseUpdate
 
 # =============================================================================
 # Webhook Endpoint Schemas

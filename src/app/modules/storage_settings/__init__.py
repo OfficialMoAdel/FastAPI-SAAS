@@ -23,19 +23,19 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "StorageSettings":
-        from .models import StorageSettings
+        from src.app.modules.storage_settings.models import StorageSettings
 
         return StorageSettings
     if name == "StorageSettingsService":
-        from .service import StorageSettingsService
+        from src.app.modules.storage_settings.service import StorageSettingsService
 
         return StorageSettingsService
     if name == "StorageNotConfiguredError":
-        from .service import StorageNotConfiguredError
+        from src.app.modules.storage_settings.service import StorageNotConfiguredError
 
         return StorageNotConfiguredError
     if name in ("StorageSettingsCreate", "StorageSettingsRead", "StorageSettingsUpdate"):
-        from . import schemas
+        from src.app.modules.storage_settings import schemas
 
         return getattr(schemas, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

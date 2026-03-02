@@ -10,7 +10,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import FastAPI, status
+from fastapi import status, FastAPI, status
 from fastapi.testclient import TestClient
 
 from src.app.middleware.tenant import TenantMiddleware

@@ -13,6 +13,12 @@ class HealthCheck(BaseModel):
     timestamp: str
 
 
+class MessageResponse(BaseModel):
+    """Generic message response schema."""
+
+    message: str
+
+
 class ReadyCheck(BaseModel):
     status: str
     environment: str

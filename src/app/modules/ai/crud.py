@@ -4,9 +4,8 @@ Tenant-aware CRUD classes for AI chat sessions, messages, and settings.
 """
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD
-
-from .models import AIChatMessage, AIChatSession, AISettings
-from .schemas import (
+from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
+from src.app.modules.ai.schemas import (
     AISettingsRead,
     AISettingsUpdate,
     ChatMessageCreate,

@@ -10,27 +10,25 @@ from collections.abc import Sequence
 from typing import TYPE_CHECKING, Annotated, Any
 from uuid import UUID
 
+import structlog
 from cachetools import TTLCache
 from fastapi import Depends
 from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.config import settings
-from ...core.db.database import async_get_db
-from ...core.json_utils import json_dumps, json_loads
-from ...core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
-from ...core.rbac.dependencies import invalidate_user_permissions_cache
-from ...core.tenancy.context import get_current_tenant
-from ...modules.tenants.models import Tenant
-from .._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
-from .models import Permission, Role, RolePermission, UserRole
-from .schemas import RoleCreate, RoleUpdate
+from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
+from src.app.core.rbac.dependencies import invalidate_user_permissions_cache
+from src.app.core.tenancy.context import get_current_tenant
+from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
+from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
+from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
+from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
-
-import structlog
-
 logger = structlog.get_logger(__name__)
 
 # L1 In-Memory Cache for RBAC permissions (R2-HYBRID MED-2)
@@ -437,7 +435,7 @@ class RoleService:
         await self.get_role(role_id)  # Verify role exists and belongs to tenant
 
         # Verify user belongs to the same tenant (P1 fix: tenant isolation)
-        from ..users.models import User
+        from src.app.modules.users.models import User
 
         user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
         user_result = await self.db.execute(user_stmt)
@@ -473,7 +471,7 @@ class RoleService:
         Security: Validates user belongs to the current tenant.
         """
         # Verify user belongs to the same tenant (P1 fix: tenant isolation)
-        from ..users.models import User
+        from src.app.modules.users.models import User
 
         user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
         user_result = await self.db.execute(user_stmt)

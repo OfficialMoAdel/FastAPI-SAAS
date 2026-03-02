@@ -1,7 +1,7 @@
 from fastcrud import FastCRUD
 
-from .models import SSOSettings
-from .schemas import (
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.sso_settings.schemas import (
     SSOSettingsCreateInternal,
     SSOSettingsDelete,
     SSOSettingsRead,

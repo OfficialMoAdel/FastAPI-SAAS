@@ -12,6 +12,7 @@ Usage:
     record_xfetch_latency(0.005)  # 5ms
 """
 
+
 from __future__ import annotations
 
 import logging

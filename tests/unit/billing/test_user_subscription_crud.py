@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for UserSubscriptionCRUD operations.
 
 Tests T064: Unit test for UserSubscriptionCRUD in tests/unit/billing/test_user_subscription_crud.py

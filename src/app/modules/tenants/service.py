@@ -11,12 +11,11 @@ from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
-
-from .._base.exceptions import DuplicateError, ModelNotFoundError
-from .._base.service import BaseService
-from .crud import crud_tenants
-from .models import Tenant
-from .schemas import TenantCreate, TenantResponse, TenantUpdate
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.tenants.crud import crud_tenants
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.tenants.schemas import TenantCreate, TenantResponse, TenantUpdate
 
 logger = get_logger(__name__)
 

@@ -18,7 +18,7 @@ import re
 from enum import Enum
 from typing import cast
 
-from fastapi import Request, Response
+from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -380,7 +380,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         if self._mode == "block":
             return Response(
                 content='{"detail":"Bad Request - Attack pattern detected"}',
-                status_code=400,
+                status_code=status.HTTP_400_BAD_REQUEST,
                 media_type="application/json",
             )
 
@@ -396,7 +396,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             return Response(
                 content='{"detail":"Forbidden - Attack detected and IP banned"}',
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 media_type="application/json",
             )
 

@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for BillingHistoryService.
 
 Tests T101: Unit test for BillingHistoryService in tests/unit/billing/test_billing_history_service.py

@@ -3,9 +3,9 @@
 from typing import Any
 
 from arq.jobs import Job as ArqJob
-from fastapi import HTTPException
+from fastapi import status, HTTPException
 
-from ...core.utils import queue
+from src.app.core.utils import queue
 
 
 class TaskService:
@@ -34,7 +34,7 @@ class TaskService:
 
         job = await queue.pool.enqueue_job("sample_background_task", message)
         if job is None:
-            raise HTTPException(status_code=500, detail="Failed to create task")
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create task")
 
         return {"id": job.job_id}
 

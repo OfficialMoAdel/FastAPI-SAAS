@@ -7,7 +7,7 @@ This module re-exports them for module-internal use and adds auth-specific schem
 from pydantic import BaseModel, Field
 
 # Re-export from core for convenience (these are the canonical definitions)
-from ...core.schemas import Token, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead, TokenData
+from src.app.core.schemas import Token, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead, TokenData
 
 
 class AuthTokenResponse(BaseModel):
@@ -28,6 +28,22 @@ class LoginRequest(BaseModel):
 
     username: str
     password: str
+
+
+class LoginTokenResponse(BaseModel):
+    """Login success response schema."""
+
+    access_token: str
+    token_type: str = "bearer"
+
+
+class LoginMFAResponse(BaseModel):
+    """Login MFA required response schema."""
+
+    mfa_required: str
+    mfa_token: str
+    expires_in: str
+    message: str
 
 
 class RefreshTokenResponse(BaseModel):

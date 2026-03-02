@@ -21,19 +21,19 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "router":
-        from .router import router
+        from src.app.modules.ai.router import router
 
         return router
     if name == "AIChatSession":
-        from .models import AIChatSession
+        from src.app.modules.ai.models import AIChatSession
 
         return AIChatSession
     if name == "AIChatMessage":
-        from .models import AIChatMessage
+        from src.app.modules.ai.models import AIChatMessage
 
         return AIChatMessage
     if name == "AISettings":
-        from .models import AISettings
+        from src.app.modules.ai.models import AISettings
 
         return AISettings
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

@@ -3,14 +3,14 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_superuser, get_current_user
-from ...core.db.database import async_get_db
-from ...core.exceptions.http_exceptions import ForbiddenException
-from .schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
-from .service import TenantService, get_tenant_service
+from src.app.api.dependencies import get_current_superuser, get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
+from src.app.modules.tenants.service import TenantService, get_tenant_service
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -51,7 +51,7 @@ async def list_tenants(
     }
 
 
-@router.post("", response_model=TenantResponse, status_code=201)
+@router.post("", response_model=TenantResponse, status_code=status.HTTP_201_CREATED)
 async def create_tenant(
     tenant: TenantCreate,
     service: Annotated[TenantService, Depends(_get_tenant_service)],

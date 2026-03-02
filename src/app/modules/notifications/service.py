@@ -15,13 +15,12 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
+from src.app.core.config import settings
+from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
-
-from ...core.config import settings
-from ...core.events import EventPriority, event_bus
-from ...core.utils.cache import client as redis_client
-from ...core.utils.rate_limit import rate_limiter
-from .models import EmailTemplateOverride, Notification, NotificationStatus
+from src.app.core.utils.cache import client as redis_client
+from src.app.core.utils.rate_limit import rate_limiter
+from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 
 logger = get_logger(__name__)
 
@@ -307,7 +306,7 @@ class NotificationService:
         -------
             True if notification should be sent, False otherwise
         """
-        from ...modules.user_preferences.models import UserPreferences
+        from src.app.modules.user_preferences.models import UserPreferences
 
         now = current_time or datetime.now(UTC)
 
@@ -391,7 +390,7 @@ async def send_email_task(
         subject: Email subject
         html_content: HTML body content
     """
-    from ...core.db.database import get_db_context
+    from src.app.core.db.database import get_db_context
 
     async with get_db_context() as db:
         try:
@@ -451,7 +450,7 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
             - subject: Email subject line
             - html_content: Rendered HTML body
     """
-    from ...core.utils.queue import pool as arq_pool
+    from src.app.core.utils.queue import pool as arq_pool
 
     notification_id = data.get("notification_id")
     to_email = data.get("to_email")

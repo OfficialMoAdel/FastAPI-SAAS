@@ -91,7 +91,7 @@ async def check_redis_queue_health() -> HealthResult:
     -------
         HealthResult with status, latency, and any error details
     """
-    from .utils.queue import pool
+    from src.app.core.utils.queue import pool
 
     if pool is None:
         LOGGER.warning("Redis queue pool not initialized")

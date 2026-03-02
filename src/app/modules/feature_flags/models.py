@@ -9,10 +9,10 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
-    from ...modules.tenants.models import Tenant
+    from src.app.modules.tenants.models import Tenant
 
 
 class FeatureFlag(Base):

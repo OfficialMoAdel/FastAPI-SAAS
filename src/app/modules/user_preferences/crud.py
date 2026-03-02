@@ -14,8 +14,8 @@ from fastcrud import FastCRUD
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import DEFAULT_PREFERENCES, UserPreferences
-from .schemas import (
+from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES, UserPreferences
+from src.app.modules.user_preferences.schemas import (
     UserPreferencesCreate,
     UserPreferencesDeleteInternal,
     UserPreferencesRead,

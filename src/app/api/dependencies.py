@@ -1,20 +1,20 @@
 from typing import Annotated, Any
 
 import jwt
-from fastapi import Depends, HTTPException, Request
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import settings
-from ..core.db.database import async_get_db
-from ..core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
-from ..core.logger import get_logger
-from ..core.security import TokenType, oauth2_scheme, verify_token
-from ..core.security.jwt_utils import get_cached_jwt_payload
-from ..core.tenancy.context import get_current_tenant as get_tenant_context
-from ..core.utils.rate_limit import rate_limiter
-from ..modules.rate_limits.crud import crud_rate_limits
-from ..modules.rate_limits.schemas import RateLimitRead, sanitize_path
-from ..modules.users.service import UserService
+from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
+from src.app.core.logger import get_logger
+from src.app.core.security import TokenType, oauth2_scheme, verify_token
+from src.app.core.security.jwt_utils import get_cached_jwt_payload
+from src.app.core.tenancy.context import get_current_tenant as get_tenant_context
+from src.app.core.utils.rate_limit import rate_limiter
+from src.app.modules.rate_limits.crud import crud_rate_limits
+from src.app.modules.rate_limits.schemas import RateLimitRead, sanitize_path
+from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 
@@ -37,8 +37,8 @@ async def get_current_user(
 
     if cached_payload:
         # Reuse cached payload - still need to verify token isn't blacklisted
-        from ..core.db.crud_token_blacklist import crud_token_blacklist
-        from ..core.security.token_blacklist_cache import is_token_blacklisted
+        from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+        from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
         # Check Redis cache first (O(1) lookup)
         cache_result = await is_token_blacklisted(token)
@@ -179,7 +179,7 @@ def get_current_tenant() -> Any:
     if tenant is None:
         logger.error("Tenant context is None - TenantMiddleware may not be configured correctly")
         raise HTTPException(
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error: tenant context not available",
         )
     return tenant

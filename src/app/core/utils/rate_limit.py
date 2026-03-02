@@ -4,9 +4,9 @@ from typing import Optional
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.logger import logging
-from ...modules.rate_limits.schemas import sanitize_path
-from . import cache
+from src.app.core.logger import logging
+from src.app.core.utils import cache
+from src.app.modules.rate_limits.schemas import sanitize_path
 
 logger = logging.getLogger(__name__)
 
@@ -81,9 +81,8 @@ class RateLimiter:
         except Exception as e:
             logger.exception(f"Error checking rate limit for key {key}: {e}")
             # Use configurable fail-open/fail-closed behavior
+            from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
-
-            from ...core.config import settings
 
             if settings.RATE_LIMIT_FAIL_OPEN:
                 record_fail_open("rate_limit")

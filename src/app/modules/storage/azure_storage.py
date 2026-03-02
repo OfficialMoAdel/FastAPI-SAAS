@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """Azure Blob Storage provider implementation.
 
 This module implements the StorageProvider interface for Azure Blob Storage,
@@ -10,7 +12,6 @@ Usage:
     result = await storage.upload(file, "path/to/file.pdf", "application/pdf")
 """
 
-from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator

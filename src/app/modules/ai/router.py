@@ -9,10 +9,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
-
-from .middleware import RateLimitedUser
-from .ollama_client import get_ollama_client
-from .schemas import (
+from src.app.modules.ai.middleware import RateLimitedUser
+from src.app.modules.ai.ollama_client import get_ollama_client
+from src.app.modules.ai.schemas import (
     AIModelsListResponse,
     AIServiceError,
     AISettingsRead,
@@ -26,10 +25,10 @@ from .schemas import (
     ChatSessionReadWithMessages,
     ChatSessionUpdate,
 )
-from .schemas import (
+from src.app.modules.ai.schemas import (
     RateLimitError as RateLimitErrorSchema,
 )
-from .service import (
+from src.app.modules.ai.service import (
     ChatCompletionError,
     get_ai_settings_service,
     get_chat_completion_service,
@@ -45,7 +44,7 @@ router = APIRouter(prefix="/ai", tags=["ai"])
 # =============================================================================
 
 
-@router.post("/sessions", response_model=ChatSessionRead, status_code=201)
+@router.post("/sessions", response_model=ChatSessionRead, status_code=status.HTTP_201_CREATED)
 async def create_chat_session(
     data: ChatSessionCreate,
     current_user: Annotated[dict, Depends(get_current_user)],

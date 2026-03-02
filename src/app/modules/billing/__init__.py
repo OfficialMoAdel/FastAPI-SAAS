@@ -24,31 +24,31 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "router":
-        from .router import router
+        from src.app.modules.billing.router import router
 
         return router
     if name == "StripeSettings":
-        from .models import StripeSettings
+        from src.app.modules.billing.models import StripeSettings
 
         return StripeSettings
     if name == "SubscriptionPlan":
-        from .models import SubscriptionPlan
+        from src.app.modules.billing.models import SubscriptionPlan
 
         return SubscriptionPlan
     if name == "Product":
-        from .models import Product
+        from src.app.modules.billing.models import Product
 
         return Product
     if name == "Pricing":
-        from .models import Pricing
+        from src.app.modules.billing.models import Pricing
 
         return Pricing
     if name == "UserSubscription":
-        from .models import UserSubscription
+        from src.app.modules.billing.models import UserSubscription
 
         return UserSubscription
     if name == "BillingRecord":
-        from .models import BillingRecord
+        from src.app.modules.billing.models import BillingRecord
 
         return BillingRecord
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

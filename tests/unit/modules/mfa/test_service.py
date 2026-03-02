@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for MFA Service.
 
 Tests the MFAService class with mocked dependencies.

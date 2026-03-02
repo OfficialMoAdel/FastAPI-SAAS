@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for AppleProvider.
 
 TDD: These tests are written first and should FAIL until implementation is complete.

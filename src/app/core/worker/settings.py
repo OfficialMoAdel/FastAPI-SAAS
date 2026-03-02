@@ -1,11 +1,10 @@
 from arq.connections import RedisSettings
 from arq.cron import cron
 
-from ...core.config import settings
-from ...core.events import process_event_handler
-from ...core.json_utils import json_dumps, json_loads
-from ...modules.notifications.service import send_email_task
-from .functions import (
+from src.app.core.config import settings
+from src.app.core.events import process_event_handler
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.worker.functions import (
     deliver_webhook_task,
     flush_audit_logs_task,
     migrate_sessions_task,
@@ -14,6 +13,7 @@ from .functions import (
     startup,
     sync_bloom_filter_task,
 )
+from src.app.modules.notifications.service import send_email_task
 
 REDIS_QUEUE_HOST = settings.REDIS_QUEUE_HOST
 REDIS_QUEUE_PORT = settings.REDIS_QUEUE_PORT

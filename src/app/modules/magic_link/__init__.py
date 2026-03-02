@@ -27,15 +27,15 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "router":
-        from .router import router
+        from src.app.modules.magic_link.router import router
 
         return router
     if name == "MagicLinkService":
-        from .service import MagicLinkService
+        from src.app.modules.magic_link.service import MagicLinkService
 
         return MagicLinkService
     if name == "MagicLink":
-        from .models import MagicLink
+        from src.app.modules.magic_link.models import MagicLink
 
         return MagicLink
     if name in (
@@ -44,11 +44,11 @@ def __getattr__(name: str):
         "MagicLinkRateLimitError",
         "MagicLinkUserInactiveError",
     ):
-        from . import exceptions
+        from src.app.modules.magic_link import exceptions
 
         return getattr(exceptions, name)
     if name in ("MagicLinkSendRequest", "MagicLinkSendResponse", "MagicLinkVerifyRequest"):
-        from . import schemas
+        from src.app.modules.magic_link import schemas
 
         return getattr(schemas, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

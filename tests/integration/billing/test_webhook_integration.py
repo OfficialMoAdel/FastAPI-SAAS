@@ -92,7 +92,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
         response = client.post("/api/v1/billing/webhook", json=event_payload, headers={"Stripe-Signature": "dummy_sig"})
 
         assert response.status_code == status.HTTP_200_OK
-        assert response.json() == {"status": "success"}
+        assert response.json() == {"status": "success", "message": None}
 
         # Verify UserSubscription was created
         # We need to refresh/query the db_session

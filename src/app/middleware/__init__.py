@@ -12,14 +12,14 @@ Middleware order in application:
 9. RequestIDMiddleware (innermost - request tracing)
 """
 
-from .attack_detection import AttackDetectionMiddleware
-from .body_limit import RequestBodyLimitMiddleware
-from .ip_filter import IPFilterMiddleware
-from .query_profiler import QueryProfilerMiddleware
-from .rate_limit import RateLimitMiddleware
-from .request_id import RequestIDMiddleware
-from .security_headers import SecurityHeadersMiddleware
-from .tenant import TenantMiddleware
+from src.app.middleware.attack_detection import AttackDetectionMiddleware
+from src.app.middleware.body_limit import RequestBodyLimitMiddleware
+from src.app.middleware.ip_filter import IPFilterMiddleware
+from src.app.middleware.query_profiler import QueryProfilerMiddleware
+from src.app.middleware.rate_limit import RateLimitMiddleware
+from src.app.middleware.request_id import RequestIDMiddleware
+from src.app.middleware.security_headers import SecurityHeadersMiddleware
+from src.app.middleware.tenant import TenantMiddleware
 
 __all__ = [
     "AttackDetectionMiddleware",

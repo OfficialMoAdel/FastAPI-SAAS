@@ -6,7 +6,7 @@ from collections.abc import AsyncGenerator
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,7 +25,7 @@ from src.app.modules.audit_logs.service import AuditLogService
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 
-router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
+router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
 
 @router.get("", response_model=AuditLogList)
@@ -113,7 +113,7 @@ async def get_audit_log(
     log = result.scalar_one_or_none()
 
     if not log:
-        raise HTTPException(status_code=404, detail="Audit log not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
 
     return AuditLogResponse.model_validate(log)
 
@@ -239,7 +239,7 @@ async def export_audit_logs(
 
     if count > EXPORT_MAX_RECORDS:
         raise HTTPException(
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Export exceeds maximum of {EXPORT_MAX_RECORDS} records. "
             f"Found {count} records. Use date filtering to reduce the export size.",
         )

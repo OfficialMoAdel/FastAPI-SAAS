@@ -17,7 +17,7 @@ from typing import Any
 
 from fastapi import Query
 
-from .config import settings
+from src.app.core.config import settings
 
 # L2: Centralized pagination constants
 # Default: 20 items per page (balances UX and performance)

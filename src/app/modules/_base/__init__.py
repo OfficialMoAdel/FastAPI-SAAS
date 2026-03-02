@@ -32,10 +32,10 @@ Usage:
         ...
 """
 
-from .exceptions import DuplicateError, ModelNotFoundError, ValidationError
-from .models import Base
-from .schemas import BaseCreate, BaseList, BasePagination, BaseRead, BaseReadUUID, BaseUpdate
-from .service import BaseService, get_base_service
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError, ValidationError
+from src.app.modules._base.models import Base
+from src.app.modules._base.schemas import BaseCreate, BaseList, BasePagination, BaseRead, BaseReadUUID, BaseUpdate
+from src.app.modules._base.service import BaseService, get_base_service
 
 __all__ = [
     # Models

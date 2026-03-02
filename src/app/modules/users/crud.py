@@ -4,10 +4,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from ...core.db.tenant_crud import TenantAwareCRUD
-from ...core.tenancy.context import get_tenant_context
-from .models import User
-from .schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
+from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.tenancy.context import get_tenant_context
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
 
 class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]):

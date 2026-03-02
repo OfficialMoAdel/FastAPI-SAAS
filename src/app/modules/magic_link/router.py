@@ -14,9 +14,8 @@ from src.app.api.dependencies import rate_limiter_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import AuthTokenResponse
-
-from .schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
-from .service import MagicLinkService
+from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
+from src.app.modules.magic_link.service import MagicLinkService
 
 router = APIRouter(prefix="/auth/magic-link", tags=["magic-link"])
 

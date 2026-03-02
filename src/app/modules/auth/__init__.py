@@ -28,19 +28,19 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "auth_router":
-        from .router import router as auth_router
+        from src.app.modules.auth.router import router as auth_router
 
         return auth_router
     if name == "AuthService":
-        from .service import AuthService
+        from src.app.modules.auth.service import AuthService
 
         return AuthService
     if name == "get_auth_service":
-        from .service import get_auth_service
+        from src.app.modules.auth.service import get_auth_service
 
         return get_auth_service
     if name == "auth_audit":
-        from .audit import auth_audit
+        from src.app.modules.auth.audit import auth_audit
 
         return auth_audit
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

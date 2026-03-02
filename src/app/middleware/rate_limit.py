@@ -14,7 +14,7 @@ import time
 from collections.abc import Callable
 from functools import lru_cache
 
-from fastapi import Request, Response
+from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -121,7 +121,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
                 return Response(
                     content="Forbidden: IP address banned due to abuse",
-                    status_code=403,
+                    status_code=status.HTTP_403_FORBIDDEN,
                     headers=headers,
                 )
 
@@ -187,11 +187,11 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     headers["X-Ban-Reason"] = f"Auto-ban after {violation_count} violations"
                     return Response(
                         content=f"Forbidden: IP banned after {violation_count} rate limit violations",
-                        status_code=403,
+                        status_code=status.HTTP_403_FORBIDDEN,
                         headers=headers,
                     )
 
-            return Response("Too Many Requests", status_code=429, headers=headers)
+            return Response("Too Many Requests", status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers=headers)
 
         response: Response = await call_next(request)
 

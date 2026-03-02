@@ -4,6 +4,7 @@ Business logic for magic link passwordless authentication.
 Handles token generation, email queueing, and token verification.
 """
 
+
 from __future__ import annotations
 
 import logging
@@ -20,13 +21,12 @@ from src.app.core.security import (
 )
 from src.app.core.security.tokens import MagicLinkManager
 from src.app.modules.auth.schemas import AuthTokenResponse
-from src.app.modules.users.crud import crud_users
-
-from .exceptions import (
+from src.app.modules.magic_link.exceptions import (
     InvalidMagicLinkError,
     MagicLinkUserInactiveError,
 )
-from .schemas import MagicLinkSendResponse
+from src.app.modules.magic_link.schemas import MagicLinkSendResponse
+from src.app.modules.users.crud import crud_users
 
 logger = logging.getLogger(__name__)
 
@@ -265,16 +265,16 @@ class MagicLinkService:
                     "failed_to_enqueue_magic_link_email",
                     extra={"user_id": user_id, "email": email, "error": str(e)},
                 )
-                # Fallback: log the link for development/debugging
+                # Fallback: log that the link was created but not enqueued
                 logger.warning(
-                    "magic_link_fallback",
-                    extra={"user_id": user_id, "magic_link_url": magic_link_url},
+                    "magic_link_fallback_no_queue",
+                    extra={"user_id": user_id, "email": email},
                 )
         else:
-            # ARQ not available - log for development
+            # ARQ not available - log that email wasn't sent
             logger.warning(
                 "arq_queue_not_available_magic_link",
-                extra={"user_id": user_id, "email": email, "magic_link_url": magic_link_url},
+                extra={"user_id": user_id, "email": email},
             )
 
     async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:

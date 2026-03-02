@@ -1,7 +1,7 @@
 """Billing & Payments router - HTTP handlers for billing operations."""
 
 import logging
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from redis.asyncio import Redis
@@ -13,8 +13,7 @@ from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.utils.cache import async_get_redis
-
-from .schemas import (
+from src.app.modules.billing.schemas import (
     BillingRecordList,
     BillingRecordRead,
     CheckoutCreate,
@@ -34,8 +33,9 @@ from .schemas import (
     SubscriptionPlanRead,
     SubscriptionPlanUpdate,
     UserSubscriptionRead,
+    WebhookResponse,
 )
-from .service import (
+from src.app.modules.billing.service import (
     get_billing_record_service,
     get_checkout_service,
     get_product_service,
@@ -43,7 +43,7 @@ from .service import (
     get_subscription_plan_service,
     get_user_subscription_service,
 )
-from .webhook import handle_webhook_event, verify_webhook_signature
+from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature
 
 router = APIRouter(prefix="/billing", tags=["billing"])
 logger = logging.getLogger(__name__)
@@ -54,12 +54,12 @@ logger = logging.getLogger(__name__)
 # =============================================================================
 
 
-@router.post("/webhook", status_code=status.HTTP_200_OK)
+@router.post("/webhook", response_model=WebhookResponse, status_code=status.HTTP_200_OK)
 async def stripe_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
     redis: Annotated[Redis, Depends(async_get_redis)],
-):
+) -> Any:
     """
     Handle Stripe webhooks.
 

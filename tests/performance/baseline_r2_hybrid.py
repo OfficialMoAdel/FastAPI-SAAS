@@ -39,7 +39,7 @@ import hmac
 import json
 import re
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, TYPE_CHECKING, Any, Final
 from unittest.mock import AsyncMock
 
 import pytest

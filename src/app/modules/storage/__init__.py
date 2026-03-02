@@ -23,10 +23,11 @@ Usage:
     result = await storage.upload(file, "uploads/file.txt", "text/plain")
 """
 
+
 from __future__ import annotations
 
-from .interfaces import StorageProvider, StorageResult
-from .s3_storage import S3Storage
+from src.app.modules.storage.interfaces import StorageProvider, StorageResult
+from src.app.modules.storage.s3_storage import S3Storage
 
 
 def get_storage(

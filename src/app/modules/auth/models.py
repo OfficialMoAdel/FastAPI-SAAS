@@ -7,10 +7,10 @@ from typing import TYPE_CHECKING
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
-    from ..users.models import User
+    from src.app.modules.users.models import User
 
 
 def generate_reset_token() -> str:

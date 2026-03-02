@@ -4,19 +4,19 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ...api.dependencies import get_current_tenant, get_current_user
-from ...core.rbac.dependencies import requires_permission
-from ...core.rbac.permissions import Permission
-from ...modules.tenants.models import Tenant
-from ...modules.users.models import User
-from .._base import ModelNotFoundError
-from .schemas import (
+from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+from src.app.modules._base import ModelNotFoundError
+from src.app.modules.feature_flags.schemas import (
     FeatureFlagBulkUpdateRequest,
     FeatureFlagCheckResponse,
     FeatureFlagsResponse,
     FeatureFlagUpdateRequest,
 )
-from .service import FeatureFlagService, get_feature_flag_service
+from src.app.modules.feature_flags.service import FeatureFlagService, get_feature_flag_service
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/features", tags=["features"])
 
@@ -103,7 +103,7 @@ async def update_feature_flag(
 
 @router.delete(
     "/{flag_name}",
-    status_code=204,
+    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_MANAGE))],
 )
 async def delete_feature_flag(

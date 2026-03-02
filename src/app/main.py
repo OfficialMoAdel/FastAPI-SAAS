@@ -9,19 +9,19 @@ from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
-from .admin.initialize import create_admin_interface
-from .api import get_router
-from .core.cache.warmer import warmer
-from .core.config import settings
-from .core.setup import create_application, lifespan_factory
-from .middleware.attack_detection import AttackDetectionMiddleware
-from .middleware.body_limit import RequestBodyLimitMiddleware
-from .middleware.ip_filter import IPFilterMiddleware
-from .middleware.query_profiler import QueryProfilerMiddleware
-from .middleware.rate_limit import RateLimitMiddleware
-from .middleware.request_id import RequestIDMiddleware
-from .middleware.security_headers import SecurityHeadersMiddleware
-from .middleware.tenant import TenantMiddleware
+from src.app.admin.initialize import create_admin_interface
+from src.app.api import get_router
+from src.app.core.cache.warmer import warmer
+from src.app.core.config import settings
+from src.app.core.setup import create_application, lifespan_factory
+from src.app.middleware.attack_detection import AttackDetectionMiddleware
+from src.app.middleware.body_limit import RequestBodyLimitMiddleware
+from src.app.middleware.ip_filter import IPFilterMiddleware
+from src.app.middleware.query_profiler import QueryProfilerMiddleware
+from src.app.middleware.rate_limit import RateLimitMiddleware
+from src.app.middleware.request_id import RequestIDMiddleware
+from src.app.middleware.security_headers import SecurityHeadersMiddleware
+from src.app.middleware.tenant import TenantMiddleware
 
 admin = create_admin_interface()
 logger = logging.getLogger(__name__)
@@ -32,9 +32,9 @@ CACHE_WARMING_DELAY = timedelta(seconds=2)
 
 async def _warm_token_blacklist_cache() -> None:
     """Warm the token blacklist Redis cache from database on startup."""
-    from .core.db.crud_token_blacklist import crud_token_blacklist
-    from .core.db.database import async_session_maker
-    from .core.security.token_blacklist_cache import warm_cache_from_db
+    from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+    from src.app.core.db.database import async_session_maker
+    from src.app.core.security.token_blacklist_cache import warm_cache_from_db
 
     try:
         async with async_session_maker() as db:
@@ -58,7 +58,7 @@ async def _warm_application_caches() -> None:
         logger.info("Cache warming is disabled")
         return
 
-    from .core.db.database import async_session_maker
+    from src.app.core.db.database import async_session_maker
 
     try:
         async with async_session_maker() as session:
@@ -76,11 +76,11 @@ async def _warm_application_caches() -> None:
 @asynccontextmanager
 async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     """Custom lifespan that includes admin initialization and cache warming."""
-    from .core.logger import setup_logging
+    from src.app.core.logger import setup_logging
 
     setup_logging()
 
-    from .core.env_validator import EnvironmentValidator
+    from src.app.core.env_validator import EnvironmentValidator
 
     if not EnvironmentValidator.validate_and_log():
         if settings.ENVIRONMENT == "production":
@@ -89,16 +89,16 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
 
     async with default_lifespan(app):
-        from .core.db.database import async_engine
-        from .core.utils.pool_metrics import setup_pool_metrics
+        from src.app.core.db.database import async_engine
+        from src.app.core.utils.pool_metrics import setup_pool_metrics
 
         try:
             setup_pool_metrics(async_engine)
         except Exception as e:
             logger.warning("Pool metrics setup failed: %s", e)
 
-        from .core.events import event_bus
-        from .core.utils.cache import client as redis_client
+        from src.app.core.events import event_bus
+        from src.app.core.utils.cache import client as redis_client
 
         if redis_client:
             event_bus.set_redis_client(redis_client)
@@ -108,13 +108,13 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         event_bus.register_all_handlers()
 
         # Initialize session manager for concurrent session limiting
-        from .core.security.session_manager import session_manager
+        from src.app.core.security.session_manager import session_manager
 
         if redis_client:
             session_manager.set_redis_client(redis_client)
 
         # FIXED: Initialize GCRA rate limiter for algorithm selection
-        from .core.utils.gcra_rate_limit import init_gcra_rate_limiter
+        from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
 
         if redis_client:
             init_gcra_rate_limiter(redis_client)

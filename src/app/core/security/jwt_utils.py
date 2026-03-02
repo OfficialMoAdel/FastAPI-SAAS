@@ -27,6 +27,7 @@ See Also:
     - src/app/modules/auth/dependencies.py: Uses cached payload
 """
 
+
 from __future__ import annotations
 
 import logging

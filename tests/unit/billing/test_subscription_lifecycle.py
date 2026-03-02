@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for subscription lifecycle transitions.
 
 Tests T107: Unit test for subscription lifecycle in tests/unit/billing/test_subscription_lifecycle.py

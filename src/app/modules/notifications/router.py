@@ -3,33 +3,33 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_tenant, get_current_user
-from ...core.db.database import async_get_db
-from ...core.rbac.dependencies import requires_permission
-from ...core.rbac.permissions import Permission
-from ...core.utils.cache import client as redis_client
-from ...modules.tenants.models import Tenant
-from ...modules.users.models import User
-from .models import EmailTemplateOverride, Notification
-from .schemas import (
+from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+from src.app.core.utils.cache import client as redis_client
+from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+from src.app.modules.notifications.schemas import (
     EmailTemplateOverrideCreate,
     EmailTemplateOverrideResponse,
     NotificationList,
     NotificationResponse,
 )
-from .schemas import (
+from src.app.modules.notifications.schemas import (
     NotificationSendRequest as SendEmailRequest,
 )
-from .service import NotificationService
+from src.app.modules.notifications.service import NotificationService
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
 
-router = APIRouter(prefix="/notifications", tags=["Notifications"])
+router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-@router.post("/send", response_model=NotificationResponse, status_code=202)
+@router.post("/send", response_model=NotificationResponse, status_code=status.HTTP_202_ACCEPTED)
 async def send_notification(
     request: SendEmailRequest,
     background_tasks: BackgroundTasks,
@@ -126,7 +126,7 @@ async def get_notification(
     notification = result.scalar_one_or_none()
 
     if not notification:
-        raise HTTPException(status_code=404, detail="Notification not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
 
     return NotificationResponse.model_validate(notification)
 
@@ -156,7 +156,7 @@ async def list_template_overrides(
 @router.post(
     "/templates/overrides",
     response_model=EmailTemplateOverrideResponse,
-    status_code=201,
+    status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
 )
 async def create_template_override(
@@ -207,7 +207,7 @@ async def create_template_override(
 
 @router.delete(
     "/templates/overrides/{template_name}",
-    status_code=204,
+    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
 )
 async def delete_template_override(
@@ -225,7 +225,7 @@ async def delete_template_override(
     override = result.scalar_one_or_none()
 
     if not override:
-        raise HTTPException(status_code=404, detail="Template override not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template override not found")
 
     await db.delete(override)
     await db.commit()

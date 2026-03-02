@@ -1,7 +1,7 @@
 """Feature Flags module."""
 
-from .models import FeatureFlag, FeatureFlagOverride
-from .schemas import (
+from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
+from src.app.modules.feature_flags.schemas import (
     FeatureFlagCheckResponse,
     FeatureFlagCreate,
     FeatureFlagList,
@@ -12,7 +12,7 @@ from .schemas import (
     FeatureFlagsResponse,
     FeatureFlagUpdate,
 )
-from .service import (
+from src.app.modules.feature_flags.service import (
     FeatureFlagService,
     feature_flags_service,  # Legacy compatibility
     get_feature_flag_service,

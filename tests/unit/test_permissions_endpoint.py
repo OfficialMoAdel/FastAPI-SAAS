@@ -36,7 +36,7 @@ class TestPermissionsEndpoint:
 
         # Check tags
         endpoint = paths["/api/v1/permissions"]["get"]
-        assert "RBAC" in endpoint["tags"]
+        assert "rbac" in endpoint["tags"]
 
     def test_permissions_response_schema(self):
         """Permissions endpoint should return list of PermissionOut."""

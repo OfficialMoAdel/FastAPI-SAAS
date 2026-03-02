@@ -25,6 +25,7 @@ Usage:
     return await is_token_in_redis(token)
 """
 
+
 from __future__ import annotations
 
 import hashlib
@@ -261,7 +262,7 @@ async def sync_bloom_filter_from_redis() -> int:
         return 0
 
     try:
-        from .token_blacklist_cache import BLACKLIST_KEY
+        from src.app.core.security.token_blacklist_cache import BLACKLIST_KEY
 
         # Get all tokens from Redis sorted set
         # Returns list of (member, score) tuples

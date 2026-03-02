@@ -4,8 +4,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
-from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
+from src.app.core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
 
 class PostBase(BaseModel):

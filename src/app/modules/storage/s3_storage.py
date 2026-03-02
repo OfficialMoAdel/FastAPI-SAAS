@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 """S3 storage provider implementation.
 
 This module provides AWS S3 storage implementation conforming to
@@ -13,15 +15,13 @@ Note:
     Requires boto3 package: pip install boto3
 """
 
-from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from src.app.core.config import settings
-
-from .interfaces import StorageProvider, StorageResult
+from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
 # Lazy import for boto3 - only needed at runtime, not for testing with mocks
 if TYPE_CHECKING:

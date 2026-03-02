@@ -4,8 +4,8 @@ from fastcrud import FastCRUD
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..db.token_blacklist import TokenBlacklist
-from ..schemas import TokenBlacklistCreate, TokenBlacklistRead, TokenBlacklistUpdate
+from src.app.core.db.token_blacklist import TokenBlacklist
+from src.app.core.schemas import TokenBlacklistCreate, TokenBlacklistRead, TokenBlacklistUpdate
 
 
 class CRUDTokenBlacklist(

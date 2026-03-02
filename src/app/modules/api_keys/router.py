@@ -6,17 +6,17 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_user
-from ...core.db.database import async_get_db
-from ...core.tenancy.context import get_tenant_context
-from .schemas import (
+from src.app.api.dependencies import get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.tenancy.context import get_tenant_context
+from src.app.modules.api_keys.schemas import (
     APIKeyCreate,
     APIKeyList,
     APIKeyResponse,
     APIKeyRevokeResponse,
     APIKeyRotateResponse,
 )
-from .service import APIKeyService, get_api_key_service
+from src.app.modules.api_keys.service import APIKeyService, get_api_key_service
 
 router = APIRouter(prefix="/api-keys", tags=["api-keys"])
 
@@ -34,9 +34,9 @@ def _get_tenant_id() -> UUID:
     """Get current tenant ID from context."""
     context = get_tenant_context()
     if context is None:
-        from fastapi import HTTPException
+        from fastapi import HTTPException, status
 
-        raise HTTPException(status_code=400, detail="Tenant context not set")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
     return context.id
 
 

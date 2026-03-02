@@ -40,7 +40,7 @@ import hmac
 import ipaddress
 import json
 import socket
-from typing import TYPE_CHECKING, Any, Final
+from typing import Any, TYPE_CHECKING, Any, Final
 from unittest.mock import AsyncMock
 
 import orjson

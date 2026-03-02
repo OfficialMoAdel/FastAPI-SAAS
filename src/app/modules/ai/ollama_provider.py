@@ -9,7 +9,7 @@ from typing import Any
 
 from httpx import AsyncClient, HTTPStatusError, RequestError
 
-from .providers import (
+from src.app.modules.ai.providers import (
     AIProvider,
     AIProviderError,
     AITokenUsage,

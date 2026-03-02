@@ -5,6 +5,6 @@ to maintain compatibility with the old backend. It delegates to the billing
 module's CheckoutService and UserSubscriptionService for actual business logic.
 """
 
-from .router import router
+from src.app.modules.checkouts.router import router
 
 __all__ = ["router"]

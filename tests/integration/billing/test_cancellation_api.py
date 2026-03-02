@@ -1,3 +1,4 @@
+from fastapi import status
 """Integration tests for subscription cancellation API endpoints.
 
 Tests T108: Integration test for cancellation endpoint in tests/integration/billing/test_cancellation_api.py

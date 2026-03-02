@@ -9,19 +9,19 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from ...core.events import EventPriority, event_bus
-from ...core.exceptions.http_exceptions import ForbiddenException
-from ...core.json_utils import json_dumps, json_loads
-from ...core.security import blacklist_token, get_password_hash
-from ...core.service_registry import get_service
-from ...core.tenancy.context import get_current_tenant
-from ...core.utils import cache
-from .._base.exceptions import DuplicateError, ModelNotFoundError
-from .._base.service import BaseService
-from ..tiers.models import Tier
-from .crud import CRUDUser, crud_users
-from .models import User
-from .schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
+from src.app.core.events import EventPriority, event_bus
+from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.security import blacklist_token, get_password_hash
+from src.app.core.service_registry import get_service
+from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.utils import cache
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.tiers.models import Tier
+from src.app.modules.users.crud import CRUDUser, crud_users
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
 logger = logging.getLogger(__name__)
 

@@ -3,16 +3,17 @@
 import logging
 from typing import Any
 
+from fastapi import Depends
 from fastcrud import paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.warmer import warmer
+from src.app.core.db.database import async_get_db
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
-
-from .crud import crud_tiers
-from .models import Tier
-from .schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
+from src.app.modules.tiers.crud import crud_tiers
+from src.app.modules.tiers.models import Tier
+from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 
 logger = logging.getLogger(__name__)
 
@@ -185,7 +186,7 @@ class TierService(BaseService[Tier]):
         return {"message": "Tier deleted"}
 
 
-def get_tier_service(db: AsyncSession) -> TierService:
+def get_tier_service(db: AsyncSession = Depends(async_get_db)) -> TierService:
     """Dependency injection factory for TierService.
 
     Parameters

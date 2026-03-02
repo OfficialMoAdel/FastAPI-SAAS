@@ -1,3 +1,4 @@
+from typing import Any
 """E2E Tests: Auth Flow Latency Validation.
 
 Tests validate that authentication endpoints meet performance thresholds

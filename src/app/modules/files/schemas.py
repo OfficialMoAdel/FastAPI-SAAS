@@ -3,6 +3,7 @@
 This module defines request/response DTOs for file API operations.
 """
 
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -11,7 +12,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base import BaseList, BaseRead, BaseUpdate
+from src.app.modules._base import BaseList, BaseRead, BaseUpdate
 
 
 class FileUploadResponse(BaseModel):

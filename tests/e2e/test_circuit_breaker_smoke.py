@@ -1,3 +1,4 @@
+from fastapi import status
 import pytest
 from httpx import ASGITransport, AsyncClient
 

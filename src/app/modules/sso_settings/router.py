@@ -5,10 +5,10 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_superuser
-from ...core.db.database import async_get_db
-from .crud import crud_sso_settings
-from .schemas import (
+from src.app.api.dependencies import get_current_superuser
+from src.app.core.db.database import async_get_db
+from src.app.modules.sso_settings.crud import crud_sso_settings
+from src.app.modules.sso_settings.schemas import (
     SSOSettingsCreate,
     SSOSettingsList,
     SSOSettingsRead,
@@ -19,7 +19,7 @@ from .schemas import (
 router = APIRouter(prefix="/ssos", tags=["ssos"])
 
 
-@router.post("/", response_model=SSOSettingsRead, status_code=201)
+@router.post("/", response_model=SSOSettingsRead, status_code=status.HTTP_201_CREATED)
 async def create_sso_settings(
     request: Request,
     settings: SSOSettingsCreate,
@@ -27,7 +27,7 @@ async def create_sso_settings(
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> SSOSettingsRead:
     """Create new SSO provider settings (superuser only)."""
-    from .service import sso_settings_service
+    from src.app.modules.sso_settings.service import sso_settings_service
 
     existing = await crud_sso_settings.exists(db=db, provider=settings.provider)
     if existing:
@@ -96,7 +96,7 @@ async def get_sso_settings(
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
     """Get SSO settings for a specific provider (superuser only)."""
-    from .service import sso_settings_service
+    from src.app.modules.sso_settings.service import sso_settings_service
 
     settings = await sso_settings_service.get_decrypted_settings(db, provider)
     if not settings:
@@ -116,7 +116,7 @@ async def update_sso_settings(
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> SSOSettingsRead:
     """Update SSO settings for a specific provider (superuser only)."""
-    from .service import sso_settings_service
+    from src.app.modules.sso_settings.service import sso_settings_service
 
     existing = await crud_sso_settings.exists(db=db, provider=provider)
     if not existing:
@@ -129,7 +129,7 @@ async def update_sso_settings(
     return SSOSettingsRead.model_validate(result)
 
 
-@router.delete("/{provider}", status_code=200, dependencies=[Depends(get_current_superuser)])
+@router.delete("/{provider}", status_code=status.HTTP_200_OK, dependencies=[Depends(get_current_superuser)])
 async def delete_sso_settings(
     request: Request,
     provider: str,
@@ -137,7 +137,7 @@ async def delete_sso_settings(
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict[str, str]:
     """Delete SSO settings for a specific provider (superuser only)."""
-    from .service import sso_settings_service
+    from src.app.modules.sso_settings.service import sso_settings_service
 
     existing = await crud_sso_settings.exists(db=db, provider=provider)
     if not existing:

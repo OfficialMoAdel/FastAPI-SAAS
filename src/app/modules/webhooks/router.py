@@ -3,17 +3,17 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import HttpUrl
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_tenant, get_current_user
-from ...core.db.database import async_get_db
-from ...modules.tenants.models import Tenant
-from ...modules.users.models import User
-from .models import WebhookDelivery, WebhookEndpoint
-from .schemas import (
+from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.users.models import User
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
+from src.app.modules.webhooks.schemas import (
     SigningSecretRotateRequest,
     SigningSecretRotateResponse,
     SigningSecretViewResponse,
@@ -26,9 +26,9 @@ from .schemas import (
     WebhookEndpointUpdate,
     WebhookTestRequest,
 )
-from .service import WebhookService
+from src.app.modules.webhooks.service import WebhookService
 
-router = APIRouter(prefix="/webhooks", tags=["Webhooks"])
+router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 
 @router.get("/", response_model=WebhookEndpointList)
@@ -73,7 +73,7 @@ async def list_webhook_endpoints(
     }
 
 
-@router.post("/", response_model=WebhookEndpointCreateResponse, status_code=201)
+@router.post("/", response_model=WebhookEndpointCreateResponse, status_code=status.HTTP_201_CREATED)
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
     db: AsyncSession = Depends(async_get_db),
@@ -166,7 +166,7 @@ async def get_webhook_endpoint(
     endpoint = result.scalar_one_or_none()
 
     if not endpoint:
-        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
     return WebhookEndpointResponse.model_validate(endpoint)
 
@@ -188,7 +188,7 @@ async def update_webhook_endpoint(
     endpoint = result.scalar_one_or_none()
 
     if not endpoint:
-        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
     # Update fields
     update_data = request.model_dump(exclude_unset=True)
@@ -203,7 +203,7 @@ async def update_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.delete("/{endpoint_id}", status_code=204)
+@router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -219,7 +219,7 @@ async def delete_webhook_endpoint(
     endpoint = result.scalar_one_or_none()
 
     if not endpoint:
-        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
     await db.delete(endpoint)
     await db.commit()
@@ -246,7 +246,7 @@ async def get_webhook_delivery(
     delivery = result.scalar_one_or_none()
 
     if not delivery:
-        raise HTTPException(status_code=404, detail="Webhook delivery not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
 
     return WebhookDeliveryResponse.model_validate(delivery)
 
@@ -278,10 +278,10 @@ async def retry_webhook_delivery(
     delivery = result.scalar_one_or_none()
 
     if not delivery:
-        raise HTTPException(status_code=404, detail="Webhook delivery not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
 
     if delivery.status != "failed":
-        raise HTTPException(status_code=400, detail="Only failed deliveries can be retried")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only failed deliveries can be retried")
 
     # Reset status and enqueue for retry
     await service.retry_delivery(delivery.id)
@@ -305,11 +305,14 @@ async def test_webhook_endpoint(
     """
     # Rate limiting for test endpoint (T106)
     # 10 tests/minute per tenant
-    from ...core.utils.rate_limit import rate_limiter
+    from src.app.core.utils.rate_limit import rate_limiter
 
     if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", 10, 60):
         # We use standard HTTPException here to match project style
-        raise HTTPException(status_code=429, detail="Rate limit exceeded: 10 tests per minute")
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Rate limit exceeded: 10 tests per minute",
+        )
 
     query = select(WebhookEndpoint).where(
         WebhookEndpoint.id == endpoint_id,
@@ -319,7 +322,7 @@ async def test_webhook_endpoint(
     endpoint = result.scalar_one_or_none()
 
     if not endpoint:
-        raise HTTPException(status_code=404, detail="Webhook endpoint not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
     service = WebhookService(db)
     delivery = await service.trigger_endpoint(
@@ -351,7 +354,7 @@ async def get_signing_secret(
     )
 
     if not result["signing_secret"]:
-        raise HTTPException(status_code=404, detail="No signing secret found for this endpoint")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No signing secret found for this endpoint")
 
     return SigningSecretViewResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],

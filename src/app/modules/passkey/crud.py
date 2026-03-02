@@ -15,8 +15,8 @@ from fastcrud import FastCRUD
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import PasskeyCredential
-from .schemas import (
+from src.app.modules.passkey.models import PasskeyCredential
+from src.app.modules.passkey.schemas import (
     PasskeyCredentialCreate,
     PasskeyCredentialRead,
     PasskeyCredentialUpdate,

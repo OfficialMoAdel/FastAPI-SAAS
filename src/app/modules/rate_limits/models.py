@@ -4,11 +4,11 @@ from typing import TYPE_CHECKING
 from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
-from ...modules.tiers.models import Tier
+from src.app.core.db.database import Base
+from src.app.modules.tiers.models import Tier
 
 if TYPE_CHECKING:
-    from ...modules.tiers.models import Tier
+    from src.app.modules.tiers.models import Tier
 
 
 class RateLimit(Base):

@@ -17,10 +17,9 @@ from src.app.core.exceptions.http_exceptions import (
 from src.app.core.security.encryption import get_encryption
 from src.app.core.tenancy.context import get_tenant_context  # Needed to get default tenant_id if not passed
 from src.app.modules.audit_logs.service import audit_action
-
-from .crud import crud_sso_settings
-from .models import SSOSettings
-from .schemas import (
+from src.app.modules.sso_settings.crud import crud_sso_settings
+from src.app.modules.sso_settings.models import SSOSettings
+from src.app.modules.sso_settings.schemas import (
     SSOSettingsCreate,
     SSOSettingsCreateInternal,
     SSOSettingsRead,

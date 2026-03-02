@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
-from .._base import BaseCreate, BaseRead, BaseUpdate
+from src.app.modules._base import BaseCreate, BaseRead, BaseUpdate
 
 
 class SSOProvider(str, Enum):

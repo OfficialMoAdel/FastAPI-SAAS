@@ -19,15 +19,15 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "router":
-        from .router import router
+        from src.app.modules.passkey.router import router
 
         return router
     if name == "PasskeyService":
-        from .service import PasskeyService
+        from src.app.modules.passkey.service import PasskeyService
 
         return PasskeyService
     if name == "PasskeyCredential":
-        from .models import PasskeyCredential
+        from src.app.modules.passkey.models import PasskeyCredential
 
         return PasskeyCredential
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

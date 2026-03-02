@@ -5,13 +5,13 @@ from crudadmin import CRUDAdmin
 from crudadmin.admin_interface.model_view import PasswordTransformer
 from pydantic import BaseModel, Field
 
-from ..core.config import settings
-from ..modules.posts.models import Post
-from ..modules.posts.schemas import PostUpdate
-from ..modules.tiers.models import Tier
-from ..modules.tiers.schemas import TierCreate, TierUpdate
-from ..modules.users.models import User
-from ..modules.users.schemas import UserCreate, UserCreateInternal, UserUpdate
+from src.app.core.config import settings
+from src.app.modules.posts.models import Post
+from src.app.modules.posts.schemas import PostUpdate
+from src.app.modules.tiers.models import Tier
+from src.app.modules.tiers.schemas import TierCreate, TierUpdate
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserUpdate
 
 
 def _sync_hash_password(password: str) -> str:

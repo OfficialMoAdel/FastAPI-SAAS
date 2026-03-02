@@ -11,12 +11,26 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
-from ..api.dependencies import get_current_superuser
-from ..middleware.client_cache_middleware import ClientCacheMiddleware
+from src.app.api.dependencies import get_current_superuser
+from src.app.core import redis_factory
+from src.app.core.config import (
+    AppSettings,
+    ClientSideCacheSettings,
+    CORSSettings,
+    DatabaseSettings,
+    EnvironmentOption,
+    EnvironmentSettings,
+    RedisCacheSettings,
+    RedisQueueSettings,
+)
+from src.app.core.db.database import Base
+from src.app.core.db.database import async_engine as engine
+from src.app.core.utils import cache, queue
+from src.app.middleware.client_cache_middleware import ClientCacheMiddleware
 
 # Import all models to register them with SQLAlchemy's Base.metadata
 # This ensures create_all() creates all tables
-from ..models import (  # noqa: F401
+from src.app.models import (  # noqa: F401
     AuditLog,
     EmailTemplateOverride,
     FeatureFlagOverride,
@@ -33,20 +47,6 @@ from ..models import (  # noqa: F401
     WebhookDelivery,
     WebhookEndpoint,
 )
-from . import redis_factory
-from .config import (
-    AppSettings,
-    ClientSideCacheSettings,
-    CORSSettings,
-    DatabaseSettings,
-    EnvironmentOption,
-    EnvironmentSettings,
-    RedisCacheSettings,
-    RedisQueueSettings,
-)
-from .db.database import Base
-from .db.database import async_engine as engine
-from .utils import cache, queue
 
 
 # -------------- database --------------
@@ -139,7 +139,7 @@ def lifespan_factory(
                 await create_tables()
 
             # Warm caches after DB and Redis are ready
-            from .utils.cache_warming import warm_caches
+            from src.app.core.utils.cache_warming import warm_caches
 
             try:
                 await warm_caches()
@@ -281,7 +281,7 @@ def create_application(
             application.include_router(docs_router)
 
     # Register standardized error handlers
-    from .errors import setup_exception_handlers
+    from src.app.core.errors import setup_exception_handlers
 
     setup_exception_handlers(application)
 

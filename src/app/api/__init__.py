@@ -1,9 +1,9 @@
 from fastapi import APIRouter
 
-from .monitoring import router as monitoring_router
+from src.app.api.monitoring import router as monitoring_router
 
 # Lazy load v1 router to avoid circular dependency
-# from ..api.v1 import router as v1_router
+# from src.app.api.v1 import router as v1_router
 
 router = APIRouter(prefix="/api")
 # router.include_router(v1_router)
@@ -14,7 +14,7 @@ def get_router() -> APIRouter:
 
     Lazy loading v1 router avoids circular imports with dependencies/security.
     """
-    from ..api.v1 import router as v1_router
+    from src.app.api.v1 import router as v1_router
     # Check if v1_router is already included to prevent duplicates if called multiple times
     # (Checking simple route existence or just re-including is safe if unique identifiers match,
     # but include_router duplicates routes)

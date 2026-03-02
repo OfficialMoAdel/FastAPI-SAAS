@@ -4,12 +4,12 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from ...core.rbac.dependencies import requires_permission
-from ...core.rbac.permissions import Permission
-from .schemas import PermissionOut, RoleCreate, RoleOut, RoleUpdate
-from .service import RoleService, get_role_service
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
+from src.app.modules.rbac.schemas import PermissionOut, RoleCreate, RoleOut, RoleUpdate
+from src.app.modules.rbac.service import RoleService, get_role_service
 
-router = APIRouter(prefix="/roles", tags=["RBAC"])
+router = APIRouter(prefix="/roles", tags=["rbac"])
 
 
 @router.get(

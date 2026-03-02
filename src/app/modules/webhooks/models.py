@@ -20,11 +20,11 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
-from ...core.db.models import UUIDMixin
+from src.app.core.db.database import Base
+from src.app.core.db.models import UUIDMixin
 
 if TYPE_CHECKING:
-    from ...modules.tenants.models import Tenant
+    from src.app.modules.tenants.models import Tenant
 
 
 class WebhookDeliveryStatus(str, enum.Enum):

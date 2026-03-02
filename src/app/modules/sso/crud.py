@@ -5,9 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD
-
-from .models import UserSSOConnection
-from .schemas import (
+from src.app.modules.sso.models import UserSSOConnection
+from src.app.modules.sso.schemas import (
     UserSSOConnectionCreate,
     UserSSOConnectionRead,
     UserSSOConnectionUpdate,

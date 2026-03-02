@@ -4,6 +4,7 @@ This module defines the API endpoints for file operations.
 Endpoints require appropriate FILES_* permissions.
 """
 
+
 from __future__ import annotations
 
 from urllib.parse import quote
@@ -32,7 +33,7 @@ from src.app.modules.files.service import (
 from src.app.modules.storage_settings import StorageNotConfiguredError
 from src.app.modules.tenants import Tenant
 
-router = APIRouter(prefix="/files", tags=["Files"])
+router = APIRouter(prefix="/files", tags=["files"])
 
 
 @router.post(

@@ -1,6 +1,6 @@
 """Webhook module for managing event subscriptions and deliveries."""
 
-from .models import (
+from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,

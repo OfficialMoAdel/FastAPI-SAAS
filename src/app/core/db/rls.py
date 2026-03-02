@@ -15,8 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import Session
 
 from src.app.core.logger import get_logger
-
-from ..tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import get_current_tenant
 
 logger = get_logger(__name__)
 

@@ -7,16 +7,15 @@ from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, sta
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.dependencies import get_current_user
+from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
-
-from ...api.dependencies import get_current_user
-from ...core.config import settings
-from ...core.db.database import async_get_db
-from ...core.tenancy.context import get_tenant_context
-from ..auth.schemas import AuthTokenResponse
-from .crud import crud_user_sso_connections
-from .schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
-from .service import SSOService, get_sso_service
+from src.app.core.tenancy.context import get_tenant_context
+from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.sso.crud import crud_user_sso_connections
+from src.app.modules.sso.schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
+from src.app.modules.sso.service import SSOService, get_sso_service
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 

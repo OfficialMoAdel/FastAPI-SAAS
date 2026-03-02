@@ -92,7 +92,7 @@ class SMTPProvider(EmailProvider):
 
         import aiosmtplib
 
-        from .core.utils.circuit_breaker import email_circuit
+        from src.app.core.utils.circuit_breaker import email_circuit
 
         logger = logging.getLogger(__name__)
 

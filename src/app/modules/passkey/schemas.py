@@ -14,7 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # ============================================================================
 # Request Schemas

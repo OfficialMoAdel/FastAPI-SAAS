@@ -13,23 +13,23 @@ Provides consistent error response format across all endpoints:
 
 from typing import Any
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from pydantic import ValidationError
 from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from structlog import get_logger
 
-from ..modules._base.exceptions import (
+from src.app.modules._base.exceptions import (
     DuplicateError,
     ForbiddenError,
     ModelNotFoundError,
 )
-from ..modules._base.exceptions import (
+from src.app.modules._base.exceptions import (
     ValidationError as BaseValidationError,
 )
-from ..modules.ai.unified_errors import SessionLimitExceededError
-from ..modules.billing.exceptions import PaymentRequiredError
+from src.app.modules.ai.unified_errors import SessionLimitExceededError
+from src.app.modules.billing.exceptions import PaymentRequiredError
 
 logger = get_logger(__name__)
 
@@ -161,7 +161,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.NOT_FOUND,
             message=str(exc),
-            status_code=404,
+            status_code=status.HTTP_404_NOT_FOUND,
             details={"model": exc.model_name, "identifier": str(exc.identifier)},
             request_id=request_id,
         )
@@ -182,7 +182,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.ALREADY_EXISTS,
             message=str(exc),
-            status_code=409,
+            status_code=status.HTTP_409_CONFLICT,
             details={"field": exc.field, "value": str(exc.value)},
             request_id=request_id,
         )
@@ -203,7 +203,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.FORBIDDEN,
             message=exc.message,
-            status_code=403,
+            status_code=status.HTTP_403_FORBIDDEN,
             details={"reason": exc.reason},
             request_id=request_id,
         )
@@ -223,7 +223,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.VALIDATION_ERROR,
             message=str(exc),
-            status_code=400,
+            status_code=status.HTTP_400_BAD_REQUEST,
             request_id=request_id,
         )
 
@@ -313,7 +313,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.SESSION_LIMIT_EXCEEDED,
             message=str(exc),
-            status_code=429,
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             details=details,
             request_id=request_id,
         )
@@ -358,7 +358,7 @@ def setup_exception_handlers(app: FastAPI) -> None:
         return create_error_response(
             code=ErrorCode.INTERNAL_ERROR,
             message="An internal error occurred",
-            status_code=500,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             request_id=request_id,
         )
 

@@ -10,6 +10,7 @@ Instead of:
     from src.app.core.monitoring_metrics import ...
 """
 
+
 from __future__ import annotations
 
 from src.app.core.monitoring.r1_unified_metrics import (

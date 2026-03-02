@@ -1,3 +1,4 @@
+from fastapi import status
 """Integration tests for Notification API endpoints.
 
 Tests cover:

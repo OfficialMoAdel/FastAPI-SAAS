@@ -1,3 +1,4 @@
+from fastapi import status
 """Unit tests for BillingRecordCRUD operations.
 
 Tests T065: Unit test for BillingRecordCRUD in tests/unit/billing/test_billing_record_crud.py

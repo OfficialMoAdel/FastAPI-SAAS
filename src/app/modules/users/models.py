@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 # Avoid circular import by using string reference for secondary if needed,
 # or import inside TYPE_CHECKING if only needed for type,

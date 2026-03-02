@@ -8,7 +8,7 @@ from sqlalchemy import DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
     pass

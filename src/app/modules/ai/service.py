@@ -18,10 +18,10 @@ from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
 logger = logging.getLogger(__name__)
 
-from .crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
-from .models import AIChatMessage, AIChatSession, AISettings
-from .ollama_client import OllamaClient, OllamaError, get_ollama_client
-from .schemas import (
+from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
+from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
+from src.app.modules.ai.ollama_client import OllamaClient, OllamaError, get_ollama_client
+from src.app.modules.ai.schemas import (
     AISettingsUpdate,
     ChatCompletionRequest,
     ChatMessageCreate,
@@ -166,7 +166,7 @@ class ChatSessionService(BaseService[AIChatSession]):
 
     async def get_user_sessions(self, user_id: int, page: int = 1, limit: int = 20) -> dict[str, Any]:
         """Get paginated chat sessions for a user."""
-        from .schemas import ChatSessionRead
+        from src.app.modules.ai.schemas import ChatSessionRead
 
         offset = (page - 1) * limit
         return await crud_chat_sessions.get_multi(
@@ -223,7 +223,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
         """Get paginated messages for a session."""
-        from .schemas import ChatMessageRead
+        from src.app.modules.ai.schemas import ChatMessageRead
 
         offset = (page - 1) * limit
         return await crud_chat_messages.get_multi(

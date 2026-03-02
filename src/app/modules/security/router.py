@@ -35,8 +35,7 @@ from src.app.modules.passkey.schemas import (
     PasskeyDeleteResponse,
 )
 from src.app.modules.passkey.service import passkey_service
-
-from .schemas import (
+from src.app.modules.security.schemas import (
     AutoBanConfig,
     AutoBanConfigUpdate,
     BanActionResponse,
@@ -51,7 +50,7 @@ from .schemas import (
     IPViolationStats,
     ViolationStats,
 )
-from .service import ip_filter_service
+from src.app.modules.security.service import ip_filter_service
 
 router = APIRouter(prefix="/security", tags=["security"])
 

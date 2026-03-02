@@ -15,7 +15,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .._base import BaseCreate, BaseRead, BaseUpdate
+from src.app.modules._base import BaseCreate, BaseRead, BaseUpdate
 
 # ============================================================================
 # Enums

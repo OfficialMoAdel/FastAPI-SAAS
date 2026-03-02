@@ -13,10 +13,10 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from ...core.config import EnvironmentOption, settings
-from ...core.events import EventPriority, event_bus
-from ...core.exceptions.http_exceptions import UnauthorizedException
-from ...core.security import (
+from src.app.core.config import EnvironmentOption, settings
+from src.app.core.events import EventPriority, event_bus
+from src.app.core.exceptions.http_exceptions import UnauthorizedException
+from src.app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     MFA_PENDING_EXPIRY_SECONDS,
     MFAPendingTokenManager,
@@ -29,12 +29,12 @@ from ...core.security import (
     verify_password,
     verify_token,
 )
-from ...core.tenancy.context import get_tenant_context
-from ...modules.mfa.service import MFAService
-from ...modules.users.crud import crud_users
-from ...modules.users.models import User
-from ...modules.users.service import get_user_service
-from .models import EmailVerificationToken, PasswordResetToken
+from src.app.core.tenancy.context import get_tenant_context
+from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
+from src.app.modules.mfa.service import MFAService
+from src.app.modules.users.crud import crud_users
+from src.app.modules.users.models import User
+from src.app.modules.users.service import get_user_service
 
 logger = get_logger(__name__)
 
@@ -290,7 +290,7 @@ return new_attempts
             # Extract jti from access token for session ID
             import jwt
 
-            from ...core.security.session_manager import session_manager as global_session_manager
+            from src.app.core.security.session_manager import session_manager as global_session_manager
 
             decoded_token = jwt.decode(access_token, options={"verify_signature": False})
             session_id = decoded_token.get("jti", access_token[:32])
@@ -442,7 +442,7 @@ return new_attempts
                     if db_user:
                         import jwt
 
-                        from ...core.security.session_manager import session_manager as global_session_manager
+                        from src.app.core.security.session_manager import session_manager as global_session_manager
 
                         decoded_token = jwt.decode(access_token, options={"verify_signature": False})
                         session_id = decoded_token.get("jti", access_token[:32])

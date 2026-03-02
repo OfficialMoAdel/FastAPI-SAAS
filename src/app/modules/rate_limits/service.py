@@ -6,15 +6,14 @@ from fastapi import Depends
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
-
-from ...core.db.database import async_get_db
-from ...core.utils import cache
-from .._base.exceptions import DuplicateError, ModelNotFoundError
-from .._base.service import BaseService
-from .crud import crud_rate_limits
-from .models import RateLimit
-from .schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
+from src.app.core.utils import cache
+from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.rate_limits.crud import crud_rate_limits
+from src.app.modules.rate_limits.models import RateLimit
+from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
 
 
 class RateLimitService(BaseService[RateLimit]):
@@ -33,7 +32,7 @@ class RateLimitService(BaseService[RateLimit]):
     async def _get_tier_or_404(self, tier_name: str) -> dict[str, Any]:
         """Get tier by name or raise ModelNotFoundError."""
         # Use service registry for cross-module decoupling
-        from ...core.service_registry import get_service
+        from src.app.core.service_registry import get_service
 
         tier_service = get_service("tier", self.db)
         return cast(dict[str, Any], await tier_service.get_tier(tier_name))

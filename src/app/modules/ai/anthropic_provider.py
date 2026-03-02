@@ -15,7 +15,7 @@ try:
 except ImportError:
     validate = None
 
-from .providers import (
+from src.app.modules.ai.providers import (
     AIProvider,
     AIProviderError,
     AITokenUsage,

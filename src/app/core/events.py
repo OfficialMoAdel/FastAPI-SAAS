@@ -20,12 +20,11 @@ from arq.jobs import serialize_job
 from arq.utils import timestamp_ms
 from structlog import get_logger
 
+from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_event_idempotency
+from src.app.core.utils.circuit_breaker import arq_circuit
 from src.app.core.utils.lua_manager import get_lua_manager
-
-from .config import settings
-from .utils.circuit_breaker import arq_circuit
 
 logger = get_logger(__name__)
 

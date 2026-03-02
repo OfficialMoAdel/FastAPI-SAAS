@@ -20,10 +20,10 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..logger import get_logger
-from .bitmask import PermissionBitmask
-from .permissions import Permission as PermissionEnum
-from .utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
+from src.app.core.logger import get_logger
+from src.app.core.rbac.bitmask import PermissionBitmask
+from src.app.core.rbac.permissions import Permission as PermissionEnum
+from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
 
 logger = get_logger(__name__)
 
@@ -40,7 +40,7 @@ async def get_user_permissions(
     Fetch all permission slugs for a user within a specific tenant.
     Queries UserRole -> Role -> RolePermission -> Permission.
     """
-    from ...modules.rbac.models import Permission, Role, RolePermission, UserRole
+    from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 
     stmt = (
         select(Permission.slug)
@@ -67,7 +67,7 @@ async def get_cached_permissions(
     Uses Redis SMEMBERS for O(1) retrieval instead of JSON deserialization.
     Returns cached permissions if available, otherwise queries DB and caches result.
     """
-    from ...core.utils.cache import client as redis_client
+    from src.app.core.utils.cache import client as redis_client
 
     cache_key = get_user_permissions_cache_key(user_id, tenant_id)
 
@@ -140,7 +140,7 @@ async def get_cached_permissions_bitmask(
     Returns:
         Integer bitmask with bits set for each permission
     """
-    from ...core.utils.cache import client as redis_client
+    from src.app.core.utils.cache import client as redis_client
 
     cache_key = _get_bitmask_cache_key(user_id, tenant_id)
 
@@ -242,7 +242,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             return
 
         # 2. Get tenant context
-        from ..tenancy.context import get_tenant_context
+        from src.app.core.tenancy.context import get_tenant_context
 
         tenant_context = get_tenant_context()
         if tenant_context is None:
@@ -273,7 +273,7 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
     Clears both Set-based cache and bitmask cache for backward compatibility.
     Call this when user roles are modified.
     """
-    from ...core.utils.cache import client as redis_client
+    from src.app.core.utils.cache import client as redis_client
 
     if redis_client is None:
         return
@@ -302,7 +302,7 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
 
 async def _get_db() -> AsyncGenerator[AsyncSession, None]:
     """Get async database session."""
-    from ...core.db.database import get_db_context
+    from src.app.core.db.database import get_db_context
 
     async with get_db_context() as db:
         yield db
@@ -316,8 +316,8 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
     GI-2: Uses UserService.get_user_auth_info() which has Redis caching,
     instead of direct crud_users.get() which bypasses cache on every request.
     """
-    from ...core.security import TokenType, verify_token
-    from ...modules.users.service import UserService
+    from src.app.core.security import TokenType, verify_token
+    from src.app.modules.users.service import UserService
 
     token_data = await verify_token(token, TokenType.ACCESS, db)
     if token_data is None:
@@ -348,7 +348,7 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
 
 def _get_current_tenant_id() -> UUID:
     """Get current tenant ID from middleware context."""
-    from ..tenancy.context import get_tenant_context
+    from src.app.core.tenancy.context import get_tenant_context
 
     tenant_context = get_tenant_context()
     if tenant_context is None:

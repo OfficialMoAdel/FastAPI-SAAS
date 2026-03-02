@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 #!/usr/bin/env python3
 """Module Generator CLI for FastAPI SaaS boilerplate.
 
@@ -17,7 +19,6 @@ Usage:
 
 """
 
-from __future__ import annotations
 
 import argparse
 import re

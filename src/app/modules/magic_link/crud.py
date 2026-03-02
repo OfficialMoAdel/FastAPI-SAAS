@@ -11,7 +11,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from .models import MagicLink
+from src.app.modules.magic_link.models import MagicLink
 
 
 def _hash_token(token: str) -> str:

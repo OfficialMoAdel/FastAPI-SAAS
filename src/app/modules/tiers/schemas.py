@@ -8,8 +8,8 @@ from typing import Annotated
 
 from pydantic import BaseModel, Field
 
-from ...core.schemas import TimestampSchema
-from .._base.schemas import BaseCreate, BaseRead, BaseUpdate
+from src.app.core.schemas import TimestampSchema
+from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
 
 class TierBase(BaseModel):

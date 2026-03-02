@@ -2,8 +2,8 @@
 
 from fastcrud import FastCRUD
 
-from .models import APIKey
-from .schemas import APIKeyRead
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.api_keys.schemas import APIKeyRead
 
 # Use type: ignore for FastCRUD generics since the library's type stubs
 # don't properly support SQLAlchemy models as first argument.

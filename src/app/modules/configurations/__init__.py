@@ -4,6 +4,6 @@ This module provides configuration management endpoints to maintain compatibilit
 with the old backend.
 """
 
-from .stripe_router import router
+from src.app.modules.configurations.stripe_router import router
 
 __all__ = ["router"]

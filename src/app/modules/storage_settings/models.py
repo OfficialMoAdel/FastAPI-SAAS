@@ -4,6 +4,7 @@ This module defines the StorageSettings model for per-tenant storage configurati
 including encrypted credential storage and quota settings.
 """
 
+
 from __future__ import annotations
 
 import uuid as uuid_pkg

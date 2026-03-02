@@ -107,7 +107,7 @@ async def handle_stripe_webhooks(
 
     if not sig_header:
         logger.error("Missing Stripe signature header")
-        raise HTTPException(status_code=400, detail="Missing signature")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing signature")
 
     # M-03: Retrieve tenant specific webhook secret
     webhook_secret = None
@@ -136,14 +136,14 @@ async def handle_stripe_webhooks(
 
     if not webhook_secret:
         logger.error("Stripe webhook secret not configured")
-        raise HTTPException(status_code=500, detail="Webhook secret not configured")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Webhook secret not configured")
 
     # Verify webhook signature
     try:
         event = verify_webhook_signature(payload, sig_header, webhook_secret)
     except Exception as e:
         logger.error(f"Webhook signature verification failed: {e}")
-        raise HTTPException(status_code=400, detail="Invalid signature")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     # Idempotency check
     event_id = event.get("id")

@@ -1,25 +1,24 @@
 """Auth API router - HTTP handlers delegating to service layer."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, Request, Response
+from fastapi import APIRouter, Cookie, Depends, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...api.dependencies import get_current_user
-from ...core.db.database import async_get_db
-from ...core.security import oauth2_scheme
-from ...core.security.session_manager import SessionManager
-from ...core.utils.cache import async_get_redis
-from ..users.models import User
-from ..users.schemas import UserCreate, UserRead
-from ..users.service import UserService
-from .schemas import (
+from src.app.api.dependencies import get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.security import oauth2_scheme
+from src.app.core.security.session_manager import SessionManager
+from src.app.core.utils.cache import async_get_redis
+from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
     EmailVerificationResponse,
     ForgotPasswordResponse,
+    LoginMFAResponse,
+    LoginTokenResponse,
     LogoutResponse,
     PasswordChangeRequest,
     PasswordChangeResponse,
@@ -28,7 +27,10 @@ from .schemas import (
     PasswordResetResponse,
     RefreshTokenResponse,
 )
-from .service import AuthService
+from src.app.modules.auth.service import AuthService
+from src.app.modules.users.models import User
+from src.app.modules.users.schemas import UserCreate, UserRead
+from src.app.modules.users.service import UserService
 
 
 def _get_auth_service() -> AuthService:
@@ -44,7 +46,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 router = APIRouter(prefix="/account", tags=["account"])
 
 
-@router.post("/login")
+@router.post("/login", response_model=LoginTokenResponse | LoginMFAResponse)
 async def login_for_access_token(
     response: Response,
     request: Request,
@@ -52,12 +54,12 @@ async def login_for_access_token(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     redis: Annotated[Redis, Depends(async_get_redis)],
     auth_service: Annotated[AuthService, Depends(_get_auth_service)],
-) -> dict[str, str]:
+) -> Any:
     """Authenticate user and return access token."""
     return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
 
 
-@router.post("/register", response_model=UserRead, status_code=201)
+@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
 async def register(
     request: Request,
     user: UserCreate,
@@ -87,7 +89,7 @@ async def logout(
     refresh_token: str | None = Cookie(None, alias="refresh_token"),
     db: AsyncSession = Depends(async_get_db),
     auth_service: AuthService = Depends(_get_auth_service),
-) -> dict[str, str]:
+) -> Any:
     """Logout user by blacklisting tokens."""
     return await auth_service.logout(access_token, refresh_token, response, request, db)
 

@@ -25,13 +25,14 @@ Usage:
         ...
 """
 
+
 from __future__ import annotations
 
 import hashlib
 from functools import lru_cache
 from typing import Final
 
-from .permissions import Permission as PermissionEnum
+from src.app.core.rbac.permissions import Permission as PermissionEnum
 
 # Maximum 64 permissions for single BigInt (PostgreSQL BIGINT is 64-bit signed)
 # For more permissions, use array of BigInts or switch to BYTEA

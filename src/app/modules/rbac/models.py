@@ -5,7 +5,7 @@ from sqlalchemy import Boolean, ForeignKey, Index, Integer, String, UniqueConstr
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
     from src.app.modules.users.models import User

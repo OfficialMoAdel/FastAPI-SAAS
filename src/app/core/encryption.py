@@ -10,6 +10,7 @@ Usage:
     decrypted = decrypt_value(encrypted, encryption_key)
 """
 
+
 from __future__ import annotations
 
 import logging

@@ -9,10 +9,10 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from .schemas import PermissionOut
-from .service import RoleService, get_role_service
+from src.app.modules.rbac.schemas import PermissionOut
+from src.app.modules.rbac.service import RoleService, get_role_service
 
-router = APIRouter(prefix="/permissions", tags=["RBAC"])
+router = APIRouter(prefix="/permissions", tags=["rbac"])
 
 
 @router.get("", response_model=list[PermissionOut])

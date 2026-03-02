@@ -19,15 +19,15 @@ __all__ = [
 def __getattr__(name: str):
     """Lazy import to avoid circular imports."""
     if name == "router":
-        from .router import router
+        from src.app.modules.sso_settings.router import router
 
         return router
     if name == "sso_settings_service":
-        from .service import sso_settings_service
+        from src.app.modules.sso_settings.service import sso_settings_service
 
         return sso_settings_service
     if name == "SSOSettings":
-        from .models import SSOSettings
+        from src.app.modules.sso_settings.models import SSOSettings
 
         return SSOSettings
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

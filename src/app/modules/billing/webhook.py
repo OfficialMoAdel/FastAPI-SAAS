@@ -11,9 +11,8 @@ from sqlalchemy.exc import IntegrityError
 
 from src.app.core.utils.cache import client as redis_client
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
-
-from .crud import crud_billing_records, crud_user_subscriptions
-from .schemas import (
+from src.app.modules.billing.crud import crud_billing_records, crud_user_subscriptions
+from src.app.modules.billing.schemas import (
     BillingRecordCreateInternal,
     SubscriptionStatus,
     UserSubscriptionCreateInternal,

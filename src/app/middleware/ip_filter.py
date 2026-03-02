@@ -7,7 +7,7 @@ stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocke
 import logging
 from typing import cast
 
-from fastapi import Request, Response
+from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
@@ -129,7 +129,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                     logger.warning(f"Blocked bad bot: {bad_bot} | ip={client_ip} | user_agent={user_agent}")
                     return Response(
                         content='{"detail":"Forbidden - Bad bot detected"}',
-                        status_code=403,
+                        status_code=status.HTTP_403_FORBIDDEN,
                         media_type="application/json",
                     )
 
@@ -166,7 +166,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
             logger.warning(f"IP {client_ip} blocked - not in whitelist for {path}")
             return Response(
                 content='{"detail":"Forbidden - IP not whitelisted"}',
-                status_code=403,
+                status_code=status.HTTP_403_FORBIDDEN,
                 media_type="application/json",
             )
 
@@ -186,7 +186,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 logger.warning(f"IP {client_ip} blocked - blacklisted for {path}")
                 return Response(
                     content='{"detail":"Forbidden - IP is blacklisted"}',
-                    status_code=403,
+                    status_code=status.HTTP_403_FORBIDDEN,
                     media_type="application/json",
                 )
 

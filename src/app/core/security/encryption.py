@@ -26,6 +26,7 @@ Usage:
     encryption = CredentialEncryption(key=custom_key)
 """
 
+
 from __future__ import annotations
 
 import base64

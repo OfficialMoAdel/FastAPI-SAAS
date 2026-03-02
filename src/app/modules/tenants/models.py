@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
-from ...core.db.database import Base
+from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AITokenUsage

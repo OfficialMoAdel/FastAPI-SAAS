@@ -6,8 +6,7 @@ Tenant-aware CRUD classes for all billing-related models.
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD
-
-from .models import (
+from src.app.modules.billing.models import (
     BillingRecord,
     Pricing,
     Product,
@@ -15,7 +14,7 @@ from .models import (
     SubscriptionPlan,
     UserSubscription,
 )
-from .schemas import (
+from src.app.modules.billing.schemas import (
     BillingRecordCreate,
     BillingRecordDelete,
     BillingRecordRead,

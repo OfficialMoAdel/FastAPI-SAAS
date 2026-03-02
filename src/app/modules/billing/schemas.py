@@ -8,7 +8,7 @@ from datetime import datetime
 from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import Field
+from pydantic import BaseModel, Field
 
 from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead, BaseUpdate
 
@@ -475,6 +475,13 @@ class PortalResponse(BaseCreate):
     """Schema for customer portal session response."""
 
     url: str
+
+
+class WebhookResponse(BaseModel):
+    """Schema for webhook response."""
+
+    status: str
+    message: str | None = None
 
 
 # Resolve forward references

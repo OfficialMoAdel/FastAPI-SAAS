@@ -24,8 +24,7 @@ from src.app.modules._base.service import BaseService
 logger = logging.getLogger(__name__)
 
 from src.app.core.config import settings
-
-from .crud import (
+from src.app.modules.billing.crud import (
     crud_billing_records,
     crud_pricing,
     crud_products,
@@ -33,7 +32,7 @@ from .crud import (
     crud_subscription_plans,
     crud_user_subscriptions,
 )
-from .models import (
+from src.app.modules.billing.models import (
     BillingRecord,
     Pricing,
     Product,
@@ -41,7 +40,7 @@ from .models import (
     SubscriptionPlan,
     UserSubscription,
 )
-from .schemas import (
+from src.app.modules.billing.schemas import (
     BillingRecordCreate,
     BillingRecordCreateInternal,
     BillingRecordRead,
@@ -615,7 +614,6 @@ class CheckoutService:
 
     def __init__(self, db: AsyncSession):
         self.db = db
-        # self.encryption = CredentialEncryption() # Not needed if using env vars for platform keys
 
     async def create_session(self, user_id: int, user_email: str, data: CheckoutCreate) -> CheckoutSession:
         """Create a Stripe Checkout session."""

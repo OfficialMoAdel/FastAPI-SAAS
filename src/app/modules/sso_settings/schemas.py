@@ -1,6 +1,6 @@
 from pydantic import BaseModel
 
-from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 
 class SSOSettingsBase(BaseModel):

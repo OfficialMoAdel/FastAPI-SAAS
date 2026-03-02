@@ -4,6 +4,7 @@ This module defines request/response DTOs for storage settings API,
 with proper validation and sensitive field masking.
 """
 
+
 from __future__ import annotations
 
 from datetime import datetime
@@ -13,7 +14,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from .._base import BaseRead, BaseUpdate
+from src.app.modules._base import BaseRead, BaseUpdate
 
 
 class StorageProviderType(str, Enum):

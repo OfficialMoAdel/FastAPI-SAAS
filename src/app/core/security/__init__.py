@@ -16,16 +16,16 @@ from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..config import settings
-from ..db.crud_token_blacklist import crud_token_blacklist
-from ..json_utils import json_dumps, json_loads
-from ..schemas import TokenBlacklistCreate, TokenData
-from .token_blacklist_cache import (
+from src.app.core.config import settings
+from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.schemas import TokenBlacklistCreate, TokenData
+from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
     add_tokens_to_blacklist,
     is_token_blacklisted,
 )
-from .tokens import TokenGenerator
+from src.app.core.security.tokens import TokenGenerator
 
 SECRET_KEY: SecretStr = settings.SECRET_KEY
 ALGORITHM = settings.ALGORITHM
@@ -258,7 +258,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         # P1-4: Cache token_version in Redis to avoid DB query on every request
         cache_key = f"user:{username_or_email}:token_version"
 
-        from ..utils.cache import client as redis_client
+        from src.app.core.utils.cache import client as redis_client
 
         cached_version = None
         if redis_client:

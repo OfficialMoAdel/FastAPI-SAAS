@@ -2,15 +2,15 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from starlette.status import HTTP_404_NOT_FOUND
 
-from ...api.dependencies import get_current_superuser, get_current_user
-from ...core.db.database import async_get_db
-from ...core.pagination import PaginationParams, get_pagination_params
-from ...core.security import oauth2_scheme
-from .schemas import (
+from src.app.api.dependencies import get_current_superuser, get_current_user
+from src.app.core.db.database import async_get_db
+from src.app.core.pagination import PaginationParams, get_pagination_params
+from src.app.core.security import oauth2_scheme
+from src.app.modules.users.schemas import (
     UserCreate,
     UserDeleteResponse,
     UserList,
@@ -20,7 +20,7 @@ from .schemas import (
     UserUpdate,
     UserUpdateResponse,
 )
-from .service import UserService, get_user_service
+from src.app.modules.users.service import UserService, get_user_service
 
 router = APIRouter(prefix="/users", tags=["users"])
 
@@ -38,7 +38,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     return get_user_service(db)
 
 
-@router.post("", response_model=UserRead, status_code=201, dependencies=[Depends(get_current_user)])
+@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_user)])
 async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
     """Create a new user."""
     return await service.create(user)

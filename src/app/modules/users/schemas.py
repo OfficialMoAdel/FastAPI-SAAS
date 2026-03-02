@@ -7,8 +7,8 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from ...core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
-from .._base import BaseCreate, BaseList, BaseRead, BaseUpdate
+from src.app.core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
+from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
 # =============================================================================
 # P2-1: Pre-compiled password validation regex patterns (performance optimization)

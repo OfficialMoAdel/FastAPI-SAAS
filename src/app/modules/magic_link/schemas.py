@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, EmailStr, Field
 
-from .._base import BaseCreate, BaseRead
+from src.app.modules._base import BaseCreate, BaseRead
 
 # =============================================================================
 # Auth Flow Schemas (API Request/Response)

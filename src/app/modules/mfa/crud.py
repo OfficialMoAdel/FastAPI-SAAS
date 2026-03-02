@@ -2,7 +2,7 @@
 
 from fastcrud import FastCRUD
 
-from .models import MFAMethod
+from src.app.modules.mfa.models import MFAMethod
 
 # Use type: ignore for FastCRUD generics since the library's type stubs
 # don't properly support SQLAlchemy models as first argument.

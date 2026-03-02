@@ -3,9 +3,9 @@ from collections.abc import AsyncGenerator
 from crudadmin import CRUDAdmin
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ..core.config import EnvironmentOption, settings
-from ..core.db.database import get_db_context
-from .views import register_admin_views
+from src.app.admin.views import register_admin_views
+from src.app.core.config import EnvironmentOption, settings
+from src.app.core.db.database import get_db_context
 
 
 async def _get_db_session() -> AsyncGenerator[AsyncSession, None]:

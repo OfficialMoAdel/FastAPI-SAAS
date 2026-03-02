@@ -5,13 +5,13 @@ from typing import Any
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from ...core.exceptions.http_exceptions import ForbiddenException
-from ...core.tenancy.context import get_tenant_context
-from .._base.exceptions import ModelNotFoundError
-from .._base.service import BaseService
-from .crud import crud_posts
-from .models import Post
-from .schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
+from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.tenancy.context import get_tenant_context
+from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.posts.crud import crud_posts
+from src.app.modules.posts.models import Post
+from src.app.modules.posts.schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
 
 class PostService(BaseService[Post]):
@@ -270,7 +270,7 @@ class _LegacyPostService:
         self, username: str, db: AsyncSession, page: int = 1, items_per_page: int = 10
     ) -> dict[str, Any]:
         # Use service registry for cross-module decoupling
-        from ...core.service_registry import get_service
+        from src.app.core.service_registry import get_service
 
         user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)
@@ -278,7 +278,7 @@ class _LegacyPostService:
         return await service.get_posts(user.id, page, items_per_page)
 
     async def get_post(self, username: str, post_id: int, db: AsyncSession) -> dict[str, Any]:
-        from ...core.service_registry import get_service
+        from src.app.core.service_registry import get_service
 
         user_svc = get_service("user", db)
         user = await user_svc.get_by_username(username)

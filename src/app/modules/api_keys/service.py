@@ -10,16 +10,15 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.utils.cache import client as redis_client
+from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.modules._base.service import BaseService
+from src.app.modules.api_keys.crud import crud_api_keys
+from src.app.modules.api_keys.models import APIKey
+from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 from src.app.modules.audit_logs.service import AuditLogService
-
-from ...core.exceptions.http_exceptions import ForbiddenException
-from ...core.json_utils import json_dumps, json_loads
-from ...core.utils.cache import client as redis_client
-from .._base.exceptions import ModelNotFoundError
-from .._base.service import BaseService
-from .crud import crud_api_keys
-from .models import APIKey
-from .schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 
 logger = logging.getLogger(__name__)
 
@@ -352,8 +351,8 @@ class APIKeyService(BaseService[APIKey]):
         """
         from sqlalchemy import select
 
-        from ...modules.tenants.models import Tenant
-        from .models import APIKey
+        from src.app.modules.api_keys.models import APIKey
+        from src.app.modules.tenants.models import Tenant
 
         # JOIN with tenant to check tenant.is_active
         stmt = (

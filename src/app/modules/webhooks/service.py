@@ -18,12 +18,12 @@ from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from ...core.logger import get_logger
-from ...core.security.encryption import decrypt_data, encrypt_data
-from ...core.security.url_validator import SSRFProtectionError, validate_webhook_url
-from .._base import ModelNotFoundError
-from .http_client import get_webhook_http_client
-from .models import (
+from src.app.core.logger import get_logger
+from src.app.core.security.encryption import decrypt_data, encrypt_data
+from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
+from src.app.modules._base import ModelNotFoundError
+from src.app.modules.webhooks.http_client import get_webhook_http_client
+from src.app.modules.webhooks.models import (
     WebhookDelivery,
     WebhookDeliveryStatus,
     WebhookEndpoint,
@@ -236,7 +236,7 @@ class WebhookService:
 
     async def _enqueue_delivery(self, delivery_id: UUID) -> None:
         """Enqueue webhook delivery task."""
-        from ...core.utils.queue import pool
+        from src.app.core.utils.queue import pool
 
         if pool:
             await pool.enqueue_job("deliver_webhook_task", delivery_id)
@@ -254,7 +254,7 @@ class WebhookService:
         """
         import json
 
-        from ...core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
+        from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
 
         # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
         stmt = (
@@ -518,7 +518,7 @@ class WebhookService:
         ModelNotFoundError
             If endpoint not found
         """
-        from .utils import generate_signing_secret
+        from src.app.modules.webhooks.utils import generate_signing_secret
 
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.id == endpoint_id,

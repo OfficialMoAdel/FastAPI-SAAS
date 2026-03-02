@@ -3,6 +3,7 @@
 Provides Prometheus metrics export and health check endpoints for monitoring.
 """
 
+
 from __future__ import annotations
 
 import asyncio
@@ -10,7 +11,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -205,7 +206,7 @@ async def metrics_export() -> str:
         metrics = get_r1_metrics()
         return metrics.export_prometheus()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to export metrics: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
 
 
 @router.get("/metrics/json")
@@ -218,4 +219,4 @@ async def metrics_json() -> dict[str, Any]:
         metrics = get_r1_metrics()
         return metrics.get_all_metrics()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to export metrics: {e}")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
