@@ -19,16 +19,14 @@ _BACKUP_CODE_PATTERN = re.compile(r"^(BC-)?[A-Z0-9]{5}-[A-Z0-9]{5}$")
 class MFASetupResponse(BaseModel):
     """Response schema for MFA setup initiation.
 
-    Contains TOTP secret and QR code for user to configure their authenticator app.
+    Contains setup token and QR code for user to configure their authenticator app.
     """
 
-    totp_secret: Annotated[
+    setup_token: Annotated[
         str,
         Field(
-            min_length=32,
-            max_length=32,
-            description="Base32-encoded TOTP secret",
-            examples=["JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"],
+            description="Short-lived token used to verify MFA setup completion",
+            examples=["mfa_setup_abc123..."],
         ),
     ]
     otpauth_url: Annotated[
@@ -55,17 +53,15 @@ class MFASetupResponse(BaseModel):
 class MFAEnableRequest(BaseModel):
     """Request schema for enabling MFA.
 
-    User must provide the TOTP secret they received during setup and verify
+    User must provide the setup token they received during setup and verify
     they can generate valid tokens.
     """
 
-    totp_secret: Annotated[
+    setup_token: Annotated[
         str,
         Field(
-            min_length=32,
-            max_length=32,
-            description="Base32-encoded TOTP secret from setup",
-            examples=["JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"],
+            description="Setup token received during MFA setup initiation",
+            examples=["mfa_setup_abc123..."],
         ),
     ]
     totp_token: Annotated[

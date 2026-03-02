@@ -49,13 +49,16 @@ class DashboardService:
 
         return start_date, end_date
 
-    async def _get_user_metrics(self, db: AsyncSession, start_date: datetime, end_date: datetime) -> UserMetrics:
+    async def _get_user_metrics(
+        self, db: AsyncSession, start_date: datetime, end_date: datetime, tenant_id: str
+    ) -> UserMetrics:
         """Get user-related metrics.
 
         Args:
             db: Database session
             start_date: Start of time range
             end_date: End of time range
+            tenant_id: Tenant ID for isolation
 
         Returns:
             UserMetrics with aggregated data
@@ -70,12 +73,20 @@ class DashboardService:
         # use the same pattern for checking soft-deleted records.
 
         # 1. Total users
-        total_sub = select(func.count(User.id)).where(User.deleted_at.is_(None)).scalar_subquery()
+        total_sub = (
+            select(func.count(User.id))
+            .where(
+                User.tenant_id == tenant_id,
+                User.deleted_at.is_(None),
+            )
+            .scalar_subquery()
+        )
 
         # 2. New users
         new_sub = (
             select(func.count(User.id))
             .where(
+                User.tenant_id == tenant_id,
                 User.created_at >= start_date,
                 User.created_at <= end_date,
                 User.deleted_at.is_(None),
@@ -87,6 +98,7 @@ class DashboardService:
         active_sub = (
             select(func.count(func.distinct(AuditLog.user_id)))
             .where(
+                AuditLog.tenant_id == tenant_id,
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action == "login",
@@ -98,6 +110,7 @@ class DashboardService:
         deleted_sub = (
             select(func.count(User.id))
             .where(
+                User.tenant_id == tenant_id,
                 User.deleted_at >= start_date,
                 User.deleted_at <= end_date,
             )
@@ -116,7 +129,9 @@ class DashboardService:
             deleted_users=row[3] or 0,
         )
 
-    async def _get_revenue_metrics(self, db: AsyncSession, start_date: datetime, end_date: datetime) -> RevenueMetrics:
+    async def _get_revenue_metrics(
+        self, db: AsyncSession, start_date: datetime, end_date: datetime, tenant_id: str
+    ) -> RevenueMetrics:
         """Get revenue-related metrics.
 
         Note: This is a placeholder implementation. In production, this would
@@ -126,6 +141,7 @@ class DashboardService:
             db: Database session
             start_date: Start of time range
             end_date: End of time range
+            tenant_id: Tenant ID for isolation
 
         Returns:
             RevenueMetrics with aggregated data
@@ -139,7 +155,7 @@ class DashboardService:
         )
 
     async def _get_activity_metrics(
-        self, db: AsyncSession, start_date: datetime, end_date: datetime
+        self, db: AsyncSession, start_date: datetime, end_date: datetime, tenant_id: str
     ) -> ActivityMetrics:
         """Get activity-related metrics.
 
@@ -147,6 +163,7 @@ class DashboardService:
             db: Database session
             start_date: Start of time range
             end_date: End of time range
+            tenant_id: Tenant ID for isolation
 
         Returns:
             ActivityMetrics with aggregated data
@@ -157,6 +174,7 @@ class DashboardService:
         logins_sub = (
             select(func.count(AuditLog.id))
             .where(
+                AuditLog.tenant_id == tenant_id,
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action == "login",
@@ -168,6 +186,7 @@ class DashboardService:
         api_calls_sub = (
             select(func.count(AuditLog.id))
             .where(
+                AuditLog.tenant_id == tenant_id,
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
             )
@@ -178,6 +197,7 @@ class DashboardService:
         failed_auth_sub = (
             select(func.count(AuditLog.id))
             .where(
+                AuditLog.tenant_id == tenant_id,
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
                 AuditLog.action.in_(["login_failed", "authentication_failed"]),
@@ -200,11 +220,14 @@ class DashboardService:
             failed_authentications=row[2] or 0,
         )
 
-    async def get_metrics(self, db: AsyncSession, time_range: TimeRange = TimeRange.MONTH) -> DashboardMetricsResponse:
+    async def get_metrics(
+        self, db: AsyncSession, tenant_id: str, time_range: TimeRange = TimeRange.MONTH
+    ) -> DashboardMetricsResponse:
         """Get dashboard metrics for a time range.
 
         Args:
             db: Database session
+            tenant_id: Tenant ID for isolation
             time_range: Time range for metrics (default: month)
 
         Returns:
@@ -213,9 +236,9 @@ class DashboardService:
         start_date, end_date = self._get_date_range(time_range)
 
         # Fetch all metrics concurrently
-        user_metrics = await self._get_user_metrics(db, start_date, end_date)
-        revenue_metrics = await self._get_revenue_metrics(db, start_date, end_date)
-        activity_metrics = await self._get_activity_metrics(db, start_date, end_date)
+        user_metrics = await self._get_user_metrics(db, start_date, end_date, tenant_id)
+        revenue_metrics = await self._get_revenue_metrics(db, start_date, end_date, tenant_id)
+        activity_metrics = await self._get_activity_metrics(db, start_date, end_date, tenant_id)
 
         return DashboardMetricsResponse(
             time_range=time_range,

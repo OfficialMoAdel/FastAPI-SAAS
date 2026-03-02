@@ -27,7 +27,6 @@ from .schemas import (
     PasswordResetRequest,
     PasswordResetResponse,
     RefreshTokenResponse,
-    Token,
 )
 from .service import AuthService
 

@@ -347,8 +347,8 @@ return new_attempts
             # Optimized cached path for username-based subjects (standard)
             db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
-        # A1 SECURITY FIX: Block token refresh for deleted or non-existent users
-        if not db_user or db_user.get("is_deleted", False):
+        # A1 SECURITY FIX: Block token refresh for deleted, non-existent, or inactive users
+        if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", True):
             raise UnauthorizedException("User account is no longer active.")
 
         # Include tier info in JWT claims for Zero-DB rate limiting
@@ -534,6 +534,28 @@ return new_attempts
         # Invalidate auth cache so new password works immediately
         user_service = get_user_service(db)
         await user_service._invalidate_user_cache(user)
+
+        # SECURITY FIX: Add audit log for password change (H-13)
+        try:
+            from src.app.core.events.bus import event_bus
+            from src.app.core.events.models import EventPriority
+
+            await event_bus.publish(
+                "audit.log",
+                {
+                    "action": "auth.password_changed",
+                    "entity_type": "user",
+                    "entity_id": str(user_id),
+                    "tenant_id": str(user.get("tenant_id", "0")),
+                    "user_id": user_id,
+                    "details": {
+                        "message": "User password was changed"
+                    }
+                },
+                priority=EventPriority.HIGH,
+            )
+        except Exception as e:
+            logger.error("failed_to_publish_password_change_audit_log", error=str(e))
 
         return {"message": "Password changed successfully. All other sessions have been logged out."}
 

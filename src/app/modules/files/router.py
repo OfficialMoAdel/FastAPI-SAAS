@@ -31,12 +31,16 @@ from src.app.modules.files.service import (
 )
 from src.app.modules.storage_settings import StorageNotConfiguredError
 from src.app.modules.tenants import Tenant
-from src.app.modules.users import User
 
 router = APIRouter(prefix="/files", tags=["Files"])
 
 
-@router.post("/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED, dependencies=[Depends(requires_permission(Permission.FILES_WRITE))])
+@router.post(
+    "/upload",
+    response_model=FileUploadResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.FILES_WRITE))],
+)
 async def upload_file(
     file: UploadFile = File(..., description="File to upload"),
     tenant: Tenant = Depends(get_current_tenant),
@@ -105,7 +109,11 @@ async def upload_file(
         )
 
 
-@router.get("", response_model=FileList, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
+@router.get(
+    "",
+    response_model=FileList,
+    dependencies=[Depends(requires_permission(Permission.FILES_READ))],
+)
 async def list_files(
     user_id: int | None = Query(None, description="Filter by owner user ID"),
     mime_type: str | None = Query(None, description="Filter by MIME type"),
@@ -152,18 +160,18 @@ async def get_quota(
     service: FileService = Depends(get_file_service),
 ) -> dict:
     """Get active storage quota and usage.
-    
+
     Returns:
         dict: Quota usage, limit, and remaining bytes.
     """
     from src.app.modules.storage_settings.service import StorageSettingsService
     settings_service = StorageSettingsService(service.db)
     settings = await settings_service.get_settings_or_raise(tenant.id)
-    
+
     count, used = await service._get_quota_stats(tenant.id)
     limit = settings.storage_quota_bytes
     remaining = max(0, limit - used)
-    
+
     return {
         "used": used,
         "limit": limit,
@@ -171,7 +179,11 @@ async def get_quota(
     }
 
 
-@router.get("/{file_id}", response_class=StreamingResponse, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
+@router.get(
+    "/{file_id}",
+    response_class=StreamingResponse,
+    dependencies=[Depends(requires_permission(Permission.FILES_READ))],
+)
 async def download_file(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),
@@ -212,7 +224,11 @@ async def download_file(
         )
 
 
-@router.get("/{file_id}/info", response_model=FileRead, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
+@router.get(
+    "/{file_id}/info",
+    response_model=FileRead,
+    dependencies=[Depends(requires_permission(Permission.FILES_READ))],
+)
 async def get_file_info(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),
@@ -241,7 +257,11 @@ async def get_file_info(
         )
 
 
-@router.get("/{file_id}/url", response_model=SignedUrlResponse, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
+@router.get(
+    "/{file_id}/url",
+    response_model=SignedUrlResponse,
+    dependencies=[Depends(requires_permission(Permission.FILES_READ))],
+)
 async def get_signed_url(
     file_id: int,
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
@@ -274,7 +294,11 @@ async def get_signed_url(
         )
 
 
-@router.patch("/{file_id}", response_model=FileRead, dependencies=[Depends(requires_permission(Permission.FILES_WRITE))])
+@router.patch(
+    "/{file_id}",
+    response_model=FileRead,
+    dependencies=[Depends(requires_permission(Permission.FILES_WRITE))],
+)
 async def update_file(
     file_id: int,
     data: FileUpdate,
@@ -305,7 +329,12 @@ async def update_file(
         )
 
 
-@router.delete("/{file_id}", status_code=status.HTTP_204_NO_CONTENT, response_class=Response, dependencies=[Depends(requires_permission(Permission.FILES_DELETE))])
+@router.delete(
+    "/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    response_class=Response,
+    dependencies=[Depends(requires_permission(Permission.FILES_DELETE))],
+)
 async def delete_file(
     file_id: int,
     tenant: Tenant = Depends(get_current_tenant),

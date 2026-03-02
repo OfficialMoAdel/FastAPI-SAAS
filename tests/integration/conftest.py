@@ -248,7 +248,9 @@ async def real_redis() -> AsyncGenerator[Redis, None]:
 
     # Use TEST_REDIS_PORT env var if set, otherwise use main REDIS_CACHE_PORT
     test_port = int(os.getenv("TEST_REDIS_PORT", str(settings.REDIS_CACHE_PORT)))
-    test_password = os.getenv("TEST_REDIS_PASSWORD", settings.REDIS_CACHE_PASSWORD)
+    test_password = os.getenv("TEST_REDIS_PASSWORD")
+    if test_password is None and settings.REDIS_CACHE_PASSWORD:
+        test_password = settings.REDIS_CACHE_PASSWORD.get_secret_value()
 
     redis = Redis(
         host=settings.REDIS_CACHE_HOST,

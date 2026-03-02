@@ -191,6 +191,12 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         plan = await crud_subscription_plans.get(db=self.db, id=plan_id)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
+
+        # SECURITY FIX (H-08): tenant authorization on plan access
+        tenant = get_current_tenant()
+        if tenant and plan.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+
         return plan
 
     async def get_plans(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
@@ -512,7 +518,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         # T109: Call Stripe API to cancel subscription at period end
         stripe_subscription_id = subscription.get("stripe_subscription_id")
         if stripe_subscription_id:
-            api_key = settings.STRIPE_SECRET_KEY
+            api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
             if api_key:
                 try:
                     # Wrap sync Stripe call in thread to avoid blocking event loop
@@ -619,7 +625,7 @@ class CheckoutService:
 
         try:
             # Use Platform API Key from Env
-            api_key = settings.STRIPE_SECRET_KEY
+            api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
             if not api_key:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
@@ -694,11 +700,34 @@ class CheckoutService:
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
+        from urllib.parse import urlparse
+
         tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
-        api_key = settings.STRIPE_SECRET_KEY
+        # Validate return_url to prevent open redirects (M-01)
+        if return_url:
+            # Allow relative URLs or URLs matching FRONTEND_URL
+            is_relative = return_url.startswith("/") and not return_url.startswith("//")
+
+            frontend_url = settings.FRONTEND_URL
+            is_allowed_origin = False
+            if frontend_url:
+                parsed_return = urlparse(return_url)
+                parsed_frontend = urlparse(frontend_url)
+
+                # Check if it matches exactly or is a subdomain of frontend_url
+                if parsed_return.netloc == parsed_frontend.netloc:
+                    is_allowed_origin = True
+
+            if not (is_relative or is_allowed_origin):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="Invalid return_url form: Must be relative or match allowed origins."
+                )
+
+        api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"

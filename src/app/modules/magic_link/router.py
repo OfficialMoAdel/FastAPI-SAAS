@@ -10,6 +10,7 @@ from fastapi import APIRouter, Depends, Request
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.dependencies import rate_limiter_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import AuthTokenResponse
@@ -34,6 +35,7 @@ def get_magic_link_service(
     summary="Send magic link",
     description="Request a magic link to be sent to the specified email. "
     "Returns success even if email doesn't exist to prevent enumeration.",
+    dependencies=[Depends(rate_limiter_dependency)],
     responses={
         200: {"description": "Magic link sent (or not, to prevent enumeration)"},
         422: {"description": "Invalid email format"},

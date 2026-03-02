@@ -203,12 +203,25 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             except Exception as e:
                 logger.debug(f"Cache get failed: {e}")
 
-        # Fallback to DB
-        tenant = await self.db.get(Tenant, tenant_id)
+        # Fallback to DB (H-12 FIX: Check flag and overrides first)
         enabled = default
 
-        if tenant and tenant.feature_flags:
-            enabled = bool(tenant.feature_flags.get(feature_name, default))
+        flag = await self.get_flag_by_key_or_none(feature_name)
+        if flag:
+            override = await self.get_override(flag.id, tenant_id)
+            if override and override.custom_value is not None:
+                if "value" in override.custom_value:
+                    enabled = bool(override.custom_value["value"])
+                elif "enabled" in override.custom_value:
+                    enabled = bool(override.custom_value["enabled"])
+                else:
+                    enabled = bool(override.custom_value)
+            else:
+                enabled = flag.default_value
+        else:
+            tenant = await self.db.get(Tenant, tenant_id)
+            if tenant and tenant.feature_flags:
+                enabled = bool(tenant.feature_flags.get(feature_name, default))
 
         # Update cache
         if redis_client:

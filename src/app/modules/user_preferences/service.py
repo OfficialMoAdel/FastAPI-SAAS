@@ -203,7 +203,10 @@ class PreferencesService:
             bucket=settings.STORAGE_BUCKET,
             region=settings.STORAGE_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            aws_secret_access_key=(
+                settings.AWS_SECRET_ACCESS_KEY.get_secret_value()
+                if settings.AWS_SECRET_ACCESS_KEY else None
+            ),
             endpoint_url=settings.AWS_ENDPOINT_URL,
         )
 
@@ -259,7 +262,10 @@ class PreferencesService:
             bucket=settings.STORAGE_BUCKET,
             region=settings.STORAGE_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=settings.AWS_SECRET_ACCESS_KEY,
+            aws_secret_access_key=(
+                settings.AWS_SECRET_ACCESS_KEY.get_secret_value()
+                if settings.AWS_SECRET_ACCESS_KEY else None
+            ),
             endpoint_url=settings.AWS_ENDPOINT_URL,
         )
 

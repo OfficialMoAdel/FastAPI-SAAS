@@ -238,7 +238,7 @@ class RedisCacheSettings(BaseSettings):
     REDIS_CACHE_ENABLED: bool = True
     REDIS_CACHE_HOST: str = "localhost"  # Override via REDIS_CACHE_HOST in .env
     REDIS_CACHE_PORT: int = 6379
-    REDIS_CACHE_PASSWORD: str | None = None
+    REDIS_CACHE_PASSWORD: SecretStr | None = None
     # P2-2: Redis connection pool configuration for better performance under load
     REDIS_CACHE_MAX_CONNECTIONS: int = Field(default=50, ge=10, le=500, description="Max connections in Redis pool")
     REDIS_CACHE_SOCKET_TIMEOUT: float = Field(default=5.0, ge=1.0, le=30.0, description="Socket timeout in seconds")
@@ -253,7 +253,7 @@ class RedisCacheSettings(BaseSettings):
     @property
     def REDIS_CACHE_URL(self) -> str:
         if self.REDIS_CACHE_PASSWORD:
-            return f"redis://:{self.REDIS_CACHE_PASSWORD}@{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
+            return f"redis://:{self.REDIS_CACHE_PASSWORD.get_secret_value()}@{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
         return f"redis://{self.REDIS_CACHE_HOST}:{self.REDIS_CACHE_PORT}"
 
 
@@ -368,7 +368,7 @@ class RedisQueueSettings(BaseSettings):
     REDIS_QUEUE_ENABLED: bool = True
     REDIS_QUEUE_HOST: str = "localhost"  # Override via REDIS_QUEUE_HOST in .env
     REDIS_QUEUE_PORT: int = 6379
-    REDIS_QUEUE_PASSWORD: str | None = None
+    REDIS_QUEUE_PASSWORD: SecretStr | None = None
     # P2-2: Explicit pool configuration matching cache settings
     REDIS_QUEUE_MAX_CONNECTIONS: int = Field(default=50, ge=10, le=500, description="Max connections in queue pool")
     REDIS_QUEUE_CONN_TIMEOUT: int = Field(default=5, ge=1, le=30, description="Connection timeout in seconds")
@@ -403,7 +403,7 @@ class CRUDAdminSettings(BaseSettings):
     CRUD_ADMIN_REDIS_HOST: str = "localhost"  # Override via CRUD_ADMIN_REDIS_HOST in .env
     CRUD_ADMIN_REDIS_PORT: int = 6379
     CRUD_ADMIN_REDIS_DB: int = 0
-    CRUD_ADMIN_REDIS_PASSWORD: str | None = None
+    CRUD_ADMIN_REDIS_PASSWORD: SecretStr | None = None
     CRUD_ADMIN_REDIS_SSL: bool = False
 
 
@@ -442,7 +442,7 @@ class StorageSettings(BaseSettings):
     STORAGE_BUCKET: str = "fastapi-saas-user-content"
     STORAGE_REGION: str = "us-east-1"
     AWS_ACCESS_KEY_ID: str | None = None
-    AWS_SECRET_ACCESS_KEY: str | None = None
+    AWS_SECRET_ACCESS_KEY: SecretStr | None = None
     AWS_ENDPOINT_URL: str | None = None  # For localstack or MinIO
 
 
@@ -489,9 +489,9 @@ class CORSSettings(BaseSettings):
 class BillingSettings(BaseSettings):
     """Stripe and Billing settings."""
 
-    STRIPE_SECRET_KEY: str | None = None
+    STRIPE_SECRET_KEY: SecretStr | None = None
     STRIPE_PUBLISHABLE_KEY: str | None = None
-    STRIPE_WEBHOOK_SECRET: str | None = None
+    STRIPE_WEBHOOK_SECRET: SecretStr | None = None
 
 
 class AISettings(BaseSettings):

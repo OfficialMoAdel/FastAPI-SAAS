@@ -30,8 +30,17 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and add request ID."""
+        import re
+
         # Use existing header or generate new ID
-        request_id = request.headers.get(REQUEST_ID_HEADER) or str(uuid.uuid4())
+        request_id = request.headers.get(REQUEST_ID_HEADER)
+
+        # Validate request_id to prevent log injection (M-02)
+        if request_id and not re.match(r"^[a-zA-Z0-9-]{1,64}$", request_id):
+            request_id = None
+
+        if not request_id:
+            request_id = str(uuid.uuid4())
 
         # Store in request state for downstream access
         request.state.request_id = request_id

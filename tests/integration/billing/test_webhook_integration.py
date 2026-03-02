@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import status
 from sqlalchemy import select
 from datetime import datetime, UTC
+from pydantic import SecretStr
 
 from src.app.modules.billing.models import UserSubscription, BillingRecord
 from src.app.modules.billing.webhook import verify_webhook_signature
@@ -19,7 +20,7 @@ def mock_redis_lifespan():
          patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock), \
          patch("src.app.core.utils.cache.client", mock_redis), \
-         patch("src.app.core.config.settings.STRIPE_WEBHOOK_SECRET", "whsec_test"):
+         patch("src.app.core.config.settings.STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")):
         yield
 
 @pytest.mark.asyncio

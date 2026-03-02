@@ -11,6 +11,10 @@ Performance Optimization (R2-HYBRID MED-1):
 - L1 in-memory cache (TTLCache) reduces Redis calls for hot tenants
 - L2 Redis cache (1hr TTL) reduces DB queries
 - Negative caching prevents cache penetration DoS
+
+WARNING: If `FEATURE_REMOVE_WASTED_CONNECTION` is enabled, RLS session variables are NOT set.
+Downstream database connections will not have row-level security enforced!
+Isolation must be handled at the application layer.
 """
 
 import asyncio
@@ -286,6 +290,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 tenant_slug,
                 tenant.id,
                 path,
+            )
+
+            logger.warning(
+                "RLS BYPASSED: Optimized tenant dispatch enabled (FEATURE_REMOVE_WASTED_CONNECTION=True). "
+                "PostgreSQL RLS session variables are NOT set. Downstream connections will NOT have "
+                "row-level security enforced! Ensure isolation is handled at the application layer."
             )
 
             response = await call_next(request)

@@ -3,6 +3,8 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi import HTTPException
 
+from pydantic import SecretStr
+
 from src.app.modules.billing.service import CheckoutCreate, CheckoutService
 
 
@@ -10,7 +12,7 @@ from src.app.modules.billing.service import CheckoutCreate, CheckoutService
 async def test_create_session_success(db_session, tenant):
     """Test successful checkout session creation."""
     # Mock settings to ensure key exists
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", "sk_test_123"):
+    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         # Mock dependencies
@@ -64,7 +66,8 @@ async def test_create_session_no_api_key(db_session, tenant):
 @pytest.mark.asyncio
 async def test_create_portal_session_success(db_session, tenant):
     """Test successful portal session creation."""
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", "sk_test_123"):
+    # Mock settings to ensure key exists
+    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         with (
@@ -77,7 +80,7 @@ async def test_create_portal_session_success(db_session, tenant):
         ):
             mock_portal_create.return_value = MagicMock(url="https://billing.stripe.com/...")
 
-            url = await service.create_portal_session(return_url="https://example.com")
+            url = await service.create_portal_session(return_url="/dashboard")
 
             assert url == "https://billing.stripe.com/..."
 
@@ -86,7 +89,7 @@ async def test_create_portal_session_success(db_session, tenant):
 async def test_create_session_has_tenant_metadata(db_session, tenant):
     """Test that checkout session creation includes tenant_id in metadata."""
     # Mock settings
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", "sk_test_123"):
+    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         # Mock dependencies

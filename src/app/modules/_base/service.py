@@ -117,15 +117,15 @@ class BaseService(Generic[T]):
         if settings.FEATURE_EAGER_LOADING and eager_loads:
             # Must select the ORM entity to use eager loading options
             query = select(self.model)
-            
+
             # Extract sorting kwargs as FastCRUD accepts them explicitly
             sort_columns = kwargs.pop("sort_columns", None)
             sort_orders = kwargs.pop("sort_orders", None)
-            
-            # Apply kwargs filters via FastCRUD's processor 
+
+            # Apply kwargs filters via FastCRUD's processor
             filters = self.crud._filter_processor.parse_filters(**kwargs)
             query = query.filter(*filters)
-            
+
             # Apply sorting
             if sort_columns:
                 query = self.crud._query_builder.apply_sorting(query, sort_columns, sort_orders)

@@ -12,6 +12,108 @@ Tests the complete MFA flow from setup through verification, including:
 
 
 import pytest
+from typing import Generator
+from unittest.mock import patch
+
+
+@pytest.fixture(autouse=True)
+def mock_redis() -> Generator[None, None, None]:
+    class FakeRedis:
+        def __init__(self):
+            self.data = {}
+            self.ttls = {}
+            self.scripts = {}
+
+        async def setex(self, name, time, value):
+            self.data[name] = value
+            self.ttls[name] = time
+
+        async def get(self, name):
+            val = self.data.get(name)
+            return str(val).encode('utf-8') if val else None
+
+        async def delete(self, *names):
+            for name in names:
+                self.data.pop(name, None)
+                self.ttls.pop(name, None)
+                
+        async def exists(self, *names):
+            return sum(1 for name in names if name in self.data)
+            
+        async def ttl(self, name):
+            return self.ttls.get(name, -2)
+            
+        async def expire(self, name, time):
+            if name in self.data:
+                self.ttls[name] = time
+                return True
+            return False
+            
+        async def incr(self, name, amount=1):
+            val = int(self.data.get(name, 0)) + amount
+            self.data[name] = str(val)
+            return val
+            
+        async def script_load(self, script):
+            # Generate a fake SHA for the script
+            import hashlib
+            sha = hashlib.sha1(script.encode('utf-8')).hexdigest()
+            self.scripts[sha] = script
+            return sha
+            
+        async def evalsha(self, sha, numkeys, *keys_and_args):
+            # If it's the rate limit script, just return 0 to allow requests
+            if sha in self.scripts and 'limit' in self.scripts[sha].lower():
+                return 0
+            return 0
+            
+        async def eval(self, script, numkeys, *keys_and_args):
+            if "DEL" in script.upper() and numkeys == 1:
+                # Mock for atomic GETDEL script
+                key = keys_and_args[0]
+                val = self.data.get(key)
+                if val is not None:
+                    self.data.pop(key, None)
+                    self.ttls.pop(key, None)
+                    return str(val).encode('utf-8')
+                return None
+
+            # Very basic Lua mock specifically for _MFA_CHECK_LUA in mfa/service.py
+            if numkeys == 1 and len(keys_and_args) >= 3:
+                key = keys_and_args[0]
+                max_attempts = int(keys_and_args[1])
+                lockout_duration = int(keys_and_args[2])
+                
+                current = self.data.get(key)
+                if current and int(current) >= max_attempts:
+                    if self.ttls.get(key, -2) > 0:
+                        return -1
+                        
+                new_count = int(self.data.get(key, 0)) + 1
+                self.data[key] = str(new_count)
+                if new_count == 1:
+                    self.ttls[key] = lockout_duration
+                return new_count
+                
+            return None
+                
+        # Required for async context manager in security service
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    fake_redis = FakeRedis()
+    
+    # We need to patch cache.client AND async_get_redis generator to yield fake_redis
+    async def fake_async_get_redis():
+        yield fake_redis
+        
+    with patch("src.app.modules.mfa.service.redis", new=fake_redis), \
+         patch("src.app.core.utils.cache.client", new=fake_redis), \
+         patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis):
+        yield
 
 
 @pytest.mark.asyncio
@@ -54,11 +156,15 @@ class TestMFASetupFlow:
         assert setup_response.status_code == 200
         setup_data = setup_response.json()
 
-        assert "totp_secret" in setup_data
+        assert "setup_token" in setup_data
         assert "qr_code_base64" in setup_data
         assert "otpauth_url" in setup_data
 
-        secret = setup_data["totp_secret"]
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # [STEP 2] Verify MFA with TOTP to enable
         # Generate valid TOTP token using pyotp
@@ -70,7 +176,7 @@ class TestMFASetupFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": valid_token},
+            json={"setup_token": setup_token, "totp_token": valid_token},
         )
         if enable_response.status_code != 200:
             print(f"Enable failed: {enable_response.status_code}")
@@ -151,7 +257,12 @@ class TestMFALoginWithTOTP:
 
         # Setup MFA
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
-        secret = setup_response.json()["totp_secret"]
+        setup_data = setup_response.json()
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # Enable MFA
         import pyotp
@@ -160,7 +271,7 @@ class TestMFALoginWithTOTP:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": totp.now()},
+            json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
@@ -244,7 +355,12 @@ class TestMFALoginWithBackupCode:
 
         # Setup MFA
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
-        secret = setup_response.json()["totp_secret"]
+        setup_data = setup_response.json()
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # Enable MFA
         import pyotp
@@ -253,7 +369,7 @@ class TestMFALoginWithBackupCode:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": totp.now()},
+            json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
@@ -354,7 +470,12 @@ class TestMFALockoutFlow:
 
         # Setup MFA
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
-        secret = setup_response.json()["totp_secret"]
+        setup_data = setup_response.json()
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # Enable MFA
         import pyotp
@@ -363,7 +484,7 @@ class TestMFALockoutFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": totp.now()},
+            json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
@@ -371,15 +492,14 @@ class TestMFALockoutFlow:
         cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
         await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
-        # Login to get MFA token
-        login_response = await async_client.post(
-            "/api/v1/account/login",
-            data={"username": test_user_email, "password": test_password},
-        )
-        mfa_token = login_response.json()["mfa_token"]
-
         # [STEP 1] Make 5 failed attempts
         for i in range(5):
+            login_response = await async_client.post(
+                "/api/v1/account/login",
+                data={"username": test_user_email, "password": test_password},
+            )
+            mfa_token = login_response.json()["mfa_token"]
+
             complete_response = await async_client.post(
                 "/api/v1/mfa/complete-login",
                 json={
@@ -391,7 +511,13 @@ class TestMFALockoutFlow:
             assert complete_response.status_code == 401
             print(f"[STEP 1.{i + 1}] Failed attempt {i + 1}: 401 Unauthorized")
 
-        # [STEP 2] 6th attempt should be rate limited (429)
+        # [STEP 2] 6th attempt should be locked out (401)
+        login_response = await async_client.post(
+            "/api/v1/account/login",
+            data={"username": test_user_email, "password": test_password},
+        )
+        mfa_token = login_response.json()["mfa_token"]
+
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
             json={
@@ -400,10 +526,10 @@ class TestMFALockoutFlow:
                 "backup_code": None,
             },
         )
-        assert complete_response.status_code == 429
-        assert "Too many MFA verification attempts" in complete_response.json()["detail"]
+        assert complete_response.status_code == 401
+        assert "MFA locked" in complete_response.json()["detail"]
 
-        print("[STEP 2] 6th attempt rate limited: 429 Too Many Requests")
+        print("[STEP 2] 6th attempt locked out: 401 Unauthorized")
         print("[E2E SUCCESS] MFA lockout mechanism verified")
 
 
@@ -440,7 +566,12 @@ class TestMFADisableFlow:
 
         # Setup MFA
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
-        secret = setup_response.json()["totp_secret"]
+        setup_data = setup_response.json()
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # Enable MFA
         import pyotp
@@ -449,7 +580,7 @@ class TestMFADisableFlow:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": totp.now()},
+            json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 
@@ -520,7 +651,12 @@ class TestMFARegenerateBackupCodes:
 
         # Setup MFA
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
-        secret = setup_response.json()["totp_secret"]
+        setup_data = setup_response.json()
+        setup_token = setup_data["setup_token"]
+        
+        from urllib.parse import urlparse, parse_qs
+        parsed_url = urlparse(setup_data["otpauth_url"])
+        secret = parse_qs(parsed_url.query)["secret"][0]
 
         # Enable MFA
         import pyotp
@@ -529,7 +665,7 @@ class TestMFARegenerateBackupCodes:
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
             headers=headers,
-            json={"totp_secret": secret, "totp_token": totp.now()},
+            json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
 

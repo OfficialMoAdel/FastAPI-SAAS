@@ -328,6 +328,7 @@ async def complete_mfa_login(
         "sub": user["username"],
         "tier_id": user.get("tier_id"),
         "tier_name": tier_name,
+        "token_version": user.get("token_version", 0),  # M-06: Include for session invalidation
     }
 
     # Generate tokens

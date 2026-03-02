@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.json_utils import json_loads
 
 from ...api.dependencies import get_current_user
+from ...core.config import settings
 from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_tenant_context
 from ..auth.schemas import AuthTokenResponse
@@ -18,6 +19,21 @@ from .schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
 from .service import SSOService, get_sso_service
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
+
+def _validate_redirect_uri(uri: str | None) -> None:
+    """Validate redirect URI to prevent open redirects."""
+    if not uri:
+        return
+    # Allow relative paths or URLs matching the frontend domain
+    if uri.startswith("/") and not uri.startswith("//"):
+        return
+    if uri.startswith(settings.FRONTEND_URL):
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_400_BAD_REQUEST,
+        detail="Invalid redirect URI. Must be a relative path or match the permitted frontend domain."
+    )
 
 
 @router.get("/providers", response_model=SSOProvidersResponse)
@@ -41,6 +57,9 @@ async def initiate_sso(
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow and redirect to provider."""
+    # Validate redirect URI to prevent open redirects (H-11)
+    _validate_redirect_uri(redirect_uri)
+
     # tenant context available via get_tenant_context() if needed
 
     auth_url = await sso_service.get_authorization_url(
@@ -62,6 +81,7 @@ async def initiate_sso_alias(
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow (alias for /{provider}/authorize for backward compatibility)."""
+    _validate_redirect_uri(redirect_uri)
     return await initiate_sso(request, provider, db, sso_service, redirect_uri)
 
 
@@ -145,6 +165,8 @@ async def connect_provider(
     redirect_uri: Annotated[str | None, Query] = None,
 ) -> RedirectResponse:
     """Connect SSO provider to existing authenticated account."""
+    _validate_redirect_uri(redirect_uri)
+
     tenant = get_tenant_context()
     tenant_id = tenant.id if tenant else None
 

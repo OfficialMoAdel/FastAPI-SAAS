@@ -331,6 +331,30 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             object=update_data,
             id=subscription_id,
         )
+
+        # M-04: Explicitly downgrade tenant to free tier if canceled/expired
+        if new_status in ("canceled", "expired"):
+            from src.app.modules.billing.crud import crud_subscription_plans
+            from src.app.modules.tenants.crud import crud_tenants
+
+            # Find the free plan
+            free_plan_stmt = select(crud_subscription_plans.model).where(
+                crud_subscription_plans.model.name.ilike("%free%")
+            ).limit(1)
+            free_plan_result = await db.execute(free_plan_stmt)
+            free_plan = free_plan_result.scalar_one_or_none()
+
+            if free_plan:
+                await crud_tenants.update(
+                    db=db,
+                    id=tenant_id,
+                    object={"tier_id": free_plan.id}
+                )
+                logger.info(
+                    f"Downgraded tenant {tenant_id} to free tier ({free_plan.id}) "
+                    f"due to subscription {new_status}"
+                )
+
         await db.commit()
 
     logger.info(f"Updated subscription {stripe_subscription_id} to status {new_status}")
@@ -377,6 +401,26 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
             object=update_data,
             id=subscription_id,
         )
+
+        # M-04: Explicitly downgrade tenant to free tier
+        from src.app.modules.billing.crud import crud_subscription_plans
+        from src.app.modules.tenants.crud import crud_tenants
+
+        # Find the free plan
+        free_plan_stmt = select(crud_subscription_plans.model).where(
+            crud_subscription_plans.model.name.ilike("%free%")
+        ).limit(1)
+        free_plan_result = await db.execute(free_plan_stmt)
+        free_plan = free_plan_result.scalar_one_or_none()
+
+        if free_plan:
+            await crud_tenants.update(
+                db=db,
+                id=tenant_id,
+                object={"tier_id": free_plan.id}
+            )
+            logger.info(f"Downgraded tenant {tenant_id} to free tier ({free_plan.id})")
+
         await db.commit()
 
     logger.info(f"Marked subscription {stripe_subscription_id} as canceled")

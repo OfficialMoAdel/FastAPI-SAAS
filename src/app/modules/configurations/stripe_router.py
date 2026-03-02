@@ -97,7 +97,10 @@ async def handle_stripe_webhooks(
     Returns:
         Success response
     """
+    import json
+
     from src.app.core.config import settings as app_settings
+    from src.app.modules.billing.crud import crud_stripe_settings
 
     payload = await request.body()
     sig_header = stripe_signature
@@ -106,7 +109,30 @@ async def handle_stripe_webhooks(
         logger.error("Missing Stripe signature header")
         raise HTTPException(status_code=400, detail="Missing signature")
 
-    webhook_secret = app_settings.STRIPE_WEBHOOK_SECRET
+    # M-03: Retrieve tenant specific webhook secret
+    webhook_secret = None
+    try:
+        payload_dict = json.loads(payload)
+        stripe_account_id = payload_dict.get("account")
+
+        # AsyncSession dependencies
+        from src.app.core.db.database import local_session
+
+        if stripe_account_id:
+            logger.info(f"Looking up webhook secret for Stripe account: {stripe_account_id}")
+            async with local_session() as db:
+                settings = await crud_stripe_settings.get_by_account_id(db, stripe_account_id)
+                if settings and settings.webhook_secret:
+                    webhook_secret = settings.webhook_secret
+    except Exception as e:
+        logger.warning(f"Failed to lookup tenant webhook secret: {e}")
+
+    # Fallback to global secret
+    if not webhook_secret:
+        webhook_secret = (
+            app_settings.STRIPE_WEBHOOK_SECRET.get_secret_value()
+            if app_settings.STRIPE_WEBHOOK_SECRET else None
+        )
 
     if not webhook_secret:
         logger.error("Stripe webhook secret not configured")

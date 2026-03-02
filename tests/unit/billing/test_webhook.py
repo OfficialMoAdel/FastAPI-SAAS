@@ -284,7 +284,8 @@ async def test_handle_webhook_event_subscription_deleted():
 
     with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update:
+         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update, \
+         patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock) as mock_tenant_update:
         
         # Mock bypass db
         mock_bypass_db = AsyncMock()
@@ -297,6 +298,9 @@ async def test_handle_webhook_event_subscription_deleted():
         # Mock tenant db
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
+        mock_tenant_result = MagicMock()
+        mock_tenant_result.scalar_one_or_none.return_value = MagicMock(id=99)
+        mock_tenant_db.execute.return_value = mock_tenant_result
         
         result = await handle_webhook_event(event)
         

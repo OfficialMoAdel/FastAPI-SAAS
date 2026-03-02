@@ -223,7 +223,7 @@ class APIKeyService(BaseService[APIKey]):
             or user_id_attr is None
             or tenant_id_attr is None
         ):
-            key = await crud_api_keys.get(db=self.db, id=key_id)
+            key = await crud_api_keys.get(db=self.db, id=key_id)  # type: ignore[assignment]
 
         if key is None:
             raise ModelNotFoundError("APIKey", key_id)
@@ -460,7 +460,7 @@ class APIKeyService(BaseService[APIKey]):
             or old_user_id_attr is None
             or old_tenant_id_attr is None
         ):
-            old_key = await crud_api_keys.get(db=self.db, id=key_id)
+            old_key = await crud_api_keys.get(db=self.db, id=key_id)  # type: ignore[assignment]
 
         if old_key is None:
             raise ModelNotFoundError("APIKey", key_id)

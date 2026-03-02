@@ -5,12 +5,18 @@ Token validation uses Redis for performance (MagicLinkManager);
 this provides audit trail persistence.
 """
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .models import MagicLink
+
+
+def _hash_token(token: str) -> str:
+    """Hash a magic link token using SHA-256 for secure DB storage."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 async def create_magic_link(
@@ -41,7 +47,7 @@ async def create_magic_link(
 
     magic_link = MagicLink(
         user_id=user_id,
-        token=token,
+        token=_hash_token(token),
         action=action,
         expires_at=expires_at,
         ip_address=ip_address,
@@ -68,7 +74,7 @@ async def get_magic_link_by_token(
     Returns:
         MagicLink if found, None otherwise.
     """
-    stmt = select(MagicLink).where(MagicLink.token == token)
+    stmt = select(MagicLink).where(MagicLink.token == _hash_token(token))
     result = await db.execute(stmt)
     return result.scalar_one_or_none()
 

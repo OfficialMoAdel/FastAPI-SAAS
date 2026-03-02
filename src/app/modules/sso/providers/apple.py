@@ -221,14 +221,18 @@ class AppleProvider(BaseOAuthProvider):
         2. Issuer is https://appleid.apple.com
         3. Audience matches our client_id
         4. Token is not expired
-
-        For now, we decode without verification and rely on the
-        fact that we received it directly from Apple's token endpoint.
         """
-        # Decode without verification for now
-        # In production, fetch Apple's public keys and verify signature
         try:
-            claims: dict[str, Any] = jwt.decode(id_token, options={"verify_signature": False})
+            jwks_client = jwt.PyJWKClient("https://appleid.apple.com/auth/keys")
+            signing_key = jwks_client.get_signing_key_from_jwt(id_token)
+
+            claims: dict[str, Any] = jwt.decode(
+                id_token,
+                signing_key.key,
+                algorithms=["RS256"],
+                audience=self.client_id,
+                issuer="https://appleid.apple.com",
+            )
             return claims
-        except jwt.DecodeError as e:
+        except jwt.PyJWTError as e:
             raise ValueError(f"Invalid id_token: {e}")

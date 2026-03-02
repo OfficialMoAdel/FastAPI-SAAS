@@ -96,6 +96,9 @@ async def get_current_user(
                     )
                     raise ForbiddenException("User does not belong to the current tenant.")
 
+        if not user.get("is_active", True):
+            raise UnauthorizedException("User account is no longer active.")
+
         return user
 
     raise UnauthorizedException("User not authenticated.")
@@ -150,6 +153,8 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
 
 async def get_current_superuser(current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
+    if not current_user.get("is_active", True):
+        raise ForbiddenException("User account is no longer active.")
     if not current_user["is_superuser"]:
         raise ForbiddenException("You do not have enough privileges.")
 

@@ -83,8 +83,10 @@ class MFAService:
             db: Database session.
 
         Returns:
-            Dict with totp_secret and otpauth_url (for QR code).
+            Dict with setup_token and otpauth_url (for QR code).
         """
+        import uuid
+
         # Generate secure random secret
         secret = pyotp.random_base32()
 
@@ -119,10 +121,15 @@ class MFAService:
         except Exception as e:
             logger.debug("Audit logging failed (non-critical): %s", e)
 
+        # Store secret temporarily in redis (Expires in 10 minutes)
+        setup_token = str(uuid.uuid4())
+        if redis is not None:
+            await redis.setex(f"mfa_setup:{setup_token}", 600, secret)
+
         # Note: In production, generate actual QR code image
         # For now, return the provisioning URI
         return {
-            "totp_secret": secret,
+            "setup_token": setup_token,
             "otpauth_url": provisioning_uri,
             "qr_code_base64": "",  # Placeholder - would be generated
         }
@@ -137,7 +144,7 @@ class MFAService:
 
         Args:
             user_id: The user's ID.
-            request: Enable request with totp_secret and totp_token.
+            request: Enable request with setup_token and totp_token.
             db: Database session.
 
         Returns:
@@ -151,16 +158,29 @@ class MFAService:
         if existing:
             raise BadRequestException("MFA is already enabled for this user")
 
+        # Retrieve secret from Redis using setup_token
+        mfa_setup_key = f"mfa_setup:{request.setup_token}"
+        totp_secret_bytes = await redis.get(mfa_setup_key) if redis else None
+
+        if not totp_secret_bytes:
+            raise BadRequestException("Setup token expired or invalid. Please restart MFA setup.")
+
+        totp_secret = totp_secret_bytes.decode("utf-8") if isinstance(totp_secret_bytes, bytes) else totp_secret_bytes
+
         # Verify the provided TOTP token
-        totp = pyotp.TOTP(request.totp_secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
+        totp = pyotp.TOTP(totp_secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
         if not totp.verify(request.totp_token, valid_window=TOTP_SKEW):
             raise BadRequestException("Invalid TOTP token. Please try again.")
+
+        # Clean up the setup token
+        if redis is not None:
+            await redis.delete(mfa_setup_key)
 
         # Generate backup codes
         backup_codes = await self._generate_backup_codes()
 
         # Encrypt secret before storing
-        encrypted_secret = await self._encrypt_secret(request.totp_secret)
+        encrypted_secret = await self._encrypt_secret(totp_secret)
 
         # Hash backup codes for storage
         backup_codes_hashed = [await self._hash_backup_code(code) for code in backup_codes]

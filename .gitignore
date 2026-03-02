@@ -196,6 +196,7 @@ SECURITY.md
 Phase*
 coverage_report*
 final_failed*
+*REVIEW_ISSUES.md
 unique_failed*
 baseline*
 failed.txt

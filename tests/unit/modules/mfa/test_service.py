@@ -51,9 +51,9 @@ class TestGenerateTotpSecret:
                     db=AsyncMock(),
                 )
 
-        assert "totp_secret" in result
+        assert "setup_token" in result
         assert "otpauth_url" in result
-        assert result["totp_secret"] == "JBSWY3DPEHPK3PXP"
+        assert "qr_code_base64" in result
         assert result["otpauth_url"] == "otpauth://totp/..."
 
     @pytest.mark.asyncio
@@ -66,7 +66,7 @@ class TestGenerateTotpSecret:
                 user_id=12345,
                 db=AsyncMock(),
             )
-            results.append(result["totp_secret"])
+            results.append(result["setup_token"])
 
         # All secrets should be unique
         assert len(set(results)) == len(results)
@@ -83,9 +83,10 @@ class TestEnableMFA:
 
         with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value={"id": "test-id"}):
             with pytest.raises(BadRequestException, match="already enabled"):
+                # MFAEnableRequest takes setup_token and totp_token
                 await mfa_service.enable_mfa(
                     user_id=mock_user_id,
-                    request=MagicMock(totp_secret="JBSWY3DPEHPK3PXP", totp_token="123456"),
+                    request=MagicMock(setup_token="some-setup-token", totp_token="123456"),
                     db=mock_db,
                 )
 
@@ -102,17 +103,18 @@ class TestEnableMFA:
                 mock_totp_instance.verify.return_value = False
                 mock_totp.return_value = mock_totp_instance
 
-                # Use 32-char secret to satisfy schema validation
                 request = MFAEnableRequest(
-                    totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+                    setup_token="some-setup-token",
                     totp_token="000000",
                 )
-                with pytest.raises(BadRequestException, match="Invalid TOTP"):
-                    await mfa_service.enable_mfa(
-                        user_id=mock_user_id,
-                        request=request,
-                        db=mock_db,
-                    )
+                with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                    mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
+                    with pytest.raises(BadRequestException, match="Invalid TOTP"):
+                        await mfa_service.enable_mfa(
+                            user_id=mock_user_id,
+                            request=request,
+                            db=mock_db,
+                        )
 
     @pytest.mark.asyncio
     async def test_enable_mfa_success(self, mfa_service, mock_db, mock_user_id):
@@ -132,14 +134,17 @@ class TestEnableMFA:
 
                     # Use 32-char secret to satisfy schema validation
                     request = MFAEnableRequest(
-                        totp_secret="JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP",
+                        setup_token="some-setup-token",
                         totp_token="123456",
                     )
-                    result = await mfa_service.enable_mfa(
-                        user_id=mock_user_id,
-                        request=request,
-                        db=mock_db,
-                    )
+                    with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                        mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
+                        mock_redis.delete = AsyncMock()
+                        result = await mfa_service.enable_mfa(
+                            user_id=mock_user_id,
+                            request=request,
+                            db=mock_db,
+                        )
 
         assert result["message"] == "MFA enabled successfully"
         assert "backup_codes" in result

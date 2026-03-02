@@ -68,7 +68,7 @@ async def stripe_webhook(
     """
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
-    webhook_secret = settings.STRIPE_WEBHOOK_SECRET
+    webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
 
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
@@ -369,7 +369,11 @@ async def create_checkout_session(
     return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
 
 
-@router.post("/portal", response_model=PortalResponse)
+@router.post(
+    "/portal",
+    response_model=PortalResponse,
+    dependencies=[Depends(requires_permission(Permission.MANAGE_BILLING))],
+)
 async def create_portal_session(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
