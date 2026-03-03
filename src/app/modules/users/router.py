@@ -86,11 +86,13 @@ async def read_users_me(
         return current_user
 
     try:
-        return await service.get(int(user_id))
-    except (ValueError, TypeError, KeyError):
-        if username:
+        if user_id is not None:
+            return await service.get(int(user_id))
+        elif username:
             return await service.get_by_username(username)
-        raise HTTPException(status_code=401, detail="Invalid user context")
+    except (ValueError, TypeError, KeyError):
+        pass
+    raise HTTPException(status_code=401, detail="Invalid user context")
 
 
 @router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])
