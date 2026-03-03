@@ -51,22 +51,26 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         if not user:
             return None
 
-        # P1: Direct dict construction - avoids Pydantic validation overhead
-        user_dict = {
+        # Build auth payload directly from ORM object.
+        # NOTE: Do not validate through API/user-input schema here because
+        # auth payload must accept existing DB usernames/emails even when they
+        # don't satisfy current request-time regex constraints.
+        user_dict: dict[str, Any] = {
             "id": user.id,
             "created_at": user.created_at,
             "updated_at": user.updated_at,
             "name": user.name,
             "username": user.username,
             "email": user.email,
-            "hashed_password": user.hashed_password,  # Required for auth service password verification
             "profile_image_url": user.profile_image_url,
+            "tenant_id": user.tenant_id,
             "tier_id": user.tier_id,
-            "tenant_id": user.tenant_id,  # Required for auth service JWT claims
+            "hashed_password": user.hashed_password,
             "is_superuser": user.is_superuser,
-            "is_deleted": user.is_deleted,  # A1: Required for token refresh security check
-            "is_email_verified": user.is_email_verified,  # A2: Required for email verification status
-            "token_version": user.token_version,  # FIXED: Was missing - required for session invalidation
+            "is_deleted": user.is_deleted,
+            "is_active": user.is_active,
+            "is_email_verified": user.is_email_verified,
+            "token_version": user.token_version,
         }
 
         if user.tier:

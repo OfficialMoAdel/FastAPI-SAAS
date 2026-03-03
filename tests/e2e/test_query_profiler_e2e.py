@@ -17,6 +17,7 @@ import asyncio
 from src.app.core.config import EnvironmentOption, settings
 from tests.factories import UserFactory, TenantFactory
 
+
 @pytest.mark.e2e
 class TestQueryProfilerE2E:
     @pytest.fixture(autouse=True)
@@ -24,27 +25,47 @@ class TestQueryProfilerE2E:
         """Setup for e2e tests - create a real user in the test database."""
         # Use unique slug and emails to avoid collisions since we commit the session
         import uuid
+
         unique_suffix = uuid.uuid4().hex[:8]
 
         # Create tenant and user in SQLite
-        tenant = await TenantFactory.create_async(db_session, name=f"Profile Tenant {unique_suffix}", slug=f"profile-tenant-{unique_suffix}")
-        user = await UserFactory.create_async(db_session, tenant_id=tenant.id, username=f"profiler_user_{unique_suffix}", email=f"profiler_{unique_suffix}@example.com")
-        
+        tenant = await TenantFactory.create_async(
+            db_session, name=f"Profile Tenant {unique_suffix}", slug=f"profile-tenant-{unique_suffix}"
+        )
+        user = await UserFactory.create_async(
+            db_session,
+            tenant_id=tenant.id,
+            username=f"profiler_user_{unique_suffix}",
+            email=f"profiler_{unique_suffix}@example.com",
+        )
+
         # Create superuser for endpoints that require it
-        admin_user = await UserFactory.create_async(db_session, tenant_id=tenant.id, username=f"profiler_admin_{unique_suffix}", email=f"admin_{unique_suffix}@example.com", is_superuser=True)
-        
+        admin_user = await UserFactory.create_async(
+            db_session,
+            tenant_id=tenant.id,
+            username=f"profiler_admin_{unique_suffix}",
+            email=f"admin_{unique_suffix}@example.com",
+            is_superuser=True,
+        )
+
         # Commit to ensure middleware using a separate connection can see the data
         await db_session.commit()
 
         # Clear tenant cache to ensure fresh lookups
         from src.app.middleware.tenant import _L1_TENANT_CACHE
+
         _L1_TENANT_CACHE.clear()
-        
+
         # Generate tokens without hitting DB again
         from src.app.core.security import create_access_token
-        access_token = await create_access_token(data={"sub": user.email, "email": user.email, "tenant_id": str(tenant.id)})
-        admin_token = await create_access_token(data={"sub": admin_user.email, "email": admin_user.email, "tenant_id": str(tenant.id)})
-        
+
+        access_token = await create_access_token(
+            data={"sub": user.email, "email": user.email, "tenant_id": str(tenant.id)}
+        )
+        admin_token = await create_access_token(
+            data={"sub": admin_user.email, "email": admin_user.email, "tenant_id": str(tenant.id)}
+        )
+
         self.user_headers = {
             "Authorization": f"Bearer {access_token}",
             "X-Tenant-ID": tenant.slug,
@@ -146,6 +167,7 @@ class TestQueryProfilerE2E:
     ):
         """Test that query profiler returns X-Query-Count=0 when disabled."""
         from src.app.middleware.query_profiler import QueryProfilerMiddleware
+
         # Find the middleware instance in the app stack
         app = get_test_app
         middleware_instance = None
@@ -238,7 +260,6 @@ class TestQueryProfilerE2E:
             assert response.status_code == 200
             assert "X-Query-Count" in response.headers
             assert "X-Query-Time" in response.headers
-
 
     @pytest.mark.asyncio
     async def test_query_stats_accumulation(

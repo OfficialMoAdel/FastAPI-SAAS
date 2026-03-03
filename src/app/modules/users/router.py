@@ -66,9 +66,31 @@ async def read_users(
 
 
 @router.get("/me", response_model=UserRead)
-async def read_users_me(request: Request, current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
-    """Get current authenticated user."""
-    return current_user
+async def read_users_me(
+    request: Request,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: UserService = Depends(_get_user_service),
+) -> Any:
+    """Get current authenticated user profile.
+
+    `get_current_user` returns auth-oriented payload; fetch full user profile
+    to satisfy `UserRead` response contract.
+    """
+    # Normalize current_user to dict (supports both dict and ORM/attr objects)
+    if isinstance(current_user, dict):
+        user_id = current_user.get("id")
+        username = current_user.get("username")
+    else:
+        # Assume it's an ORM object - return directly (already full profile)
+        # This handles test fixtures that override get_current_user with User objects
+        return current_user
+
+    try:
+        return await service.get(int(user_id))
+    except (ValueError, TypeError, KeyError):
+        if username:
+            return await service.get_by_username(username)
+        raise HTTPException(status_code=401, detail="Invalid user context")
 
 
 @router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])

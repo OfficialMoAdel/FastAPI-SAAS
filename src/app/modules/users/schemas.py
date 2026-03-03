@@ -5,7 +5,7 @@ from datetime import datetime
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 from src.app.core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
 from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
@@ -44,6 +44,12 @@ class User(TimestampSchema, UserBase, UUIDSchema, PersistentDeletion):
     hashed_password: str
     is_superuser: bool = False
     tier_id: int | None = None
+    tenant_id: UUID
+    is_email_verified: bool = False
+    token_version: int = 0
+
+    # Allow validating directly from SQLAlchemy ORM instances
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserCreateInternal(UserBase):
@@ -111,13 +117,49 @@ class UserCreate(UserBase, BaseCreate):
         that could be used for phishing or confusion attacks.
         """
         reserved = {
-            "admin", "administrator", "root", "api", "www", "mail", "email",
-            "support", "help", "info", "contact", "sales", "billing",
-            "security", "secure", "auth", "login", "logout", "signup",
-            "register", "user", "users", "account", "accounts", "system",
-            "service", "services", "host", "master", "webmaster", "postmaster",
-            "hostmaster", "abuse", "noc", "security", "team", "staff",
-            "null", "undefined", "test", "testing", "demo", "example",
+            "admin",
+            "administrator",
+            "root",
+            "api",
+            "www",
+            "mail",
+            "email",
+            "support",
+            "help",
+            "info",
+            "contact",
+            "sales",
+            "billing",
+            "security",
+            "secure",
+            "auth",
+            "login",
+            "logout",
+            "signup",
+            "register",
+            "user",
+            "users",
+            "account",
+            "accounts",
+            "system",
+            "service",
+            "services",
+            "host",
+            "master",
+            "webmaster",
+            "postmaster",
+            "hostmaster",
+            "abuse",
+            "noc",
+            "security",
+            "team",
+            "staff",
+            "null",
+            "undefined",
+            "test",
+            "testing",
+            "demo",
+            "example",
         }
         if v.lower() in reserved:
             raise ValueError(f"Username '{v}' is reserved and cannot be used")

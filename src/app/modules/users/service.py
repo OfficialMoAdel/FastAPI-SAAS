@@ -136,6 +136,7 @@ class UserService(BaseService[User]):
                     "email": user.email,
                     "profile_image_url": user.profile_image_url,
                     "tier_id": user.tier_id,
+                    "tenant_id": user.tenant_id,
                 }
                 user_id = user.id
                 email = user.email
@@ -329,7 +330,9 @@ class UserService(BaseService[User]):
                 "tier": {
                     "id": user_with_tier.tier.id,
                     "name": user_with_tier.tier.name,
-                } if user_with_tier.tier else None
+                }
+                if user_with_tier.tier
+                else None,
             }
 
         return user_with_tier

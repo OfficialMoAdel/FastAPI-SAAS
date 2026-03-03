@@ -22,6 +22,7 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
+from src.app.core.db.database import Base
 from src.app.core.encryption import encrypt_value
 from src.app.core.utils import cache
 
@@ -50,6 +51,23 @@ def _get_test_session_maker():
         poolclass=NullPool,  # Critical: fresh connection per use
     )
     return sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+@pytest.fixture(scope="function", autouse=True)
+async def ensure_real_postgres_schema():
+    """Ensure real Postgres has all ORM tables before each test.
+
+    Uses checkfirst semantics via SQLAlchemy metadata create_all to avoid
+    failures when tests run against stale DB schemas after migrations.
+    """
+    test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
+    engine = create_async_engine(test_db_url, poolclass=NullPool)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.create_all)
+        yield
+    finally:
+        await engine.dispose()
 
 
 # NOTE: event_loop fixture REMOVED - pytest-asyncio 0.23+ handles this via
@@ -175,7 +193,12 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
     """Provide async HTTP client for E2E tests with initialized Redis."""
     from src.app.main import app
     from src.app.core.security.session_manager import session_manager
+    from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
     from redis import asyncio as aioredis
+
+    # Reset globals to avoid cross-loop resource reuse during coverage runs
+    cache.client = None
+    session_manager.set_redis_client(None)
 
     # Initialize Redis client for session manager (ASGITransport doesn't trigger lifespan)
     redis_client = aioredis.from_url(
@@ -192,8 +215,6 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
 
     # CRITICAL: Reinitialize GCRA rate limiter with new Redis client
     # The global rate limiter may have a stale Redis connection from a previous test
-    from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
-
     init_gcra_rate_limiter(redis_client)
     logger.info("Initialized GCRA rate limiter")
 
@@ -227,8 +248,14 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
         logger.info("Closed HTTP client")
 
     # Cleanup
-    await redis_client.close()
+    await redis_client.aclose()
     cache.client = None
+    session_manager.set_redis_client(None)
+
+    # Clear global limiter singleton to avoid stale loop/client binding
+    import src.app.core.utils.gcra_rate_limit as gcra_module
+
+    gcra_module.gcra_rate_limiter = None
     logger.info("Closed Redis client")
 
 
@@ -300,15 +327,14 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
 
         # Assign admin role explicitly
         role_result = await session.execute(
-            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"),
-            {"tenant_id": tenant_id}
+            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"), {"tenant_id": tenant_id}
         )
         role_id = role_result.scalar()
-        
+
         if user_id and role_id:
             await session.execute(
                 text("INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
-                {"user_id": user_id, "role_id": role_id}
+                {"user_id": user_id, "role_id": role_id},
             )
 
         await session.commit()
@@ -417,15 +443,14 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
 
         # Assign admin role explicitly
         role_result = await session.execute(
-            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"),
-            {"tenant_id": tenant_id}
+            text("SELECT id FROM roles WHERE tenant_id = :tenant_id AND name = 'admin'"), {"tenant_id": tenant_id}
         )
         role_id = role_result.scalar()
-        
+
         if user_id and role_id:
             await session.execute(
                 text("INSERT INTO user_roles (user_id, role_id) VALUES (:user_id, :role_id)"),
-                {"user_id": user_id, "role_id": role_id}
+                {"user_id": user_id, "role_id": role_id},
             )
 
         await session.commit()

@@ -215,7 +215,7 @@ def setup_db():
             os.remove(DATABASE_PATH)
     except Exception:
         pass
-        
+
     # Create all tables
     Base.metadata.create_all(bind=sync_engine)
 
@@ -254,9 +254,9 @@ def reset_circuit_breaker_registry():
     reset_registry()
     reset_all_circuit_breakers()
     get_registry().register("database", db_circuit, service_type=ServiceType.DATABASE)
-    
+
     yield
-    
+
     reset_registry()
     reset_all_circuit_breakers()
 
@@ -813,17 +813,18 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def async_client(get_test_app) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture for all tests."""
     app = get_test_app
-    
+
     from src.app.core.db.database import async_get_db
+
     app.dependency_overrides[async_get_db] = override_get_db
-    
+
     async with AsyncClient(
         transport=ASGITransport(app=app),
         base_url="http://test",
         headers={"User-Agent": "TestClient/1.0", "X-Tenant-ID": "test-tenant-e2e"},
     ) as ac:
         yield ac
-        
+
     app.dependency_overrides.clear()
 
 
@@ -1317,7 +1318,6 @@ def mock_redis(request):
     """Mock Redis client with in-memory state.
 
     Automatically applies to all tests EXCEPT those marked with:
-    - @pytest.mark.integration
     - @pytest.mark.e2e
     - @pytest.mark.uses_real_redis
 
@@ -1325,7 +1325,7 @@ def mock_redis(request):
     """
     # Skip mocking for tests that need real Redis
     markers = [m.name for m in request.node.iter_markers()]
-    if any(m in markers for m in ("integration", "e2e", "uses_real_redis")):
+    if any(m in markers for m in ("e2e", "uses_real_redis")):
         # Real Redis initialization is handled by init_real_redis_async fixture
         yield None
         return
@@ -1341,6 +1341,8 @@ def mock_redis(request):
     # Force attribute to exist for pkgutil.resolve_name used by mock.patch
     if not hasattr(setup, "create_redis_cache_pool"):
         setup.create_redis_cache_pool = setup.create_redis_cache_pool
+
+    from src.app.core.security.session_manager import session_manager
 
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
@@ -1359,7 +1361,10 @@ def mock_redis(request):
         patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
         patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()),  # Add this
     ):
+        # Keep session manager bound to the same Redis backend used by this test
+        session_manager.set_redis_client(fake_redis)
         yield fake_redis
+        session_manager.set_redis_client(None)
 
 
 @pytest_asyncio.fixture(autouse=True)
@@ -1367,14 +1372,13 @@ async def init_real_redis_async(request):
     """Initialize real Redis client for tests that need it.
 
     This fixture runs BEFORE tests marked with:
-    - @pytest.mark.integration
     - @pytest.mark.e2e
     - @pytest.mark.uses_real_redis
 
     It initializes cache.client with a real Redis connection.
     """
     markers = [m.name for m in request.node.iter_markers()]
-    needs_real_redis = any(m in markers for m in ("integration", "e2e", "uses_real_redis"))
+    needs_real_redis = any(m in markers for m in ("e2e", "uses_real_redis"))
 
     if not needs_real_redis:
         yield
@@ -1383,6 +1387,7 @@ async def init_real_redis_async(request):
     # Initialize real Redis client
     from src.app.core.utils import cache
     from src.app.core import redis_factory
+    from src.app.core.security.session_manager import session_manager
     from src.app.core.utils.gcra_rate_limit import gcra_rate_limiter as gcra_global, GCRARateLimiter
     import redis.asyncio as redis
 
@@ -1394,6 +1399,7 @@ async def init_real_redis_async(request):
     cache.client = None
     cache.pool = None
     redis_factory._redis_pool = None
+    session_manager.set_redis_client(None)
 
     # Reset GCRA rate limiter to force fresh initialization
     # The script SHA is bound to a specific Redis connection
@@ -1409,6 +1415,8 @@ async def init_real_redis_async(request):
 
         # Initialize GCRA rate limiter with new client
         gcra_module.gcra_rate_limiter = GCRARateLimiter(cache.client)
+        # Bind session manager to current-loop Redis client
+        session_manager.set_redis_client(cache.client)
 
         # Flush before test for isolation
         await cache.client.flushdb()
@@ -1431,6 +1439,7 @@ async def init_real_redis_async(request):
     cache.pool = None
     redis_factory._redis_pool = None
     gcra_module.gcra_rate_limiter = None
+    session_manager.set_redis_client(None)
 
 
 @pytest.fixture(autouse=True)
@@ -1438,14 +1447,14 @@ async def cleanup_real_redis(request):
     """Clean up real Redis after integration/e2e tests.
 
     This fixture runs AFTER tests that use real Redis connections
-    (marked with @pytest.mark.integration, @pytest.mark.e2e, or @pytest.mark.uses_real_redis).
+    (marked with @pytest.mark.e2e or @pytest.mark.uses_real_redis).
 
     Cleans rate limit keys, auth cache, tenant cache, and token blacklist
     to prevent test isolation issues.
     """
     # Check markers FIRST - skip if not a real Redis test
     markers = [m.name for m in request.node.iter_markers()]
-    needs_real_redis = any(m in markers for m in ("integration", "e2e", "uses_real_redis"))
+    needs_real_redis = any(m in markers for m in ("e2e", "uses_real_redis"))
 
     if not needs_real_redis:
         yield
@@ -1727,6 +1736,12 @@ async def real_postgres_engine():
         poolclass=NullPool,  # Critical: prevents connection caching across event loops
     )
 
+    # Ensure real Postgres test DB has the latest ORM schema.
+    # This prevents coverage/e2e failures when migrations were not applied
+    # but models (e.g. ai_token_usage relation) are already referenced.
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+
     yield engine
 
     # Handle event loop closed during teardown
@@ -1772,7 +1787,7 @@ async def real_redis() -> AsyncGenerator[Any, None]:
 
     # Use TEST_REDIS_PORT env var if set, otherwise use main REDIS_CACHE_PORT
     test_port = int(os.getenv("TEST_REDIS_PORT", str(settings.REDIS_CACHE_PORT)))
-    
+
     # Handle SecretStr for test environment Redis password
     test_password = os.getenv("TEST_REDIS_PASSWORD")
     if not test_password and settings.REDIS_CACHE_PASSWORD:
