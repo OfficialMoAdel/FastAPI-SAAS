@@ -65,7 +65,7 @@ else:
         # P1-1: Configure asyncpg statement cache for better performance
         # Default 100 statements, 1KB max - increase for complex workloads
         connect_args={
-            "statement_cache_size": 5000,  # Cache up to 5000 prepared statements
+            "statement_cache_size": 0,  # Disabled to prevent memory bloat with connection poolers
             "max_cacheable_statement_size": 10240,  # 10KB max statement size
         },
     )

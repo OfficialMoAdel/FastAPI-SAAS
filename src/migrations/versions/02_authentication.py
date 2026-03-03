@@ -31,7 +31,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_token_blacklist")),
     )
     op.create_index("ix_token_blacklist_token", "token_blacklist", ["token"], unique=True)
-    op.create_index("idx_token_blacklist_expires", "token_blacklist", ["expires_at"])
+    op.create_index("idx_token_blacklist_active", "token_blacklist", ["expires_at"])
 
     # ===== PASSKEY_CREDENTIALS =====
     op.create_table(
@@ -164,6 +164,7 @@ def upgrade() -> None:
     op.create_index("idx_user_sso_connections_user_id", "user_sso_connections", ["user_id"])
     op.create_unique_constraint("uq_user_sso_user_provider", "user_sso_connections", ["user_id", "provider"])
     op.create_unique_constraint("uq_user_sso_provider_user", "user_sso_connections", ["provider", "provider_user_id"])
+    op.create_index("idx_user_sso_lookup", "user_sso_connections", ["provider", "provider_user_id"])
 
 
 def downgrade() -> None:

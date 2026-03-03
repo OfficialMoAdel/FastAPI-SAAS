@@ -15,7 +15,7 @@ if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
 
 
-class FeatureFlag(Base):
+class FeatureFlag(Base, kw_only=True):
     """
     Global feature flag definition.
 
@@ -109,7 +109,7 @@ class FeatureFlag(Base):
     )
 
     # Indexes
-    __table_args__: tuple[Index, Index, dict[str, bool]] = (  # type: ignore[assignment]
+    __table_args__ = (
         Index("idx_feature_flag_key", "key", unique=True),
         Index("idx_feature_flag_system", "is_system"),
         {"extend_existing": True},
@@ -120,7 +120,7 @@ class FeatureFlag(Base):
         return f"<FeatureFlag(key='{self.key}', default={self.default_value})>"
 
 
-class FeatureFlagOverride(Base):
+class FeatureFlagOverride(Base, kw_only=True):
     """
     Tenant-specific feature flag overrides.
 
@@ -200,7 +200,7 @@ class FeatureFlagOverride(Base):
     )
 
     # Constraints
-    __table_args__: tuple[UniqueConstraint, Index, Index, dict[str, bool]] = (  # type: ignore[assignment]
+    __table_args__ = (
         UniqueConstraint(
             "tenant_id",
             "feature_flag_id",

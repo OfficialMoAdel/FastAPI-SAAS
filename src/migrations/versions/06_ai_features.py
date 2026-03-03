@@ -83,10 +83,36 @@ def upgrade() -> None:
         sa.CheckConstraint("temperature >= 0.0 AND temperature <= 2.0", name=op.f("ck_ai_settings_temperature_valid")),
         sa.CheckConstraint("max_tokens >= 1 AND max_tokens <= 32000", name=op.f("ck_ai_settings_max_tokens_valid")),
     )
-    op.create_index("idx_ai_settings_user", "ai_settings", ["user_id"], unique=True)
+    # ===== AI_TOKEN_USAGE =====
+    op.create_table(
+        "ai_token_usage",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=True),
+        sa.Column("user_id", sa.Integer(), nullable=True),
+        sa.Column("session_id", sa.Integer(), nullable=True),
+        sa.Column("provider", sa.String(length=50), nullable=False),
+        sa.Column("model", sa.String(length=100), nullable=False),
+        sa.Column("prompt_tokens", sa.Integer(), nullable=False),
+        sa.Column("completion_tokens", sa.Integer(), nullable=False),
+        sa.Column("total_tokens", sa.Integer(), nullable=False),
+        sa.Column("cost_usd", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column("usage_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_token_usage")),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_ai_token_usage_tenant_id")),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_ai_token_usage_user_id")),
+        sa.ForeignKeyConstraint(["session_id"], ["ai_chat_sessions.id"], name=op.f("fk_ai_token_usage_session_id")),
+    )
+    op.create_index("idx_ai_token_usage_tenant", "ai_token_usage", ["tenant_id"])
+    op.create_index("idx_ai_token_usage_user", "ai_token_usage", ["user_id"])
+    op.create_index("idx_ai_token_usage_session", "ai_token_usage", ["session_id"])
+    op.create_index("idx_ai_token_usage_provider", "ai_token_usage", ["provider"])
+    op.create_index("idx_ai_token_usage_model", "ai_token_usage", ["model"])
+    op.create_index("idx_ai_token_usage_created", "ai_token_usage", ["created_at"])
 
 
 def downgrade() -> None:
+    op.drop_table("ai_token_usage")
     op.drop_table("ai_settings")
     op.drop_table("ai_chat_messages")
     op.drop_table("ai_chat_sessions")

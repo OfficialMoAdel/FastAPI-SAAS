@@ -123,6 +123,9 @@ class BaseService(Generic[T]):
             sort_columns = kwargs.pop("sort_columns", None)
             sort_orders = kwargs.pop("sort_orders", None)
 
+            if hasattr(self.crud, "_inject_tenant_filter"):
+                kwargs = self.crud._inject_tenant_filter(kwargs)
+
             # Apply kwargs filters via FastCRUD's processor
             filters = self.crud._filter_processor.parse_filters(**kwargs)
             query = query.filter(*filters)

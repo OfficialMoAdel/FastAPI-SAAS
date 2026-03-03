@@ -96,7 +96,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_user_preferences_user_id", "user_preferences", ["user_id"], unique=True)
     op.create_index("idx_user_preferences_quiet_hours", "user_preferences", ["quiet_hours_enabled"])
-    op.execute("CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences)")
+    op.execute("CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences jsonb_path_ops)")
 
     # ===== FEATURE_FLAGS =====
     op.create_table(

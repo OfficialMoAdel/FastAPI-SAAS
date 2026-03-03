@@ -176,7 +176,7 @@ def upgrade() -> None:
     )
     op.create_index("idx_billing_records_tenant", "billing_records", ["tenant_id"])
     op.create_index("idx_billing_records_user", "billing_records", ["user_id"])
-    op.create_index("idx_billing_records_created", "billing_records", ["created_at"])
+    op.create_index("idx_billing_records_created", "billing_records", ["created_at"], postgresql_using="brin")
 
 
 def downgrade() -> None:

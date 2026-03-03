@@ -159,4 +159,14 @@ def downgrade() -> None:
     op.drop_table("user_roles")
     op.drop_table("role_permissions")
     op.drop_table("roles")
+    op.execute(
+        """
+        DELETE FROM permissions WHERE slug IN (
+            'users:read', 'users:manage', 'roles:read', 'roles:manage', 'roles:assign',
+            'posts:read', 'posts:manage', 'files:read', 'files:manage', 'billing:read',
+            'billing:manage', 'settings:read', 'settings:manage', 'audit:read',
+            'webhooks:read', 'webhooks:manage', 'api_keys:read', 'api_keys:manage'
+        )
+        """
+    )
     op.drop_table("permissions")

@@ -234,13 +234,14 @@ async def bypass_rls(
             )
             logger.debug("RLS bypass audit log created", user_id=user_id, reason=reason)
         except Exception as audit_error:
-            # Log but don't fail - the bypass should still work
+            # SECURITY FIX: Fail closed - if we can't audit, we don't bypass
             logger.error(
-                "Failed to create RLS bypass audit log",
+                "Failed to create RLS bypass audit log - failing closed",
                 user_id=user_id,
                 reason=reason,
                 error=str(audit_error),
             )
+            raise
 
         yield session
 

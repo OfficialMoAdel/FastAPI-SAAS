@@ -34,9 +34,9 @@ if TYPE_CHECKING:
     from src.app.modules.tiers.models import Tier
 
 
-class User(Base):
+class User(Base, kw_only=True):
     __tablename__ = "user"
-    __table_args__ = (
+    __table_args__: tuple[Index | UniqueConstraint, ...] = (
         UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
         UniqueConstraint("username", "tenant_id", name="uq_user_username_tenant"),
         Index("idx_users_tenant_email", "tenant_id", "email"),
@@ -77,16 +77,37 @@ class User(Base):
         back_populates="users",
         init=False,
         viewonly=True,
+        lazy="selectin",
     )
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="user", init=False)
-    files: Mapped[list["File"]] = relationship(back_populates="user", init=False)
-    api_keys: Mapped[list["APIKey"]] = relationship(back_populates="user", init=False)
-    mfa_methods: Mapped[list["MFAMethod"]] = relationship(back_populates="user", init=False)
+    notifications: Mapped[list["Notification"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    files: Mapped[list["File"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    api_keys: Mapped[list["APIKey"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    mfa_methods: Mapped[list["MFAMethod"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
     # Billing & AI relationships (Phase 3/5)
-    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="user", init=False)
-    billing_records: Mapped[list["BillingRecord"]] = relationship(back_populates="user", init=False)
-    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="user", init=False)
-    ai_settings: Mapped["AISettings | None"] = relationship(back_populates="user", uselist=False, init=False)
-    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="user", init=False)
+    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    billing_records: Mapped[list["BillingRecord"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
+    ai_settings: Mapped["AISettings | None"] = relationship(
+        back_populates="user", uselist=False, init=False, cascade="all, delete-orphan"
+    )
+    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
     tier: Mapped["Tier | None"] = relationship(lazy="joined", init=False)  # OPT-6: Eager load tier
-    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user", init=False)
+    audit_logs: Mapped[list["AuditLog"]] = relationship(
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )

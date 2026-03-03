@@ -11,14 +11,14 @@ if TYPE_CHECKING:
     from src.app.modules.tiers.models import Tier
 
 
-class RateLimit(Base):
+class RateLimit(Base, kw_only=True):
     __tablename__ = "rate_limit"
     # P2-3: Composite index for tier+path lookups (common query pattern)
     # Unique constraint to prevent duplicate rate limits for same path in tier
-    __table_args__ = (
+    __table_args__: tuple[Index | UniqueConstraint, ...] = (
         Index("ix_rate_limit_tier_path", "tier_id", "path"),
         UniqueConstraint("tier_id", "path", name="uq_rate_limit_tier_path"),
-    )  # type: ignore[assignment]
+    )
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
     tier_id: Mapped[int] = mapped_column(ForeignKey("tier.id"), index=True)

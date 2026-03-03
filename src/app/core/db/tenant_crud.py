@@ -79,7 +79,7 @@ class TenantAwareCRUD(
         if "tenant_id" not in kwargs:
             tenant = get_tenant_context()
             if tenant is not None:
-                kwargs["tenant_id"] = tenant.id
+                return {"tenant_id": tenant.id, **kwargs}
         return kwargs
 
     async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]

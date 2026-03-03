@@ -19,7 +19,7 @@ if TYPE_CHECKING:
     from src.app.modules.users.models import User
 
 
-class StripeSettings(Base):
+class StripeSettings(Base, kw_only=True):
     """Tenant-level Stripe configuration.
 
     One record per tenant. API keys are encrypted at rest using Fernet.
@@ -51,7 +51,7 @@ class StripeSettings(Base):
     tenant: Mapped["Tenant"] = relationship(back_populates="stripe_settings", init=False)
 
 
-class SubscriptionPlan(Base):
+class SubscriptionPlan(Base, kw_only=True):
     """Subscription plan definition with pricing tiers."""
 
     __tablename__ = "subscription_plans"
@@ -87,10 +87,11 @@ class SubscriptionPlan(Base):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False)
-    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(back_populates="subscription_plan", init=False)
+    user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
+        back_populates="subscription_plan", init=False, lazy="selectin"
+    )
 
-
-class Product(Base):
+class Product(Base, kw_only=True):
     """Purchasable products for one-time or add-on purchases."""
 
     __tablename__ = "products"
@@ -117,11 +118,11 @@ class Product(Base):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="products", init=False)
     pricing_tiers: Mapped[list["Pricing"]] = relationship(
-        back_populates="product", init=False, cascade="all, delete-orphan"
+        back_populates="product", init=False, cascade="all, delete-orphan", lazy="selectin"
     )
 
 
-class Pricing(Base):
+class Pricing(Base, kw_only=True):
     """Pricing tiers for products."""
 
     __tablename__ = "pricing"
@@ -158,14 +159,14 @@ class UserSubscription(Base, kw_only=True):
 
     __tablename__ = "user_subscriptions"
 
-    __table_args__ = (
+    __table_args__: tuple[Index, ...] = (
         Index(
             "idx_subscription_tenant_user_status",
             "tenant_id",
             "user_id",
             "status",
         ),
-    )  # type: ignore[assignment]
+    )
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
@@ -200,10 +201,12 @@ class UserSubscription(Base, kw_only=True):
     tenant: Mapped["Tenant"] = relationship(init=False)
     user: Mapped["User"] = relationship(back_populates="user_subscriptions", init=False)
     subscription_plan: Mapped["SubscriptionPlan"] = relationship(back_populates="user_subscriptions", init=False)
-    billing_records: Mapped[list["BillingRecord"]] = relationship(back_populates="user_subscription", init=False)
+    billing_records: Mapped[list["BillingRecord"]] = relationship(
+        back_populates="user_subscription", init=False, cascade="all, delete-orphan", lazy="selectin"
+    )
 
 
-class BillingRecord(Base):
+class BillingRecord(Base, kw_only=True):
     """Payment transaction history."""
 
     __tablename__ = "billing_records"
