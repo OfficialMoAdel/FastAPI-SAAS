@@ -117,6 +117,7 @@ def upgrade() -> None:
         sa.Column("key_prefix", sa.String(length=10), nullable=False),
         sa.Column("hashed_key", sa.String(length=255), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("valid_from", sa.DateTime(timezone=True), nullable=True, comment="Timestamp when key becomes valid for grace period rotation"),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("scopes", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
@@ -130,6 +131,8 @@ def upgrade() -> None:
     op.create_index("ix_api_keys_tenant_id", "api_keys", ["tenant_id"])
     op.create_index("idx_api_keys_tenant_active", "api_keys", ["tenant_id", "is_active"])
     op.create_index("idx_api_keys_hashed_key", "api_keys", ["hashed_key"], unique=True)
+    op.create_index("idx_api_keys_valid_from", "api_keys", ["valid_from"])
+    op.create_index("idx_api_keys_tenant_valid", "api_keys", ["tenant_id", "is_active", "valid_from"])
 
     # ===== RATE_LIMIT =====
     op.create_table(

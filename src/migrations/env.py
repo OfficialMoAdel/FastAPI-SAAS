@@ -45,7 +45,7 @@ config = context.config
 
 config.set_main_option(
     "sqlalchemy.url",
-    f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD}@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}",
+    f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_USER}:{settings.POSTGRES_PASSWORD.get_secret_value()}@{settings.POSTGRES_SERVER}:{settings.POSTGRES_PORT}/{settings.POSTGRES_DB}",
 )
 
 
@@ -107,4 +107,4 @@ if context.is_offline_mode():
     run_migrations_offline()
 else:
     # asyncio already imported at top of file
-    asyncio.run(run_migrations_online())  # type: ignore[func-returns-value]
+    run_migrations_online()

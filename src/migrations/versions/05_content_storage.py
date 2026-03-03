@@ -32,7 +32,8 @@ def upgrade() -> None:
         sa.Column("endpoint_url", sa.String(length=500), nullable=True),
         sa.Column("max_file_size_mb", sa.Integer(), nullable=False, server_default=sa.text("50")),
         sa.Column("allowed_file_types", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
-        sa.Column("storage_quota_bytes", sa.BigInteger(), nullable=True),
+        sa.Column("storage_quota_bytes", sa.BigInteger(), nullable=False),
+        sa.Column("max_file_count", sa.Integer(), nullable=False, server_default=sa.text("10000")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_storage_settings")),
@@ -59,8 +60,9 @@ def upgrade() -> None:
         sa.Column("is_public", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
+        sa.Column("description", sa.Text(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=True),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_files")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_files_tenant_id"), ondelete="CASCADE"),
@@ -81,12 +83,19 @@ def upgrade() -> None:
         sa.Column(
             "preferences", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'")
         ),
+        sa.Column("email_notifications_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("push_notifications_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("disabled_notification_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'[]'")),
+        sa.Column("quiet_hours_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("quiet_hours_start", sa.Time(timezone=True), nullable=True),
+        sa.Column("quiet_hours_end", sa.Time(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_preferences")),
         sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_user_preferences_user_id"), ondelete="CASCADE"),
     )
     op.create_index("idx_user_preferences_user_id", "user_preferences", ["user_id"], unique=True)
+    op.create_index("idx_user_preferences_quiet_hours", "user_preferences", ["quiet_hours_enabled"])
     op.execute("CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences)")
 
     # ===== FEATURE_FLAGS =====

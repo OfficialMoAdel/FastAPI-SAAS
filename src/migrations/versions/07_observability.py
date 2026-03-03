@@ -4,7 +4,7 @@ Revision ID: 07_observability
 Revises: 06_ai_features
 Create Date: 2026-01-30
 
-Tables: audit_logs, notifications, email_template_overrides, webhook_endpoints, webhook_deliveries
+Tables: audit_logs, rls_audit_log, notifications, email_template_overrides, webhook_endpoints, webhook_deliveries
 """
 
 from collections.abc import Sequence
@@ -44,6 +44,30 @@ def upgrade() -> None:
     op.create_index("idx_audit_action", "audit_logs", ["action"])
     op.create_index("idx_audit_entity", "audit_logs", ["entity_type", "entity_id"])
     op.execute("CREATE INDEX idx_audit_details_gin ON audit_logs USING GIN (details)")
+
+    # ===== RLS_AUDIT_LOG =====
+    op.create_table(
+        "rls_audit_log",
+        sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
+        sa.Column("uuid", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("user_id", sa.String(length=100), nullable=True, comment="ID of user who performed RLS bypass"),
+        sa.Column("reason", sa.Text(), nullable=False, comment="Reason for RLS bypass operation"),
+        sa.Column("timestamp", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False, comment="When the bypass occurred"),
+        sa.Column("ip_address", sa.String(length=45), nullable=True, comment="IP address of the request"),
+        sa.Column("table_name", sa.String(length=100), nullable=True, comment="Table accessed during bypass"),
+        sa.Column("operation", sa.String(length=50), nullable=True, comment="Type of operation performed"),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_rls_audit_log")),
+        sa.UniqueConstraint("uuid", name=op.f("uq_rls_audit_log_uuid")),
+    )
+    op.create_index("ix_rls_audit_log_user_id", "rls_audit_log", ["user_id"])
+    op.create_index("ix_rls_audit_log_timestamp", "rls_audit_log", ["timestamp"])
+    op.execute(
+        """
+        COMMENT ON TABLE rls_audit_log IS
+        'Audit log for Row Level Security bypass operations - for compliance and security investigation'
+        """
+    )
 
     # ===== NOTIFICATIONS =====
     op.create_table(
@@ -99,6 +123,12 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("url", sa.String(length=500), nullable=False),
         sa.Column("secret", sa.LargeBinary(), nullable=True),
+        sa.Column(
+            "signing_secret",
+            sa.String(64),
+            nullable=True,
+            comment="Per-endpoint signing secret for webhook verification (64 chars = 256 bits)",
+        ),
         sa.Column("event_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("description", sa.String(length=255), nullable=True),
@@ -155,4 +185,5 @@ def downgrade() -> None:
     op.drop_table("webhook_endpoints")
     op.drop_table("email_template_overrides")
     op.drop_table("notifications")
+    op.drop_table("rls_audit_log")
     op.drop_table("audit_logs")

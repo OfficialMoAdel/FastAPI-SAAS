@@ -84,13 +84,13 @@ def upgrade() -> None:
     # 5. Enable RLS and create policies for each tenant table
     for table in TENANT_TABLES:
         # Enable RLS
-        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
-        op.execute(f"COMMENT ON TABLE {table} IS 'RLS enabled for tenant isolation'")
+        op.execute(f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY')
+        op.execute(f"COMMENT ON TABLE \"{table}\" IS 'RLS enabled for tenant isolation'")
 
         # Create tenant isolation policy
         op.execute(
             f"""
-            CREATE POLICY tenant_isolation ON {table}
+            CREATE POLICY tenant_isolation ON "{table}"
                 FOR ALL
                 USING (tenant_id = auth.current_tenant_id())
                 WITH CHECK (tenant_id = auth.current_tenant_id())
@@ -100,7 +100,7 @@ def upgrade() -> None:
         # Create bypass policy for admin/system operations
         op.execute(
             f"""
-            CREATE POLICY bypass_rls ON {table}
+            CREATE POLICY bypass_rls ON "{table}"
                 FOR ALL
                 USING (auth.bypass_rls())
                 WITH CHECK (auth.bypass_rls())
@@ -110,13 +110,13 @@ def upgrade() -> None:
         # Add comments to policies
         op.execute(
             f"""
-            COMMENT ON POLICY tenant_isolation ON {table} IS
+            COMMENT ON POLICY tenant_isolation ON "{table}" IS
             'Enforce tenant isolation - users can only access their tenant data'
             """
         )
         op.execute(
             f"""
-            COMMENT ON POLICY bypass_rls ON {table} IS
+            COMMENT ON POLICY bypass_rls ON "{table}" IS
             'Allow bypass for admin operations when app.bypass_rls is set'
             """
         )
@@ -175,9 +175,9 @@ def downgrade() -> None:
 
     # 1. Drop policies from all tables
     for table in TENANT_TABLES:
-        op.execute(f"DROP POLICY IF EXISTS tenant_isolation ON {table}")
-        op.execute(f"DROP POLICY IF EXISTS bypass_rls ON {table}")
-        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+        op.execute(f'DROP POLICY IF EXISTS tenant_isolation ON "{table}"')
+        op.execute(f'DROP POLICY IF EXISTS bypass_rls ON "{table}"')
+        op.execute(f'ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY')
 
     # 3. Drop functions
     op.execute("DROP FUNCTION IF EXISTS auth.current_tenant_id()")

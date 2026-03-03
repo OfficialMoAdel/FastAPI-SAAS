@@ -61,6 +61,7 @@ def upgrade() -> None:
         sa.Column("uuid", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
         sa.Column("profile_image_url", sa.String(length=500), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("true")),
+        sa.Column("token_version", sa.Integer(), nullable=False, server_default="0"),
         sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_superuser", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_email_verified", sa.Boolean(), nullable=False, server_default=sa.text("false")),
@@ -76,6 +77,8 @@ def upgrade() -> None:
     op.create_index("ix_user_uuid", "user", ["uuid"], unique=True)
     op.create_index("idx_users_tenant_email", "user", ["tenant_id", "email"])
     op.create_index("idx_users_tenant_deleted", "user", ["tenant_id", "is_deleted"])
+    op.create_index("ix_user_is_active", "user", ["is_active"])
+    op.create_index("ix_user_token_version", "user", ["token_version"])
 
     # ===== POST =====
     op.create_table(

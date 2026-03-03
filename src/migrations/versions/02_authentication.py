@@ -4,7 +4,7 @@ Revision ID: 02_authentication
 Revises: 01_foundation
 Create Date: 2026-01-30
 
-Tables: token_blacklist, passkey_credentials, magic_links, password_reset_tokens,
+Tables: token_blacklist, passkey_credentials, magic_links, mfa_methods, password_reset_tokens,
         email_verification_tokens, sso_settings, user_sso_connections
 """
 
@@ -72,6 +72,25 @@ def upgrade() -> None:
     op.create_index("idx_magic_links_token", "magic_links", ["token"], unique=True)
     op.create_index("idx_magic_links_user_id", "magic_links", ["user_id"])
     op.create_index("idx_magic_links_expires_at", "magic_links", ["expires_at"])
+
+    # ===== MFA_METHODS =====
+    op.create_table(
+        "mfa_methods",
+        sa.Column("id", postgresql.UUID(as_uuid=True), nullable=False, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("name", sa.String(length=50), nullable=False),
+        sa.Column("type", sa.String(length=20), nullable=False),
+        sa.Column("secret", sa.String(length=255), nullable=False),
+        sa.Column("backup_codes", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'"), nullable=True),
+        sa.Column("is_primary", sa.Boolean(), server_default="false", nullable=False),
+        sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
+        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_mfa_methods_user_id"), ondelete="CASCADE"),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_mfa_methods")),
+        sa.UniqueConstraint("user_id", "type", name=op.f("uq_user_mfa_type")),
+    )
+    op.create_index("ix_mfa_methods_user_id", "mfa_methods", ["user_id"])
+    op.create_index("ix_mfa_methods_type", "mfa_methods", ["type"])
 
     # ===== PASSWORD_RESET_TOKENS =====
     op.create_table(
@@ -152,6 +171,7 @@ def downgrade() -> None:
     op.drop_table("sso_settings")
     op.drop_table("email_verification_tokens")
     op.drop_table("password_reset_tokens")
+    op.drop_table("mfa_methods")
     op.drop_table("magic_links")
     op.drop_table("passkey_credentials")
     op.drop_table("token_blacklist")
