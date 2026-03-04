@@ -13,7 +13,6 @@ from src.app.modules.billing.routes.checkouts import router as checkouts_router
 from src.app.modules.billing.routes.invoices import router as invoices_router
 from src.app.modules.billing.routes.prices import router as prices_router
 from src.app.modules.billing.routes.products import router as products_router
-from src.app.modules.configurations import router as configurations_router
 from src.app.modules.dashboard.router import router as dashboard_router
 from src.app.modules.feature_flags.router import router as feature_flags_router
 from src.app.modules.files.router import router as files_router
@@ -72,7 +71,7 @@ router.include_router(products_router)  # API compatibility layer
 router.include_router(prices_router)  # API compatibility layer
 router.include_router(checkouts_router)  # API compatibility layer
 router.include_router(invoices_router)  # API compatibility layer
-router.include_router(configurations_router)  # API compatibility layer (Stripe)
+
 router.include_router(ai_router)
 # Admin endpoints - PROTECTED with superuser authentication
 router.include_router(

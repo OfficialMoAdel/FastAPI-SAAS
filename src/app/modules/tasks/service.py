@@ -3,9 +3,13 @@
 from typing import Any
 
 from arq.jobs import Job as ArqJob
-from fastapi import status, HTTPException
+from fastapi import status
 
 from src.app.core.utils import queue
+
+class QueueUnavailableError(Exception):
+    pass
+
 
 
 class TaskService:
@@ -26,15 +30,17 @@ class TaskService:
 
         Raises
         ------
-        HTTPException
-            If queue is not available or task creation fails
+        QueueUnavailableError
+            If queue is not available
+        ValueError
+            If task creation fails
         """
         if queue.pool is None:
-            raise HTTPException(status_code=503, detail="Queue is not available")
+            raise QueueUnavailableError("Queue is not available")
 
         job = await queue.pool.enqueue_job("sample_background_task", message)
         if job is None:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Failed to create task")
+            raise ValueError("Failed to create task")
 
         return {"id": job.job_id}
 
@@ -53,11 +59,11 @@ class TaskService:
 
         Raises
         ------
-        HTTPException
+        QueueUnavailableError
             If queue is not available
         """
         if queue.pool is None:
-            raise HTTPException(status_code=503, detail="Queue is not available")
+            raise QueueUnavailableError("Queue is not available")
 
         job = ArqJob(task_id, queue.pool)
         job_info = await job.info()

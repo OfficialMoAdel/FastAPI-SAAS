@@ -4,7 +4,9 @@ Provides a registry-based system for registering and executing cache warmers
 with error handling and statistics tracking.
 """
 
+import asyncio
 import logging
+import time
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,9 +68,6 @@ class CacheWarmer:
         Returns:
             CacheWarmingResult with detailed results.
         """
-        import asyncio
-        import time
-
         start_time = time.time()
         result = CacheWarmingResult()
         errors: list[str] = []
@@ -143,9 +142,6 @@ class CacheWarmer:
         Returns:
             CacheWarmingResult with results.
         """
-        import asyncio
-        import time
-
         result = CacheWarmingResult()
         errors: list[str] = []
 

@@ -42,11 +42,11 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     response = await client.get("/api/v1/account/sessions", headers=headers1)
     assert response.status_code == 200, f"Failed to get sessions: {response.text}"
 
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
     log_step("Initial sessions retrieved", count=len(sessions), sessions=sessions)
     assert len(sessions) >= 1, "Should have at least one session"
 
-    session1_id = sessions[0]["session_id"]
+    session1_id = sessions[0]["id"]
     log_step("First session ID", session_id=session1_id)
 
     # Step 2: Login from second device
@@ -64,11 +64,11 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     response = await client.get("/api/v1/account/sessions", headers=headers1)
     assert response.status_code == 200
 
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
     log_step("Sessions after second login", count=len(sessions), sessions=sessions)
     assert len(sessions) == 2, f"Expected 2 sessions, got {len(sessions)}"
 
-    session2_id = [s["session_id"] for s in sessions if s["session_id"] != session1_id][0]
+    session2_id = [s["id"] for s in sessions if s["id"] != session1_id][0]
     log_step("Second session ID", session_id=session2_id)
 
     # Step 4: Verify Redis Hash structure
@@ -100,7 +100,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     # Alternative: Just verify session count changes correctly
     response = await client.get("/api/v1/account/sessions", headers=headers1)
     assert response.status_code == 200
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
     log_step("Sessions for first device", count=len(sessions))
 
     # Step 6: Verify sessions are tracked correctly
@@ -109,7 +109,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     response = await client.get("/api/v1/account/sessions", headers=headers2)
     assert response.status_code == 200
 
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
     log_step("Sessions from second device", count=len(sessions), sessions=sessions)
     assert len(sessions) >= 1, f"Expected at least 1 session, got {len(sessions)}"
 
@@ -218,7 +218,7 @@ async def test_session_list_performance(authenticated_user: dict, client: AsyncC
     assert response.status_code == 200
 
     elapsed = time.perf_counter() - start_time
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
 
     log_step(
         "Session list completed",
@@ -273,11 +273,11 @@ async def test_concurrent_session_operations(authenticated_user: dict, client: A
     response = await client.get("/api/v1/account/sessions", headers=headers)
     assert response.status_code == 200
 
-    sessions = response.json()
+    sessions = response.json().get("sessions", [])
     log_step("Sessions after concurrent operations", count=len(sessions))
 
     # Verify no duplicate session IDs
-    session_ids = [s["session_id"] for s in sessions]
+    session_ids = [s["id"] for s in sessions]
     unique_ids = set(session_ids)
     assert len(session_ids) == len(unique_ids), "Found duplicate session IDs"
     log_step("No duplicate session IDs found")

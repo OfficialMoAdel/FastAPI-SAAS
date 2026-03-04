@@ -26,6 +26,9 @@ from src.app.modules.auth.schemas import (
     PasswordResetRequest,
     PasswordResetResponse,
     RefreshTokenResponse,
+    SessionCountResponse,
+    SessionInfo,
+    SessionListResponse,
 )
 from src.app.modules.auth.service import AuthService
 from src.app.modules.users.models import User
@@ -78,6 +81,9 @@ async def refresh_access_token(
 ) -> dict[str, str]:
     """Refresh access token using refresh token from cookie."""
     refresh_token = request.cookies.get("refresh_token")
+    if not refresh_token:
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
     return await auth_service.refresh_access_token(refresh_token, response, db)
 
 
@@ -156,23 +162,53 @@ async def verify_email(
     return EmailVerificationResponse(**result)
 
 
-@router.get("/sessions")
+@router.get("/sessions", response_model=SessionListResponse)
 async def list_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     redis: Annotated[Redis, Depends(async_get_redis)],
-) -> list[dict]:
+) -> SessionListResponse:
     """List all active sessions for current user."""
     session_manager = SessionManager(redis)
     sessions = await session_manager.get_active_sessions(user_id=current_user["id"])
-    return sessions
+
+    from datetime import datetime
+    session_infos = []
+    for s in sessions:
+        device_info = s.get("device_info") or ""
+        ip_address = None
+        user_agent = None
+        if " | IP: " in device_info:
+            user_agent, ip_address = device_info.split(" | IP: ", 1)
+        else:
+            user_agent = device_info if device_info else None
+
+        created_at_str = s.get("created_at")
+        try:
+            if isinstance(created_at_str, str):
+                created_at_ts = int(datetime.fromisoformat(created_at_str).timestamp())
+            else:
+                created_at_ts = 0
+        except (ValueError, TypeError):
+            created_at_ts = 0
+
+        session_infos.append(SessionInfo(
+            id=s.get("session_id", ""),
+            user_id=current_user["id"],
+            created_at=created_at_ts,
+            last_accessed_at=created_at_ts,
+            ip_address=ip_address,
+            user_agent=user_agent
+        ))
+
+    return SessionListResponse(sessions=session_infos)
 
 
-@router.get("/sessions/count")
+@router.get("/sessions/count", response_model=SessionCountResponse)
 async def count_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     redis: Annotated[Redis, Depends(async_get_redis)],
-) -> dict[str, int]:
+) -> SessionCountResponse:
     """Count active sessions for current user."""
     session_manager = SessionManager(redis)
     count = await session_manager.count_active_sessions(user_id=current_user["id"])
-    return {"count": count}
+    return SessionCountResponse(count=count)

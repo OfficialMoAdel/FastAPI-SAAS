@@ -13,7 +13,7 @@ import re
 import time
 from collections import defaultdict
 from contextvars import ContextVar
-from datetime import UTC
+from datetime import UTC, datetime
 from typing import Any
 
 from sqlalchemy import event
@@ -140,8 +140,6 @@ def _track_query(
         n_plus_1_threshold: Warn if same query executed more than N times
         detailed_logs: Log detailed analysis
     """
-    from datetime import datetime
-
     now = time.perf_counter()
 
     if normalized_statement in _query_tracker:

@@ -8,6 +8,8 @@ Provides API endpoints for:
 - MFA login completion
 """
 
+import asyncio
+from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -18,6 +20,7 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
 from src.app.core.security import (
+    ACCESS_TOKEN_EXPIRE_MINUTES,
     MFAPendingTokenManager,
     create_access_token,
     create_refresh_token,
@@ -36,6 +39,7 @@ from src.app.modules.mfa.schemas import (
     MFAVerifyResponse,
 )
 from src.app.modules.mfa.service import MFAService, get_mfa_service
+from src.app.modules.users.service import get_user_service
 
 router = APIRouter(prefix="/mfa", tags=["mfa"])
 
@@ -275,12 +279,6 @@ async def complete_mfa_login(
         RateLimitException: If too many verification attempts.
         UnauthorizedException: If MFA pending token or code is invalid.
     """
-    import asyncio
-    from datetime import timedelta
-
-    from src.app.core.security import ACCESS_TOKEN_EXPIRE_MINUTES
-    from src.app.modules.users.service import get_user_service
-
     # Check rate limit (use MFA pending token as identifier)
     await check_mfa_rate_limit(fastapi_request, identifier=request.mfa_token)
 

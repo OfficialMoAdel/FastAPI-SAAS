@@ -6,7 +6,9 @@ Provides safe execution wrapper for cache warming operations with:
 - Comprehensive result tracking
 """
 
+import asyncio
 import logging
+from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
@@ -23,7 +25,7 @@ logger = logging.getLogger(__name__)
 CACHE_WARMING_ENABLED = True
 CACHE_WARMING_DELAY = timedelta(seconds=2)
 
-DEFAULT_WARMERS = [
+DEFAULT_WARMERS: list[tuple[str, Callable[..., Any]]] = [
     ("tenant", warm_tenant_cache),
     ("tier", warm_tier_cache),
 ]
@@ -46,7 +48,6 @@ async def warm_cache_safely(
     Returns:
         Tuple of (success, cached_count, error).
     """
-    import asyncio
 
     try:
         cached_count: int = await asyncio.wait_for(warmer_func(session), timeout=timeout)

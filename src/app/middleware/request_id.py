@@ -6,6 +6,7 @@ Generates a unique request ID for each request and adds it to:
 - Logging context
 """
 
+import re
 import uuid
 from collections.abc import Callable
 
@@ -30,8 +31,6 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request and add request ID."""
-        import re
-
         # Use existing header or generate new ID
         request_id = request.headers.get(REQUEST_ID_HEADER)
 

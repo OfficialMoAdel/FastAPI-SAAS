@@ -59,6 +59,29 @@ class LogoutResponse(BaseModel):
     message: str = "Logged out successfully"
 
 
+class SessionInfo(BaseModel):
+    """Session information schema."""
+
+    id: str
+    user_id: int
+    created_at: int
+    last_accessed_at: int
+    ip_address: str | None = None
+    user_agent: str | None = None
+
+
+class SessionListResponse(BaseModel):
+    """Session list response schema."""
+
+    sessions: list[SessionInfo]
+
+
+class SessionCountResponse(BaseModel):
+    """Session count response schema."""
+
+    count: int
+
+
 class PasswordChangeRequest(BaseModel):
     """Password change request schema."""
 
@@ -114,6 +137,14 @@ __all__ = [
     "LogoutResponse",
     "MessageResponse",
     "PasswordChangeRequest",
+    "PasswordChangeResponse",
+    "PasswordResetConfirm",
+    "PasswordResetRequest",
+    "PasswordResetResponse",
+    "RefreshTokenResponse",
+    "SessionCountResponse",
+    "SessionInfo",
+    "SessionListResponse",
     "PasswordChangeResponse",
     "PasswordResetConfirm",
     "PasswordResetRequest",

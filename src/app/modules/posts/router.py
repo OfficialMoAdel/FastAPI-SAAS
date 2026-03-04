@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,8 +44,8 @@ async def read_posts(
     username: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: PostService = Depends(_get_post_service),
-    page: int = 1,
-    per_page: int = 10,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> dict:
     """Get paginated list of posts for a user."""
     return await service.get_posts(current_user["id"], page, per_page)
@@ -78,7 +78,7 @@ async def patch_post(
     return await service.update_post(id, values, current_user)
 
 
-@router.delete("/{username}/posts/{id}", response_model=MessageResponse)
+@router.delete("/{username}/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
 @cache("{username}_post_cache", resource_id_name="id", to_invalidate_extra={"{username}_posts": "{username}"})
 async def erase_post(
     request: Request,
@@ -86,19 +86,21 @@ async def erase_post(
     id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: PostService = Depends(_get_post_service),
-) -> dict[str, str]:
+) -> Response:
     """Soft delete a post."""
-    return await service.delete_post(id, current_user)
+    await service.delete_post(id, current_user)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
     "/{username}/db_posts/{id}",
-    response_model=MessageResponse,
+    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(get_current_superuser)],
 )
 @cache("{username}_post_cache", resource_id_name="id", to_invalidate_extra={"{username}_posts": "{username}"})
 async def erase_db_post(
     request: Request, username: str, id: int, service: PostService = Depends(_get_post_service)
-) -> dict[str, Any]:
+) -> Response:
     """Permanently delete a post from database (superuser only)."""
-    return await service.hard_delete(id)
+    await service.hard_delete(id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

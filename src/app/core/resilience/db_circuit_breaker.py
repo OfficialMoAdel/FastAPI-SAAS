@@ -1,6 +1,7 @@
 """Database-specific circuit breaker with fallback strategies."""
 
 import asyncio
+import json
 import logging
 from collections.abc import Callable
 from typing import Any, Optional
@@ -59,8 +60,6 @@ async def execute_query_with_circuit_breaker(
                 if cached:
                     logger.info(f"Using cached data for key: {cache_key}")
                     # Assume simple JSON serialization for fallback data
-                    import json
-
                     return list(json.loads(cached))
             except Exception as cache_error:
                 logger.error(f"Cache retrieval failed: {cache_error}")
@@ -101,8 +100,6 @@ async def execute_query_with_circuit_breaker(
         # Cache result for future fallback
         if cache_key and cache.client:
             try:
-                import json
-
                 # Handle datetime/decimal serialization if needed (simplified here)
                 # Using strings for non-serializable types for fallback purposes
                 await cache.client.setex(cache_key, cache_ttl, json.dumps(rows, default=str))
@@ -121,8 +118,6 @@ async def execute_query_with_circuit_breaker(
                 cached = await cache.client.get(cache_key)
                 if cached:
                     logger.info(f"Using cached data after failure for key: {cache_key}")
-                    import json
-
                     return list(json.loads(cached))
             except Exception as cache_error:
                 logger.debug("Circuit breaker cache fallback failed: %s", cache_error)

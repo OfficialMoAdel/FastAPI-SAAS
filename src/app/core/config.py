@@ -204,8 +204,12 @@ class PostgresSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def POSTGRES_URI(self) -> str:
-        credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
-        location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        credentials = (
+            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
+        )
+        location = (
+            f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
+        )
         return f"{credentials}@{location}"
 
 

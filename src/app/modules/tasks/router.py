@@ -5,7 +5,7 @@ from fastapi import status, APIRouter, Depends, HTTPException
 
 from src.app.api.dependencies import get_current_user, rate_limiter_dependency
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
-from src.app.modules.tasks.service import task_service
+from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -27,7 +27,12 @@ async def create_task(
     dict[str, str]
         A dictionary containing the ID of the created task.
     """
-    return await task_service.create_task(body.message)
+    try:
+        return await task_service.create_task(body.message)
+    except QueueUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
 
 
 @router.get("/task/{task_id}", response_model=TaskStatus)
@@ -52,7 +57,10 @@ async def get_task(
     HTTPException
         404 if task not found.
     """
-    result = await task_service.get_task(task_id)
-    if result is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-    return TaskStatus(**result)
+    try:
+        result = await task_service.get_task(task_id)
+        if result is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+        return TaskStatus(**result)
+    except QueueUnavailableError:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")

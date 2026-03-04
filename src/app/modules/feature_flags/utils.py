@@ -1,5 +1,6 @@
 """Feature flags utility functions."""
 
+import warnings
 from typing import Any
 from uuid import UUID
 
@@ -30,6 +31,11 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
     -------
         bool: True if feature is enabled, False otherwise
     """
+    warnings.warn(
+        "is_feature_enabled is deprecated, use FeatureFlagService.is_enabled() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
 
     # Try cache first
@@ -72,6 +78,11 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
     -------
         dict: All feature flags for the tenant
     """
+    warnings.warn(
+        "get_feature_flags is deprecated, use FeatureFlagService.get_tenant_flags() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     cache_key = f"tenant:{tenant_id}:features"
 
     # Try cache first
@@ -122,6 +133,11 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
     ------
         ModelNotFoundError: If tenant doesn't exist
     """
+    warnings.warn(
+        "update_feature_flag is deprecated, use FeatureFlagService.update_tenant_flag() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
         raise ModelNotFoundError("Tenant", tenant_id)
@@ -173,6 +189,11 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     ------
         ModelNotFoundError: If tenant doesn't exist
     """
+    warnings.warn(
+        "bulk_update_feature_flags is deprecated, use FeatureFlagService.bulk_update_tenant_flags() instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
     tenant = await db.get(Tenant, tenant_id)
     if not tenant:
         raise ModelNotFoundError("Tenant", tenant_id)

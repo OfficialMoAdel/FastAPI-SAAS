@@ -31,8 +31,19 @@ from src.app.modules.webhooks.models import (
 
 logger = get_logger(__name__)
 
-# Retry schedule: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
-WEBHOOK_RETRY_DELAYS = [60, 300, 900, 1800, 3600]
+# Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
+RETRY_DELAY_1_MINUTE = 60
+RETRY_DELAY_5_MINUTES = 300
+RETRY_DELAY_15_MINUTES = 900
+RETRY_DELAY_30_MINUTES = 1800
+RETRY_DELAY_1_HOUR = 3600
+WEBHOOK_RETRY_DELAYS = [
+    RETRY_DELAY_1_MINUTE,
+    RETRY_DELAY_5_MINUTES,
+    RETRY_DELAY_15_MINUTES,
+    RETRY_DELAY_30_MINUTES,
+    RETRY_DELAY_1_HOUR,
+]
 
 
 class WebhookService:
@@ -188,7 +199,7 @@ class WebhookService:
                 )
                 raise ValueError(
                     f"Cannot decrypt webhook secret for endpoint {endpoint.id}. The encryption key may have changed."
-                )
+                ) from e
 
         signature = self._generate_signature(payload, secret)
 

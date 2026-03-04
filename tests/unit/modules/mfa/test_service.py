@@ -541,26 +541,26 @@ class TestHashBackupCode:
     """Test backup code hashing."""
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_produces_bcrypt_hash(self, mfa_service):
-        """Test that hashing produces a bcrypt hash."""
+    async def test_hash_backup_code_produces_sha256_hash(self, mfa_service):
+        """Test that hashing produces a SHA256 hex digest."""
         code = "BC-ABCDE-FGHIJ"
 
         hash1 = await mfa_service._hash_backup_code(code)
 
-        # bcrypt hashes start with $2b$ and are 60 chars
-        assert hash1.startswith("$2b$")
-        assert len(hash1) == 60
+        # SHA256 hex digests are 64 characters long and contain only hex digits
+        assert len(hash1) == 64
+        int(hash1, 16)  # Will raise ValueError if not valid hex
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_different_calls_different_hashes(self, mfa_service):
-        """Test that bcrypt produces unique hashes (due to salt)."""
+    async def test_hash_backup_code_same_calls_same_hashes(self, mfa_service):
+        """Test that SHA256 produces identical hashes for same input (deterministic)."""
         code = "BC-ABCDE-FGHIJ"
 
         hash1 = await mfa_service._hash_backup_code(code)
         hash2 = await mfa_service._hash_backup_code(code)
 
-        # bcrypt includes unique salt, so hashes should differ
-        assert hash1 != hash2
+        # SHA256 is deterministic, so hashes should match
+        assert hash1 == hash2
 
     @pytest.mark.asyncio
     async def test_hash_backup_code_different_codes_different_hashes(self, mfa_service):

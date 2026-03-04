@@ -4,15 +4,14 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.utils.cache import client as redis_client
-from src.app.modules.notifications.models import EmailTemplateOverride, Notification
+from src.app.modules.notifications.models import Notification
 from src.app.modules.notifications.schemas import (
     EmailTemplateOverrideCreate,
     EmailTemplateOverrideResponse,
@@ -77,28 +76,17 @@ async def list_notifications(
 
     Supports filtering by status and date range.
     """
-    query = select(Notification).where(Notification.tenant_id == current_tenant.id)
-
-    if status:
-        query = query.where(Notification.status == status)
-    if start_date:
-        query = query.where(Notification.created_at >= start_date)
-    if end_date:
-        query = query.where(Notification.created_at <= end_date)
-
-    query = query.order_by(Notification.created_at.desc())
-
-    # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
-
-    # Apply pagination
+    service = NotificationService(db)
     offset = (page - 1) * per_page
-    query = query.limit(per_page).offset(offset)
 
-    result = await db.execute(query)
-    notifications = result.scalars().all()
+    total, notifications = await service.get_notifications(
+        tenant_id=current_tenant.id,
+        status=status,
+        start_date=start_date,
+        end_date=end_date,
+        limit=per_page,
+        offset=offset
+    )
 
     return {
         "items": [NotificationResponse.model_validate(n) for n in notifications],
@@ -141,14 +129,8 @@ async def list_template_overrides(
     current_user: User = Depends(get_current_user),
 ) -> list[EmailTemplateOverrideResponse]:
     """List all email template overrides for the current tenant with pagination."""
-    query = (
-        select(EmailTemplateOverride)
-        .where(EmailTemplateOverride.tenant_id == current_tenant.id)
-        .limit(limit)
-        .offset(offset)
-    )
-    result = await db.execute(query)
-    overrides = result.scalars().all()
+    service = NotificationService(db)
+    overrides = await service.list_template_overrides(current_tenant.id, limit, offset)
 
     return [EmailTemplateOverrideResponse.model_validate(o) for o in overrides]
 
@@ -166,41 +148,14 @@ async def create_template_override(
     current_user: User = Depends(get_current_user),
 ) -> EmailTemplateOverrideResponse:
     """Create or update an email template override for the current tenant."""
-    # Check if override exists
-    query = select(EmailTemplateOverride).where(
-        EmailTemplateOverride.tenant_id == current_tenant.id,
-        EmailTemplateOverride.template_name == request.template_name,
-    )
-    result = await db.execute(query)
-    existing = result.scalar_one_or_none()
+    service = NotificationService(db)
 
-    if existing:
-        # Update existing
-        existing.subject_override = request.subject_override
-        existing.content = request.content
-        await db.commit()
-        await db.refresh(existing)
-
-        # Invalidate cache
-        if redis_client:
-            await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{request.template_name}")
-
-        return EmailTemplateOverrideResponse.model_validate(existing)
-
-    # Create new
-    override = EmailTemplateOverride(
+    override = await service.create_template_override(
         tenant_id=current_tenant.id,
         template_name=request.template_name,
         subject_override=request.subject_override,
-        content=request.content,
+        content=request.content
     )
-    db.add(override)
-    await db.commit()
-    await db.refresh(override)
-
-    # Invalidate cache
-    if redis_client:
-        await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{request.template_name}")
 
     return EmailTemplateOverrideResponse.model_validate(override)
 
@@ -217,19 +172,8 @@ async def delete_template_override(
     current_user: User = Depends(get_current_user),
 ) -> None:
     """Delete an email template override (revert to default template)."""
-    query = select(EmailTemplateOverride).where(
-        EmailTemplateOverride.tenant_id == current_tenant.id,
-        EmailTemplateOverride.template_name == template_name,
-    )
-    result = await db.execute(query)
-    override = result.scalar_one_or_none()
+    service = NotificationService(db)
+    deleted = await service.delete_template_override(current_tenant.id, template_name)
 
-    if not override:
+    if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template override not found")
-
-    await db.delete(override)
-    await db.commit()
-
-    # Invalidate cache
-    if redis_client:
-        await redis_client.delete(f"tenant:{current_tenant.id}:email_template:{template_name}")

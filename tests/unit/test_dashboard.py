@@ -123,10 +123,12 @@ class TestDashboardService:
     @pytest.mark.asyncio
     async def test_get_date_range_month(self):
         """Service should calculate correct date range for month."""
+        from unittest.mock import AsyncMock
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
-        start_date, end_date = dashboard_service._get_date_range(TimeRange.MONTH)
+        db_mock = AsyncMock()
+        start_date, end_date = await dashboard_service._get_date_range(db_mock, TimeRange.MONTH, "test-tenant")
 
         # Should be approximately 30 days
         delta = end_date - start_date
@@ -135,10 +137,12 @@ class TestDashboardService:
     @pytest.mark.asyncio
     async def test_get_date_range_week(self):
         """Service should calculate correct date range for week."""
+        from unittest.mock import AsyncMock
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
-        start_date, end_date = dashboard_service._get_date_range(TimeRange.WEEK)
+        db_mock = AsyncMock()
+        start_date, end_date = await dashboard_service._get_date_range(db_mock, TimeRange.WEEK, "test-tenant")
 
         # Should be 7 days
         delta = end_date - start_date
@@ -147,10 +151,12 @@ class TestDashboardService:
     @pytest.mark.asyncio
     async def test_get_date_range_today(self):
         """Service should calculate correct date range for today."""
+        from unittest.mock import AsyncMock
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
-        start_date, end_date = dashboard_service._get_date_range(TimeRange.TODAY)
+        db_mock = AsyncMock()
+        start_date, end_date = await dashboard_service._get_date_range(db_mock, TimeRange.TODAY, "test-tenant")
 
         # Start should be beginning of today
         assert start_date.hour == 0

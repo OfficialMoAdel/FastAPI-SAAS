@@ -331,14 +331,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         await self.db.refresh(tenant)
 
         # Invalidate cache for all updated flags
-        if redis_client:
-            try:
-                await redis_client.delete(f"tenant:{tenant_id}:features")
-                keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags]
-                if keys_to_delete:
-                    await redis_client.delete(*keys_to_delete)
-            except Exception as e:
-                logger.debug(f"Cache invalidation failed: {e}")
+        await self._invalidate_cache(tenant_id)
 
         return tenant
 

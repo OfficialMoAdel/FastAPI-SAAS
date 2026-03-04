@@ -14,8 +14,8 @@ class CRUDTokenBlacklist(
         TokenBlacklistCreate,
         TokenBlacklistUpdate,
         TokenBlacklistUpdate,
-        TokenBlacklistUpdate,
         TokenBlacklistRead,
+        TokenBlacklistRead,  # 6th param required by newer FastCRUD (typically ReturnSchema)
     ]
 ):
     """Extended CRUD for token blacklist with cache support."""

@@ -157,7 +157,7 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the delete.
         """
         kwargs = self._inject_tenant_filter(kwargs)
-        return await super().delete(db, **kwargs)
+        await super().delete(db, **kwargs)
 
     async def db_delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Hard delete records, filtered by tenant context.
@@ -167,4 +167,4 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the delete.
         """
         kwargs = self._inject_tenant_filter(kwargs)
-        return await super().db_delete(db, **kwargs)
+        await super().db_delete(db, **kwargs)

@@ -56,24 +56,19 @@ class TestTaskServiceCreate:
     @pytest.mark.asyncio
     async def test_create_task_queue_unavailable(self):
         """Test task creation when queue is unavailable."""
-        from fastapi import HTTPException
-
-        from src.app.modules.tasks.service import task_service
+        from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
         with patch("src.app.modules.tasks.service.queue") as mock_queue:
             mock_queue.pool = None
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(QueueUnavailableError) as exc_info:
                 await task_service.create_task("test message")
 
-            assert exc_info.value.status_code == 503
-            assert "Queue is not available" in str(exc_info.value.detail)
+            assert "Queue is not available" in str(exc_info.value)
 
     @pytest.mark.asyncio
     async def test_create_task_enqueue_fails(self):
         """Test task creation when enqueue returns None."""
-        from fastapi import HTTPException
-
         from src.app.modules.tasks.service import task_service
 
         mock_pool = AsyncMock()
@@ -82,11 +77,10 @@ class TestTaskServiceCreate:
         with patch("src.app.modules.tasks.service.queue") as mock_queue:
             mock_queue.pool = mock_pool
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(ValueError) as exc_info:
                 await task_service.create_task("test message")
 
-            assert exc_info.value.status_code == 500
-            assert "Failed to create task" in str(exc_info.value.detail)
+            assert "Failed to create task" in str(exc_info.value)
 
 
 class TestTaskServiceGet:
@@ -137,14 +131,12 @@ class TestTaskServiceGet:
     @pytest.mark.asyncio
     async def test_get_task_queue_unavailable(self):
         """Test task retrieval when queue is unavailable."""
-        from fastapi import HTTPException
-
-        from src.app.modules.tasks.service import task_service
+        from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
         with patch("src.app.modules.tasks.service.queue") as mock_queue:
             mock_queue.pool = None
 
-            with pytest.raises(HTTPException) as exc_info:
+            with pytest.raises(QueueUnavailableError) as exc_info:
                 await task_service.get_task("test-job-123")
 
-            assert exc_info.value.status_code == 503
+            assert "Queue is not available" in str(exc_info.value)

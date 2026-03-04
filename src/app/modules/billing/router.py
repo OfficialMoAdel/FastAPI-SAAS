@@ -4,6 +4,7 @@ import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from pydantic import BaseModel, HttpUrl
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -84,8 +85,12 @@ async def stripe_webhook(
         )
 
     # Verify signature
-    # Note: verification is synchronous (CPU-bound)
-    event = verify_webhook_signature(payload, sig_header, webhook_secret)
+    # Note: verification was originally synchronous (CPU-bound)
+    import asyncio
+
+    event = await asyncio.get_event_loop().run_in_executor(
+        None, verify_webhook_signature, payload, sig_header, webhook_secret
+    )
 
     # Idempotency check (T050)
     event_id = event["id"]
@@ -222,15 +227,17 @@ async def update_subscription_plan(
 
 @router.delete(
     "/plans/{plan_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
 )
 async def delete_subscription_plan(
     plan_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> None:
     """Deactivate a subscription plan (admin only)."""
     service = get_subscription_plan_service(db)
-    return await service.delete_plan(plan_id)
+    await service.delete_plan(plan_id)
+    return None
 
 
 # =============================================================================
@@ -369,26 +376,23 @@ async def create_checkout_session(
     return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
 
 
+class PortalSessionRequest(BaseModel):
+    return_url: HttpUrl
+
+
 @router.post(
     "/portal",
     response_model=PortalResponse,
     dependencies=[Depends(requires_permission(Permission.MANAGE_BILLING))],
 )
 async def create_portal_session(
-    request: Request,
+    body: PortalSessionRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> PortalResponse:
     """Create a Stripe Customer Portal session."""
-    # return_url expected in body or query? Usually body.
-    # Simple JSON body: {"return_url": "..."}
-    body = await request.json()
-    return_url = body.get("return_url")
-    if not return_url:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="return_url is required")
-
     service = get_checkout_service(db)
-    url = await service.create_portal_session(return_url=return_url)
+    url = await service.create_portal_session(return_url=str(body.return_url))
     return PortalResponse(url=url)
 
 

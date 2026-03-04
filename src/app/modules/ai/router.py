@@ -106,11 +106,11 @@ async def update_chat_session(
     return await service.update_session(session_id, current_user["id"], data)
 
 
-@router.delete("/sessions/{session_id}")
+@router.delete("/sessions/{session_id}", response_model=dict)
 async def delete_chat_session(
     session_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
-    db: Annotated[AsyncSession, Depends(async_get_db)],
+    db: AsyncSession = Depends(async_get_db),
 ) -> dict:
     """Delete a chat session."""
     service = get_chat_session_service(db)

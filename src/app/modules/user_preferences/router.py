@@ -27,7 +27,7 @@ async def get_preferences(
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
     service: PreferencesService = Depends(get_preferences_service),
-):
+) -> UserPreferencesResponse:
     """Get current user's preferences.
 
     Returns user preferences with defaults for any unset values.
@@ -46,7 +46,7 @@ async def update_preferences(
     current_user: dict[str, Any] = Depends(get_current_user),
     db: AsyncSession = Depends(async_get_db),
     service: PreferencesService = Depends(get_preferences_service),
-):
+) -> UserPreferencesResponse:
     """Update current user's preferences.
 
     Only provided fields are updated; others remain unchanged.

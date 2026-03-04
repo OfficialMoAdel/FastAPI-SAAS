@@ -171,7 +171,7 @@ async def get_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.patch("/{endpoint_id}", response_model=WebhookEndpointResponse)
+@router.patch("/{endpoint_id}", response_model=WebhookEndpointResponse, status_code=status.HTTP_200_OK)
 async def update_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookEndpointUpdate,

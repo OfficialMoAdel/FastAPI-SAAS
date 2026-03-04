@@ -151,6 +151,36 @@ class AuditLogService:
         result = await self.db.execute(query)
         return list(result.scalars().all())
 
+    async def count_logs(
+        self,
+        tenant_id: UUID,
+        user_id: int | None = None,
+        action: str | None = None,
+        entity_type: str | None = None,
+        entity_id: UUID | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+    ) -> int:
+        from sqlalchemy import func
+
+        query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == tenant_id)
+
+        if user_id:
+            query = query.where(AuditLog.user_id == user_id)
+        if action:
+            query = query.where(AuditLog.action == action)
+        if entity_type:
+            query = query.where(AuditLog.entity_type == entity_type)
+        if entity_id:
+            query = query.where(AuditLog.entity_id == entity_id)
+        if start_date:
+            query = query.where(AuditLog.created_at >= start_date)
+        if end_date:
+            query = query.where(AuditLog.created_at <= end_date)
+
+        result = await self.db.execute(query)
+        return result.scalar_one()
+
     async def get_audit_logs_for_tenant_async(
         self,
         tenant_id: UUID,
@@ -392,6 +422,13 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
         # Broad exception handling is appropriate here to prevent
         # audit logging failures from crashing the main application flow
         logger.error("audit_log_event_failed", error=str(e), exc_info=True)
+        # Fallback inline mechanism to ensure log survives Redis failures
+        from src.app.core.db.database import get_db_context
+        try:
+            async with get_db_context() as db:
+                await _direct_insert_log(log_data, db)
+        except Exception as fallback_error:
+            logger.critical("audit_log_event_fallback_failed", error=str(fallback_error))
 
 
 def audit_action(action: str, entity_type: str) -> Callable:

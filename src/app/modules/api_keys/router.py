@@ -3,7 +3,7 @@
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
@@ -64,8 +64,8 @@ async def list_api_keys(
     current_user: Annotated[dict, Depends(get_current_user)],
     tenant_id: Annotated[UUID, Depends(_get_tenant_id)],
     service: APIKeyServiceDep,
-    page: int = 1,
-    per_page: int = 10,
+    page: int = Query(1, ge=1),
+    per_page: int = Query(10, ge=1, le=100),
 ) -> dict:
     """List API keys for the current user.
 

@@ -20,6 +20,7 @@ from src.app.modules.files.schemas import (
     FileRead,
     FileUpdate,
     FileUploadResponse,
+    QuotaResponse,
     SignedUrlResponse,
 )
 from src.app.modules.files.service import (
@@ -154,12 +155,12 @@ async def list_files(
     }
 
 
-@router.get("/quota", dependencies=[Depends(requires_permission(Permission.FILES_READ))])
+@router.get("/quota", response_model=QuotaResponse, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
 async def get_quota(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> dict:
+) -> QuotaResponse:
     """Get active storage quota and usage.
 
     Returns:
@@ -173,11 +174,11 @@ async def get_quota(
     limit = settings.storage_quota_bytes
     remaining = max(0, limit - used)
 
-    return {
-        "used": used,
-        "limit": limit,
-        "remaining": remaining,
-    }
+    return QuotaResponse(
+        used=used,
+        limit=limit,
+        remaining=remaining,
+    )
 
 
 @router.get(

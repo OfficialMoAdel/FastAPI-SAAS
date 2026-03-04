@@ -381,10 +381,19 @@ class MFAService:
         # Reconstruct full code with prefix for verification
         formatted_code = f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:]}"
 
-        # Check each stored hash against the provided code (bcrypt requires verification, not comparison)
+
         matched_hash = None
+
+        # We now use fast SHA256 hashing to prevent bcrypt DoS when iterating 10 codes
+        hashed_input = await self._hash_backup_code(formatted_code)
         for stored_hash in mfa_method.backup_codes:
-            if await verify_password(formatted_code, stored_hash):
+            # Fallback for old bcrypt hashes dynamically
+            if stored_hash.startswith("$2b$"):
+                if await verify_password(formatted_code, stored_hash):
+                    matched_hash = stored_hash
+                    break
+            # Fast SHA256
+            elif hashed_input == stored_hash:
                 matched_hash = stored_hash
                 break
 
@@ -657,17 +666,17 @@ class MFAService:
         return codes
 
     async def _hash_backup_code(self, code: str) -> str:
-        """Hash a backup code for secure storage using bcrypt.
+        """Hash a backup code for secure storage using fast SHA256 (mitigating DoS).
 
         Args:
             code: The backup code to hash.
 
         Returns:
-            Hashed code string (bcrypt hash).
+            Hashed code string.
         """
-        from src.app.core.security import get_password_hash
-
-        return await get_password_hash(code)
+        import hashlib
+        salt = settings.SECRET_KEY.get_secret_value().encode()
+        return hashlib.sha256(salt + code.encode()).hexdigest()
 
     def _get_fernet(self) -> Fernet:
         """Get Fernet instance for encryption/decryption.

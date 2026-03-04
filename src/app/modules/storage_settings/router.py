@@ -112,6 +112,7 @@ async def create_storage_settings(
 @router.patch(
     "",
     response_model=StorageSettingsRead,
+    status_code=status.HTTP_200_OK,
     dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
 )
 async def update_storage_settings(

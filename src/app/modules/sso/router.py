@@ -2,6 +2,7 @@
 
 from typing import Annotated
 
+import httpx
 import orjson
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
 from fastapi.responses import RedirectResponse
@@ -105,10 +106,15 @@ async def handle_callback(
         return tokens
     except HTTPException:
         raise
-    except Exception as e:
+    except httpx.TimeoutException as e:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Provider timeout or error: {str(e)}",
+            detail=f"Provider timeout: {str(e)}",
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Provider error: {e.response.status_code}",
         )
 
 
@@ -147,10 +153,15 @@ async def handle_post_callback(
         return tokens
     except HTTPException:
         raise
-    except Exception as e:
+    except httpx.TimeoutException as e:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Provider timeout or error: {str(e)}",
+            detail=f"Provider timeout: {str(e)}",
+        )
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Provider error: {e.response.status_code}",
         )
 
 

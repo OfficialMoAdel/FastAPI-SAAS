@@ -32,8 +32,6 @@ def get_violations_ttl() -> int:
     return getattr(settings, "AUTO_BAN_VIOLATION_WINDOW", 86400)
 
 
-# Keep constant for backward compatibility with existing code
-VIOLATIONS_TTL = 86400  # Will be deprecated in favor of get_violations_ttl()
 
 
 @dataclass

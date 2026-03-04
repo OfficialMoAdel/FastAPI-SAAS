@@ -149,7 +149,7 @@ class LogSanitizer:
                 sanitized = pattern.sub(replacement, sanitized)
             except Exception as e:
                 logging.warning(
-                    f"Error applying sanitization pattern: {e}", exc_info=True
+                    "Error applying sanitization pattern: %s", e, exc_info=True
                 )
                 continue
 

@@ -261,33 +261,50 @@ class NotificationService:
         tenant_id: UUID,
         user_id: UUID | None = None,
         status: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
         limit: int = 50,
         offset: int = 0,
-    ) -> list[Notification]:
+    ) -> tuple[int, list[Notification]]:
         """Get notification history.
 
         Args:
             tenant_id: Tenant ID
             user_id: Optional user filter
             status: Optional status filter
+            start_date: Optional from date filter
+            end_date: Optional to date filter
             limit: Maximum results
             offset: Offset for pagination
 
         Returns
         -------
-            List of notifications
+            Tuple of (total_count, List of notifications)
         """
+        from sqlalchemy import func
+
         query = select(Notification).where(Notification.tenant_id == tenant_id)
 
         if user_id:
             query = query.where(Notification.user_id == user_id)
         if status:
             query = query.where(Notification.status == status)
+        if start_date:
+            query = query.where(Notification.created_at >= start_date)
+        if end_date:
+            query = query.where(Notification.created_at <= end_date)
 
-        query = query.order_by(Notification.created_at.desc()).limit(limit).offset(offset)
+        query = query.order_by(Notification.created_at.desc())
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar_one()
+
+        query = query.limit(limit).offset(offset)
 
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return total, list(result.scalars().all())
 
     async def should_send_notification(
         self,
@@ -369,6 +386,91 @@ class NotificationService:
                         end=prefs.quiet_hours_end,
                         error=str(e),
                     )
+        return True
+
+    async def list_template_overrides(
+        self,
+        tenant_id: UUID,
+        limit: int = 100,
+        offset: int = 0
+    ) -> list[EmailTemplateOverride]:
+        """List all email template overrides for a tenant"""
+        query = (
+            select(EmailTemplateOverride)
+            .where(EmailTemplateOverride.tenant_id == tenant_id)
+            .limit(limit)
+            .offset(offset)
+        )
+        result = await self.db.execute(query)
+        return list(result.scalars().all())
+
+    async def create_template_override(
+        self,
+        tenant_id: UUID,
+        template_name: str,
+        subject_override: str | None,
+        content: str
+    ) -> EmailTemplateOverride:
+        """Create or update an email template override"""
+        query = select(EmailTemplateOverride).where(
+            EmailTemplateOverride.tenant_id == tenant_id,
+            EmailTemplateOverride.template_name == template_name,
+        )
+        result = await self.db.execute(query)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            # Update existing
+            existing.subject_override = subject_override
+            existing.content = content
+            await self.db.commit()
+            await self.db.refresh(existing)
+
+            # Invalidate cache
+            if redis_client:
+                await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
+
+            return existing
+
+        # Create new
+        override = EmailTemplateOverride(
+            tenant_id=tenant_id,
+            template_name=template_name,
+            subject_override=subject_override,
+            content=content,
+        )
+        self.db.add(override)
+        await self.db.commit()
+        await self.db.refresh(override)
+
+        # Invalidate cache
+        if redis_client:
+            await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
+
+        return override
+
+    async def delete_template_override(
+        self,
+        tenant_id: UUID,
+        template_name: str
+    ) -> bool:
+        """Delete an email template override returns True if deleted, False if not found"""
+        query = select(EmailTemplateOverride).where(
+            EmailTemplateOverride.tenant_id == tenant_id,
+            EmailTemplateOverride.template_name == template_name,
+        )
+        result = await self.db.execute(query)
+        override = result.scalar_one_or_none()
+
+        if not override:
+            return False
+
+        await self.db.delete(override)
+        await self.db.commit()
+
+        # Invalidate cache
+        if redis_client:
+            await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
 
         return True
 

@@ -24,9 +24,9 @@ async def write_rate_limit(
     tier_name: str,
     rate_limit: RateLimitCreate,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> Any:
+) -> RateLimitRead:
     """Create a new rate limit for a tier (superuser only)."""
-    return await service.create_rate_limit(tier_name, rate_limit)
+    return RateLimitRead.model_validate(await service.create_rate_limit(tier_name, rate_limit))
 
 
 @router.get("/tiers/{tier_name}/rate-limits", response_model=PaginatedListResponse[RateLimitRead])
@@ -47,9 +47,9 @@ async def read_rate_limit(
     tier_name: str,
     id: int,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> Any:
+) -> RateLimitRead:
     """Get a single rate limit by ID."""
-    return await service.get_rate_limit(tier_name, id)
+    return RateLimitRead.model_validate(await service.get_rate_limit(tier_name, id))
 
 
 @router.patch(
@@ -63,9 +63,9 @@ async def patch_rate_limit(
     id: int,
     values: RateLimitUpdate,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> Any:
+) -> MessageResponse:
     """Update a rate limit (superuser only)."""
-    return await service.update_rate_limit(tier_name, id, values)
+    return MessageResponse.model_validate(await service.update_rate_limit(tier_name, id, values))
 
 
 @router.delete(
@@ -78,6 +78,6 @@ async def erase_rate_limit(
     tier_name: str,
     id: int,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> Any:
+) -> MessageResponse:
     """Delete a rate limit (superuser only)."""
-    return await service.delete_rate_limit(tier_name, id)
+    return MessageResponse.model_validate(await service.delete_rate_limit(tier_name, id))

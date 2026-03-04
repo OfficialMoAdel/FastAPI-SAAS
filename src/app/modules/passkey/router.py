@@ -13,7 +13,6 @@ from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.passkey.schemas import (
     PasskeyAuthenticationOptionsResponse,
     PasskeyCredentialResponse,
-    PasskeyDeleteResponse,
     PasskeyLoginRequest,
     PasskeyLoginVerifyRequest,
     PasskeyRegistrationOptionsResponse,
@@ -100,7 +99,7 @@ async def list_credentials(
     return await passkey_service.list_credentials(db=db, user_id=current_user["id"])
 
 
-@router.delete("/credentials/{credential_id}", response_model=PasskeyDeleteResponse)
+@router.delete("/credentials/{credential_id}", status_code=204)
 async def delete_credential(
     credential_id: int,
     current_user: dict[str, Any] = Depends(get_current_user),
@@ -108,7 +107,6 @@ async def delete_credential(
 ):
     """Delete a passkey credential."""
     await passkey_service.delete_credential(db=db, user_id=current_user["id"], credential_id=credential_id)
-    return PasskeyDeleteResponse(message="Credential deleted successfully")
 
 
 # ============================================================================

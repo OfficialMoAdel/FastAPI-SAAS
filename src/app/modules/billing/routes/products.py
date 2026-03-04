@@ -7,7 +7,7 @@ All business logic is handled by the billing module's ProductService.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
@@ -45,8 +45,8 @@ async def create_product(
 @router.get("", response_model=ProductList)
 async def list_products(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     is_active: bool | None = None,
 ) -> dict:
     """List products."""
@@ -82,7 +82,9 @@ async def get_product(
         # If not a valid int, treat as Stripe ID string
         # For now, we'll still pass to service which expects int
         # This will be handled by service layer if needed
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
+        )
 
 
 @router.patch(
@@ -105,8 +107,9 @@ async def update_product(
         product_id_int = int(product_id)
         return await service.update_product(product_id_int, data)
     except ValueError:
-        # If not a valid int, treat as Stripe ID string
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
+        )
 
 
 @router.delete(
@@ -128,8 +131,9 @@ async def delete_product(
         result = await service.deactivate_product(product_id_int)
         return dict(result) if result else {}
     except ValueError:
-        # If not a valid int, treat as Stripe ID string
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
+        )
 
 
 @router.post(
@@ -153,5 +157,6 @@ async def add_product_pricing(
         product_id_int = int(product_id)
         return await service.add_pricing(product_id_int, data)
     except ValueError:
-        # If not a valid int, treat as Stripe ID string
-        raise
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
+        )

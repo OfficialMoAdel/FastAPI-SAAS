@@ -18,7 +18,6 @@ Isolation must be handled at the application layer.
 """
 
 import asyncio
-from typing import TYPE_CHECKING
 
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response, status
@@ -34,9 +33,6 @@ from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 from src.app.core.utils.cache import client as redis_client
 from src.app.modules.tenants.models import Tenant
-
-if TYPE_CHECKING:
-    pass
 
 logger = get_logger(__name__)
 

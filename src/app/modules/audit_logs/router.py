@@ -28,7 +28,11 @@ from src.app.modules.users.models import User
 router = APIRouter(prefix="/audit-logs", tags=["audit-logs"])
 
 
-@router.get("", response_model=AuditLogList)
+@router.get(
+    "",
+    response_model=AuditLogList,
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
+)
 async def list_audit_logs(
     action: str | None = Query(None, description="Filter by action"),
     user_id: int | None = Query(None, description="Filter by user ID"),
@@ -52,36 +56,33 @@ async def list_audit_logs(
 
     Returns paginated results with total count.
     """
-    # Build query with tenant isolation
-    query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
-
-    # Apply filters
-    if action:
-        query = query.where(AuditLog.action == action)
-    if user_id:
-        query = query.where(AuditLog.user_id == user_id)
-    if entity_type:
-        query = query.where(AuditLog.entity_type == entity_type)
-    if start_date:
-        query = query.where(AuditLog.created_at >= start_date)
-    if end_date:
-        query = query.where(AuditLog.created_at <= end_date)
-
-    # Order by created_at DESC (newest first)
-    query = query.order_by(AuditLog.created_at.desc())
+    # Get database objects via service
+    audit_service = AuditLogService(db)
 
     # Get total count
-    count_query = select(func.count()).select_from(query.subquery())
-    total_result = await db.execute(count_query)
-    total = total_result.scalar_one()
+    total = await audit_service.count_logs(
+        tenant_id=current_tenant.id,
+        user_id=user_id,
+        action=action,
+        entity_type=entity_type,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
     # Apply pagination
     offset = (page - 1) * per_page
-    query = query.limit(per_page).offset(offset)
 
     # Execute query
-    result = await db.execute(query)
-    logs = result.scalars().all()
+    logs = await audit_service.query_logs(
+        tenant_id=current_tenant.id,
+        user_id=user_id,
+        action=action,
+        entity_type=entity_type,
+        start_date=start_date,
+        end_date=end_date,
+        limit=per_page,
+        offset=offset,
+    )
 
     return {
         "items": [AuditLogResponse.model_validate(log) for log in logs],

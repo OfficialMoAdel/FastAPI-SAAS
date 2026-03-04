@@ -152,7 +152,9 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         return None
 
 
-async def get_current_superuser(current_user: Annotated[dict, Depends(get_current_user)]) -> dict:
+async def get_current_superuser(
+    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
+) -> dict[str, Any]:
     if not current_user.get("is_active", True):
         raise ForbiddenException("User account is no longer active.")
     if not current_user["is_superuser"]:

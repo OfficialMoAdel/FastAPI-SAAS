@@ -39,9 +39,9 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 
 
 @router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_user)])
-async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
+async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> UserRead:
     """Create a new user."""
-    return await service.create(user)
+    return UserRead.model_validate(await service.create(user))
 
 
 @router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
@@ -70,7 +70,7 @@ async def read_users_me(
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> Any:
+) -> UserRead:
     """Get current authenticated user profile.
 
     `get_current_user` returns auth-oriented payload; fetch full user profile
@@ -87,26 +87,26 @@ async def read_users_me(
 
     try:
         if user_id is not None:
-            return await service.get(int(user_id))
+            return UserRead.model_validate(await service.get(int(user_id)))
         elif username:
-            return await service.get_by_username(username)
+            return UserRead.model_validate(await service.get_by_username(username))
     except (ValueError, TypeError, KeyError):
         pass
     raise HTTPException(status_code=401, detail="Invalid user context")
 
 
 @router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])
-async def read_user(request: Request, user_id: str, service: UserService = Depends(_get_user_service)) -> Any:
+async def read_user(request: Request, user_id: str, service: UserService = Depends(_get_user_service)) -> UserRead:
     """Get user by ID or username (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
     # Try to get by ID first, then fall back to username
     try:
-        return await service.get(int(user_id))
+        return UserRead.model_validate(await service.get(int(user_id)))
     except (ValueError, KeyError):
         # If not a valid integer or not found, try username
-        return await service.get_by_username(user_id)
+        return UserRead.model_validate(await service.get_by_username(user_id))
 
 
 @router.patch("/{user_id}", response_model=UserUpdateResponse)

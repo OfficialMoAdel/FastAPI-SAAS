@@ -307,7 +307,7 @@ class MagicLinkService:
         }
 
 
-def get_magic_link_service(db: AsyncSession, redis: Redis) -> MagicLinkService:
+async def get_magic_link_service(db: AsyncSession, redis: Redis) -> MagicLinkService:
     """Factory function for dependency injection.
 
     Args:

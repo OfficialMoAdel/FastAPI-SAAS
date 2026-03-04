@@ -7,7 +7,7 @@ All business logic is handled by the billing module's BillingRecordService.
 import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
@@ -23,8 +23,8 @@ logger = logging.getLogger(__name__)
 async def list_invoices(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = 1,
-    per_page: int = 20,
+    page: int = Query(1, ge=1, description="Page number"),
+    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     status: str | None = None,
 ) -> dict:
     """List invoices (billing records) for the current user.
@@ -75,8 +75,11 @@ async def get_invoice(
     service = get_billing_record_service(db)
     result = await service.get_record(invoice_id)
 
+    if not result:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Invoice not found")
+
     # SECURITY FIX: Verify invoice belongs to current user
-    if result and result.get("user_id") != current_user["id"]:
+    if result.get("user_id") != current_user["id"]:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Access denied to this invoice")
 
-    return dict(result) if result else {}
+    return dict(result)

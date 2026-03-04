@@ -1,6 +1,5 @@
 """Feature Flags API Router."""
 
-from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
@@ -21,9 +20,12 @@ from src.app.modules.users.models import User
 router = APIRouter(prefix="/features", tags=["features"])
 
 
-def _get_tenant_id(current_tenant: Tenant | int) -> Any:
-    """Extract tenant ID from tenant object or int."""
-    return current_tenant.id if hasattr(current_tenant, "id") else current_tenant
+from uuid import UUID
+
+
+def _get_tenant_id(current_tenant: Tenant) -> UUID:
+    """Extract tenant ID from tenant object."""
+    return current_tenant.id
 
 
 @router.get("", response_model=FeatureFlagsResponse)
@@ -96,9 +98,12 @@ async def update_feature_flag(
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
-        enabled=value if isinstance(value, bool) else True,
+        enabled=bool(value),
         value=value,
     )
+
+
+from fastapi import Response
 
 
 @router.delete(
@@ -111,7 +116,7 @@ async def delete_feature_flag(
     service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> None:
+) -> Response:
     """
     Remove a feature flag from the tenant configuration.
 
@@ -123,6 +128,8 @@ async def delete_feature_flag(
         await service.delete_tenant_flag(tenant_id, flag_name)
     except ModelNotFoundError as e:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.put(

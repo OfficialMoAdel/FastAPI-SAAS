@@ -129,6 +129,23 @@ class SignedUrlResponse(BaseModel):
     )
 
 
+class QuotaResponse(BaseModel):
+    """Storage quota and usage statistics."""
+
+    used: int
+    limit: int
+    remaining: int
+
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": {
+                "used": 1048576,
+                "limit": 1073741824,
+                "remaining": 1072693248,
+            }
+        }
+    )
+
 __all__ = [
     "FileUploadResponse",
     "FileRead",
@@ -136,4 +153,5 @@ __all__ = [
     "FileList",
     "FileListResponse",
     "SignedUrlResponse",
+    "QuotaResponse",
 ]

@@ -29,7 +29,11 @@ class PostCreateAdmin(BaseModel):
     created_by_user_id: int
     media_url: Annotated[
         str | None,
-        Field(pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$", examples=["https://www.postimageurl.com"], default=None),
+        Field(
+            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
+            examples=["https://www.postimageurl.com"],
+            default=None,
+        ),
     ]
 
 

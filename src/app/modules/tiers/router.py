@@ -23,9 +23,9 @@ async def write_tier(
     request: Request,
     tier: TierCreate,
     service: Annotated[TierService, Depends(get_tier_service)],
-) -> Any:
+) -> TierRead:
     """Create a new tier (superuser only)."""
-    return await service.create_tier(tier)
+    return TierRead.model_validate(await service.create_tier(tier))
 
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
@@ -44,9 +44,9 @@ async def read_tier(
     request: Request,
     name: str,
     service: Annotated[TierService, Depends(get_tier_service)],
-) -> Any:
+) -> TierRead:
     """Get tier by name."""
-    return await service.get_tier(name)
+    return TierRead.model_validate(await service.get_tier(name))
 
 
 @router.patch("/tiers/{name}", response_model=MessageResponse, dependencies=[Depends(get_current_superuser)])
@@ -55,9 +55,9 @@ async def patch_tier(
     name: str,
     values: TierUpdate,
     service: Annotated[TierService, Depends(get_tier_service)],
-) -> Any:
+) -> MessageResponse:
     """Update a tier (superuser only)."""
-    return await service.update_tier(name, values)
+    return MessageResponse.model_validate(await service.update_tier(name, values))
 
 
 @router.delete("/tiers/{name}", response_model=MessageResponse, dependencies=[Depends(get_current_superuser)])
@@ -65,6 +65,6 @@ async def erase_tier(
     request: Request,
     name: str,
     service: Annotated[TierService, Depends(get_tier_service)],
-) -> Any:
+) -> MessageResponse:
     """Delete a tier (superuser only)."""
-    return await service.delete_tier(name)
+    return MessageResponse.model_validate(await service.delete_tier(name))

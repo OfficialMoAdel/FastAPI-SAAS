@@ -10,6 +10,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.audit_logs.models import AuditLog
+from src.app.modules.billing.models import BillingRecord, UserSubscription
 from src.app.modules.dashboard.schemas import (
     ActivityMetrics,
     DashboardMetricsResponse,
@@ -23,7 +24,9 @@ from src.app.modules.users.models import User
 class DashboardService:
     """Service for generating dashboard metrics."""
 
-    def _get_date_range(self, time_range: TimeRange) -> tuple[datetime, datetime]:
+    async def _get_date_range(
+        self, db: AsyncSession, time_range: TimeRange, tenant_id: str
+    ) -> tuple[datetime, datetime]:
         """Calculate start and end dates for a time range.
 
         Args:
@@ -45,7 +48,11 @@ class DashboardService:
         elif time_range == TimeRange.YEAR:
             start_date = end_date - timedelta(days=365)
         else:  # ALL
-            start_date = datetime(2020, 1, 1, tzinfo=UTC)  # Beginning of time for this app
+            # Query for actual minimum date in database for this tenant
+            query = select(func.min(User.created_at)).where(User.tenant_id == tenant_id)
+            result = await db.execute(query)
+            min_date = result.scalar()
+            start_date = min_date if min_date else end_date - timedelta(days=365)
 
         return start_date, end_date
 
@@ -146,12 +153,44 @@ class DashboardService:
         Returns:
             RevenueMetrics with aggregated data
         """
-        # Placeholder values - in production, query billing tables
+        # Total Revenue (sum of all successful billing amounts / 100 to convert cents)
+        total_rev_sub = (
+            select(func.sum(BillingRecord.amount_cents))
+            .where(
+                BillingRecord.tenant_id == tenant_id,
+                BillingRecord.created_at >= start_date,
+                BillingRecord.created_at <= end_date,
+                BillingRecord.status == "succeeded"
+            )
+            .scalar_subquery()
+        )
+
+        # Recurring Revenue (Monthly * 12 + Yearly) approximated for MRR/ARR
+        # For simplicity, we'll sum active subscriptions price if we had joining to plans
+        # Since this is a dashboard simple value, we will query active subscriptions count
+        subs_count_sub = (
+            select(func.count(UserSubscription.id))
+            .where(
+                UserSubscription.tenant_id == tenant_id,
+                UserSubscription.status == "active"
+            )
+            .scalar_subquery()
+        )
+
+        query = select(total_rev_sub, subs_count_sub)
+        result = await db.execute(query)
+        row = result.one()
+
+        total_cents = row[0] or 0
+        total_revenue = total_cents / 100.0
+        total_subs = row[1] or 0
+        avg_revenue = (total_revenue / total_subs) if total_subs > 0 else 0.0
+
         return RevenueMetrics(
-            total_revenue=0.0,
-            recurring_revenue=0.0,
-            average_revenue_per_user=0.0,
-            total_subscriptions=0,
+            total_revenue=total_revenue,
+            recurring_revenue=0.0, # Placeholder until MRR specific query is built
+            average_revenue_per_user=avg_revenue,
+            total_subscriptions=total_subs,
         )
 
     async def _get_activity_metrics(
@@ -205,18 +244,27 @@ class DashboardService:
             .scalar_subquery()
         )
 
+        # Webhook deliveries - Count from Audit logs where action implies webhook
+        webhook_sub = (
+            select(func.count(AuditLog.id))
+            .where(
+                AuditLog.tenant_id == tenant_id,
+                AuditLog.created_at >= start_date,
+                AuditLog.created_at <= end_date,
+                AuditLog.action.like("%webhook%")
+            )
+            .scalar_subquery()
+        )
+
         # Execute combined query
-        query = select(logins_sub, api_calls_sub, failed_auth_sub)
+        query = select(logins_sub, api_calls_sub, failed_auth_sub, webhook_sub)
         result = await db.execute(query)
         row = result.one()
-
-        # Webhook deliveries - placeholder
-        webhook_deliveries = 0
 
         return ActivityMetrics(
             total_logins=row[0] or 0,
             api_calls=row[1] or 0,
-            webhook_deliveries=webhook_deliveries,
+            webhook_deliveries=row[3] or 0,
             failed_authentications=row[2] or 0,
         )
 
@@ -233,12 +281,16 @@ class DashboardService:
         Returns:
             DashboardMetricsResponse with all metrics
         """
-        start_date, end_date = self._get_date_range(time_range)
+        start_date, end_date = await self._get_date_range(db, time_range, tenant_id)
 
         # Fetch all metrics concurrently
-        user_metrics = await self._get_user_metrics(db, start_date, end_date, tenant_id)
-        revenue_metrics = await self._get_revenue_metrics(db, start_date, end_date, tenant_id)
-        activity_metrics = await self._get_activity_metrics(db, start_date, end_date, tenant_id)
+        import asyncio
+
+        user_metrics, revenue_metrics, activity_metrics = await asyncio.gather(
+            self._get_user_metrics(db, start_date, end_date, tenant_id),
+            self._get_revenue_metrics(db, start_date, end_date, tenant_id),
+            self._get_activity_metrics(db, start_date, end_date, tenant_id),
+        )
 
         return DashboardMetricsResponse(
             time_range=time_range,
