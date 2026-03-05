@@ -278,9 +278,11 @@ def reset_singletons():
     from src.app.core.events import reset_event_bus
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
     from src.app.core.utils.rate_limit import reset_rate_limiter
+    from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
 
     # Pre-test reset
     reset_rate_limiter()
+    reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
 
@@ -288,6 +290,7 @@ def reset_singletons():
 
     # Post-test cleanup
     reset_rate_limiter()
+    reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
 
@@ -1181,54 +1184,88 @@ class FakeRedis:
     async def script_load(self, script: str):
         return "mock_script_sha"
 
-    async def evalsha(self, sha, numkeys, *keys_and_args):
+    async def evalsha(self, sha, numkeys, *keys_and_args):  # noqa: C901
         """Simulate Lua scripts based on context.
 
-        Handles both rate limit and token blacklist Lua scripts:
-        - Rate limit: returns incremented counter
-        - Token blacklist: returns 0 (not blacklisted) or 1 (blacklisted)
+        Handles multiple Redis Lua patterns:
+        - Token blacklist (2 keys, 5+ args): returns 0/1
+        - GCRA rate limit (key starts with 'gcra:', 5 args): returns list [allowed, remaining, retry, reset]
+        - MFA lockout (key contains 'mfa'/'login_attempts', 3 args): returns count or -1
+        - Fixed-window rate limit (default): returns int count
         """
-        # For token blacklist script: KEYS[1]=negative_key, KEYS[2]=blacklist_key
-        # ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
+        # --- Token blacklist script ---
+        # KEYS[1]=negative_key, KEYS[2]=blacklist_key, ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
         if numkeys == 2 and len(keys_and_args) >= 5:
-            # Token blacklist script
             negative_key = keys_and_args[0]
             blacklist_key = keys_and_args[1]
             token = keys_and_args[2]
 
-            # Check negative cache
             if negative_key in self.store:
                 return 0  # Not blacklisted (cached)
 
-            # Check blacklist sorted set
             zset = self.store.get(blacklist_key, {})
             if not isinstance(zset, dict):
                 zset = {}
             score = zset.get(token)
 
             if score is None:
-                # Not in blacklist, cache negative result
                 self.store[negative_key] = "1"
                 return 0  # Not blacklisted
 
-            # Check if expired (score is timestamp)
             now = float(keys_and_args[3]) if len(keys_and_args) > 3 else 0
             if score < now:
-                # Expired, remove
                 if token in zset:
                     del zset[token]
                 self.store[negative_key] = "1"
-                return 0  # Not blacklisted (expired)
+                return 0  # Expired - not blacklisted
 
             return 1  # IS blacklisted
 
-        # Default: Rate limit script (single key)
-        key = keys_and_args[0] if keys_and_args else "default_key"
-        current = self.store.get(key, 0)
+        # Extract primary key for remaining patterns
+        primary_key = keys_and_args[0] if keys_and_args else "default_key"
+
+        # --- GCRA Rate Limit Script ---
+        # Called with 1 key and 4 ARGV: now_ms, emission_interval_ms, limit, period_ms
+        if primary_key.startswith("gcra:") and len(keys_and_args) >= 5:
+            now_ms = int(keys_and_args[1])
+            emission_interval_ms = int(keys_and_args[2])
+            limit = int(keys_and_args[3])
+            period_ms = int(keys_and_args[4])
+
+            current = self.store.get(primary_key, 0)
+            if isinstance(current, str):
+                current = int(current)
+
+            if current >= limit:
+                return [0, 0, period_ms, now_ms + period_ms]
+            else:
+                current += 1
+                self.store[primary_key] = current
+                return [1, limit - current, 0, now_ms + period_ms]
+
+        # --- MFA Lockout Script ---
+        # Key contains 'mfa'/'login_attempts', args include max_attempts & lockout_duration
+        if len(keys_and_args) >= 3:
+            is_mfa_key = "mfa" in primary_key.lower() or "login_attempts" in primary_key.lower()
+            if is_mfa_key:
+                try:
+                    max_attempts = int(keys_and_args[1])
+                    current = self.store.get(primary_key)
+                    if current and int(current) >= max_attempts:
+                        return -1  # Locked out
+
+                    new_count = int(current or 0) + 1
+                    self.store[primary_key] = str(new_count)
+                    return new_count
+                except (ValueError, TypeError):
+                    pass
+
+        # --- Fixed-window Rate Limit Script (default) ---
+        current = self.store.get(primary_key, 0)
         if isinstance(current, str):
             current = int(current)
         current += 1
-        self.store[key] = current
+        self.store[primary_key] = current
         return current
 
     async def eval(self, script: str, numkeys: int, *keys_and_args):
@@ -1344,6 +1381,17 @@ def mock_redis(request):
 
     from src.app.core.security.session_manager import session_manager
 
+    # Clear L1 caches before test to ensure isolation
+    from src.app.middleware.tenant import _L1_TENANT_CACHE
+    from src.app.modules.rbac.service import _L1_RBAC_CACHE
+    from src.app.core.security.token_blacklist_cache import _token_cache_key
+    from src.app.middleware.rate_limit import _is_ip_in_trusted_networks
+
+    _L1_TENANT_CACHE.clear()
+    _L1_RBAC_CACHE.clear()
+    _token_cache_key.cache_clear()
+    _is_ip_in_trusted_networks.cache_clear()
+
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
         patch("src.app.core.utils.cache.client", new=fake_redis),
@@ -1365,6 +1413,12 @@ def mock_redis(request):
         session_manager.set_redis_client(fake_redis)
         yield fake_redis
         session_manager.set_redis_client(None)
+
+        # Clear L1 caches after test for cleanup
+        _L1_TENANT_CACHE.clear()
+        _L1_RBAC_CACHE.clear()
+        _token_cache_key.cache_clear()
+        _is_ip_in_trusted_networks.cache_clear()
 
 
 @pytest_asyncio.fixture(autouse=True)

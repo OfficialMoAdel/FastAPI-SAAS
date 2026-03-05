@@ -256,3 +256,13 @@ def init_gcra_rate_limiter(redis_client: Redis) -> GCRARateLimiter:
     global gcra_rate_limiter
     gcra_rate_limiter = GCRARateLimiter(redis_client)
     return gcra_rate_limiter
+
+
+def reset_gcra_rate_limiter() -> None:
+    """Reset the global GCRA rate limiter for test isolation.
+
+    Call this in test fixtures to ensure clean state between tests.
+    """
+    global gcra_rate_limiter
+    gcra_rate_limiter = None
+    logger.debug("GCRA rate limiter reset")
