@@ -583,7 +583,11 @@ class TestA2CachedAuthInfoFields:
     @pytest.mark.asyncio
     async def test_a2_cached_auth_info_contains_required_fields(self):
         """A2: Cached auth info must include is_deleted and is_email_verified."""
-        from src.app.modules.users.crud import crud_users
+        # Use fresh CRUDUser instance to avoid test pollution from module-level singleton
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
 
         # Mock the database session
         mock_db = AsyncMock()
@@ -612,7 +616,7 @@ class TestA2CachedAuthInfoFields:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         # Call the method that should include A2 fields
-        result = await crud_users.get_user_with_tier_eager(db=mock_db, username="testuser")
+        result = await crud.get_user_with_tier_eager(db=mock_db, username="testuser")
 
         # A2 Assertions: These fields MUST be present
         assert result is not None, "Result should not be None"
@@ -624,7 +628,11 @@ class TestA2CachedAuthInfoFields:
     @pytest.mark.asyncio
     async def test_a2_deleted_user_flag_propagates_correctly(self):
         """A2: is_deleted=True must propagate to cached data for security checks."""
-        from src.app.modules.users.crud import crud_users
+        # Use fresh CRUDUser instance to avoid test pollution from module-level singleton
+        from src.app.modules.users.crud import CRUDUser
+        from src.app.modules.users.models import User
+
+        crud = CRUDUser(User)
 
         mock_db = AsyncMock()
 
@@ -650,7 +658,7 @@ class TestA2CachedAuthInfoFields:
         mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
         mock_db.execute = AsyncMock(return_value=mock_result)
 
-        result = await crud_users.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
+        result = await crud.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
 
         # A2 Security: is_deleted=True must propagate
         assert result["is_deleted"] is True, "A2 SECURITY: is_deleted=True must propagate"
