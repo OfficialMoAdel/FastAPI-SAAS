@@ -44,6 +44,8 @@ DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
 class TestStatus(str, Enum):
     """Test execution status."""
 
+    __test__ = False  # Prevent pytest from collecting this as a test class
+
     PASSED = "passed"
     FAILED = "failed"
     SKIPPED = "skipped"
@@ -135,6 +137,8 @@ class RequestMetrics:
 @dataclass
 class TestResult:
     """Result of a single test case."""
+
+    __test__ = False  # Prevent pytest from collecting this as a test class
 
     name: str
     status: TestStatus

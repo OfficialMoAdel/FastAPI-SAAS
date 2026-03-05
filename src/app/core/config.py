@@ -2,8 +2,7 @@ import os
 from enum import Enum
 from typing import Literal
 
-from pydantic import Field, SecretStr, computed_field, field_validator, model_validator
-from pydantic_core.core_schema import FieldValidationInfo
+from pydantic import Field, SecretStr, ValidationInfo, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -96,7 +95,7 @@ class DatabaseSettings(BaseSettings):
 
     @field_validator("DB_POOL_SIZE", mode="after")
     @classmethod
-    def validate_pool_size(cls, v: int, info: FieldValidationInfo) -> int:
+    def validate_pool_size(cls, v: int, info: ValidationInfo) -> int:
         workers = info.data.get("DB_WORKERS", 1)
         expected_pool = workers * 10
         max_overflow = info.data.get("DB_MAX_OVERFLOW", 10)
@@ -156,7 +155,7 @@ class ArqSettings(BaseSettings):
 
     @field_validator("ARQ_MAX_JOBS", mode="after")
     @classmethod
-    def validate_max_jobs(cls, v: int, info: FieldValidationInfo) -> int:
+    def validate_max_jobs(cls, v: int, info: ValidationInfo) -> int:
         workers = info.data.get("ARQ_WORKERS", 1)
         max_total_jobs = v * workers
         import logging
@@ -204,12 +203,8 @@ class PostgresSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def POSTGRES_URI(self) -> str:
-        credentials = (
-            f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
-        )
-        location = (
-            f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
-        )
+        credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
+        location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         return f"{credentials}@{location}"
 
 

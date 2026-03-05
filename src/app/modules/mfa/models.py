@@ -21,7 +21,7 @@ class MFAMethod(Base):
     __tablename__ = "mfa_methods"
 
     # Primary key with default (init=False)
-    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4, init=False)
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, insert_default=uuid.uuid4, init=False)
 
     # Required fields
     user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
@@ -30,10 +30,10 @@ class MFAMethod(Base):
     # Optional fields with defaults (init=False)
     name: Mapped[str | None] = mapped_column(String(50), nullable=True, init=False)
     type: Mapped[str] = mapped_column(String(20), default="totp", nullable=False, init=False)
-    backup_codes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, default=list, init=False)
+    backup_codes: Mapped[list[str] | None] = mapped_column(JSONB, nullable=True, insert_default=list, init=False)
     is_primary: Mapped[bool] = mapped_column(Boolean, default=False, init=False)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True, init=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=func.now(), init=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), insert_default=func.now(), init=False)
 
     # Relationships (init=False)
     user: Mapped["User"] = relationship(back_populates="mfa_methods", init=False)

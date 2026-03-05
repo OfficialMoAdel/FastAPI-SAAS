@@ -142,6 +142,12 @@ filterwarnings = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+    "e2e: marks tests as end-to-end tests (require full stack)",
+    "uses_real_redis: marks tests that require a real Redis instance",
+    "slow: marks tests as slow running",
+    "benchmark: marks tests as performance benchmarks",
+]
 
 [dependency-groups]
 dev = [
