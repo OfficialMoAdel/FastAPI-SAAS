@@ -170,7 +170,11 @@ class TestP12CacheWarmingIntegration:
 
             assert cached_value is not None
             # Cache lookup should be very fast (<10ms typically <1ms)
-            assert cache_lookup_ms < 10, f"Cache lookup took {cache_lookup_ms:.2f}ms"
+            # Relaxed threshold for coverage/CI environments
+            import sys
+
+            threshold_ms = 50 if sys.gettrace() is not None else 10
+            assert cache_lookup_ms < threshold_ms, f"Cache lookup took {cache_lookup_ms:.2f}ms"
         finally:
             await db_session.delete(tenant)
             await db_session.commit()

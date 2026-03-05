@@ -15,6 +15,7 @@ import hashlib
 import hmac
 import json
 import logging
+import sys
 import time
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -22,7 +23,17 @@ from decimal import Decimal
 from typing import Any
 from uuid import uuid4
 
+import pytest
+
 from src.app.core.json_utils import json_dumps, json_dumps_sorted, json_loads
+
+logger = logging.getLogger(__name__)
+
+# Skip all benchmark tests when running under coverage (performance is not meaningful)
+pytestmark = pytest.mark.skipif(
+    sys.gettrace() is not None,
+    reason="Benchmark tests skipped under coverage (performance measurements are not meaningful with instrumentation)",
+)
 
 logger = logging.getLogger(__name__)
 

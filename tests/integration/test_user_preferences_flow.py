@@ -11,9 +11,7 @@ from fastapi.testclient import TestClient
 class TestUserPreferencesFlow:
     """Integration tests for user preferences management flow."""
 
-    def test_new_user_gets_default_preferences(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_new_user_gets_default_preferences(self, client: TestClient, auth_headers: dict):
         """
         Test that a new user gets default preferences.
 
@@ -22,6 +20,21 @@ class TestUserPreferencesFlow:
         2. Preferences are created with defaults
         3. All default values are returned
         """
+        # Reset preferences for this user back to default to avoid pollution from other tests
+        client.patch(
+            "/api/v1/user/me/preferences",
+            headers=auth_headers,
+            json={
+                "theme": "system",
+                "email_notifications": True,
+                "push_notifications": True,
+                "language": "en",
+                "timezone": "UTC",
+                "date_format": "YYYY-MM-DD",
+                "currency": "USD",
+            },
+        )
+
         response = client.get("/api/v1/user/me/preferences", headers=auth_headers)
 
         assert response.status_code == 200
@@ -36,9 +49,7 @@ class TestUserPreferencesFlow:
         assert data["date_format"] == "YYYY-MM-DD"
         assert data["currency"] == "USD"
 
-    def test_update_single_preference_preserves_others(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_update_single_preference_preserves_others(self, client: TestClient, auth_headers: dict):
         """
         Test partial update preserves other preferences.
 
@@ -69,9 +80,7 @@ class TestUserPreferencesFlow:
         assert updated["timezone"] == initial["timezone"]
         assert updated["email_notifications"] == initial["email_notifications"]
 
-    def test_update_multiple_preferences(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_update_multiple_preferences(self, client: TestClient, auth_headers: dict):
         """
         Test updating multiple preferences at once.
 
@@ -98,9 +107,7 @@ class TestUserPreferencesFlow:
         assert data["email_notifications"] is False
         assert data["push_notifications"] is False
 
-    def test_preferences_persist_across_requests(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_preferences_persist_across_requests(self, client: TestClient, auth_headers: dict):
         """
         Test that preference changes persist.
 
@@ -125,9 +132,7 @@ class TestUserPreferencesFlow:
         # Should still be updated
         assert data["currency"] == "GBP"
 
-    def test_update_timezone_and_date_format(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_update_timezone_and_date_format(self, client: TestClient, auth_headers: dict):
         """Test updating localization preferences."""
         response = client.patch(
             "/api/v1/user/me/preferences",
@@ -144,9 +149,7 @@ class TestUserPreferencesFlow:
         assert data["timezone"] == "Europe/London"
         assert data["date_format"] == "DD/MM/YYYY"
 
-    def test_preferences_include_updated_timestamp(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_preferences_include_updated_timestamp(self, client: TestClient, auth_headers: dict):
         """
         Test that updated_at timestamp changes on update.
 
@@ -175,9 +178,7 @@ class TestUserPreferencesFlow:
         new_updated_at = response.json()["updated_at"]
         assert new_updated_at is not None
 
-    def test_empty_update_returns_current_preferences(
-        self, client: TestClient, auth_headers: dict
-    ):
+    def test_empty_update_returns_current_preferences(self, client: TestClient, auth_headers: dict):
         """Test that empty PATCH body returns current preferences."""
         # Set some preferences first
         client.patch(

@@ -97,61 +97,62 @@ async def test_stampede_protection_lock():
     mock_client = AsyncMock()
     cache_module.client = mock_client
 
-    # Mock settings to disable LUA script for simpler path
-    settings.XFETCH_USE_LUA_SCRIPT = False
+    # Mock settings to disable LUA script for simpler path (restore after test)
+    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
+        # Mock get/ttl/set results
+        mock_client.get.return_value = b'{"data": "stale"}'
+        mock_client.ttl.return_value = 100  # TTL 100s left, Total 3600 -> delta=3500 -> prob ~ 1.0 if beta=1
 
-    # Mock get/ttl/set results
-    mock_client.get.return_value = b'{"data": "stale"}'
-    mock_client.ttl.return_value = 100 # TTL 100s left, Total 3600 -> delta=3500 -> prob ~ 1.0 if beta=1
+        # Mock set (lock acquisition) - returns True (lock acquired)
+        mock_client.set.return_value = True
 
-    # Mock set (lock acquisition) - returns True (lock acquired)
-    mock_client.set.return_value = True
+        # Mock fetch func
+        fetch_called = False
 
-    # Mock fetch func
-    fetch_called = False
-    async def fetch_func():
-        nonlocal fetch_called
-        fetch_called = True
-        return {"data": "fresh"}
+        async def fetch_func():
+            nonlocal fetch_called
+            fetch_called = True
+            return {"data": "fresh"}
 
-    # We need to mock asyncio.create_task to run synchronously or inspect it
-    with patch("asyncio.create_task") as mock_create_task:
+        # We need to mock asyncio.create_task to run synchronously or inspect it
+        with patch("asyncio.create_task") as mock_create_task:
+            await get_with_stampede_protection(
+                "test:key",
+                fetch_func,
+                ttl=3600,
+                beta=100.0,  # Force high probability
+            )
+
+            # Check if lock was attempted
+            mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
+
+            # Check if background task was created
+            mock_create_task.assert_called_once()
+
+            # Now verify what happens inside _refresh_cache_with_lock
+            # We can call it manually to verify it releases lock
+            await _refresh_cache_with_lock("test:key", fetch_func, 3600, "test:key:refresh_lock")
+
+            # Verify lock was deleted
+            mock_client.delete.assert_called_with("test:key:refresh_lock")
+            assert fetch_called
+
+        # Test lock contention (lock not acquired)
+        mock_client.set.return_value = False
+        mock_create_task.reset_mock()
+
         await get_with_stampede_protection(
             "test:key",
             fetch_func,
             ttl=3600,
-            beta=100.0 # Force high probability
+            beta=100.0,
         )
 
-        # Check if lock was attempted
+        # Lock attempt made
         mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
+        # But no background task created
+        mock_create_task.assert_not_called()
 
-        # Check if background task was created
-        mock_create_task.assert_called_once()
-
-        # Now verify what happens inside _refresh_cache_with_lock
-        # We can call it manually to verify it releases lock
-        await _refresh_cache_with_lock("test:key", fetch_func, 3600, "test:key:refresh_lock")
-
-        # Verify lock was deleted
-        mock_client.delete.assert_called_with("test:key:refresh_lock")
-        assert fetch_called
-
-    # Test lock contention (lock not acquired)
-    mock_client.set.return_value = False
-    mock_create_task.reset_mock()
-
-    await get_with_stampede_protection(
-        "test:key",
-        fetch_func,
-        ttl=3600,
-        beta=100.0
-    )
-
-    # Lock attempt made
-    mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
-    # But no background task created
-    mock_create_task.assert_not_called()
 
 if __name__ == "__main__":
     asyncio.run(test_batch_enqueue())

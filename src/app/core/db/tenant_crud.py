@@ -79,7 +79,15 @@ class TenantAwareCRUD(
         if "tenant_id" not in kwargs:
             tenant = get_tenant_context()
             if tenant is not None:
-                return {"tenant_id": tenant.id, **kwargs}
+                tenant_id = tenant.id
+                # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
+                if isinstance(tenant_id, str):
+                    import uuid
+                    try:
+                        tenant_id = uuid.UUID(tenant_id)
+                    except ValueError:
+                        pass
+                return {"tenant_id": tenant_id, **kwargs}
         return kwargs
 
     async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]

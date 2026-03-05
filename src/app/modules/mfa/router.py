@@ -25,6 +25,7 @@ from src.app.core.security import (
     create_access_token,
     create_refresh_token,
 )
+from src.app.core.utils import cache as _redis_cache
 from src.app.core.utils.cache import client as redis_client
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.mfa.schemas import (
@@ -283,10 +284,12 @@ async def complete_mfa_login(
     await check_mfa_rate_limit(fastapi_request, identifier=request.mfa_token)
 
     # Validate MFA pending token
-    if not redis_client:
+    # Use module-level redis_client (patchable by tests), with fallback to live cache.client
+    _redis_client = redis_client if redis_client is not None else _redis_cache.client
+    if not _redis_client:
         raise UnauthorizedException("Authentication service unavailable")
 
-    token_manager = MFAPendingTokenManager(redis_client)
+    token_manager = MFAPendingTokenManager(_redis_client)
     token_data = await token_manager.validate_token(request.mfa_token)
 
     if not token_data:

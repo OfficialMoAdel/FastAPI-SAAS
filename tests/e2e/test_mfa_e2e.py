@@ -16,103 +16,28 @@ from typing import Generator
 from unittest.mock import patch
 
 
+from tests.conftest import FakeRedis
+from typing import AsyncGenerator
+
 @pytest.fixture(autouse=True)
-def mock_redis() -> Generator[None, None, None]:
-    class FakeRedis:
-        def __init__(self):
-            self.data = {}
-            self.ttls = {}
-            self.scripts = {}
-
-        async def setex(self, name, time, value):
-            self.data[name] = value
-            self.ttls[name] = time
-
-        async def get(self, name):
-            val = self.data.get(name)
-            return str(val).encode('utf-8') if val else None
-
-        async def delete(self, *names):
-            for name in names:
-                self.data.pop(name, None)
-                self.ttls.pop(name, None)
-                
-        async def exists(self, *names):
-            return sum(1 for name in names if name in self.data)
-            
-        async def ttl(self, name):
-            return self.ttls.get(name, -2)
-            
-        async def expire(self, name, time):
-            if name in self.data:
-                self.ttls[name] = time
-                return True
-            return False
-            
-        async def incr(self, name, amount=1):
-            val = int(self.data.get(name, 0)) + amount
-            self.data[name] = str(val)
-            return val
-            
-        async def script_load(self, script):
-            # Generate a fake SHA for the script
-            import hashlib
-            sha = hashlib.sha1(script.encode('utf-8')).hexdigest()
-            self.scripts[sha] = script
-            return sha
-            
-        async def evalsha(self, sha, numkeys, *keys_and_args):
-            # If it's the rate limit script, just return 0 to allow requests
-            if sha in self.scripts and 'limit' in self.scripts[sha].lower():
-                return 0
-            return 0
-            
-        async def eval(self, script, numkeys, *keys_and_args):
-            if "DEL" in script.upper() and numkeys == 1:
-                # Mock for atomic GETDEL script
-                key = keys_and_args[0]
-                val = self.data.get(key)
-                if val is not None:
-                    self.data.pop(key, None)
-                    self.ttls.pop(key, None)
-                    return str(val).encode('utf-8')
-                return None
-
-            # Very basic Lua mock specifically for _MFA_CHECK_LUA in mfa/service.py
-            if numkeys == 1 and len(keys_and_args) >= 3:
-                key = keys_and_args[0]
-                max_attempts = int(keys_and_args[1])
-                lockout_duration = int(keys_and_args[2])
-                
-                current = self.data.get(key)
-                if current and int(current) >= max_attempts:
-                    if self.ttls.get(key, -2) > 0:
-                        return -1
-                        
-                new_count = int(self.data.get(key, 0)) + 1
-                self.data[key] = str(new_count)
-                if new_count == 1:
-                    self.ttls[key] = lockout_duration
-                return new_count
-                
-            return None
-                
-        # Required for async context manager in security service
-        async def __aenter__(self):
-            return self
-
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            pass
-
+async def mock_redis() -> AsyncGenerator[FakeRedis, None]:
+    # Custom FakeRedis for MFA testing
     fake_redis = FakeRedis()
     
-    # We need to patch cache.client AND async_get_redis generator to yield fake_redis
     async def fake_async_get_redis():
         yield fake_redis
         
     with patch("src.app.modules.mfa.service.redis", new=fake_redis), \
          patch("src.app.core.utils.cache.client", new=fake_redis), \
          patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis):
+        yield fake_redis
+
+
+from unittest.mock import AsyncMock
+
+@pytest.fixture(autouse=True)
+def mock_rate_limiter():
+    with patch("src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)):
         yield
 
 
@@ -441,7 +366,7 @@ class TestMFALoginWithBackupCode:
 class TestMFALockoutFlow:
     """Test MFA lockout mechanism after failed attempts."""
 
-    async def test_mfa_lockout_after_5_failed_attempts(self, async_client, perf_metrics):
+    async def test_mfa_lockout_after_5_failed_attempts(self, async_client, perf_metrics, mock_redis):
         """[STEP 1] Verify rate limit enforced after 5 failed attempts."""
         test_user_email = "mfa_lockout_test@example.com"
         test_password = "SecurePass123!"
@@ -472,7 +397,7 @@ class TestMFALockoutFlow:
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
-        
+
         from urllib.parse import urlparse, parse_qs
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]

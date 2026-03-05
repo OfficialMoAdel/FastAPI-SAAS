@@ -1,7 +1,7 @@
 """Task API router - HTTP handlers delegating to service layer."""
 
 
-from fastapi import status, APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.app.api.dependencies import get_current_user, rate_limiter_dependency
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus

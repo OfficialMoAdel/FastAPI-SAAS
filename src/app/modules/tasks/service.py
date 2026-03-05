@@ -3,9 +3,9 @@
 from typing import Any
 
 from arq.jobs import Job as ArqJob
-from fastapi import status
 
 from src.app.core.utils import queue
+
 
 class QueueUnavailableError(Exception):
     pass

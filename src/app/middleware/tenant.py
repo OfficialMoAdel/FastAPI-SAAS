@@ -422,8 +422,18 @@ class TenantMiddleware(BaseHTTPMiddleware):
         -------
             TenantContext with cached fields populated.
         """
+        import uuid
+
+        tenant_id = data["id"]
+        # Ensure UUID object for SQLite tests compatibility
+        if isinstance(tenant_id, str):
+            try:
+                tenant_id = uuid.UUID(tenant_id)
+            except ValueError:
+                pass
+
         return TenantContext(
-            tenant_id=data["id"],
+            tenant_id=tenant_id,
             tenant_slug=data["slug"],
             tenant_name=data.get("name", "cached"),
             is_active=data["is_active"],
