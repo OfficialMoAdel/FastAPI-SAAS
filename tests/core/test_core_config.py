@@ -1,9 +1,53 @@
+"""Core configuration tests - consolidated from multiple small test files."""
+
 from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
+from pydantic import SecretStr
 from redis.asyncio import ConnectionPool
 
 from src.app.core import redis_factory, setup
+from src.app.core.config import CryptSettings, R1UnifiedSettings
+
+
+# ==================== Config Defaults ====================
+
+
+def test_rbac_cache_ttl_default():
+    """Verify RBAC cache TTL default is 24 hours (86400 seconds)."""
+    settings = R1UnifiedSettings()
+    assert settings.RBAC_CACHE_TTL_SECONDS == 86400
+
+
+# ==================== Config Secrets ====================
+
+
+def test_encryption_keys_missing_warning(caplog):
+    """Verify warning is logged when encryption keys are missing."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+
+    # Create settings with valid SECRET_KEY but missing encryption keys
+    CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
+
+    assert "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing" in caplog.text
+
+
+def test_encryption_keys_present_no_warning(caplog):
+    """Verify no warning is logged when encryption keys are present."""
+    import logging
+
+    caplog.set_level(logging.WARNING)
+
+    CryptSettings(
+        SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=SecretStr("k" * 32), ENCRYPTION_SALT=SecretStr("s" * 16)
+    )
+
+    assert "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing" not in caplog.text
+
+
+# ==================== Redis Factory ====================
 
 
 # Override conftest.mock_redis to prevent it from patching create_redis_cache_pool

@@ -139,6 +139,14 @@ convention = "numpy"
 [tool.pytest.ini_options]
 filterwarnings = [
     "ignore::PendingDeprecationWarning:starlette.formparsers",
+    # Suppress RuntimeWarning for async mock issues in tests (fakeredis pipeline mocking)
+    "ignore::RuntimeWarning",
+    # Suppress FastCRUD schema_to_select deprecation warnings
+    "ignore::DeprecationWarning:",
+    # Suppress Pydantic class-based Config deprecation
+    "ignore::DeprecationWarning:pydantic",
+    # Suppress unknown pytest mark warnings
+    "ignore::pytest.PytestUnknownMarkWarning",
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
