@@ -1,0 +1,8 @@
+USER_NOT_AUTHENTICATED = "User not authenticated."
+INSUFFICIENT_PRIVILEGES = "You do not have enough privileges."
+RATE_LIMIT_EXCEEDED = "Rate limit exceeded."
+WRONG_CREDENTIALS = "Wrong username, email or password."
+REFRESH_TOKEN_MISSING = "Refresh token missing."
+INVALID_REFRESH_TOKEN = "Invalid refresh token."
+REFRESH_TOKEN_NOT_FOUND = "Refresh token not found."
+INVALID_TOKEN = "Invalid token."

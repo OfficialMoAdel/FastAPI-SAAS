@@ -9,6 +9,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from ...core.config import settings
 from ...core.exceptions.http_exceptions import UnauthorizedException
+from ...core.exceptions.messages import (
+    INVALID_REFRESH_TOKEN,
+    INVALID_TOKEN,
+    REFRESH_TOKEN_MISSING,
+    REFRESH_TOKEN_NOT_FOUND,
+    WRONG_CREDENTIALS,
+)
 from ...core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     TokenType,
@@ -56,7 +63,7 @@ class AuthService:
         """
         user = await authenticate_user(username_or_email=username, password=password, db=db)
         if not user:
-            raise UnauthorizedException("Wrong username, email or password.")
+            raise UnauthorizedException(WRONG_CREDENTIALS)
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
         access_token = await create_access_token(data={"sub": user["username"]}, expires_delta=access_token_expires)
@@ -96,11 +103,11 @@ class AuthService:
             If refresh token is missing or invalid
         """
         if not refresh_token:
-            raise UnauthorizedException("Refresh token missing.")
+            raise UnauthorizedException(REFRESH_TOKEN_MISSING)
 
         user_data = await verify_token(refresh_token, TokenType.REFRESH, db)
         if not user_data:
-            raise UnauthorizedException("Invalid refresh token.")
+            raise UnauthorizedException(INVALID_REFRESH_TOKEN)
 
         new_access_token = await create_access_token(data={"sub": user_data.username_or_email})
         return {"access_token": new_access_token, "token_type": "bearer"}
@@ -137,14 +144,14 @@ class AuthService:
         """
         try:
             if not refresh_token:
-                raise UnauthorizedException("Refresh token not found.")
+                raise UnauthorizedException(REFRESH_TOKEN_NOT_FOUND)
 
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
             return {"message": "Logged out successfully"}
 
         except JWTError:
-            raise UnauthorizedException("Invalid token.")
+            raise UnauthorizedException(INVALID_TOKEN)
 
 
 # Singleton instance for import convenience
