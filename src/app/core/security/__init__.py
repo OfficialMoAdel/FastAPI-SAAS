@@ -326,10 +326,14 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
         try:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
+            jti = payload.get("jti")
             if exp_timestamp is not None:
                 expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
-                tokens_for_cache.append((token, expires_at))
+
+                # Cache by JTI if available for precise blacklisting
+                cache_key = f"jti:{jti}" if jti else token
+                tokens_for_cache.append((cache_key, expires_at))
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
 

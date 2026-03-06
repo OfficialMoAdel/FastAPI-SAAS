@@ -510,6 +510,8 @@ async def cleanup_redis():
             "ratelimit:*",  # Fixed window rate limit keys
             "gcra:*",  # GCRA rate limit keys
             "user:auth:*",  # Auth cache
+            "token:verified:*",  # Token negative cache - must clear to avoid stale entries
+            "token:blacklist",  # Token blacklist sorted set
         ]
         for pattern in pre_patterns:
             try:
@@ -536,7 +538,9 @@ async def cleanup_redis():
             "gcra:*",  # GCRA rate limit keys
             "user:auth:*",  # Auth cache
             "tenant:*",  # Tenant cache
-            "blacklist:*",  # Token blacklist
+            "blacklist:*",  # Token blacklist (legacy pattern)
+            "token:blacklist",  # Token blacklist sorted set (actual key)
+            "token:verified:*",  # Token negative cache
             "cache:*",  # General cache keys
         ]
 

@@ -74,10 +74,12 @@ async def test_tenant_optimization_concurrent_isolation():
     middleware = TenantMiddleware(app)
 
     with (
+        patch("src.app.middleware.tenant.settings") as mock_settings,
         patch("src.app.middleware.tenant.async_engine") as mock_engine,
         patch("src.app.middleware.tenant.set_current_tenant") as mock_set_context,
         patch("src.app.middleware.tenant.clear_tenant_context") as mock_clear_context,
     ):
+        mock_settings.performance.FEATURE_REMOVE_WASTED_CONNECTION = True
         # Mock separate tenants for separate requests
         tenant1 = Tenant(name="T1", slug="t1", is_active=True)
         object.__setattr__(tenant1, "id", 1)
@@ -127,10 +129,12 @@ async def test_performance_no_connection_wait():
     middleware = TenantMiddleware(app)
 
     with (
+        patch("src.app.middleware.tenant.settings") as mock_settings,
         patch("src.app.middleware.tenant.async_engine") as mock_engine,
         patch.object(middleware, "_get_tenant_by_slug") as mock_get_tenant,
         patch("src.app.middleware.tenant.set_current_tenant"),
     ):
+        mock_settings.performance.FEATURE_REMOVE_WASTED_CONNECTION = True
         # Setup mock tenant
         mock_tenant = Tenant(name="Test", slug="test", is_active=True)
         object.__setattr__(mock_tenant, "id", 1)

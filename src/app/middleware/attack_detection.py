@@ -277,25 +277,37 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             text_content_types = ["application/json", "application/x-www-form-urlencoded", "text/"]
             if any(ct in content_type.lower() for ct in text_content_types):
                 # Pre-check Content-Length before reading body
-                content_length = request.headers.get("content-length")
-                if content_length and int(content_length) > 1024 * 1024:
-                    pass  # Skip oversized payloads
-                else:
+                content_length_str = request.headers.get("content-length")
+                if content_length_str:
                     try:
-                        body = await request.body()
-                        if body:
-                            # Re-inject body into a new receive channel so downstream handlers can read it.
-                            # This is necessary because await request.body() consumes the stream.
-                            async def receive():
-                                return {"type": "http.request", "body": body, "more_body": False}
+                        content_length = int(content_length_str)
+                        if content_length > 10 * 1024 * 1024:
+                            # Skip extremely large payloads (should be blocked by body limit middleware anyway)
+                            pass
+                    except ValueError:
+                        pass
 
-                            request._receive = receive
+                try:
+                    body = await request.body()
+                    if body:
+                        # Re-inject body into a new receive channel so downstream handlers can read it.
+                        # This is necessary because await request.body() consumes the stream.
+                        async def receive():
+                            return {"type": "http.request", "body": body, "more_body": False}
 
-                            if len(body) < 1024 * 1024:
-                                # Scan raw bytes directly — no UTF-8 decode needed
-                                self._check_for_patterns(body, "request_body", detected_attacks)
-                    except Exception as e:
-                        logger.error(f"Error reading request body in AttackDetectionMiddleware: {e}")
+                        request._receive = receive
+
+                        # Scan raw bytes directly — no UTF-8 decode needed
+                        self._check_for_patterns(body, "request_body", detected_attacks)
+                except Exception as e:
+                    logger.error(f"Error reading request body in AttackDetectionMiddleware: {e}")
+                    # Fail closed on body read error
+                    detected_attacks.append({
+                        "attack_type": "invalid_body",
+                        "pattern_name": "body_read_error",
+                        "location": "request_body",
+                        "matched_content": "Error reading body",
+                    })
 
         return detected_attacks
 

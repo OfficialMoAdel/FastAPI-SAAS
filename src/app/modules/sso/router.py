@@ -4,7 +4,7 @@ from typing import Annotated
 
 import httpx
 import orjson
-from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
 from fastapi.responses import RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -62,13 +62,23 @@ async def initiate_sso(
 
     # tenant context available via get_tenant_context() if needed
 
-    auth_url = await sso_service.get_authorization_url(
+    auth_url, state = await sso_service.get_authorization_url(
         provider=provider,
         redirect_uri=redirect_uri,
         request=request,
         db=db,
     )
-    return RedirectResponse(url=auth_url)
+
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        "sso_state",
+        state,
+        max_age=600,  # 10 minutes to match Redis TTL
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+    return response
 
 
 # Alias for backward compatibility with old frontend
@@ -88,6 +98,7 @@ async def initiate_sso_alias(
 @router.get("/{provider}/callback")
 async def handle_callback(
     request: Request,
+    response: Response,
     provider: SSOProvider,
     code: Annotated[str, Query],
     state: Annotated[str, Query],
@@ -95,6 +106,14 @@ async def handle_callback(
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> AuthTokenResponse:
     """Handle OAuth callback and return authentication tokens."""
+    # Login CSRF Protection Constraint
+    cookie_state = request.cookies.get("sso_state")
+    if not cookie_state or cookie_state != state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State mismatch or missing session cookie (Login CSRF detection)",
+        )
+
     try:
         tokens = await sso_service.process_callback(
             provider=provider,
@@ -103,6 +122,7 @@ async def handle_callback(
             request=request,
             db=db,
         )
+        response.delete_cookie("sso_state")
         return tokens
     except HTTPException:
         raise
@@ -121,6 +141,7 @@ async def handle_callback(
 @router.post("/{provider}/callback")
 async def handle_post_callback(
     request: Request,
+    response: Response,
     provider: SSOProvider,
     code: Annotated[str, Form()],
     state: Annotated[str, Form()],
@@ -133,6 +154,14 @@ async def handle_post_callback(
     Apple sends the callback as a POST request with form data instead of GET query params.
     The `user` field contains JSON with name info on first authorization only.
     """
+    # Login CSRF Protection Constraint
+    cookie_state = request.cookies.get("sso_state")
+    if not cookie_state or cookie_state != state:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="State mismatch or missing session cookie (Login CSRF detection)",
+        )
+
     try:
         # Parse user data if provided (Apple sends this on first auth)
         user_data = None
@@ -150,6 +179,7 @@ async def handle_post_callback(
             db=db,
             user_data=user_data,
         )
+        response.delete_cookie("sso_state")
         return tokens
     except HTTPException:
         raise
@@ -192,7 +222,7 @@ async def connect_provider(
             detail=f"Provider {provider.value} already connected to this account",
         )
 
-    auth_url = await sso_service.get_authorization_url(
+    auth_url, state = await sso_service.get_authorization_url(
         provider=provider,
         redirect_uri=redirect_uri,
         request=request,
@@ -200,7 +230,17 @@ async def connect_provider(
         connect_mode=True,
         user_id=current_user["id"],
     )
-    return RedirectResponse(url=auth_url)
+
+    response = RedirectResponse(url=auth_url)
+    response.set_cookie(
+        "sso_state",
+        state,
+        max_age=600,  # 10 minutes to match Redis TTL
+        httponly=True,
+        secure=request.url.scheme == "https",
+        samesite="lax",
+    )
+    return response
 
 
 @router.delete("/{provider}")

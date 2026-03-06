@@ -28,7 +28,7 @@ OPTIMIZATION_FLAGS: list[tuple[str, str, bool]] = [
     (
         "FEATURE_REMOVE_WASTED_CONNECTION",
         "src.app.core.config.Settings.FEATURE_REMOVE_WASTED_CONNECTION",
-        True,
+        False,
     ),
     (
         "FEATURE_STREAMING_UPLOADS",

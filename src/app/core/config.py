@@ -338,6 +338,16 @@ class SecuritySettings(BaseSettings):
         description="List of user-agent substrings to block as bad bots",
     )
 
+    # Trusted proxies for rate limiting and IP processing
+    TRUSTED_PROXY_IPS: list[str] = Field(
+        default=["127.0.0.1", "::1"],
+        description="List of trusted proxy IP addresses",
+    )
+    TRUSTED_PROXY_NETWORKS: list[str] = Field(
+        default=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
+        description="List of trusted proxy network CIDRs",
+    )
+
 
 class AttackDetectionSettings(BaseSettings):
     """Attack pattern detection configuration.
@@ -585,7 +595,7 @@ class PerformanceSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="PERFORMANCE_")
 
-    FEATURE_REMOVE_WASTED_CONNECTION: bool = True
+    FEATURE_REMOVE_WASTED_CONNECTION: bool = False
     """Remove wasted database connection in tenant middleware (P0-1)."""
 
     FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False

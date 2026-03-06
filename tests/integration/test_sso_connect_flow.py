@@ -50,7 +50,7 @@ class TestSSOConnectFlowIntegration:
     def test_connect_redirects_to_provider(self, client: TestClient):
         """Verify connect initiates OAuth flow with provider."""
         mock_service = _create_mock_sso_service(
-            get_authorization_url="https://accounts.google.com/o/oauth2/auth?state=test-state"
+            get_authorization_url=("https://accounts.google.com/o/oauth2/auth?state=test-state", "test-state")
         )
         with patch(
             "src.app.modules.sso.router.crud_user_sso_connections.exists",
@@ -72,7 +72,7 @@ class TestSSOConnectFlowIntegration:
     def test_connect_stores_user_id_in_state(self, client: TestClient):
         """Verify connect mode stores user_id in OAuth state."""
         mock_service = _create_mock_sso_service(
-            get_authorization_url="https://accounts.google.com/o/oauth2/auth?state=test-state"
+            get_authorization_url=("https://accounts.google.com/o/oauth2/auth?state=test-state", "test-state")
         )
         with patch(
             "src.app.modules.sso.router.crud_user_sso_connections.exists",

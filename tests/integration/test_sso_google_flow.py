@@ -88,6 +88,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=auth_code_google&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_200_OK
@@ -111,6 +112,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=auth_code_google&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_200_OK
@@ -128,6 +130,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=invalid_code&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -143,6 +146,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -156,6 +160,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -175,6 +180,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/unknown_provider/callback?code=test_code&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
@@ -215,6 +221,7 @@ class TestGoogleSSOE2EFlow:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=auth_code&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
 
             assert response.status_code == status.HTTP_200_OK

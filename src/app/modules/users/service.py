@@ -177,6 +177,8 @@ class UserService(BaseService[User]):
                 _user_username_cache_key(username),
                 _user_auth_cache_key(username),
                 _user_auth_cache_key(email),  # Also invalidate email-based auth cache
+                f"user:{username}:token_version",  # Invalidate token version correctly
+                f"user:{email}:token_version",  # Also under email namespace
             )
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id

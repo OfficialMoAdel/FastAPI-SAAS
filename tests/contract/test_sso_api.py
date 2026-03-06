@@ -71,7 +71,7 @@ class TestSSOAuthorizeEndpoint:
 
     def test_authorize_endpoint_exists(self, client, auth_headers):
         """Verify authorize endpoint exists."""
-        mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
+        mock_service = _create_mock_sso_service(get_authorization_url=("https://google.com/auth", "test_state"))
         with override_sso_service(mock_service):
             response = client.get(
                 "/api/v1/account/sso/google/authorize",
@@ -91,7 +91,7 @@ class TestSSOAuthorizeEndpoint:
     def test_authorize_redirect_includes_state(self, client, auth_headers):
         """Verify authorize returns redirect URL with state parameter."""
         mock_service = _create_mock_sso_service(
-            get_authorization_url="https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback"
+            get_authorization_url=("https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback", "test_state")
         )
         with override_sso_service(mock_service):
             response = client.get(
@@ -141,6 +141,7 @@ class TestSSOCallbackEndpoint:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=test_code&state=invalid_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
             assert response.status_code == status.HTTP_400_BAD_REQUEST
 
@@ -157,6 +158,7 @@ class TestSSOCallbackEndpoint:
             response = client.get(
                 "/api/v1/account/sso/google/callback?code=test_code&state=test_state",
                 headers=auth_headers,
+                cookies={"sso_state": "test_state"},
             )
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
@@ -170,7 +172,7 @@ class TestSSOConnectEndpoint:
 
     def test_connect_endpoint_exists(self, client, auth_headers):
         """Verify connect endpoint exists."""
-        mock_service = _create_mock_sso_service(get_authorization_url="https://google.com/auth")
+        mock_service = _create_mock_sso_service(get_authorization_url=("https://google.com/auth", "test_state"))
         with override_sso_service(mock_service):
             response = client.post(
                 "/api/v1/account/sso/google/connect",
@@ -190,7 +192,7 @@ class TestSSOConnectEndpoint:
     def test_connect_returns_authorization_url(self, client, auth_headers):
         """Verify connect returns authorization URL in Location header."""
         mock_service = _create_mock_sso_service(
-            get_authorization_url="https://accounts.google.com/o/oauth2/v2/auth?state=connect_state"
+            get_authorization_url=("https://accounts.google.com/o/oauth2/v2/auth?state=connect_state", "connect_state")
         )
         with override_sso_service(mock_service):
             response = client.post(

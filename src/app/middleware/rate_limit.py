@@ -42,12 +42,18 @@ TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
 DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
 
 # Trusted proxy configuration (module-level for LRU cache hashability)
-TRUSTED_PROXY_IPS: set[str] = {"127.0.0.1", "::1"}
-TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = (
-    ipaddress.ip_network("10.0.0.0/8"),
-    ipaddress.ip_network("172.16.0.0/12"),
-    ipaddress.ip_network("192.168.0.0/16"),
-)
+TRUSTED_PROXY_IPS: set[str] = set(settings.TRUSTED_PROXY_IPS)
+try:
+    TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
+        ipaddress.ip_network(n) for n in settings.TRUSTED_PROXY_NETWORKS
+    )
+except ValueError as e:
+    logger.error(f"Invalid trusted proxy network configuration: {e}")
+    TRUSTED_PROXY_NETWORKS = (
+        ipaddress.ip_network("10.0.0.0/8"),
+        ipaddress.ip_network("172.16.0.0/12"),
+        ipaddress.ip_network("192.168.0.0/16"),
+    )
 
 
 # OPT P0-3: LRU cache for IP address parsing and network check
@@ -259,9 +265,12 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if user_id:
             # Authenticated user - use tier-based limits
             # If we successfully identified the user (via state or JWT), we use their specific key
-            limit, period = TIER_RATE_LIMITS.get(
-                tier_name.lower() if tier_name else "basic", DEFAULT_AUTHENTICATED_LIMIT
-            )
+            if tier_name:
+                limit, period = TIER_RATE_LIMITS.get(
+                    tier_name.lower(), DEFAULT_AUTHENTICATED_LIMIT
+                )
+            else:
+                limit, period = DEFAULT_AUTHENTICATED_LIMIT
             key = f"user:{user_id}"
         else:
             # Unauthenticated - use global IP-based limits

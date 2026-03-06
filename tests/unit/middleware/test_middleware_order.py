@@ -48,12 +48,12 @@ class TestMiddlewareOrder:
 
         # Verify logical ordering (LIFO means later additions run first on request)
         # Execution Order: GZip -> Security -> BodyLimit -> Tenant -> RateLimit -> RequestID
-        # Addition Order: RequestID -> RateLimit -> Tenant -> BodyLimit -> Security -> GZip
+        # Addition Order: RequestID -> RateLimit -> Tenant -> Security -> BodyLimit -> GZip
         assert request_id_pos < rate_limit_pos, "RequestID added before RateLimit"
         assert rate_limit_pos < tenant_pos, "RateLimit added before Tenant"
-        assert tenant_pos < body_limit_pos, "Tenant added before BodyLimit"
-        assert body_limit_pos < security_pos, "BodyLimit added before Security"
-        assert security_pos < gzip_pos, "Security added before GZip"
+        assert tenant_pos < security_pos, "Tenant added before Security"
+        assert security_pos < body_limit_pos, "Security added before BodyLimit"
+        assert body_limit_pos < gzip_pos, "BodyLimit added before GZip"
 
     def test_p2_5_comment_documents_ordering(self):
         """Verify P2-5 optimization is documented in code."""

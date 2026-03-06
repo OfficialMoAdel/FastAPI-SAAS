@@ -138,6 +138,13 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     except Exception as e:
         logger.error(f"Error handling webhook event {event_type} (ID: {event_id}): {e}")
         # Do NOT mark as processed on failure - allow Stripe to retry
+        # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
+        # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
+        if redis_client:
+            try:
+                await redis_client.delete(f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
+            except Exception as redis_e:
+                logger.error(f"Failed to release webhook event lock: {redis_e}")
         raise
 
     return {"status": "success"}
@@ -295,8 +302,11 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         db_subscription = result.scalar_one_or_none()
 
         if not db_subscription:
-            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-            return
+            logger.warning(
+                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
+                f"Raising error to trigger Stripe retry."
+            )
+            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
@@ -382,8 +392,11 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         db_subscription = result.scalar_one_or_none()
 
         if not db_subscription:
-            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-            return
+            logger.warning(
+                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
+                f"Raising error to trigger Stripe retry."
+            )
+            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
@@ -455,8 +468,11 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
         db_subscription = result.scalar_one_or_none()
 
         if not db_subscription:
-            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-            return
+            logger.warning(
+                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
+                f"Raising error to trigger Stripe retry."
+            )
+            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id
@@ -515,8 +531,11 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
         db_subscription = result.scalar_one_or_none()
 
         if not db_subscription:
-            logger.warning(f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}")
-            return
+            logger.warning(
+                f"Subscription not found for stripe_subscription_id: {stripe_subscription_id}. "
+                f"Raising error to trigger Stripe retry."
+            )
+            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id
@@ -601,8 +620,11 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         db_subscription = result.scalar_one_or_none()
 
         if not db_subscription:
-            logger.warning(f"Could not find subscription for charge {charge['id']}")
-            return
+            logger.warning(
+                f"Could not find subscription for charge {charge['id']} "
+                f"(sub_id: {stripe_subscription_id}). Raising error to trigger Stripe retry."
+            )
+            raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
         tenant_id = db_subscription.tenant_id
         user_id = db_subscription.user_id

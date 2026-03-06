@@ -41,7 +41,11 @@ async def get_current_user(
         from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
         # Check Redis cache first (O(1) lookup)
-        cache_result = await is_token_blacklisted(token)
+        # SECURITY FIX: Use jti:{jti} key to match how blacklist_tokens() stores entries.
+        # Using the raw JWT string would never match because blacklist_tokens() uses JTI.
+        jti_in_payload = cached_payload.get("jti")
+        blacklist_token_key = f"jti:{jti_in_payload}" if jti_in_payload else token
+        cache_result = await is_token_blacklisted(blacklist_token_key)
         if cache_result is True:
             raise UnauthorizedException("User not authenticated.")
         elif cache_result is None:
@@ -83,18 +87,13 @@ async def get_current_user(
 
         # Verify user belongs to current tenant context
         current_tenant = get_tenant_context()
-        if current_tenant and user["tenant_id"] != current_tenant.id:
-            if not user.get("is_superuser"):
-                # Convert to UUID for comparison (JWT tenant_id is string)
-                user_tenant_id = user["tenant_id"]
-                current_tenant_id = current_tenant.id
-                # Handle both UUID and string comparisons
-                if str(user_tenant_id) != str(current_tenant_id):
-                    logger.warning(
-                        f"Tenant mismatch: User {user['id']} (tenant {user['tenant_id']}) "
-                        f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
-                    )
-                    raise ForbiddenException("User does not belong to the current tenant.")
+        if current_tenant and not user.get("is_superuser"):
+            if str(user.get("tenant_id")) != str(current_tenant.id):
+                logger.warning(
+                    f"Tenant mismatch: User {user['id']} (tenant {user.get('tenant_id')}) "
+                    f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
+                )
+                raise ForbiddenException("User does not belong to the current tenant.")
 
         if not user.get("is_active", True):
             raise UnauthorizedException("User account is no longer active.")
@@ -131,8 +130,8 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
         # Verify tenant context
         current_tenant = get_tenant_context()
-        if current_tenant and user["tenant_id"] != current_tenant.id:
-            if not user.get("is_superuser"):
+        if current_tenant and not user.get("is_superuser"):
+            if str(user.get("tenant_id")) != str(current_tenant.id):
                 return None
 
         return user

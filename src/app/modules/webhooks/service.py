@@ -245,17 +245,20 @@ class WebhookService:
 
         return f"sha256={signature}"
 
-    async def _enqueue_delivery(self, delivery_id: UUID) -> None:
+    async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0) -> None:
         """Enqueue webhook delivery task."""
         from src.app.core.utils.queue import pool
 
         if pool:
-            await pool.enqueue_job("deliver_webhook_task", delivery_id)
+            if defer_by > 0:
+                await pool.enqueue_job("deliver_webhook_task", delivery_id, _defer_by=defer_by)
+            else:
+                await pool.enqueue_job("deliver_webhook_task", delivery_id)
             logger.debug(f"Enqueued delivery task for {delivery_id}")
         else:
             logger.warning(f"Redis queue pool not initialized. Cannot enqueue delivery {delivery_id}")
 
-    async def deliver_webhook(self, delivery_id: UUID, attempt: int = 0) -> WebhookDelivery:
+    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:
         """Deliver a webhook (called by background task).
 
         Implements retry logic with exponential backoff and circuit breaker protection.
@@ -294,7 +297,10 @@ class WebhookService:
                 webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time),
             )
             # Mark for retry later when circuit recovers
-            await self._handle_delivery_failure(delivery, attempt)
+            delivery.attempt_count += 1
+            recovery_time = webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time)
+            delivery.response_body = f"Circuit breaker open. Skipped. Recovery in {recovery_time:.1f}s"
+            await self._handle_delivery_failure(delivery)
             await self.db.commit()
             await self.db.refresh(delivery)
             return delivery
@@ -367,18 +373,18 @@ class WebhookService:
                 await webhook_circuit.record_success()
                 delivery.status = WebhookDeliveryStatus.DELIVERED
                 # Note: delivered_at tracked via updated_at timestamp
-                logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {attempt + 1})")
+                logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {delivery.attempt_count})")
             else:
                 # HTTP error - record failure and retry if attempts remain
                 await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
-                await self._handle_delivery_failure(delivery, attempt)
+                await self._handle_delivery_failure(delivery)
 
         elif circuit_error is not None:
             # Circuit opened during delivery attempt
             logger.warning("Webhook circuit breaker opened: %s", circuit_error)
             delivery.attempt_count += 1
             delivery.response_body = str(circuit_error)[:1000]
-            await self._handle_delivery_failure(delivery, attempt)
+            await self._handle_delivery_failure(delivery)
 
         elif http_error is not None:
             # Network/timeout error - record failure and retry
@@ -386,30 +392,32 @@ class WebhookService:
             await webhook_circuit.record_failure(http_error)
             delivery.attempt_count += 1
             delivery.response_body = str(http_error)[:1000]
-            await self._handle_delivery_failure(delivery, attempt)
+            await self._handle_delivery_failure(delivery)
 
         await self.db.commit()
         await self.db.refresh(delivery)
         return delivery
 
-    async def _handle_delivery_failure(self, delivery: WebhookDelivery, attempt: int) -> None:
+    async def _handle_delivery_failure(self, delivery: WebhookDelivery) -> None:
         """Handle failed delivery with retry logic."""
-        if attempt < len(WEBHOOK_RETRY_DELAYS):
+        attempt_idx = delivery.attempt_count - 1
+        if attempt_idx >= 0 and attempt_idx < len(WEBHOOK_RETRY_DELAYS):
             # Schedule retry
-            retry_delay = WEBHOOK_RETRY_DELAYS[attempt]
+            retry_delay = int(WEBHOOK_RETRY_DELAYS[attempt_idx])
             delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
             delivery.status = WebhookDeliveryStatus.PENDING
 
-            # Enqueue retry task
-            await self._enqueue_delivery(delivery.id)
+            # Enqueue retry task with delay
+            await self._enqueue_delivery(delivery.id, defer_by=retry_delay)
 
             logger.warning(
-                f"Webhook delivery failed, will retry in {retry_delay}s: {delivery.id} (attempt {attempt + 1})"
+                f"Webhook delivery failed, will retry in {retry_delay}s: "
+                f"{delivery.id} (attempt {delivery.attempt_count})"
             )
         else:
             # Max retries exhausted
             delivery.status = WebhookDeliveryStatus.FAILED
-            logger.error(f"Webhook delivery failed permanently after {attempt + 1} attempts: {delivery.id}")
+            logger.error(f"Webhook delivery failed permanently after {delivery.attempt_count} attempts: {delivery.id}")
 
     async def verify_signature(self, payload: dict[str, Any], signature: str, secret: str) -> bool:
         """Verify webhook signature.

@@ -377,7 +377,8 @@ class TestWebhookServiceDelivery:
                     mock_circuit.is_closed = True
                     mock_circuit.record_failure = AsyncMock()
 
-                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=0)
+                    mock_webhook_delivery.attempt_count = 0
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.PENDING
                     assert result.next_retry_at is not None
@@ -408,7 +409,8 @@ class TestWebhookServiceDelivery:
                     mock_circuit.is_closed = True
                     mock_circuit.record_failure = AsyncMock()
 
-                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id, attempt=5)
+                    mock_webhook_delivery.attempt_count = 5
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
                     assert result.status == WebhookDeliveryStatus.FAILED
 

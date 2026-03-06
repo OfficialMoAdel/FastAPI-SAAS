@@ -46,9 +46,8 @@ _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
 # Cache stampede protection: per-slug locks, keyed by event loop ID.
 # Prevents "thundering herd" where multiple concurrent requests for a cold tenant
 # all bypass cache and hit the DB simultaneously.
-# NOTE: We key by loop ID to avoid RuntimeError when tests run in separate event loops.
-# Each event loop gets its own dict of locks so locks are never shared across loops.
-_TENANT_LOCKS: dict[int, dict[str, asyncio.Lock]] = {}
+# Using TTLCache prevents memory leaks that occur with unbounded dictionaries over time
+_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=3600)
 
 
 def _get_tenant_lock(slug: str) -> asyncio.Lock:
@@ -59,13 +58,10 @@ def _get_tenant_lock(slug: str) -> asyncio.Lock:
     but used in another (common in pytest-asyncio with function-scoped loops).
     """
     loop = asyncio.get_running_loop()
-    loop_id = id(loop)
-    if loop_id not in _TENANT_LOCKS:
-        _TENANT_LOCKS[loop_id] = {}
-    loop_locks = _TENANT_LOCKS[loop_id]
-    if slug not in loop_locks:
-        loop_locks[slug] = asyncio.Lock()
-    return loop_locks[slug]
+    key = f"{id(loop)}:{slug}"
+    if key not in _TENANT_LOCKS:
+        _TENANT_LOCKS[key] = asyncio.Lock()
+    return _TENANT_LOCKS[key]
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
     [
@@ -132,6 +128,23 @@ class TenantMiddleware(BaseHTTPMiddleware):
         if is_path_exempt(path) or request.method == "OPTIONS":
             return await call_next(request)
 
+        # PERFORMANCE FIX: Check for missing header BEFORE acquiring a DB connection.
+        # Previously, the header check was inside the `async with async_engine.connect()`
+        # block, causing every missing-header request to still pay the full connection
+        # acquisition cost (~50ms) before returning a 400.
+        tenant_slug = request.headers.get(TENANT_HEADER)
+        if not tenant_slug or not tenant_slug.strip():
+            logger.warning(
+                "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
+                path,
+                request.method,
+                request.client.host if request.client else "unknown",
+            )
+            return JSONResponse(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                content={"detail": f"Missing required header: {TENANT_HEADER}"},
+            )
+
         # Optimization: P0-1 Remove wasted database connection (R1-UNIFIED)
         # Feature flag disabled for now - middleware optimization needs review
         if settings.FEATURE_REMOVE_WASTED_CONNECTION:
@@ -192,10 +205,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
                 # Set PostgreSQL RLS session variables on this connection
                 # Use set_config for parameterized query safety with asyncpg
-                await connection.execute(
-                    text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-                    {"tenant_id": str(tenant.id)},
-                )
+                if connection.dialect.name == "postgresql":
+                    await connection.execute(
+                        text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+                        {"tenant_id": str(tenant.id)},
+                    )
                 logger.debug(
                     "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s | rls_context=set",
                     tenant_slug,
@@ -211,12 +225,13 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             finally:
                 # Clear RLS context before returning connection to pool
-                try:
-                    await connection.execute(text(f"RESET {RLS_TENANT_VAR}"))
-                    await connection.execute(text(f"RESET {RLS_USER_VAR}"))
-                    logger.debug("RLS context cleared")
-                except Exception as e:
-                    logger.warning("Failed to clear RLS context: %s", e)
+                if connection.dialect.name == "postgresql":
+                    try:
+                        await connection.execute(text(f"SELECT set_config('{RLS_TENANT_VAR}', '', true)"))
+                        await connection.execute(text(f"SELECT set_config('{RLS_USER_VAR}', '', true)"))
+                        logger.debug("RLS context cleared")
+                    except Exception as e:
+                        logger.warning("Failed to clear RLS context: %s", e)
 
                 # Clear application-level tenant context
                 clear_tenant_context()

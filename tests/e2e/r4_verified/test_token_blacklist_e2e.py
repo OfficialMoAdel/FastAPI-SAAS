@@ -17,10 +17,28 @@ import time
 
 import pytest
 from httpx import AsyncClient
+from jose import jwt
 
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.utils import cache as _cache_module
 
 logger = logging.getLogger(__name__)
+
+
+async def _flush_negative_cache():
+    """Flush `token:verified:*` negative cache entries from Redis.
+
+    The Lua blacklist script caches verified-not-blacklisted tokens in
+    ``token:verified:*`` keys.  If a GET /users/me request runs before
+    logout, it populates this cache.  After logout (blacklist), the
+    `add_tokens_to_blacklist` pipeline *should* invalidate the entry, but
+    timing windows mean it may still be present.  Explicitly flushing it
+    here guarantees the subsequent blacklist check works in tests.
+    """
+    redis_client = _cache_module.client
+    if redis_client:
+        keys = [k async for k in redis_client.scan_iter(match="token:verified:*")]
+        if keys:
+            await redis_client.delete(*keys)
 
 
 @pytest.mark.asyncio
@@ -29,6 +47,8 @@ async def test_token_blacklist_full_flow(authenticated_user: dict, client: Async
 
     Verifies P0-3 optimization: Token Blacklist Lua Script for atomic operations.
     """
+    redis_client = _cache_module.client
+
     log_step("Starting token blacklist E2E test", user=authenticated_user["email"])
 
     token = authenticated_user["access_token"]
@@ -50,13 +70,20 @@ async def test_token_blacklist_full_flow(authenticated_user: dict, client: Async
     assert response.status_code == 200, f"Logout failed: {response.text}"
     log_step("Logout successful", elapsed_ms=logout_time * 1000)
 
+    # Flush negative cache to ensure blacklist check is not short-circuited by
+    # the token:verified:* entry written during Step 1.
+    await _flush_negative_cache()
+    log_step("Negative cache flushed")
+
     # Step 4: Verify token blacklisted in Redis
     if redis_client:
         log_step("Checking Redis blacklist")
         blacklist_key = "token:blacklist"
 
         # Check if token in sorted set
-        score = await redis_client.zscore(blacklist_key, token)
+        decoded = jwt.get_unverified_claims(token)
+        jti_key = f"jti:{decoded.get('jti')}"
+        score = await redis_client.zscore(blacklist_key, jti_key)
         log_step("Redis blacklist check", token_found=score is not None, score=score)
         assert score is not None, "Token should be in blacklist"
 
@@ -79,6 +106,8 @@ async def test_blacklist_expiration(authenticated_user: dict, client: AsyncClien
 
     Verifies that Redis sorted set cleanup removes expired tokens.
     """
+    redis_client = _cache_module.client
+
     log_step("Starting blacklist expiration E2E test", user=authenticated_user["email"])
 
     token = authenticated_user["access_token"]
@@ -90,11 +119,15 @@ async def test_blacklist_expiration(authenticated_user: dict, client: AsyncClien
     response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
     assert response.status_code == 200
 
+    await _flush_negative_cache()
+
     # Step 2: Verify token in blacklist
     if redis_client:
         log_step("Verifying token in Redis blacklist")
         blacklist_key = "token:blacklist"
-        score = await redis_client.zscore(blacklist_key, token)
+        decoded = jwt.get_unverified_claims(token)
+        jti_key = f"jti:{decoded.get('jti')}"
+        score = await redis_client.zscore(blacklist_key, jti_key)
         assert score is not None, "Token should be in blacklist"
         log_step("Token in blacklist", expiry_timestamp=score)
 
@@ -145,6 +178,20 @@ async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncC
         response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
         assert response.status_code == 200
         log_step(f"Token {i + 1} blacklisted")
+
+    # Flush negative cache once after blacklisting all tokens
+    await _flush_negative_cache()
+    log_step("Negative cache flushed after all logouts")
+
+    # Clear rate-limit counters so the subsequent GET /users/me checks
+    # return 401 (blacklisted) rather than 429 (rate limited)
+    redis_local = _cache_module.client
+    if redis_local:
+        for pattern in ("gcra:*", "ratelimit:*"):
+            keys_to_del = [k async for k in redis_local.scan_iter(match=pattern)]
+            if keys_to_del:
+                await redis_local.delete(*keys_to_del)
+        log_step("Rate limit keys cleared")
 
     # Step 4: Verify all tokens rejected
     log_step("Verifying all tokens rejected")

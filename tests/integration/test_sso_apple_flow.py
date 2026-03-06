@@ -105,6 +105,7 @@ class TestAppleSSOFlowIntegration:
                 "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
                 headers={"Content-Type": "application/x-www-form-urlencoded"},
+                cookies={"sso_state": state},
             )
 
         assert response.status_code in [200, 302]
@@ -133,6 +134,7 @@ class TestAppleSSOFlowIntegration:
                     "state": state,
                     "user": '{"name":{"firstName":"John","lastName":"Doe"}}',
                 },
+                cookies={"sso_state": state},
             )
 
         assert response.status_code == 200
@@ -164,6 +166,7 @@ class TestAppleSSOFlowIntegration:
             response = await async_client.post(
                 "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
+                cookies={"sso_state": state},
             )
 
         assert response.status_code == 200
@@ -190,6 +193,7 @@ class TestAppleSSOFlowIntegration:
             response = await async_client.post(
                 "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
+                cookies={"sso_state": state},
             )
 
         assert response.status_code == 200
@@ -221,6 +225,7 @@ class TestAppleSSOFlowIntegration:
                     "state": state,
                     "user": '{"name":{"firstName":"Jane","lastName":"Smith"}}',
                 },
+                cookies={"sso_state": state},
             )
 
         assert response.status_code == 200
@@ -248,6 +253,7 @@ class TestAppleSSOFlowIntegration:
             response = await async_client.post(
                 "/api/v1/account/sso/apple/callback",
                 data={"code": "test-code", "state": state},
+                cookies={"sso_state": state},
             )
 
         assert response.status_code == 200

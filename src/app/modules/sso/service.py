@@ -75,7 +75,7 @@ class SSOService:
         redirect_uri: str | None = None,
         connect_mode: bool = False,
         user_id: int | None = None,
-    ) -> str:
+    ) -> tuple[str, str]:
         """Generate authorization URL for provider.
 
         Args:
@@ -85,6 +85,9 @@ class SSOService:
             redirect_uri: Optional custom redirect URI
             connect_mode: If True, this is linking provider to existing account
             user_id: User ID to link provider to (required if connect_mode=True)
+
+        Returns:
+            Tuple of (authorization_url, state_token)
         """
         from src.app.modules.sso_settings.service import sso_settings_service
 
@@ -116,7 +119,7 @@ class SSOService:
         )
 
         oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
-        return oauth_provider.get_authorization_url(state=state)
+        return oauth_provider.get_authorization_url(state=state), state
 
     async def process_callback(
         self,
