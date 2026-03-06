@@ -420,6 +420,7 @@ dev = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "faker" },
     { name = "pre-commit" },
     { name = "pytest-asyncio" },
 ]
@@ -462,6 +463,7 @@ provides-extras = ["dev"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "faker", specifier = ">=37.3.0" },
     { name = "pre-commit", specifier = ">=4.3.0" },
     { name = "pytest-asyncio", specifier = ">=1.0.0" },
 ]

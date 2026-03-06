@@ -22,17 +22,17 @@ async def write_tier(
     return await tier_service.create_tier(tier, db)
 
 
-@router.get("/tiers", response_model=PaginatedListResponse[TierRead])
+@router.get("/tiers", dependencies=[Depends(get_current_superuser)], response_model=PaginatedListResponse[TierRead])
 async def read_tiers(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
 ) -> dict:
-    """Get paginated list of tiers."""
+    """Get paginated list of tiers (superuser only)."""
     return await tier_service.get_tiers(db, page, items_per_page)
 
 
-@router.get("/tier/{name}", response_model=TierRead)
+@router.get("/tier/{name}", dependencies=[Depends(get_current_superuser)], response_model=TierRead)
 async def read_tier(request: Request, name: str, db: Annotated[AsyncSession, Depends(async_get_db)]) -> dict[str, Any]:
-    """Get tier by name."""
+    """Get tier by name (superuser only)."""
     return await tier_service.get_tier(name, db)
 
 
