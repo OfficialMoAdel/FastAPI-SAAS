@@ -4,12 +4,11 @@ Note: Token and TokenData are kept in core/schemas.py to avoid circular imports.
 This module re-exports them for module-internal use and adds auth-specific schemas.
 """
 
-from datetime import datetime
 
 from pydantic import BaseModel
 
 # Re-export from core for convenience (these are the canonical definitions)
-from ...core.schemas import Token, TokenData, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead
+from ...core.schemas import Token, TokenBlacklistBase, TokenBlacklistCreate, TokenBlacklistRead, TokenData
 
 
 class LoginRequest(BaseModel):

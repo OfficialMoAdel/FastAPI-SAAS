@@ -1,7 +1,7 @@
 from fastapi import APIRouter
 
-from ...modules.health.router import router as health_router
 from ...modules.auth.router import router as auth_router
+from ...modules.health.router import router as health_router
 from ...modules.posts.router import router as posts_router
 from ...modules.rate_limits.router import router as rate_limits_router
 from ...modules.tasks.router import router as tasks_router

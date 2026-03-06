@@ -6,10 +6,10 @@ from pydantic import BaseModel, Field
 
 from ..core.security import get_password_hash
 from ..modules.posts.models import Post
-from ..modules.tiers.models import Tier
-from ..modules.users.models import User
 from ..modules.posts.schemas import PostUpdate
+from ..modules.tiers.models import Tier
 from ..modules.tiers.schemas import TierCreate, TierUpdate
+from ..modules.users.models import User
 from ..modules.users.schemas import UserCreate, UserCreateInternal, UserUpdate
 
 

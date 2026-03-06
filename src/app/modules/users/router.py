@@ -28,7 +28,7 @@ async def write_user(
     return await user_service.create_user(user, db)
 
 
-@router.get("/users", response_model=PaginatedListResponse[UserRead])
+@router.get("/users", response_model=PaginatedListResponse[UserRead], dependencies=[Depends(get_current_user)])
 async def read_users(
     request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], page: int = 1, items_per_page: int = 10
 ) -> dict:
@@ -50,7 +50,7 @@ async def read_users_me(request: Request, current_user: Annotated[dict, Depends(
     return current_user
 
 
-@router.get("/user/{username}", response_model=UserRead)
+@router.get("/user/{username}", response_model=UserRead, dependencies=[Depends(get_current_user)])
 async def read_user(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict[str, Any]:
@@ -118,7 +118,7 @@ async def read_user_rate_limits(
     return user_dict
 
 
-@router.get("/user/{username}/tier")
+@router.get("/user/{username}/tier", dependencies=[Depends(get_current_user)])
 async def read_user_tier(
     request: Request, username: str, db: Annotated[AsyncSession, Depends(async_get_db)]
 ) -> dict | None:

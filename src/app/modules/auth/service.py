@@ -1,7 +1,7 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 from datetime import timedelta
-from typing import Any, Optional
+from typing import Optional
 
 from fastapi import Response
 from jose import JWTError
@@ -18,7 +18,6 @@ from ...core.security import (
     create_refresh_token,
     verify_token,
 )
-from .schemas import Token
 
 
 class AuthService:

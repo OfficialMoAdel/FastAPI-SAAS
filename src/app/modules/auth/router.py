@@ -1,6 +1,6 @@
 """Auth API router - HTTP handlers delegating to service layer."""
 
-from typing import Annotated, Any, Optional
+from typing import Annotated, Optional
 
 from fastapi import APIRouter, Cookie, Depends, Request, Response
 from fastapi.security import OAuth2PasswordRequestForm
