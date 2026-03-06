@@ -250,22 +250,35 @@ class SSOService:
                     user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
                     await self._link_account(db, user_id, provider, user_info)
 
+            is_disabled = False
             if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
-                raise UnauthorizedException("Account is disabled")
+                is_disabled = True
             elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
+                is_disabled = True
+            if is_disabled:
                 raise UnauthorizedException("Account is disabled")
+
+            # Fetch fully normalized User object with tier eager loaded for token claims
+            email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]
+            user_svc = get_service("user", db)
+            normalized_user = await user_svc.get_user_auth_info(email=email_val)
+
+            if not normalized_user:
+                raise UnauthorizedException("Account not found")
 
             access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
+            tier = normalized_user.get("tier")
+            tier_name = tier.get("name") if tier else None
+
             token_data = {
-                "sub": (
-                    found_user_data.username if hasattr(found_user_data, "username") else found_user_data["username"]
-                ),
-                "id": found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"],
-                "email": (found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]),
-                "tenant_id": found_user_data.tenant_id
-                if hasattr(found_user_data, "tenant_id")
-                else found_user_data["tenant_id"],
+                "sub": normalized_user.get("username") or normalized_user.get("email"),
+                "id": normalized_user.get("id"),
+                "email": normalized_user.get("email"),
+                "tenant_id": str(normalized_user["tenant_id"]) if normalized_user.get("tenant_id") else None,
+                "tier_id": normalized_user.get("tier_id"),
+                "tier_name": tier_name,
+                "token_version": normalized_user.get("token_version", 0),
             }
 
             access_token = await create_access_token(

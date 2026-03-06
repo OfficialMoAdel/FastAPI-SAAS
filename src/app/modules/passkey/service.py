@@ -688,10 +688,14 @@ class PasskeyService:
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = user.get("tier")
         tier_name = tier.get("name") if tier else None
+
+        # Consistent with standard login, we need to include token_version and tenant_id
         token_data = {
-            "sub": user["username"],
+            "sub": user.get("username") or user.get("email"),
             "tier_id": user.get("tier_id"),
             "tier_name": tier_name,
+            "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
+            "token_version": user.get("token_version", 0),
         }
 
         access_token = await create_access_token(data=token_data)

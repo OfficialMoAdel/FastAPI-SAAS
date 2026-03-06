@@ -355,8 +355,10 @@ return new_attempts
         tier = db_user.get("tier") if db_user else None
         tier_name = tier.get("name") if tier else None
         # SECURITY FIX: Include token_version for session invalidation
+        # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
         token_data = {
             "sub": user_data.username_or_email,
+            "tenant_id": str(db_user.get("tenant_id")) if db_user and db_user.get("tenant_id") else None,
             "tier_id": db_user.get("tier_id") if db_user else None,
             "tier_name": tier_name,
             "token_version": db_user.get("token_version", 0) if db_user else 0,

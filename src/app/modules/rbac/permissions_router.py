@@ -9,14 +9,15 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from src.app.api.dependencies import get_current_user
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
 from src.app.modules.rbac.schemas import PermissionOut
 from src.app.modules.rbac.service import RoleService, get_role_service
 
 router = APIRouter(prefix="/permissions", tags=["rbac"])
 
 
-@router.get("", response_model=list[PermissionOut], dependencies=[Depends(get_current_user)])
+@router.get("", response_model=list[PermissionOut], dependencies=[Depends(requires_permission(Permission.ROLES_READ))])
 async def list_permissions(
     service: Annotated[RoleService, Depends(get_role_service)],
 ):

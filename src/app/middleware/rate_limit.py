@@ -252,7 +252,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
         # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
         if user_id and token:
-            is_blacklisted = await is_token_blacklisted(token)
+            jti = cached_payload.get("jti") if cached_payload else None
+            blacklist_token_key = f"jti:{jti}" if jti else token
+            is_blacklisted = await is_token_blacklisted(blacklist_token_key)
             if is_blacklisted:
                 # Token is blacklisted - downgrade to anonymous limits
                 logger.info(

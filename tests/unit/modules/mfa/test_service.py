@@ -47,10 +47,12 @@ class TestGenerateTotpSecret:
                 mock_totp_instance.provisioning_uri.return_value = "otpauth://totp/..."
                 mock_totp.return_value = mock_totp_instance
 
-                result = await mfa_service.generate_totp_secret(
-                    user_id=12345,
-                    db=AsyncMock(),
-                )
+                with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                    mock_redis.setex = AsyncMock()
+                    result = await mfa_service.generate_totp_secret(
+                        user_id=12345,
+                        db=AsyncMock(),
+                    )
 
         assert "setup_token" in result
         assert "otpauth_url" in result
@@ -62,12 +64,14 @@ class TestGenerateTotpSecret:
         """Test that each call generates a unique secret."""
 
         results = []
-        for _ in range(5):
-            result = await mfa_service.generate_totp_secret(
-                user_id=12345,
-                db=AsyncMock(),
-            )
-            results.append(result["setup_token"])
+        with patch("src.app.modules.mfa.service.redis") as mock_redis:
+            mock_redis.setex = AsyncMock()
+            for _ in range(5):
+                result = await mfa_service.generate_totp_secret(
+                    user_id=12345,
+                    db=AsyncMock(),
+                )
+                results.append(result["setup_token"])
 
         # All secrets should be unique
         assert len(set(results)) == len(results)

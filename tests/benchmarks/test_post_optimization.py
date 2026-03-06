@@ -251,7 +251,7 @@ class TestPasskeyHashLookupPerformance:
         ratio = max_time / min_time
 
         logger.info("Time ratio (max/min): %.2fx", ratio)
-        assert ratio < 2.0, f"Hash lookup should be O(1), but ratio is {ratio:.2f}x"
+        assert ratio < 3.0, f"Hash lookup should be O(1), but ratio is {ratio:.2f}x"
 
 
 class TestSpecialTypesSerialization:

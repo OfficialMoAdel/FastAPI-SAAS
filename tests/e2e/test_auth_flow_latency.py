@@ -58,6 +58,13 @@ class TestAuthFlowLatency:
         e2e_thresholds: dict,
     ):
         """Test token refresh endpoint latency meets p95 threshold."""
+        # Warm up request to reduce cold-start variance
+        for _ in range(2):
+            await async_client.post(
+                "/api/v1/account/refresh",
+                json={"refresh_token": "fake-refresh-token"},
+            )
+
         iterations = 15
 
         for i in range(iterations):
@@ -87,6 +94,18 @@ class TestAuthFlowLatency:
         Note: This tests the complete request/response path latency.
         We don't check status codes since test mocks may vary.
         """
+        # Warm up request to reduce cold-start variance
+        for _ in range(2):
+            try:
+                await async_client.get(
+                    "/api/v1/users/me",
+                    headers={
+                        "Authorization": "Bearer test-token",
+                    },
+                )
+            except Exception:
+                pass
+
         iterations = 15
 
         for i in range(iterations):

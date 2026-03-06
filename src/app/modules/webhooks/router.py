@@ -12,7 +12,7 @@ from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
-from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.schemas import (
     SigningSecretRotateRequest,
     SigningSecretRotateResponse,
@@ -280,7 +280,7 @@ async def retry_webhook_delivery(
     if not delivery:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
 
-    if delivery.status != "failed":
+    if delivery.status != WebhookDeliveryStatus.FAILED:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only failed deliveries can be retried")
 
     # Reset status and enqueue for retry

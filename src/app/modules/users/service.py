@@ -520,6 +520,16 @@ class UserService(BaseService[User]):
 
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
+
+        # Increment token_version to globally invalidate all existing JWTs immediately
+        # ORM object needs to be updated before soft delete
+        token_version = db_user["token_version"] if isinstance(db_user, dict) else db_user.token_version
+        await self.crud.update(
+            db=self.db,
+            object={"token_version": token_version + 1},
+            username=username
+        )
+
         await self.crud.delete(db=self.db, username=username)
         await self._invalidate_user_cache(db_user)
 

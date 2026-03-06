@@ -33,8 +33,8 @@ def mock_db():
     mock_result.scalars.return_value.all.return_value = []
     db.execute.return_value = mock_result
 
-    # Configure scalar as a proper async mock
-    db.scalar = AsyncMock(return_value=None)
+    # Configure scalar as a proper async mock returning 1 (simulating count>0)
+    db.scalar = AsyncMock(return_value=1)
 
     db.add = MagicMock()
     db.commit = AsyncMock()

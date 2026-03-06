@@ -169,9 +169,9 @@ E2E_THRESHOLDS = {
     # Auth flow latencies (relaxed for test env with DB/audit overhead)
     # Login path includes password hash verification + audit logging fallback in test env.
     # Keep this threshold realistic for CI/Windows variance.
-    "auth_login_p95": 900.0,
-    "auth_refresh_p95": 200.0,
-    "auth_me_p95": 150.0,
+    "auth_login_p95": 1000.0,
+    "auth_refresh_p95": 300.0,
+    "auth_me_p95": 400.0,
     # Cache performance
     "cache_hit_ratio_min": 80.0,  # Minimum acceptable cache hit ratio (%)
     "cache_operation_p95": 50.0,

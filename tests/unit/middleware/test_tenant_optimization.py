@@ -28,7 +28,7 @@ async def test_tenant_optimization_no_db_connection():
         patch("src.app.middleware.tenant.set_current_tenant") as mock_set_context,
         patch("src.app.middleware.tenant.clear_tenant_context") as mock_clear_context,
     ):
-        mock_settings.performance.FEATURE_REMOVE_WASTED_CONNECTION = True
+        mock_settings.FEATURE_REMOVE_WASTED_CONNECTION = True
 
         # Mock _get_tenant_by_slug to return a tenant
         mock_tenant = Tenant(name="Test", slug="test", is_active=True)
