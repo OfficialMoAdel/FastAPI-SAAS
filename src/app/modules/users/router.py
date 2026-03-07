@@ -111,8 +111,8 @@ async def read_user(request: Request, user_id: str, service: UserService = Depen
     # Try to get by ID first, then fall back to username
     try:
         return UserRead.model_validate(await service.get(int(user_id)))
-    except (ValueError, KeyError):
-        # If not a valid integer or not found, try username
+    except ValueError:
+        # If not a valid integer, try username
         return UserRead.model_validate(await service.get_by_username(user_id))
 
 
@@ -131,7 +131,7 @@ async def patch_user(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     result = await service.update(username, values, current_user)

@@ -242,10 +242,18 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         return None
     elif cache_result is None:
         # Redis unavailable - fall back to DB check
+        # SECURITY FIX: Check by JTI first (primary blacklist method), then full token hash.
+        # Previously only checked token hash, which would miss JTI-blacklisted tokens during outages.
         _jwt_logger.warning(
             "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
         )
-        is_blacklisted = await crud_token_blacklist.exists(db, token=token)
+        is_blacklisted = False
+        if jti:
+            # SECURITY FIX: Check by JTI-prefixed key (stored in DB by blacklist_token/blacklist_tokens)
+            is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
+        if not is_blacklisted:
+            # Also check full token hash for backward compatibility with older blacklisted tokens
+            is_blacklisted = await crud_token_blacklist.exists(db, token=token)
         if is_blacklisted:
             return None
 
@@ -326,10 +334,20 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
             jti = payload.get("jti")
             if exp_timestamp is not None:
                 expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
+                # Store full token in DB for backward compatibility
                 await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
 
+                if jti:
+                    # SECURITY FIX: Also store JTI-prefixed key in DB.
+                    # This allows the DB fallback in verify_token() to find JTI-blacklisted tokens
+                    # even when Redis is unavailable (Redis stores only jti:{jti}, not the full token).
+                    jti_key = f"jti:{jti}"
+                    await crud_token_blacklist.create(
+                        db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at)
+                    )
+
                 # Cache by JTI if available for precise blacklisting
-                cache_key = f"jti:{jti}" if jti else token
+                cache_key = jti_key if jti else token
                 tokens_for_cache.append((cache_key, expires_at))
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
@@ -344,6 +362,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
 
     Adds token to both Redis cache (for fast lookup) and database (for persistence).
     Uses JTI (JWT ID) for precise blacklisting when available.
+    Also stores the JTI-prefixed key in DB so the DB fallback can find it during Redis outages.
     """
     try:
         payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
@@ -352,9 +371,11 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
-            # Add to Redis cache - prefer JTI for precise blacklisting
             if jti:
-                await add_token_to_blacklist(f"jti:{jti}", expires_at)
+                # SECURITY FIX: Also store JTI-prefixed key in DB for Redis-outage fallback.
+                jti_key = f"jti:{jti}"
+                await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at))
+                await add_token_to_blacklist(jti_key, expires_at)
             else:
                 # Fallback for tokens without JTI (backward compatibility)
                 await add_token_to_blacklist(token, expires_at)

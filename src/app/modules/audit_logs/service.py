@@ -381,8 +381,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
 
     # Log if we hit the flush limit
     if len(log_entries) >= max_flush_per_run:
-        remaining_result = redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY)
-        remaining = await remaining_result if hasattr(remaining_result, "__await__") else remaining_result
+        remaining: int = int(await redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY))  # type: ignore[misc]
         logger.warning(
             "audit_log_flush_limit_reached",
             flushed=len(log_entries),

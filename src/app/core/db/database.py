@@ -1,3 +1,4 @@
+import logging
 import os
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -13,6 +14,8 @@ from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context, rls_context
 from src.app.core.tenancy.context import get_current_tenant
+
+logger = logging.getLogger(__name__)
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
@@ -114,16 +117,15 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
                 yield db
         else:
             yield db
-    except Exception as e:
-        # Rollback on exception before re-raising
+    except Exception as exc:
+        # Rollback FIRST before logging - if logging fails, rollback must still happen.
+        await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        import logging
-        logging.getLogger(__name__).error(
+        logger.error(
             f"Database transaction failed for tenant {tenant_context}, rolling back",
-            exc_info=e
+            exc_info=exc
         )
-        await db.rollback()
         raise
     finally:
         # Always close session to prevent connection pool exhaustion
@@ -154,16 +156,15 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 yield db
         else:
             yield db
-    except Exception as e:
-        # Rollback on exception before re-raising
+    except Exception as exc:
+        # Rollback FIRST before logging - if logging fails, rollback must still happen.
+        await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        import logging
-        logging.getLogger(__name__).error(
+        logger.error(
             f"Database transaction failed for tenant {tenant_context}, rolling back",
-            exc_info=e
+            exc_info=exc
         )
-        await db.rollback()
         raise
     finally:
         # Always close session to prevent connection pool exhaustion

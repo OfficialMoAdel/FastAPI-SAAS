@@ -151,22 +151,9 @@ class TenantMiddleware(BaseHTTPMiddleware):
             return await self._dispatch_optimized(request, call_next, path)
 
         # Legacy path: Acquire a connection from the pool for this request
+        # Note: tenant_slug is already validated non-empty above (before connection acquisition).
         async with async_engine.connect() as connection:
             try:
-                tenant_slug = request.headers.get(TENANT_HEADER)
-
-                if not tenant_slug:
-                    logger.warning(
-                        "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
-                        path,
-                        request.method,
-                        request.client.host if request.client else "unknown",
-                    )
-                    return JSONResponse(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        content={"detail": f"Missing required header: {TENANT_HEADER}"},
-                    )
-
                 # Normalize slug to ensure case-insensitive lookup
                 tenant_slug = tenant_slug.strip().lower()
 

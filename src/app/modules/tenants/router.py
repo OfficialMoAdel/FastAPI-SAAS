@@ -40,7 +40,7 @@ async def list_tenants(
         is_active=is_active,
     )
     data = tenants_data.get("data", [])
-    total = tenants_data.get("total_count", len(data))
+    total = tenants_data.get("total_count", 0)
     return {
         "items": data,
         "total": total,

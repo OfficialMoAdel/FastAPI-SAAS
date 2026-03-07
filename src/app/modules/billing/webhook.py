@@ -266,20 +266,24 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         )
 
                         # Re-fetch and update
-                        update_data: dict[str, Any] = {
+                        race_update_data: dict[str, Any] = {
                             "status": stripe_sub.get("status"),
-                            "current_period_start": datetime.fromtimestamp(stripe_sub.get("current_period_start", 0), UTC),
-                            "current_period_end": datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC),
+                            "current_period_start": datetime.fromtimestamp(
+                                stripe_sub.get("current_period_start", 0), UTC
+                            ),
+                            "current_period_end": datetime.fromtimestamp(
+                                stripe_sub.get("current_period_end", 0), UTC
+                            ),
                             "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                         }
                         canceled_at = stripe_sub.get("canceled_at")
                         if canceled_at:
-                            update_data["canceled_at"] = datetime.fromtimestamp(canceled_at, UTC)
+                            race_update_data["canceled_at"] = datetime.fromtimestamp(canceled_at, UTC)
 
                         await crud_user_subscriptions.update(
                             db=db,
                             stripe_subscription_id=stripe_subscription_id,
-                            object=update_data,
+                            object=race_update_data,
                         )
                         await db.commit()
 

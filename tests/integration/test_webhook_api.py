@@ -194,5 +194,6 @@ class TestWebhookTenantIsolation:
             f"/api/v1/webhooks/{webhook_id}",
             headers={"X-Tenant-ID": tenant_a},
         )
-        # Should return 404 as webhook doesn't exist or belong to this tenant
-        assert response.status_code in [404, 403, 200]
+        # Should return 404 if webhook doesn't exist, 403 if wrong tenant,
+        # or 401 if not authenticated (now that endpoint requires WEBHOOKS_READ)
+        assert response.status_code in [401, 404, 403, 200]

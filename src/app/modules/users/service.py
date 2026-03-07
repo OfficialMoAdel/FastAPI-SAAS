@@ -4,6 +4,7 @@ import logging
 from typing import Any
 from uuid import UUID
 
+from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,16 +43,20 @@ def _user_cache_key(user_id: UUID | str) -> str:
 
 def _require_tenant_id() -> str:
     """
-    Get current tenant ID or raise error.
+    Get current tenant ID or raise HTTPException.
 
     Tenant context is required for tenant-scoped cache keys to prevent
     cross-tenant cache collisions. Use this for email/username lookups
     which are only unique within a tenant.
+
+    SECURITY FIX: Changed from RuntimeError (causes 500) to HTTPException (500)
+    so FastAPI's exception handlers output a proper JSON error response.
     """
     tenant = get_current_tenant()
     if tenant is None:
-        raise RuntimeError(
-            "Tenant context required for tenant-scoped cache key. Ensure request is authenticated with tenant context."
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error: tenant context not available.",
         )
     return str(tenant.id)
 
@@ -234,9 +239,9 @@ class UserService(BaseService[User]):
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:
-            if existing_user.email == user.email:
-                raise DuplicateError("email", user.email)
-            raise DuplicateError("username", user.username)
+            # SECURITY FIX: Use a generic error message regardless of which field exists.
+            # Different messages for email vs username would allow enumeration of registered users.
+            raise DuplicateError("email or username", user.email)
 
         # Hash password and create internal user object
         user_dict = user.model_dump()
@@ -637,6 +642,12 @@ class UserService(BaseService[User]):
             .options(joinedload(User.tier).joinedload(Tier.rate_limits))
             .where(User.username == username, User.is_deleted.is_(False))
         )
+        # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
+        # Without this, a superuser could query any user across all tenants by username.
+        tenant = get_current_tenant()
+        if tenant:
+            stmt = stmt.where(User.tenant_id == tenant.id)
+
         result = await self.db.execute(stmt)
         db_user = result.unique().scalar_one_or_none()
 

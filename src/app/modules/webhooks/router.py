@@ -31,8 +31,15 @@ from src.app.modules.webhooks.service import WebhookService
 
 router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
+# Route template for rate limit lookup - must match the registered API path.
+_WEBHOOK_TEST_RATE_LIMIT_PATH = "/api/v1/webhooks/{endpoint_id}/test"
 
-@router.get("/", response_model=WebhookEndpointList)
+
+@router.get(
+    "/",
+    response_model=WebhookEndpointList,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
+)
 async def list_webhook_endpoints(
     is_active: bool | None = Query(None, description="Filter by active status"),
     event_type: str | None = Query(None, description="Filter by event type"),
@@ -74,7 +81,12 @@ async def list_webhook_endpoints(
     }
 
 
-@router.post("/", response_model=WebhookEndpointCreateResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/",
+    response_model=WebhookEndpointCreateResponse,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
     db: AsyncSession = Depends(async_get_db),
@@ -99,7 +111,11 @@ async def create_webhook_endpoint(
     return WebhookEndpointCreateResponse.model_validate(endpoint)
 
 
-@router.get("/deliveries", response_model=WebhookDeliveryList)
+@router.get(
+    "/deliveries",
+    response_model=WebhookDeliveryList,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
+)
 async def list_webhook_deliveries_route(
     endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
     status: str | None = Query(None, description="Filter by status"),
@@ -151,7 +167,11 @@ async def list_webhook_deliveries_route(
     }
 
 
-@router.get("/{endpoint_id}", response_model=WebhookEndpointResponse)
+@router.get(
+    "/{endpoint_id}",
+    response_model=WebhookEndpointResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
+)
 async def get_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -172,7 +192,12 @@ async def get_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.patch("/{endpoint_id}", response_model=WebhookEndpointResponse, status_code=status.HTTP_200_OK)
+@router.patch(
+    "/{endpoint_id}",
+    response_model=WebhookEndpointResponse,
+    status_code=status.HTTP_200_OK,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def update_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookEndpointUpdate,
@@ -204,7 +229,11 @@ async def update_webhook_endpoint(
     return WebhookEndpointResponse.model_validate(endpoint)
 
 
-@router.delete("/{endpoint_id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete(
+    "/{endpoint_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def delete_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -252,7 +281,11 @@ async def get_webhook_delivery(
     return WebhookDeliveryResponse.model_validate(delivery)
 
 
-@router.post("/deliveries/{delivery_id}/retry", response_model=WebhookDeliveryResponse)
+@router.post(
+    "/deliveries/{delivery_id}/retry",
+    response_model=WebhookDeliveryResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def retry_webhook_delivery(
     delivery_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -317,7 +350,7 @@ async def test_webhook_endpoint(
     # Query the database directly for the tenant's rate limit for this endpoint
     stmt = select(RateLimit).where(
         RateLimit.tier_id == current_user.tier_id,
-        RateLimit.path == "/api/v1/webhooks/{endpoint_id}/test",
+        RateLimit.path == _WEBHOOK_TEST_RATE_LIMIT_PATH,
     )
     result = await db.execute(stmt)
     rate_limit_config = result.scalar_one_or_none()

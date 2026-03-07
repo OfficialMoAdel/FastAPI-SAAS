@@ -128,11 +128,11 @@ EmailVerificationResponse = MessageResponse
 ForgotPasswordResponse = MessageResponse
 
 
-# Re-export all token schemas for backward compatibility
 __all__ = [
     "AuthTokenResponse",
     "EmailVerificationResponse",
     "ForgotPasswordResponse",
+    "LoginMFAResponse",
     "LoginRequest",
     "LogoutResponse",
     "MessageResponse",
@@ -145,11 +145,6 @@ __all__ = [
     "SessionCountResponse",
     "SessionInfo",
     "SessionListResponse",
-    "PasswordChangeResponse",
-    "PasswordResetConfirm",
-    "PasswordResetRequest",
-    "PasswordResetResponse",
-    "RefreshTokenResponse",
     "Token",
     "TokenBlacklistBase",
     "TokenBlacklistCreate",

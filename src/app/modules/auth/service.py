@@ -664,8 +664,14 @@ return new_attempts
         UnauthorizedException
             If token is invalid, expired, or account is deleted/inactive
         """
-        # Find token in database
-        result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token))
+        # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
+        # Without this lock, two concurrent requests with the same token could both
+        # pass the is_valid check before either marks the token as used.
+        result = await db.execute(
+            select(PasswordResetToken)
+            .where(PasswordResetToken.token == token)
+            .with_for_update()
+        )
         reset_token = result.scalar_one_or_none()
 
         if not reset_token:

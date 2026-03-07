@@ -67,6 +67,7 @@ class TenantService(BaseService[Tenant]):
         """Cache tenant data in Redis.
 
         P2-4: Caches both ID and slug lookups for O(1) retrieval.
+        Use this for ORM Tenant objects.
         """
         if not redis_client:
             return
@@ -81,6 +82,27 @@ class TenantService(BaseService[Tenant]):
             await redis_client.setex(slug_key, TENANT_CACHE_TTL, str(tenant.id))
         except Exception as e:
             logger.debug("Failed to cache tenant", error=str(e))
+
+    async def _cache_tenant_dict(self, tenant_id: Any, tenant_data: dict[str, Any]) -> None:
+        """Cache tenant data dict in Redis.
+
+        P2-4: Used when FastCRUD returns a dict (schema_to_select=TenantResponse).
+        Caches both by ID and by slug for O(1) retrieval.
+        """
+        if not redis_client or not tenant_data:
+            return
+
+        try:
+            cache_key = _get_cache_key(tenant_id)
+            await redis_client.setex(cache_key, TENANT_CACHE_TTL, json_dumps(tenant_data, as_str=True))
+
+            # Also cache by slug for slug-based lookups
+            slug = tenant_data.get("slug")
+            if slug:
+                slug_key = _get_slug_cache_key(slug)
+                await redis_client.setex(slug_key, TENANT_CACHE_TTL, str(tenant_id))
+        except Exception as e:
+            logger.debug("Failed to cache tenant dict", error=str(e))
 
     async def _invalidate_tenant_cache(self, tenant_id: UUID, slug: str | None = None) -> None:
         """Invalidate tenant cache in Redis."""
@@ -222,8 +244,10 @@ class TenantService(BaseService[Tenant]):
             raise ModelNotFoundError("Tenant", tenant_id)
 
         # Cache for next request
-        if isinstance(tenant, Tenant):
-            await self._cache_tenant(tenant)
+        # NOTE: FastCRUD with schema_to_select returns a dict, not an ORM Tenant object.
+        # Cache the dict directly via a lightweight method.
+        if tenant:
+            await self._cache_tenant_dict(tenant_id, tenant)
 
         return tenant
 
@@ -253,8 +277,9 @@ class TenantService(BaseService[Tenant]):
         tenant = await self.crud.get(db=self.db, slug=normalized_slug, schema_to_select=TenantResponse)
 
         # Cache for next request
-        if isinstance(tenant, Tenant):
-            await self._cache_tenant(tenant)
+        # NOTE: FastCRUD with schema_to_select returns a dict, not an ORM Tenant object.
+        if tenant:
+            await self._cache_tenant_dict(tenant.get("id"), tenant)
 
         return tenant
 
