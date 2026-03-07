@@ -276,8 +276,7 @@ async def test_redis_failure_uses_fallback():
 
     # Mock Redis to raise exception on Lua execution
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.setex = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
     mock_redis.incr = AsyncMock(return_value=1)
     event_bus.set_redis_client(mock_redis)
 
@@ -308,9 +307,8 @@ async def test_redis_failure_uses_fallback():
 
     # Event should be processed (fallback path)
     assert processed
-    # Fallback should use get/setex
-    mock_redis.get.assert_called_once()
-    mock_redis.setex.assert_called_once()
+    # Fallback should use set
+    mock_redis.set.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -320,8 +318,7 @@ async def test_feature_flag_disables_lua_optimization(mock_redis_client):
 
     # Mock Redis for fallback path
     mock_redis = AsyncMock()
-    mock_redis.get = AsyncMock(return_value=None)
-    mock_redis.setex = AsyncMock()
+    mock_redis.set = AsyncMock(return_value=True)
     mock_redis.incr = AsyncMock(return_value=1)
     event_bus.set_redis_client(mock_redis)
 
@@ -348,5 +345,4 @@ async def test_feature_flag_disables_lua_optimization(mock_redis_client):
         mock_lua_mgr.assert_not_called()
 
     # Should use fallback path instead
-    mock_redis.get.assert_called_once()
-    mock_redis.setex.assert_called_once()
+    mock_redis.set.assert_called_once()

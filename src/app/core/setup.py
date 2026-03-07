@@ -251,10 +251,14 @@ def create_application(
         application.add_middleware(ClientCacheMiddleware, max_age=settings.CLIENT_CACHE_MAX_AGE)
 
     if isinstance(settings, CORSSettings):
+        allow_credentials = True
+        if "*" in settings.CORS_ORIGINS:
+            allow_credentials = False
+
         application.add_middleware(
             CORSMiddleware,
             allow_origins=settings.CORS_ORIGINS,
-            allow_credentials=True,
+            allow_credentials=allow_credentials,
             allow_methods=settings.CORS_METHODS,
             allow_headers=settings.CORS_HEADERS,
         )

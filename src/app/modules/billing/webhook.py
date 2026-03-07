@@ -184,16 +184,16 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     if stripe_subscription_id:
         try:
             stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id)
-            # Access Stripe subscription period timestamps using subscript notation
-            current_period_start = datetime.fromtimestamp(stripe_sub["current_period_start"], UTC)
-            current_period_end = datetime.fromtimestamp(stripe_sub["current_period_end"], UTC)
+            # Access Stripe subscription period timestamps with .get or default to 0
+            current_period_start = datetime.fromtimestamp(stripe_sub.get("current_period_start", 0), UTC)
+            current_period_end = datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC)
 
             # Determine billing interval from Stripe subscription
             interval = "month"
-            if stripe_sub.items.data:
-                price = stripe_sub.items.data[0].price
-                if price.recurring and price.recurring.interval:
-                    interval = price.recurring.interval
+            if stripe_sub.get("items") and stripe_sub["items"].get("data"):
+                price = stripe_sub["items"]["data"][0].get("price")
+                if price and price.get("recurring") and price["recurring"].get("interval"):
+                    interval = price["recurring"]["interval"]
             billing_interval: Literal["monthly", "yearly"] = "yearly" if interval == "year" else "monthly"
 
             # Create user subscription with tenant_id in the object
@@ -210,39 +210,15 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             )
 
             async with job_tenant_context(tenant_id) as db:  # type: ignore[arg-type]
-                # ATOMIC UPSERT: Try to create first, handle race condition with IntegrityError
-                # This eliminates the TOCTOU race condition between exists() and create()
+                # ATOMIC UPSERT: Check exists first, then create or update
+                # Race condition handled: IntegrityError on create triggers fallback update
                 existing = await crud_user_subscriptions.exists(
                     db=db,
                     stripe_subscription_id=stripe_subscription_id,
                 )
 
-                try:
-                    if not existing:
-                        # Attempt to create new subscription
-                        await crud_user_subscriptions.create(
-                            db=db,
-                            object=subscription_data,
-                        )
-                        logger.info(
-                            "Created subscription | stripe_sub_id=%s | user=%s | tenant=%s",
-                            stripe_subscription_id,
-                            user_id,
-                            tenant_id,
-                        )
-                    else:
-                        # It exists, we'll fall through to the update logic below
-                        # But we raise a dummy error to trigger the shared update path
-                        # OR just handle it here. Let's handle it here for clarity.
-                        raise IntegrityError("Already exists", {}, Exception("Subscription exists"))
-
-                    await db.commit()
-
-                except IntegrityError:
-                    # Race condition or explicit update path: re-fetch and update
-                    if not existing:
-                        await db.rollback()
-
+                if existing:
+                    # Record exists - update directly
                     logger.info(
                         "Subscription exists, updating | stripe_sub_id=%s | user=%s",
                         stripe_subscription_id,
@@ -267,6 +243,45 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         object=update_data,
                     )
                     await db.commit()
+                else:
+                    # Record doesn't exist - try to create, handle race condition
+                    try:
+                        await crud_user_subscriptions.create(
+                            db=db,
+                            object=subscription_data,
+                        )
+                        logger.info(
+                            "Created subscription | stripe_sub_id=%s | user=%s | tenant=%s",
+                            stripe_subscription_id,
+                            user_id,
+                            tenant_id,
+                        )
+                        await db.commit()
+                    except IntegrityError:
+                        # Race condition: another request created it first
+                        await db.rollback()
+                        logger.info(
+                            "Race condition: subscription created by concurrent request | stripe_sub_id=%s",
+                            stripe_subscription_id,
+                        )
+
+                        # Re-fetch and update
+                        update_data: dict[str, Any] = {
+                            "status": stripe_sub.get("status"),
+                            "current_period_start": datetime.fromtimestamp(stripe_sub.get("current_period_start", 0), UTC),
+                            "current_period_end": datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC),
+                            "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
+                        }
+                        canceled_at = stripe_sub.get("canceled_at")
+                        if canceled_at:
+                            update_data["canceled_at"] = datetime.fromtimestamp(canceled_at, UTC)
+
+                        await crud_user_subscriptions.update(
+                            db=db,
+                            stripe_subscription_id=stripe_subscription_id,
+                            object=update_data,
+                        )
+                        await db.commit()
 
             logger.info(f"Created subscription for user {user_id} in tenant {tenant_id}")
 
@@ -606,6 +621,10 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             stripe_subscription_id = invoice.get("subscription")
         except stripe.error.StripeError as e:
             logger.error(f"Error retrieving invoice: {e}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to retrieve invoice {stripe_invoice_id} from Stripe"
+            )
 
     if not stripe_subscription_id:
         logger.warning(f"Could not determine subscription for charge {charge['id']}")

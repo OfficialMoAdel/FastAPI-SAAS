@@ -122,6 +122,9 @@ class RoleService:
         await self.db.delete(role)
         await self.db.commit()
 
+        # Invalidate cache for the deleted role
+        await self._invalidate_role_cache(role_id)
+
     async def get_all_permissions(self) -> Sequence[Permission]:
         """Get all available permissions in the system.
 

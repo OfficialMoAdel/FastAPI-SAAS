@@ -319,7 +319,7 @@ async def complete_mfa_login(
     user_service = get_user_service(db)
     user = await user_service.get_user_auth_info(username=username)
 
-    if not user or user.get("is_deleted"):
+    if not user or user.get("is_deleted") or not user.get("is_active", True):
         raise UnauthorizedException("User account is no longer active")
 
     # Include tier info in JWT claims for Zero-DB rate limiting

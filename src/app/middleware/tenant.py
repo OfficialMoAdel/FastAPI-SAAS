@@ -155,7 +155,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
             try:
                 tenant_slug = request.headers.get(TENANT_HEADER)
 
-                if not tenant_slug or not tenant_slug.strip():
+                if not tenant_slug:
                     logger.warning(
                         "Tenant resolution failed: missing_header | path=%s | method=%s | client=%s",
                         path,

@@ -132,9 +132,6 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
     # Double check filtering just in case we are using global index (if logic changed)
     # But here we switched index_key. So keys are already filtered by definition of the set.
 
-    if not keys:
-        return 0
-
     # Delete all matching keys in a pipeline for efficiency
     async with client.pipeline(transaction=False) as pipe:
         pipe.delete(*keys)

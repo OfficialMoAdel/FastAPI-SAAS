@@ -182,7 +182,7 @@ class MagicLinkService:
             raise InvalidMagicLinkError("User not found")
 
         # Check if user is active
-        if user.get("is_deleted", False):
+        if user.get("is_deleted", False) or not user.get("is_active", True):
             raise MagicLinkUserInactiveError("User account is inactive")
 
         # Create auth tokens

@@ -114,8 +114,15 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
                 yield db
         else:
             yield db
-    except Exception:
+    except Exception as e:
         # Rollback on exception before re-raising
+        tenant = get_current_tenant()
+        tenant_context = str(tenant.id) if tenant else "None"
+        import logging
+        logging.getLogger(__name__).error(
+            f"Database transaction failed for tenant {tenant_context}, rolling back",
+            exc_info=e
+        )
         await db.rollback()
         raise
     finally:
@@ -147,8 +154,15 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
                 yield db
         else:
             yield db
-    except Exception:
+    except Exception as e:
         # Rollback on exception before re-raising
+        tenant = get_current_tenant()
+        tenant_context = str(tenant.id) if tenant else "None"
+        import logging
+        logging.getLogger(__name__).error(
+            f"Database transaction failed for tenant {tenant_context}, rolling back",
+            exc_info=e
+        )
         await db.rollback()
         raise
     finally:

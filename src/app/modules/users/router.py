@@ -9,6 +9,8 @@ from starlette.status import HTTP_404_NOT_FOUND
 from src.app.api.dependencies import get_current_superuser, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.pagination import PaginationParams, get_pagination_params
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
 from src.app.core.security import oauth2_scheme
 from src.app.modules.users.schemas import (
     UserCreate,
@@ -38,7 +40,12 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     return get_user_service(db)
 
 
-@router.post("", response_model=UserRead, status_code=status.HTTP_201_CREATED, dependencies=[Depends(get_current_user)])
+@router.post(
+    "",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))]
+)
 async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> UserRead:
     """Create a new user."""
     return UserRead.model_validate(await service.create(user))

@@ -709,8 +709,9 @@ class CheckoutService:
             # Allow relative URLs or URLs matching FRONTEND_URL
             is_relative = return_url.startswith("/") and not return_url.startswith("//")
 
-            frontend_url = settings.FRONTEND_URL
+            frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
             is_allowed_origin = False
+
             if frontend_url:
                 parsed_return = urlparse(return_url)
                 parsed_frontend = urlparse(frontend_url)
@@ -724,6 +725,15 @@ class CheckoutService:
                     status_code=status.HTTP_400_BAD_REQUEST,
                     detail="Invalid return_url form: Must be relative or match allowed origins."
                 )
+
+            # Stripe requires absolute URLs
+            if is_relative:
+                if not frontend_url:
+                    raise HTTPException(
+                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                        detail="Server misconfiguration: Need FRONTEND_URL to resolve relative return_url."
+                    )
+                return_url = f"{frontend_url}{return_url}"
 
         api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
         if not api_key:

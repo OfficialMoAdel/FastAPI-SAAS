@@ -94,7 +94,11 @@ async def list_audit_logs(
     }
 
 
-@router.get("/{log_id}", response_model=AuditLogResponse)
+@router.get(
+    "/{log_id}",
+    response_model=AuditLogResponse,
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
+)
 async def get_audit_log(
     log_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -119,7 +123,11 @@ async def get_audit_log(
     return AuditLogResponse.model_validate(log)
 
 
-@router.get("/actions/list", response_model=list[str])
+@router.get(
+    "/actions/list",
+    response_model=list[str],
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
+)
 async def list_available_actions(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),

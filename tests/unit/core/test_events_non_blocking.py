@@ -187,8 +187,7 @@ class TestCriticalEventWithRedis:
 
         # Mock Redis client
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = None  # Not a duplicate
-        mock_redis.setex.return_value = True
+        mock_redis.set.return_value = True  # Not a duplicate
         mock_redis.incr.return_value = 1  # Sequence number
         event_bus._redis_client = mock_redis
 
@@ -223,7 +222,7 @@ class TestCriticalEventWithRedis:
 
         # Mock Redis - return that event was already processed
         mock_redis = AsyncMock()
-        mock_redis.get.return_value = "1"  # Already processed
+        mock_redis.set.return_value = False  # Already processed
         event_bus._redis_client = mock_redis
 
         handler_called = False

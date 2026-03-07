@@ -47,7 +47,7 @@ def mock_user_service_override():
 class TestWriteUser:
     """Test user creation endpoint."""
 
-    def test_create_user_success(self, client, sample_user_data, sample_user_read, mock_user_service_override):
+    def test_create_user_success(self, client, auth_headers, sample_user_data, sample_user_read, mock_user_service_override):
         """Test successful user creation."""
         # Use sample_user_data to build expected result so values match
         expected_result = {
@@ -58,28 +58,31 @@ class TestWriteUser:
         mock_service = _create_mock_user_service(create=expected_result)
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        headers = {**auth_headers, **TEST_TENANT_HEADER}
+        response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
 
         assert response.status_code == 201
         assert response.json()["email"] == sample_user_data["email"]
 
-    def test_create_user_duplicate_email(self, client, sample_user_data, mock_user_service_override):
+    def test_create_user_duplicate_email(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate email."""
         mock_service = _create_mock_user_service(create=DuplicateValueException("Email is already registered"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        headers = {**auth_headers, **TEST_TENANT_HEADER}
+        response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
 
         # DuplicateValueException from fastcrud returns 422
         assert response.status_code == 422
         assert "already registered" in response.json()["detail"].lower()
 
-    def test_create_user_duplicate_username(self, client, sample_user_data, mock_user_service_override):
+    def test_create_user_duplicate_username(self, client, auth_headers, sample_user_data, mock_user_service_override):
         """Test user creation with duplicate username."""
         mock_service = _create_mock_user_service(create=DuplicateValueException("Username not available"))
         app.dependency_overrides[users_router._get_user_service] = lambda: mock_service
 
-        response = client.post("/api/v1/users", json=sample_user_data, headers=TEST_TENANT_HEADER)
+        headers = {**auth_headers, **TEST_TENANT_HEADER}
+        response = client.post("/api/v1/users", json=sample_user_data, headers=headers)
 
         # DuplicateValueException from fastcrud returns 422
         assert response.status_code == 422

@@ -105,7 +105,19 @@ class EventBus:
             return 0  # No ordering guarantee without Redis
 
         seq_key = f"{self.SEQUENCE_KEY_PREFIX}{event_name}"
-        return await self._redis_client.incr(seq_key)
+        try:
+            return await self._redis_client.incr(seq_key)
+        except Exception as e:
+            logger.error(
+                "Failed to get sequence from Redis",
+                event_name=event_name,
+                error=str(e),
+            )
+            logger.warning(
+                "Falling back to local sequence counter - ordering guarantees compromised",
+                event_name=event_name,
+            )
+            return 0
 
     def subscribe(self, event_name: str) -> Callable:
         """Decorator to subscribe a handler to an event.
@@ -179,18 +191,21 @@ class EventBus:
                 )
                 # Fall through to original implementation
 
-        # Original path (has race condition but works as fallback)
-        already_processed = await self._redis_client.get(idempotency_key)
-        if already_processed:
+        # Original path (fallback)
+        # Use SETNX to atomically check and set
+        is_new = await self._redis_client.set(
+            idempotency_key,
+            "1",
+            nx=True,
+            ex=self.IDEMPOTENCY_TTL_SECONDS,
+        )
+
+        if not is_new:
+            # Key already existed -> duplicate event
             record_event_idempotency(is_duplicate=True)
             return True
 
-        # Mark event as processed with TTL
-        await self._redis_client.setex(
-            idempotency_key,
-            self.IDEMPOTENCY_TTL_SECONDS,
-            "1",
-        )
+        # Key was just set -> new event
         record_event_idempotency(is_duplicate=False)
         return False
 

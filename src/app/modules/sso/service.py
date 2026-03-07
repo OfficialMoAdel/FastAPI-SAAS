@@ -121,7 +121,7 @@ class SSOService:
         oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
         return oauth_provider.get_authorization_url(state=state), state
 
-    async def process_callback(
+    async def process_callback(  # noqa: C901
         self,
         db: AsyncSession,
         request: Request,
@@ -219,36 +219,62 @@ class SSOService:
             )
 
             found_user_data = None
+            connect_mode = extra_data.get("connect_mode", False)
+            connect_user_id = extra_data.get("user_id")
 
-            if connection:
-                await crud_user_sso_connections.update(
-                    db=db,
-                    object=UserSSOConnectionUpdate(
-                        provider_email=user_info.email,
-                    ),
-                    id=connection.id,
-                )
-                found_user_data = await get_service("user", db).get(connection.user_id)
-                if not found_user_data:
-                    raise NotFoundException("Associated user not found")
-            else:
-                if not user_info.email:
-                    raise BadRequestException("Email required from provider")
+            if connect_mode:
+                if not connect_user_id:
+                    raise BadRequestException("Missing user ID for connect mode")
 
-                user_by_email = await get_service("user", db).get_by_email(user_info.email)
+                if connection:
+                    if connection.user_id != connect_user_id:
+                        raise BadRequestException(
+                            f"This {provider.title()} account is already connected to another user"
+                        )
 
-                if user_by_email:
-                    found_user_data = user_by_email
-                    user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                    await self._link_account(db, user_id, provider, user_info)
+                    await crud_user_sso_connections.update(
+                        db=db,
+                        object=UserSSOConnectionUpdate(
+                            provider_email=user_info.email,
+                        ),
+                        id=connection.id,
+                    )
                 else:
-                    current_tenant = get_tenant_context()
-                    if not current_tenant:
-                        raise BadRequestException("Cannot register new user without tenant context")
+                    await self._link_account(db, connect_user_id, provider, user_info)
 
-                    found_user_data = await self._create_sso_user(db, user_info)
-                    user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                    await self._link_account(db, user_id, provider, user_info)
+                found_user_data = await get_service("user", db).get(connect_user_id)
+                if not found_user_data:
+                    raise NotFoundException("User to connect not found")
+            else:
+                if connection:
+                    await crud_user_sso_connections.update(
+                        db=db,
+                        object=UserSSOConnectionUpdate(
+                            provider_email=user_info.email,
+                        ),
+                        id=connection.id,
+                    )
+                    found_user_data = await get_service("user", db).get(connection.user_id)
+                    if not found_user_data:
+                        raise NotFoundException("Associated user not found")
+                else:
+                    if not user_info.email:
+                        raise BadRequestException("Email required from provider")
+
+                    user_by_email = await get_service("user", db).get_by_email(user_info.email)
+
+                    if user_by_email:
+                        found_user_data = user_by_email
+                        user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                        await self._link_account(db, user_id, provider, user_info)
+                    else:
+                        current_tenant = get_tenant_context()
+                        if not current_tenant:
+                            raise BadRequestException("Cannot register new user without tenant context")
+
+                        found_user_data = await self._create_sso_user(db, user_info)
+                        user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
+                        await self._link_account(db, user_id, provider, user_info)
 
             is_disabled = False
             if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:

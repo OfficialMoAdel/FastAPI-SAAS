@@ -39,6 +39,9 @@ class TestSystemRoleSeeding:
             # Phase 7: Audit Logs
             "audit_logs:read",
             "audit_logs:export",
+            # Phase 8: Webhooks
+            "webhooks:read",
+            "webhooks:manage",
         }
 
         actual_permissions = {p.value for p in Permission}
@@ -51,7 +54,7 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
-        assert len(Permission) == 18, f"Expected 18 permissions, got {len(Permission)}"
+        assert len(Permission) == 20, f"Expected 20 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
@@ -65,6 +68,7 @@ class TestSystemRoleSeeding:
             "storage_settings",
             "files",
             "audit_logs",
+            "webhooks",
         }
         valid_actions = {
             "read",
@@ -93,7 +97,7 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 18
+        assert len(admin_permissions) == 20
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """
@@ -110,6 +114,7 @@ class TestSystemRoleSeeding:
             Permission.ROLES_READ,
             Permission.FILES_READ,
             Permission.AUDIT_LOGS_VIEW_ONLY,
+            Permission.WEBHOOKS_READ,
         }
         # Filter strictly for permissions that contain "read" in the value
         # This matches the migration logic: if "read" in perm.value

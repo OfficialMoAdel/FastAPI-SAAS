@@ -28,7 +28,12 @@ from src.app.modules.users.models import User
 router = APIRouter(prefix="/notifications", tags=["notifications"])
 
 
-@router.post("/send", response_model=NotificationResponse, status_code=status.HTTP_202_ACCEPTED)
+@router.post(
+    "/send",
+    response_model=NotificationResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))]
+)
 async def send_notification(
     request: SendEmailRequest,
     background_tasks: BackgroundTasks,
@@ -81,6 +86,7 @@ async def list_notifications(
 
     total, notifications = await service.get_notifications(
         tenant_id=current_tenant.id,
+        user_id=current_user.id,  # type: ignore[arg-type]
         status=status,
         start_date=start_date,
         end_date=end_date,
@@ -109,6 +115,7 @@ async def get_notification(
     query = select(Notification).where(
         Notification.id == notification_id,
         Notification.tenant_id == current_tenant.id,
+        Notification.user_id == current_user.id,
     )
     result = await db.execute(query)
     notification = result.scalar_one_or_none()
@@ -120,7 +127,11 @@ async def get_notification(
 
 
 # Email Template Override endpoints
-@router.get("/templates/overrides", response_model=list[EmailTemplateOverrideResponse])
+@router.get(
+    "/templates/overrides",
+    response_model=list[EmailTemplateOverrideResponse],
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))]
+)
 async def list_template_overrides(
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),

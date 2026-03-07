@@ -20,8 +20,7 @@ class TestEventBusIdempotency:
     def mock_redis(self) -> AsyncMock:
         """Create mock Redis client."""
         redis = AsyncMock()
-        redis.get = AsyncMock(return_value=None)
-        redis.setex = AsyncMock()
+        redis.set = AsyncMock(return_value=True)  # True = key set = new event
         return redis
 
     @pytest.fixture
@@ -89,13 +88,12 @@ class TestEventBusIdempotency:
                 mock_lua_manager.execute.side_effect = Exception("Redis error")
 
                 # Original implementation should be used
-                mock_redis.get.return_value = None  # Not a duplicate
+                mock_redis.set.return_value = False  # Duplicate
 
                 result = await bus._check_idempotency("event-123")
 
-                assert result is False
-                mock_redis.get.assert_called_once()
-                mock_redis.setex.assert_called_once()
+                assert result is True
+                mock_redis.set.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_feature_flag_disabled_uses_original(
@@ -118,8 +116,7 @@ class TestEventBusIdempotency:
                 mock_lua_manager.execute.assert_not_called()
 
                 # Original implementation should be used
-                mock_redis.get.assert_called_once()
-                mock_redis.setex.assert_called_once()
+                mock_redis.set.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_redis_client_returns_false(self) -> None:

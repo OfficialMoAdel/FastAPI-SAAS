@@ -48,15 +48,25 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
 
     # Mock Stripe Subscription retrieval
     mock_stripe_sub = MagicMock()
-    # Support dict access for timestamps
-    mock_stripe_sub.__getitem__.side_effect = lambda k: {
+    # Support dict and get access for timestamps
+    mock_stripe_data = {
         "current_period_start": 1600000000,
         "current_period_end": 1600000000 + 31536000,  # 1 year
-    }.get(k)
-    # Support attribute access for items
-    mock_item = MagicMock()
-    mock_item.price.recurring.interval = "year"
-    mock_stripe_sub.items.data = [mock_item]
+        "status": "active",
+        "items": {
+            "data": [
+                {
+                    "price": {
+                        "recurring": {
+                            "interval": "year"
+                        }
+                    }
+                }
+            ]
+        }
+    }
+    mock_stripe_sub.get.side_effect = lambda k, default=None: mock_stripe_data.get(k, default)
+    mock_stripe_sub.__getitem__.side_effect = lambda k: mock_stripe_data[k]
 
     # Mock RLS contexts to use the test session and skip SET LOCAL commands (unsupported in SQLite)
     # We yield the test db_session so the handler uses the same transaction as the test

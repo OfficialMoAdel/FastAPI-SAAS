@@ -30,12 +30,15 @@ async def write_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
+    if current_user.get("username") != username:
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        raise ForbiddenException()
     return await service.create_post(post, current_user)
 
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
 @cache(
-    key_prefix="{username}_posts:page_{page}:per_page:{per_page}",
+    key_prefix="user_posts:{username}:page_{page}:per_page:{per_page}",
     resource_id_name="username",
     expiration=60,
 )
@@ -48,11 +51,14 @@ async def read_posts(
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> dict:
     """Get paginated list of posts for a user."""
+    if current_user.get("username") != username:
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        raise ForbiddenException()
     return await service.get_posts(current_user["id"], page, per_page)
 
 
 @router.get("/{username}/posts/{id}", response_model=PostRead)
-@cache(key_prefix="{username}_post_cache", resource_id_name="id")
+@cache(key_prefix="user_post_cache:{username}", resource_id_name="id")
 async def read_post(
     request: Request,
     username: str,
@@ -61,11 +67,14 @@ async def read_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
+    if current_user.get("username") != username:
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        raise ForbiddenException()
     return await service.get_post(id, current_user["id"])
 
 
 @router.patch("/{username}/posts/{id}", response_model=MessageResponse)
-@cache("{username}_post_cache", resource_id_name="id", pattern_to_invalidate_extra=["{username}_posts:*"])
+@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
 async def patch_post(
     request: Request,
     username: str,
@@ -75,11 +84,14 @@ async def patch_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
+    if current_user.get("username") != username:
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        raise ForbiddenException()
     return await service.update_post(id, values, current_user)
 
 
 @router.delete("/{username}/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
-@cache("{username}_post_cache", resource_id_name="id", to_invalidate_extra={"{username}_posts": "{username}"})
+@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
 async def erase_post(
     request: Request,
     username: str,
@@ -88,6 +100,9 @@ async def erase_post(
     service: PostService = Depends(_get_post_service),
 ) -> Response:
     """Soft delete a post."""
+    if current_user.get("username") != username:
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+        raise ForbiddenException()
     await service.delete_post(id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -97,7 +112,7 @@ async def erase_post(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(get_current_superuser)],
 )
-@cache("{username}_post_cache", resource_id_name="id", to_invalidate_extra={"{username}_posts": "{username}"})
+@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
 async def erase_db_post(
     request: Request, username: str, id: int, service: PostService = Depends(_get_post_service)
 ) -> Response:

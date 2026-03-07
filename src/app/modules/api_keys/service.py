@@ -386,6 +386,7 @@ class APIKeyService(BaseService[APIKey]):
             id=key.id,
             object={"last_used_at": datetime.now(UTC)},
         )
+        await self.db.commit()
 
         return {
             "user_id": key.user_id,

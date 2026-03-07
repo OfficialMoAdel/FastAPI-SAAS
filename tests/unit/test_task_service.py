@@ -51,7 +51,7 @@ class TestTaskServiceCreate:
             result = await task_service.create_task("test message")
 
             assert result["id"] == "test-job-123"
-            mock_pool.enqueue_job.assert_called_once_with("sample_background_task", "test message")
+            mock_pool.enqueue_job.assert_called_once_with("sample_background_task", "test message", tenant_id=None)
 
     @pytest.mark.asyncio
     async def test_create_task_queue_unavailable(self):

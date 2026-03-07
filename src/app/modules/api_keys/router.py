@@ -8,6 +8,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules.api_keys.schemas import (
     APIKeyCreate,
@@ -18,7 +20,11 @@ from src.app.modules.api_keys.schemas import (
 )
 from src.app.modules.api_keys.service import APIKeyService, get_api_key_service
 
-router = APIRouter(prefix="/api-keys", tags=["api-keys"])
+router = APIRouter(
+    prefix="/api-keys",
+    tags=["api-keys"],
+    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
+)
 
 
 async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> APIKeyService:

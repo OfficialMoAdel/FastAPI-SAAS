@@ -215,6 +215,10 @@ return new_attempts
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")
             raise UnauthorizedException("Wrong username, email or password.")
 
+        if not user.get("is_active", True):
+            await self._publish_login_audit(request, username, False, reason="account_inactive")
+            raise UnauthorizedException("User account is no longer active.")
+
         # Clear failed attempts on success (single roundtrip)
         await redis.delete(login_attempts_key)
 

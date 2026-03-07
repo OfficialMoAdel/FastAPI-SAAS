@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
@@ -290,7 +291,11 @@ async def retry_webhook_delivery(
     return WebhookDeliveryResponse.model_validate(delivery)
 
 
-@router.post("/{endpoint_id}/test", response_model=WebhookDeliveryResponse)
+@router.post(
+    "/{endpoint_id}/test",
+    response_model=WebhookDeliveryResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def test_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookTestRequest,
@@ -303,15 +308,28 @@ async def test_webhook_endpoint(
 
     This simulated event is recorded as a regular delivery attempt.
     """
-    # Rate limiting for test endpoint (T106)
-    # 10 tests/minute per tenant
-    from src.app.core.utils.rate_limit import rate_limiter
+    # Rate limiting for test endpoint
+    from sqlalchemy import select
 
-    if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", 10, 60):
-        # We use standard HTTPException here to match project style
+    from src.app.core.utils.rate_limit import rate_limiter
+    from src.app.modules.rate_limits.models import RateLimit
+
+    # Query the database directly for the tenant's rate limit for this endpoint
+    stmt = select(RateLimit).where(
+        RateLimit.tier_id == current_user.tier_id,
+        RateLimit.path == "/api/v1/webhooks/{endpoint_id}/test",
+    )
+    result = await db.execute(stmt)
+    rate_limit_config = result.scalar_one_or_none()
+
+    # Fallback to defaults if tenant hasn't configured a specific limit
+    limit = rate_limit_config.limit if rate_limit_config else 10
+    period = rate_limit_config.period if rate_limit_config else 60
+
+    if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", limit, period):
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail="Rate limit exceeded: 10 tests per minute",
+            detail=f"Rate limit exceeded: {limit} tests per {period} seconds",
         )
 
     query = select(WebhookEndpoint).where(
@@ -334,7 +352,11 @@ async def test_webhook_endpoint(
     return WebhookDeliveryResponse.model_validate(delivery)
 
 
-@router.get("/{endpoint_id}/signing-secret", response_model=SigningSecretViewResponse)
+@router.get(
+    "/{endpoint_id}/signing-secret",
+    response_model=SigningSecretViewResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def get_signing_secret(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
@@ -363,7 +385,11 @@ async def get_signing_secret(
     )
 
 
-@router.post("/{endpoint_id}/signing-secret/rotate", response_model=SigningSecretRotateResponse)
+@router.post(
+    "/{endpoint_id}/signing-secret/rotate",
+    response_model=SigningSecretRotateResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+)
 async def rotate_signing_secret(
     endpoint_id: UUID,
     request: SigningSecretRotateRequest,

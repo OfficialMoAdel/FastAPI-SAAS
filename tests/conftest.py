@@ -400,6 +400,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant"
     fake_tenant.is_active = True
+    fake_tenant.tier_id = 1
 
     from src.app.api.dependencies import get_current_user
     from src.app.core.db.database import async_get_db
@@ -471,6 +472,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
+    fake_tenant.tier_id = 1
 
     from src.app.core.db.database import async_get_db
 
@@ -511,6 +513,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
+    fake_tenant.tier_id = 1
 
     from src.app.api.dependencies import get_current_user
     from src.app.core.db.database import async_get_db
@@ -633,6 +636,7 @@ class MockUser:
         tenant_id=None,  # Default to None, will be set to DEFAULT_TENANT_ID
         roles=None,
         permissions=None,
+        tier_id=1,
     ):
         self.id = id
         self.username = username
@@ -641,6 +645,7 @@ class MockUser:
         self.is_active = is_active
         self.tenant_id = tenant_id if tenant_id is not None else self.DEFAULT_TENANT_ID
         self.roles = roles or []
+        self.tier_id = tier_id
         # Default permissions for superuser - all common permissions
         self.permissions = (
             permissions
@@ -697,6 +702,7 @@ async def full_mock_context(get_test_app):
     fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
+    fake_tenant.tier_id = 1
 
     from src.app.api.dependencies import get_current_user
     from src.app.core.db.database import async_get_db
@@ -770,6 +776,7 @@ async def unauthenticated_mock_context(get_test_app):
     fake_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
     fake_tenant.slug = "test-tenant-integration"
     fake_tenant.is_active = True
+    fake_tenant.tier_id = 1
 
     from src.app.core.db.database import async_get_db
 
@@ -852,15 +859,16 @@ async def superuser_token_headers(get_test_app, full_mock_context):
     app = get_test_app
     from src.app.api.dependencies import get_current_user
 
-    # Create superuser mock
-    fake_superuser = Mock()
-    fake_superuser.id = 1
-    fake_superuser.is_superuser = True
-    fake_superuser.username = "admin"
-    fake_superuser.email = "admin@example.com"
-    fake_superuser.is_active = True
-    fake_superuser.__getitem__ = lambda self, key: getattr(self, key)
-    fake_superuser.get = lambda key, default=None: getattr(fake_superuser, key, default)
+    # Create superuser mock using MockUser
+    fake_superuser = MockUser(
+        id=1,
+        username="admin",
+        email="admin@example.com",
+        is_superuser=True,
+        is_active=True,
+        tenant_id=MockUser.DEFAULT_TENANT_ID,
+        tier_id=1,
+    )
 
     # Override dependency (updates existing overrides from full_mock_context)
     app.dependency_overrides[get_current_user] = lambda: fake_superuser

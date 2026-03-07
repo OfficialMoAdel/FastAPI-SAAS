@@ -256,77 +256,84 @@ class TestTenantIsolationE2E:
         async def mock_get_current_user():
             return fake_user
 
+        from src.app.core.security import oauth2_scheme
+        from src.app.core.rbac.dependencies import _oauth2_scheme
+
         app.dependency_overrides[get_current_user] = mock_get_current_user
+        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
-        # CREATE: Create user in tenant A
-        logger.info(f"Creating user in Tenant A (slug={tenant_a.slug})")
-        create_payload = {
-            "name": "CRUD Test User",
-            "username": "crudtestusernew",
-            "email": "crud_test_new@tenant-a.com",
-            "password": "SecurePassword123!",
-        }
-        create_response = await client.post(
-            "/api/v1/users",
-            json=create_payload,
-            headers={"X-Tenant-ID": tenant_a.slug},
-        )
-        assert create_response.status_code == 201, f"Failed to create user: {create_response.text}"
-        created_user = create_response.json()
-        user_id = created_user["id"]
-        logger.info(f"Created user: id={user_id}")
+        # Mock the internal function used by requires_permission
+        with patch("src.app.core.rbac.dependencies._get_current_user_from_token", return_value=vars(fake_user)):
+            # CREATE: Create user in tenant A
+            logger.info(f"Creating user in Tenant A (slug={tenant_a.slug})")
+            create_payload = {
+                "name": "CRUD Test User",
+                "username": "crudtestusernew",
+                "email": "crud_test_new@tenant-a.com",
+                "password": "SecurePassword123!",
+            }
+            create_response = await client.post(
+                "/api/v1/users",
+                json=create_payload,
+                headers={"X-Tenant-ID": tenant_a.slug},
+            )
+            assert create_response.status_code == 201, f"Failed to create user: {create_response.text}"
+            created_user = create_response.json()
+            user_id = created_user["id"]
+            logger.info(f"Created user: id={user_id}")
 
-        # READ: Retrieve user with correct tenant header
-        logger.info(f"Reading user {user_id} with Tenant A header")
-        read_response = await client.get(
-            f"/api/v1/users/{user_id}",
-            headers={"X-Tenant-ID": tenant_a.slug},
-        )
-        assert read_response.status_code == 200, f"Failed to read user: {read_response.text}"
-        read_user = read_response.json()
-        assert read_user["id"] == user_id
-        assert read_user["name"] == "CRUD Test User"
-        logger.info(f"Successfully read user: {read_user['name']}")
+            # READ: Retrieve user with correct tenant header
+            logger.info(f"Reading user {user_id} with Tenant A header")
+            read_response = await client.get(
+                f"/api/v1/users/{user_id}",
+                headers={"X-Tenant-ID": tenant_a.slug},
+            )
+            assert read_response.status_code == 200, f"Failed to read user: {read_response.text}"
+            read_user = read_response.json()
+            assert read_user["id"] == user_id
+            assert read_user["name"] == "CRUD Test User"
+            logger.info(f"Successfully read user: {read_user['name']}")
 
-        # UPDATE: Update user with correct tenant header
-        logger.info(f"Updating user {user_id} with Tenant A header")
-        update_payload = {"name": "CRUD Test User Updated"}
-        update_response = await client.patch(
-            f"/api/v1/users/{user_id}",
-            json=update_payload,
-            headers={"X-Tenant-ID": tenant_a.slug},
-        )
-        assert update_response.status_code == 200, f"Failed to update user: {update_response.text}"
+            # UPDATE: Update user with correct tenant header
+            logger.info(f"Updating user {user_id} with Tenant A header")
+            update_payload = {"name": "CRUD Test User Updated"}
+            update_response = await client.patch(
+                f"/api/v1/users/{user_id}",
+                json=update_payload,
+                headers={"X-Tenant-ID": tenant_a.slug},
+            )
+            assert update_response.status_code == 200, f"Failed to update user: {update_response.text}"
 
-        # Verify update by reading again (API returns message dict, not user object)
-        read_response = await client.get(
-            f"/api/v1/users/{user_id}",
-            headers={"X-Tenant-ID": tenant_a.slug},
-        )
-        assert read_response.status_code == 200
-        updated_user = read_response.json()
-        assert updated_user["name"] == "CRUD Test User Updated"
-        logger.info(f"Successfully updated user: {updated_user['name']}")
+            # Verify update by reading again (API returns message dict, not user object)
+            read_response = await client.get(
+                f"/api/v1/users/{user_id}",
+                headers={"X-Tenant-ID": tenant_a.slug},
+            )
+            assert read_response.status_code == 200
+            updated_user = read_response.json()
+            assert updated_user["name"] == "CRUD Test User Updated"
+            logger.info(f"Successfully updated user: {updated_user['name']}")
 
-        # DELETE: Soft delete user with correct tenant header
-        logger.info(f"Deleting user {user_id} with Tenant A header")
-        delete_response = await client.delete(
-            f"/api/v1/users/{user_id}",
-            headers={"X-Tenant-ID": tenant_a.slug, "Authorization": "Bearer dummy-token"},
-        )
-        assert delete_response.status_code == 200, f"Failed to delete user: {delete_response.text}"
-        assert delete_response.json()["message"] == "User deleted successfully"
-        logger.info(f"Successfully deleted user {user_id}")
+            # DELETE: Soft delete user with correct tenant header
+            logger.info(f"Deleting user {user_id} with Tenant A header")
+            delete_response = await client.delete(
+                f"/api/v1/users/{user_id}",
+                headers={"X-Tenant-ID": tenant_a.slug, "Authorization": "Bearer dummy-token"},
+            )
+            assert delete_response.status_code == 200, f"Failed to delete user: {delete_response.text}"
+            assert delete_response.json()["message"] == "User deleted successfully"
+            logger.info(f"Successfully deleted user {user_id}")
 
-        # Verify user is soft deleted (should return 404 or not in list)
-        list_response = await client.get(
-            "/api/v1/users",
-            headers={"X-Tenant-ID": tenant_a.slug},
-        )
-        assert list_response.status_code == 200
-        users_list = list_response.json()["items"]
-        user_ids = [u["id"] for u in users_list]
-        assert user_id not in user_ids, f"Deleted user {user_id} still appears in list"
+            # Verify user is soft deleted (should return 404 or not in list)
+            list_response = await client.get(
+                "/api/v1/users",
+                headers={"X-Tenant-ID": tenant_a.slug},
+            )
+            assert list_response.status_code == 200
+            users_list = list_response.json()["items"]
+            user_ids = [u["id"] for u in users_list]
+            assert user_id not in user_ids, f"Deleted user {user_id} still appears in list"
 
         logger.info("✅ PASSED: Full CRUD cycle respects tenant context")
 
@@ -395,6 +402,12 @@ class TestTenantIsolationE2E:
 
         async def mock_get_current_user_b():
             return fake_user_b
+
+        from src.app.core.security import oauth2_scheme
+        from src.app.core.rbac.dependencies import _oauth2_scheme
+
+        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
         app.dependency_overrides[get_current_user] = mock_get_current_user_b
 
@@ -471,7 +484,12 @@ class TestTenantIsolationE2E:
             async def mock_get_current_user():
                 return fake_user
 
+            from src.app.core.security import oauth2_scheme
+            from src.app.core.rbac.dependencies import _oauth2_scheme
+
             app.dependency_overrides[get_current_user] = mock_get_current_user
+            app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+            app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
             logger.info(f"Request {request_num}: Fetching users for tenant {tenant_slug}")
             response = await client.get(
@@ -619,8 +637,10 @@ class TestTenantIsolationE2E:
 
                     app.dependency_overrides[get_current_user] = mock_get_current_user
                     from src.app.core.security import oauth2_scheme
+                    from src.app.core.rbac.dependencies import _oauth2_scheme
 
                     app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+                    app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
                     response = await client.get(
                         "/api/v1/users",
