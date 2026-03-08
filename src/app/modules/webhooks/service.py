@@ -10,6 +10,7 @@ This module provides:
 import asyncio
 import hashlib
 import hmac
+import inspect
 from datetime import UTC, datetime, timedelta
 from typing import Any
 from uuid import UUID, uuid4
@@ -251,9 +252,18 @@ class WebhookService:
 
         if pool:
             if defer_by > 0:
-                await pool.enqueue_job("deliver_webhook_task", delivery_id, _defer_by=defer_by)
+                enqueue_result = pool.enqueue_job("deliver_webhook_task", delivery_id, _defer_by=defer_by)
             else:
-                await pool.enqueue_job("deliver_webhook_task", delivery_id)
+                enqueue_result = pool.enqueue_job("deliver_webhook_task", delivery_id)
+
+            if inspect.isawaitable(enqueue_result):
+                await enqueue_result
+            else:
+                logger.warning(
+                    "webhook_queue_enqueue_non_awaitable",
+                    delivery_id=str(delivery_id),
+                    result_type=type(enqueue_result).__name__,
+                )
             logger.debug(f"Enqueued delivery task for {delivery_id}")
         else:
             logger.warning(f"Redis queue pool not initialized. Cannot enqueue delivery {delivery_id}")
