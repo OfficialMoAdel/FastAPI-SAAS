@@ -469,26 +469,35 @@ class ChatCompletionService:
                     token_count = chunk.get("token_count")
                 yield chunk
 
-            # Phase 3: Get fresh session for writing response
-            full_response = "".join(response_chunks)
-            if full_response:
-                async with local_session() as fresh_db:
-                    message_service = ChatMessageService(fresh_db)
-                    await message_service.add_message(
-                        session_id=session_id,
-                        data=ChatMessageCreate(role="assistant", content=full_response),
-                        token_count=token_count,
-                    )
-
-                    await crud_chat_sessions.update(
-                        db=fresh_db,
-                        object={"updated_at": datetime.now(UTC)},
-                        id=session_id,
-                    )
-                    await fresh_db.commit()
-
         except OllamaError as e:
             raise ChatCompletionError(e.message, e.error_code, model) from e
+
+        finally:
+            # Phase 3: Get fresh session for writing response safely in the background
+            full_response = "".join(response_chunks)
+            if full_response:
+                import asyncio
+
+                async def _save_response(resp_content: str, resp_tokens: int | None) -> None:
+                    try:
+                        async with local_session() as fresh_db:
+                            message_service = ChatMessageService(fresh_db)
+                            await message_service.add_message(
+                                session_id=session_id,
+                                data=ChatMessageCreate(role="assistant", content=resp_content),
+                                token_count=resp_tokens,
+                            )
+                            await crud_chat_sessions.update(
+                                db=fresh_db,
+                                object={"updated_at": datetime.now(UTC)},
+                                id=session_id,
+                            )
+                            await fresh_db.commit()
+                    except Exception as e:
+                        logger.error(f"Failed to save AI chat response in background task: {e!s}")
+
+                # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream
+                asyncio.create_task(_save_response(full_response, token_count))
 
 
 class ChatCompletionError(Exception):

@@ -425,8 +425,8 @@ class FileService:
     async def transfer_ownership(
         self,
         tenant_id: UUID,
-        from_user_id: UUID,
-        to_user_id: UUID,
+        from_user_id: int,
+        to_user_id: int,
     ) -> int:
         """Transfer file ownership from one user to another.
 

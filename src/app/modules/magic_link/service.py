@@ -20,7 +20,7 @@ from src.app.core.security import (
     create_refresh_token,
 )
 from src.app.core.security.tokens import MagicLinkManager
-from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.auth.schemas import AuthTokenResponse, LoginMFAResponse
 from src.app.modules.magic_link.exceptions import (
     InvalidMagicLinkError,
     MagicLinkUserInactiveError,
@@ -145,14 +145,15 @@ class MagicLinkService:
             may_be_delayed=False,
         )
 
-    async def verify_magic_link(self, token: str) -> AuthTokenResponse:
+    async def verify_magic_link(self, token: str) -> AuthTokenResponse | LoginMFAResponse:
         """Verify a magic link token and return auth tokens.
 
         Args:
             token: The magic link token from the email.
 
         Returns:
-            AuthTokenResponse with access and refresh tokens.
+            AuthTokenResponse with access and refresh tokens, or
+            LoginMFAResponse if MFA is required.
 
         Raises:
             InvalidMagicLinkError: If token is invalid or expired.
@@ -184,6 +185,28 @@ class MagicLinkService:
         # Check if user is active
         if user.get("is_deleted", False) or not user.get("is_active", True):
             raise MagicLinkUserInactiveError("User account is inactive")
+
+        # Check MFA
+        from src.app.modules.mfa.service import MFAService
+        mfa_service = MFAService()
+        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
+
+        if mfa_enabled:
+            from src.app.core.security import MFA_PENDING_EXPIRY_SECONDS, MFAPendingTokenManager
+
+            # Generate MFA pending token
+            mfa_token_manager = MFAPendingTokenManager(self.redis)
+            mfa_token = await mfa_token_manager.create_token(
+                user_id=user["id"],
+                username=str(user.get("username") or user.get("email") or ""),
+            )
+
+            return LoginMFAResponse(
+                mfa_required="true",
+                mfa_token=mfa_token,
+                expires_in=str(MFA_PENDING_EXPIRY_SECONDS),
+                message="MFA verification required",
+            )
 
         # Create auth tokens
         tokens = await self._create_auth_tokens(user)

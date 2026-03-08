@@ -24,6 +24,7 @@ from starlette.types import ASGIApp
 
 from src.app.core.config import settings
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
 logger = logging.getLogger(__name__)
@@ -191,53 +192,6 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from attack detection."""
         return any(path.startswith(exempt) for exempt in EXEMPT_PATHS)
-
-    def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP with trusted proxy validation.
-
-        SECURITY FIX: Only trust X-Forwarded-For/X-Real-IP headers when
-        the request comes from a trusted proxy. Prevents IP spoofing attacks.
-        """
-        client_ip = ""
-
-        # Check if request comes from trusted proxy first
-        if request.client and request.client.host:
-            direct_ip = request.client.host
-
-            # Validate trusted proxy before trusting forwarded headers
-            if self._is_trusted_proxy(direct_ip):
-                # Trust X-Forwarded-For from trusted proxies
-                forwarded_for = request.headers.get("X-Forwarded-For")
-                if forwarded_for:
-                    # Get the first IP in the chain (original client)
-                    client_ip = forwarded_for.split(",")[0].strip()
-                else:
-                    # Fall back to X-Real-IP
-                    real_ip = request.headers.get("X-Real-IP")
-                    if real_ip:
-                        client_ip = real_ip
-
-            if not client_ip:
-                client_ip = direct_ip
-        else:
-            client_ip = "unknown"
-
-        return client_ip
-
-    def _is_trusted_proxy(self, ip: str) -> bool:
-        """Check if IP is a trusted proxy.
-
-        Currently checks if IP is localhost/private network.
-        In production, configure TRUSTED_PROXIES setting.
-        """
-        import ipaddress
-
-        try:
-            addr = ipaddress.ip_address(ip)
-            # Trust loopback and private networks
-            return addr.is_loopback or addr.is_private
-        except ValueError:
-            return False
 
     async def _detect_attack_patterns(self, request: Request) -> list[dict]:
         """Scan request for attack patterns using zero-copy bytes scanning.
@@ -441,7 +395,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return cast(Response, response)
 
-        client_ip = self._get_client_ip(request)
+        client_ip = get_client_ip(request)
 
         # Detect attack patterns
         detected_attacks = await self._detect_attack_patterns(request)

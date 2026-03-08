@@ -163,19 +163,33 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
     # Extract metadata
     metadata = session.get("metadata", {})
-    tenant_id_str = metadata.get("tenant_id", "0")
-    tenant_id = UUID(tenant_id_str) if tenant_id_str and tenant_id_str != "0" else None
-    user_id = int(metadata.get("user_id", 0))
-    plan_id = int(metadata.get("plan_id", 0))
+    tenant_id_str = metadata.get("tenant_id")
+    user_id_str = metadata.get("user_id")
+    plan_id_str = metadata.get("plan_id")
+
+    # Parse tenant_id safely
+    tenant_id: UUID | None = None
+    if tenant_id_str:
+        try:
+            tenant_id = UUID(tenant_id_str)
+        except ValueError:
+            logger.warning(f"Invalid UUID format for tenant_id: {tenant_id_str}")
+
+    user_id = int(user_id_str) if user_id_str and user_id_str.isdigit() else None
+    plan_id = int(plan_id_str) if plan_id_str and plan_id_str.isdigit() else None
 
     if not all([tenant_id, user_id, plan_id]):
         logger.error(
-            "Missing metadata in checkout session: tenant_id=%s, user_id=%s, plan_id=%s",
+            f"Missing or invalid metadata in checkout session {session.id}: tenant_id=%s, user_id=%s, plan_id=%s",
             str(tenant_id) if tenant_id else None,
             user_id,
             plan_id,
         )
         return
+
+    # Narrow types: all([]) guard above means these are not None here
+    assert user_id is not None  # narrowed from int | None
+    assert plan_id is not None  # narrowed from int | None
 
     stripe_subscription_id = session.get("subscription")
     # stripe_customer_id = session.get("customer")  # Unused

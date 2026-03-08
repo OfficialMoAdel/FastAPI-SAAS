@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import rate_limiter_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.utils.cache import async_get_redis
-from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.auth.schemas import AuthTokenResponse, LoginMFAResponse
 from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
 from src.app.modules.magic_link.service import MagicLinkService
 
@@ -67,11 +67,11 @@ async def send_magic_link(
 
 @router.post(
     "/verify",
-    response_model=AuthTokenResponse,
+    response_model=AuthTokenResponse | LoginMFAResponse,
     summary="Verify magic link",
     description="Verify a magic link token and receive authentication tokens.",
     responses={
-        200: {"description": "Token verified, auth tokens returned"},
+        200: {"description": "Token verified, auth tokens returned. If MFA is enabled, returns MFA pending token."},
         400: {"description": "Invalid or expired token"},
         410: {"description": "Token already used"},
         422: {"description": "Invalid token format"},
@@ -80,7 +80,7 @@ async def send_magic_link(
 async def verify_magic_link(
     body: MagicLinkVerifyRequest,
     service: Annotated[MagicLinkService, Depends(get_magic_link_service)],
-) -> AuthTokenResponse:
+) -> AuthTokenResponse | LoginMFAResponse:
     """Verify a magic link token and return authentication tokens.
 
     The token is consumed after first use (one-time use).

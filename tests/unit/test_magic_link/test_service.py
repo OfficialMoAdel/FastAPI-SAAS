@@ -161,6 +161,11 @@ class TestMagicLinkService:
 
         with (
             patch.object(service, "_get_user_by_email", return_value=mock_user),
+            patch(
+                "src.app.modules.mfa.service.MFAService.is_mfa_enabled",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
             patch.object(
                 service,
                 "_create_auth_tokens",
@@ -207,6 +212,11 @@ class TestMagicLinkService:
 
         with (
             patch.object(service, "_get_user_by_email", return_value=mock_user),
+            patch(
+                "src.app.modules.mfa.service.MFAService.is_mfa_enabled",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
             patch.object(
                 service,
                 "_create_auth_tokens",
@@ -242,6 +252,11 @@ class TestMagicLinkService:
 
         with (
             patch.object(service, "_get_user_by_email", return_value=mock_user),
+            patch(
+                "src.app.modules.mfa.service.MFAService.is_mfa_enabled",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
             patch.object(
                 service,
                 "_create_auth_tokens",

@@ -533,9 +533,16 @@ return new_attempts
         new_hashed = await get_password_hash(new_password)
         await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed})
 
-        # SECURITY FIX: Invalidate ALL user sessions by blacklisting all tokens
-        # This prevents compromised sessions from remaining active after password change
+        # SECURITY FIX: Invalidate ALL user sessions
         await self._invalidate_all_user_sessions(user, db)
+
+        # Commit the combined transaction of password change + token version increment
+        await db.commit()
+
+        logger.info(
+            "Password changed successfully",
+            extra={"user_id": user["id"]},
+        )
 
         # Invalidate auth cache so new password works immediately
         user_service = get_user_service(db)
@@ -578,7 +585,7 @@ return new_attempts
         # Token version check in verify_token() is the primary and sufficient mechanism.
         user_id = user.get("id")
         await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-        await db.commit()
+        # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
 
         logger.info("invalidated_all_user_sessions", user_id=user_id)
 

@@ -16,6 +16,7 @@ from fastapi import Request, Response
 from starlette.datastructures import Headers, MutableHeaders
 
 from src.app.middleware.ip_filter import IPFilterMiddleware
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
 
@@ -48,44 +49,56 @@ class TestIPExtraction:
     """Test client IP extraction with various header scenarios."""
 
     def test_get_client_ip_direct(self, middleware, mock_request):
-        """Test extracting IP from direct connection."""
+        """Test extracting IP from direct connection (non-trusted proxy)."""
         mock_request.headers = Headers()
-        mock_request.client.host = "192.168.1.100"
+        mock_request.client.host = "203.0.113.42"  # Public IP, not a trusted proxy
 
-        ip = middleware._get_client_ip(mock_request)
+        ip = get_client_ip(mock_request)
 
-        assert ip == "192.168.1.100"
+        assert ip == "203.0.113.42"
 
     def test_get_client_ip_x_forwarded_for(self, middleware, mock_request):
-        """Test extracting IP from X-Forwarded-For header."""
-        mock_request.headers = Headers({"x-forwarded-for": "10.0.0.1, 10.0.0.2, 10.0.0.3"})
+        """Test extracting IP from X-Forwarded-For header (secure: rightmost non-trusted IP).
 
-        ip = middleware._get_client_ip(mock_request)
+        With secure parsing (right-to-left), when the direct connection is a private
+        IP (trusted proxy), we look for the rightmost non-trusted IP in the XFF chain.
+        All 10.x IPs are in the trusted network, so the leftmost is returned as fallback.
+        """
+        # Simulate request from internal proxy (192.168.1.100 is private/trusted)
+        mock_request.client.host = "192.168.1.100"
+        # XFF chain: client at 203.0.113.1 was forwarded via two trusted proxies
+        mock_request.headers = Headers({"x-forwarded-for": "203.0.113.42, 10.0.0.1, 10.0.0.2"})
 
-        assert ip == "10.0.0.1"
+        ip = get_client_ip(mock_request)
+
+        # The rightmost non-trusted IP is 203.0.113.42
+        assert ip == "203.0.113.42"
 
     def test_get_client_ip_x_real_ip(self, middleware, mock_request):
         """Test extracting IP from X-Real-IP header."""
-        mock_request.headers = Headers({"x-real-ip": "172.16.0.50"})
+        # Forces fallback to X-Real-IP by not setting X-Forwarded-For
+        mock_request.client.host = "192.168.1.100"  # Trusted proxy
+        mock_request.headers = Headers({"x-real-ip": "203.0.113.55"})
 
-        ip = middleware._get_client_ip(mock_request)
+        ip = get_client_ip(mock_request)
 
-        assert ip == "172.16.0.50"
+        assert ip == "203.0.113.55"
 
     def test_get_client_ip_x_forwarded_for_priority(self, middleware, mock_request):
         """Test that X-Forwarded-For takes priority over X-Real-IP."""
-        mock_request.headers = Headers({"x-forwarded-for": "10.0.0.1", "x-real-ip": "172.16.0.50"})
+        mock_request.client.host = "192.168.1.100"  # Trusted proxy
+        mock_request.headers = Headers({"x-forwarded-for": "203.0.113.10", "x-real-ip": "172.16.0.50"})
 
-        ip = middleware._get_client_ip(mock_request)
+        ip = get_client_ip(mock_request)
 
-        assert ip == "10.0.0.1"
+        assert ip == "203.0.113.10"
 
     def test_get_client_ip_unknown(self, middleware, mock_request):
         """Test handling when no IP can be determined."""
         mock_request.headers = Headers()
         mock_request.client = None
 
-        ip = middleware._get_client_ip(mock_request)
+        ip = get_client_ip(mock_request)
 
         assert ip == "unknown"
 

@@ -9,10 +9,8 @@ Supports two algorithms:
 - gcra: Generic Cell Rate Algorithm (smoother, no boundary bursts)
 """
 
-import ipaddress
 import time
 from collections.abc import Callable
-from functools import lru_cache
 
 from fastapi import Request, Response, status
 from starlette.middleware.base import BaseHTTPMiddleware
@@ -25,6 +23,7 @@ from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cac
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
 from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger(__name__)
@@ -41,44 +40,6 @@ TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
 # Default for users without tier or unknown tier
 DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
 
-# Trusted proxy configuration (module-level for LRU cache hashability)
-TRUSTED_PROXY_IPS: set[str] = set(settings.TRUSTED_PROXY_IPS)
-try:
-    TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
-        ipaddress.ip_network(n) for n in settings.TRUSTED_PROXY_NETWORKS
-    )
-except ValueError as e:
-    logger.error(f"Invalid trusted proxy network configuration: {e}")
-    TRUSTED_PROXY_NETWORKS = (
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-    )
-
-
-# OPT P0-3: LRU cache for IP address parsing and network check
-# ipaddress.ip_address() is a pure function - same input always gives same output
-# This eliminates ~5.8us parsing overhead per request for cached IPs
-@lru_cache(maxsize=2048)
-def _is_ip_in_trusted_networks(ip_str: str) -> bool:
-    """Check if IP is within any trusted network (cached).
-
-    Pure function with LRU caching for performance.
-    Expected hit rate: >95% in production (most requests from same IPs).
-
-    Args:
-        ip_str: IP address string to check
-
-    Returns:
-        True if IP is in a trusted network, False otherwise
-    """
-    try:
-        ip = ipaddress.ip_address(ip_str)
-        return any(ip in network for network in TRUSTED_PROXY_NETWORKS)
-    except ValueError:
-        return False
-
-
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware for tier-aware rate limiting.
 
@@ -94,7 +55,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
     async def dispatch(self, request: Request, call_next: Callable) -> Response:
         """Process request with tier-aware rate limiting and auto-ban."""
-        client_ip = self._get_client_ip(request)
+        client_ip = get_client_ip(request)
 
         # SECURITY: Check if IP is banned before processing
         if settings.AUTO_BAN_ENABLED:
@@ -278,7 +239,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Unauthenticated - use global IP-based limits
             limit = settings.DEFAULT_RATE_LIMIT_LIMIT
             period = settings.DEFAULT_RATE_LIMIT_PERIOD
-            key = f"ip:{self._get_client_ip(request)}"
+            key = f"ip:{get_client_ip(request)}"
 
         return limit, period, key
 
@@ -306,29 +267,3 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # No tier loaded - return None (will use default rate limit)
         return None
-
-    def _is_trusted_proxy(self, ip_str: str) -> bool:
-        """Check if IP is a trusted proxy (exact match or within trusted network).
-
-        Uses module-level cached function for network checks (OPT P0-3).
-        """
-        if ip_str in TRUSTED_PROXY_IPS:
-            return True
-        return _is_ip_in_trusted_networks(ip_str)
-
-    def _get_client_ip(self, request: Request) -> str:
-        """Get client IP with trusted proxy validation.
-
-        Only trusts X-Forwarded-For header if request comes from a trusted proxy.
-        This prevents attackers from spoofing their IP to bypass rate limits.
-        """
-        client_ip = request.client.host if request.client else "unknown"
-
-        # Only trust X-Forwarded-For if request is from a trusted proxy
-        if self._is_trusted_proxy(client_ip):
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                # Return the first (original client) IP from the chain
-                return forwarded.split(",")[0].strip()
-
-        return client_ip

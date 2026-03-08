@@ -1393,7 +1393,7 @@ def mock_redis(request):
     from src.app.middleware.tenant import _L1_TENANT_CACHE
     from src.app.modules.rbac.service import _L1_RBAC_CACHE
     from src.app.core.security.token_blacklist_cache import _token_cache_key
-    from src.app.middleware.rate_limit import _is_ip_in_trusted_networks
+    from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks
 
     _L1_TENANT_CACHE.clear()
     _L1_RBAC_CACHE.clear()

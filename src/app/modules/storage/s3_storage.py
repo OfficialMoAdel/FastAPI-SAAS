@@ -153,7 +153,10 @@ class S3Storage(StorageProvider):
 
         body = response["Body"]
 
-        while chunk := body.read(8192):
+        while True:
+            chunk = await asyncio.to_thread(body.read, 8192)
+            if not chunk:
+                break
             yield chunk
 
     async def delete(self, path: str) -> StorageResult:

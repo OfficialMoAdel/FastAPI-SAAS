@@ -194,8 +194,9 @@ class AuditLogService:
         offset: int = 0,
     ) -> list[AuditLog]:
         """Get audit logs for a specific tenant in background context."""
-        async with get_db_context() as _:
-            return await self.query_logs(
+        async with get_db_context() as background_db:
+            bg_service = AuditLogService(background_db)
+            return await bg_service.query_logs(
                 tenant_id=tenant_id,
                 user_id=user_id,
                 action=action,
@@ -355,10 +356,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
         from src.app.core.db.database import get_db_context
 
         async with get_db_context() as session:
-            try:
-                inserted = await _perform_bulk_insert(session)
-            finally:
-                await session.close()
+            inserted = await _perform_bulk_insert(session)
 
     if not inserted:
         # Re-push failed entries back to Redis to prevent data loss

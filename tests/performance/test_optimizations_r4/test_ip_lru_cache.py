@@ -16,11 +16,12 @@ from __future__ import annotations
 
 import pytest
 
-from src.app.middleware.rate_limit import (
+from src.app.core.utils.ip_utils import (
     TRUSTED_PROXY_IPS,
     TRUSTED_PROXY_NETWORKS,
     _is_ip_in_trusted_networks,
 )
+
 
 
 @pytest.fixture(autouse=True)
