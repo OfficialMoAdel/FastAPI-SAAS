@@ -36,7 +36,7 @@ class TestStorageSettingsPermissions:
             "credentials": {"base_path": "/tmp/test"},
         }
         response = client.post("/api/v1/storage", json=payload, headers=regular_user_token_headers)
-        # 400 = validation error (credentials), 401 = tenant not found, 403 = no permission, 404 = no storage settings for tenant
+        # 400 = validation error (credentials), 401 = tenant not found, 403 = no permission, 404 = no storage settings for tenant  # noqa: E501
         assert response.status_code in [
             status.HTTP_400_BAD_REQUEST,
             status.HTTP_401_UNAUTHORIZED,

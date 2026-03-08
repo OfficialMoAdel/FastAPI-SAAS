@@ -48,7 +48,7 @@ def test_all_endpoints_exist():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in features_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in features_router.routes for m in route.methods}
 
     # Expected: GET / (list), GET /{name} (check), PATCH /{name}, DELETE /{name}, PUT /bulk
     assert len(unique_paths) == 5

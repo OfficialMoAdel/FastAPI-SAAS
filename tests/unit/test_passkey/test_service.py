@@ -329,7 +329,7 @@ class TestPasskeyServiceVerification:
                     credential_device_type="single_device",
                 )
 
-                with patch.object(service, "_store_credential", new_callable=AsyncMock) as mock_store:
+                with patch.object(service, "_store_credential", new_callable=AsyncMock):
                     with patch.object(service, "_delete_challenge", new_callable=AsyncMock):
                         result = await service.verify_registration(
                             db=mock_db,
@@ -550,7 +550,7 @@ class TestPasskeyServiceAuthentication:
                     mock_verify.return_value = MagicMock(new_sign_count=10)
 
                     with pytest.raises(BadRequestException) as exc:
-                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id")
+                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
 
                     assert "replay" in str(exc.value.detail).lower()
 
@@ -566,7 +566,7 @@ class TestPasskeyServiceAuthentication:
             mock_get_challenge.return_value = None
 
             with pytest.raises(BadRequestException) as exc:
-                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")
+                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
 
             assert "challenge" in str(exc.value.detail).lower()
 
@@ -585,6 +585,6 @@ class TestPasskeyServiceAuthentication:
                 mock_find.return_value = None
 
                 with pytest.raises(BadRequestException) as exc:
-                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")
+                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
 
                 assert "credential not found" in str(exc.value.detail).lower()

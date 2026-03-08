@@ -6,25 +6,25 @@ Tests for:
 - Subscription plan service operations
 """
 
-import pytest
-from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 from unittest.mock import patch
 
-from src.app.modules.billing.crud import crud_subscription_plans, crud_stripe_settings
+import pytest
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.modules.billing.crud import crud_stripe_settings, crud_subscription_plans
 from src.app.modules.billing.schemas import (
-    SubscriptionPlanCreate,
-    SubscriptionPlanCreateInternal,
-    SubscriptionPlanRead,
-    SubscriptionPlanUpdate,
     StripeSettingsCreate,
     StripeSettingsCreateInternal,
     StripeSettingsRead,
     StripeSettingsUpdate,
+    SubscriptionPlanCreate,
+    SubscriptionPlanCreateInternal,
+    SubscriptionPlanRead,
+    SubscriptionPlanUpdate,
 )
 from src.app.modules.billing.service import SubscriptionPlanService
 from src.app.modules.tenants.models import Tenant
-
 
 # ==================== Subscription Plan CRUD ====================
 

@@ -11,22 +11,22 @@ Tests the complete MFA flow from setup through verification, including:
 """
 
 
-import pytest
-from typing import Generator
+from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
+import pytest
 
 from tests.conftest import FakeRedis
-from typing import AsyncGenerator
+
 
 @pytest.fixture(autouse=True)
 async def mock_redis() -> AsyncGenerator[FakeRedis, None]:
     # Custom FakeRedis for MFA testing
     fake_redis = FakeRedis()
-    
+
     async def fake_async_get_redis():
         yield fake_redis
-        
+
     with patch("src.app.modules.mfa.service.redis", new=fake_redis), \
          patch("src.app.core.utils.cache.client", new=fake_redis), \
          patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis):
@@ -35,9 +35,10 @@ async def mock_redis() -> AsyncGenerator[FakeRedis, None]:
 
 from unittest.mock import AsyncMock
 
+
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
-    with patch("src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)):
+    with patch("src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)):  # noqa: E501
         yield
 
 
@@ -86,8 +87,8 @@ class TestMFASetupFlow:
         assert "otpauth_url" in setup_data
 
         setup_token = setup_data["setup_token"]
-        
-        from urllib.parse import urlparse, parse_qs
+
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -124,7 +125,7 @@ class TestMFASetupFlow:
         assert len(backup_codes_data["backup_codes"]) == 10
         assert all(bc.startswith("BC-") for bc in backup_codes_data["backup_codes"])
 
-        backup_codes = backup_codes_data["backup_codes"]
+        backup_codes_data["backup_codes"]
 
         # [STEP 4] Verify MFA is enabled
         status_response = await async_client.get(
@@ -169,7 +170,7 @@ class TestMFALoginWithTOTP:
             },
         )
         assert register_response.status_code == 201
-        user_id = register_response.json()["id"]
+        register_response.json()["id"]
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -184,8 +185,8 @@ class TestMFALoginWithTOTP:
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
-        
-        from urllib.parse import urlparse, parse_qs
+
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -233,7 +234,7 @@ class TestMFALoginWithTOTP:
 
         assert "access_token" in complete_data
         # refresh_token is set as a cookie by the complete-login endpoint
-        assert complete_response.cookies.get("refresh_token") is not None or "refresh_token" in complete_response.headers.get("set-cookie", "")
+        assert complete_response.cookies.get("refresh_token") is not None or "refresh_token" in complete_response.headers.get("set-cookie", "")  # noqa: E501
 
         # Verify MFA last_used_at is updated
         new_headers = {"Authorization": f"Bearer {complete_data['access_token']}"}
@@ -267,7 +268,7 @@ class TestMFALoginWithBackupCode:
             },
         )
         assert register_response.status_code == 201
-        user_id = register_response.json()["id"]
+        register_response.json()["id"]
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -282,8 +283,8 @@ class TestMFALoginWithBackupCode:
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
-        
-        from urllib.parse import urlparse, parse_qs
+
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -382,7 +383,7 @@ class TestMFALockoutFlow:
             },
         )
         assert register_response.status_code == 201
-        user_id = register_response.json()["id"]
+        register_response.json()["id"]
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -398,7 +399,7 @@ class TestMFALockoutFlow:
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
 
-        from urllib.parse import urlparse, parse_qs
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -478,7 +479,7 @@ class TestMFADisableFlow:
             },
         )
         assert register_response.status_code == 201
-        user_id = register_response.json()["id"]
+        register_response.json()["id"]
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -493,8 +494,8 @@ class TestMFADisableFlow:
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
-        
-        from urllib.parse import urlparse, parse_qs
+
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -563,7 +564,7 @@ class TestMFARegenerateBackupCodes:
             },
         )
         assert register_response.status_code == 201
-        user_id = register_response.json()["id"]
+        register_response.json()["id"]
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -578,8 +579,8 @@ class TestMFARegenerateBackupCodes:
         setup_response = await async_client.post("/api/v1/mfa/setup", headers=headers)
         setup_data = setup_response.json()
         setup_token = setup_data["setup_token"]
-        
-        from urllib.parse import urlparse, parse_qs
+
+        from urllib.parse import parse_qs, urlparse
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -625,7 +626,7 @@ class TestMFARegenerateBackupCodes:
         new_headers = {"Authorization": f"Bearer {complete_response.json()['access_token']}"}
 
         # Verify one code used
-        status_response = await async_client.get("/api/v1/mfa/status", headers=new_headers)
+        await async_client.get("/api/v1/mfa/status", headers=new_headers)
         # Note: backup_codes_remaining may not be returned in status endpoint
         # We'll verify by checking if the code can't be reused
 

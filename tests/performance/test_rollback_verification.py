@@ -98,7 +98,7 @@ def test_optimization_flag_can_be_disabled(flag_name: str, flag_path: str, defau
 def test_feature_remove_wasted_connection_rollback() -> None:
     """
     Test rollback of FEATURE_REMOVE_WASTED_CONNECTION.
-    
+
     When disabled:
     - TenantMiddleware should revert to old behavior (hold connection)
     - Connection pool usage should increase to ~2 per request

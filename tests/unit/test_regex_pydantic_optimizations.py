@@ -288,7 +288,7 @@ class TestCacheDecoratorRegex:
         iterations = 10000
 
         # Pre-compile for comparison
-        compiled_pattern = re.compile(r"{(.*?)}")
+        re.compile(r"{(.*?)}")
 
         # Baseline: Using re.findall() with pattern string every time
         start = time.perf_counter_ns()

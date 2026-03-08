@@ -223,14 +223,14 @@ if __name__ == "__main__":
     print("""
     E2E API Compatibility Tests
     ===========================
-    
+
     These tests validate the API compatibility endpoints created for frontend parity.
-    
+
     Prerequisites:
     - FastAPI server running at http://localhost:8000
     - Admin user configured with credentials: admin/admin
     - Database initialized
-    
+
     Run with:
         python -m pytest tests/e2e/test_api_compat_e2e.py -v -s
     """)

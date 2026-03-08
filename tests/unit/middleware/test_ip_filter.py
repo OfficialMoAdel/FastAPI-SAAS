@@ -8,16 +8,14 @@ Tests cover:
 - Path exemption handling
 """
 
-from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import Request, Response
-from starlette.datastructures import Headers, MutableHeaders
+from starlette.datastructures import Headers
 
-from src.app.middleware.ip_filter import IPFilterMiddleware
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules.security.service import IPFilterService
+from src.app.middleware.ip_filter import IPFilterMiddleware
 
 
 @pytest.fixture
@@ -155,7 +153,7 @@ class TestWhitelistEnforcement:
             patch.object(middleware._filter_service, "is_whitelisted", return_value=False),
             patch("src.app.middleware.ip_filter.settings.IP_WHITELIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.settings.IP_BLACKLIST_ENABLED", False),
-            patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
+            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 
@@ -190,7 +188,7 @@ class TestBlacklistEnforcement:
             patch.object(middleware._filter_service, "is_blacklisted", return_value=True),
             patch("src.app.middleware.ip_filter.settings.IP_WHITELIST_ENABLED", False),
             patch("src.app.middleware.ip_filter.settings.IP_BLACKLIST_ENABLED", True),
-            patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
+            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 
@@ -239,7 +237,7 @@ class TestBadBotDetection:
 
         with (
             patch("src.app.middleware.ip_filter.settings.BAD_BOT_FILTER_ENABLED", True),
-            patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
+            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 
@@ -255,7 +253,7 @@ class TestBadBotDetection:
 
         with (
             patch("src.app.middleware.ip_filter.settings.BAD_BOT_FILTER_ENABLED", True),
-            patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
+            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 
@@ -303,7 +301,7 @@ class TestBadBotDetection:
 
         with (
             patch("src.app.middleware.ip_filter.settings.BAD_BOT_FILTER_ENABLED", True),
-            patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
+            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 

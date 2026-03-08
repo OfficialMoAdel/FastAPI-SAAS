@@ -9,9 +9,6 @@ Tests cover:
 
 import json
 import time
-from unittest.mock import patch
-
-import pytest
 
 from src.app.modules.webhooks.utils import generate_signing_secret, verify_webhook_signature
 

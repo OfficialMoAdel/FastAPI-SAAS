@@ -20,7 +20,7 @@ class LoadTestConfig(BaseSettings):
 
     # Profiles: smoke, load, stress
     PROFILE: str = "smoke"
-    
+
     # Stress Profile Defaults (override via env vars)
     STRESS_USERS: int = 1000
     STRESS_SPAWN_RATE: int = 50

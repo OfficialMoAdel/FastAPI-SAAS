@@ -164,7 +164,7 @@ class MemoryProfiler:
     def _benchmark(self, name: str, category: str, func: Any, *args: Any, **kwargs: Any) -> MemoryBenchmarkResult:
         result = MemoryBenchmarkResult(name=name, category=category, iterations=self.iterations)
 
-        baseline = self._take_snapshot(0)
+        self._take_snapshot(0)
 
         for i in range(1, self.iterations + 1):
             gc.collect()

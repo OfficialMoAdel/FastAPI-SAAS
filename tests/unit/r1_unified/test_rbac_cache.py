@@ -25,24 +25,8 @@ async def test_cache_hit_avoids_database_query(mock_redis_client, mock_db_sessio
     service = RoleService(db=mock_db_session, tenant_id=1, redis_client=mock_redis_client)
 
     # Mock cached permissions
-    cached_data = [
-        {
-            "id": 1,
-            "slug": "users.read",
-            "description": "Read users",
-            "created_at": "2024-01-01T00:00:00+00:00",
-            "updated_at": "2024-01-01T00:00:00+00:00",
-        },
-        {
-            "id": 2,
-            "slug": "users.write",
-            "description": "Write users",
-            "created_at": "2024-01-01T00:00:00+00:00",
-            "updated_at": "2024-01-01T00:00:00+00:00",
-        },
-    ]
     mock_redis_client.get = AsyncMock(
-        return_value='[{"id":1,"slug":"users.read","description":"Read users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"},{"id":2,"slug":"users.write","description":"Write users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"}]'
+        return_value='[{"id":1,"slug":"users.read","description":"Read users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"},{"id":2,"slug":"users.write","description":"Write users","created_at":"2024-01-01T00:00:00+00:00","updated_at":"2024-01-01T00:00:00+00:00"}]'  # noqa: E501
     )
 
     # Mock database for fallback (in case cache deserialization fails)

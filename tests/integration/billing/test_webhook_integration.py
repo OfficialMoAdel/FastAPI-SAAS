@@ -1,12 +1,13 @@
-import pytest
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-from fastapi import status
-from sqlalchemy import select
-from datetime import datetime, UTC
-from pydantic import SecretStr
 
-from src.app.modules.billing.models import UserSubscription, BillingRecord
-from src.app.modules.billing.webhook import verify_webhook_signature
+import pytest
+from fastapi import status
+from pydantic import SecretStr
+from sqlalchemy import select
+
+from src.app.modules.billing.models import BillingRecord, UserSubscription
+
 
 @pytest.fixture
 def mock_redis_lifespan():
@@ -14,7 +15,7 @@ def mock_redis_lifespan():
     mock_redis = AsyncMock()
     mock_redis.exists.return_value = 0  # Not blacklisted
     mock_redis.get.return_value = None
-    
+
     with patch("src.app.core.setup.create_redis_queue_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.close_redis_cache_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock), \
@@ -118,7 +119,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
 
 
 @pytest.mark.asyncio
-async def test_webhook_invoice_payment_succeeded_flow(mock_redis_lifespan, client, db_session, tenant, create_test_user):
+async def test_webhook_invoice_payment_succeeded_flow(mock_redis_lifespan, client, db_session, tenant, create_test_user):  # noqa: E501
     """
     E2E test for invoice.payment_succeeded flow.
     Verifies that a BillingRecord is created.

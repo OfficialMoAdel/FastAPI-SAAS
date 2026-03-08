@@ -15,7 +15,6 @@ import src.app.core.service_registry as service_registry
 from src.app.core.config import settings
 from src.app.core.events import EventBus, EventPriority
 
-
 # ==================== Event Timeout ====================
 
 

@@ -129,7 +129,7 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
             response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
 
             log_step("Upload attempt over limit", status_code=response.status_code)
-            assert response.status_code == 403 or response.status_code == 413, f"Expected 403 or 413, got {response.status_code}"
+            assert response.status_code == 403 or response.status_code == 413, f"Expected 403 or 413, got {response.status_code}"  # noqa: E501
 
             error_detail = response.json().get("detail", "")
             log_step("Quota limit enforced", error=error_detail)

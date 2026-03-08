@@ -6,9 +6,9 @@ These tests verify the contract between our application and the Stripe API
 for checkout session creation and management.
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 import pytest
 import stripe

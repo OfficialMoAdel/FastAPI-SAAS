@@ -230,7 +230,7 @@ class TestPrecompiledRegex:
         # Pre-compiled should be faster (or at least not slower)
         # Note: Python caches regex internally, so difference may be small
         assert precompiled_time <= dynamic_time * 1.5, (
-            f"Pre-compiled ({precompiled_time:.4f}s) should not be significantly slower than dynamic ({dynamic_time:.4f}s)"
+            f"Pre-compiled ({precompiled_time:.4f}s) should not be significantly slower than dynamic ({dynamic_time:.4f}s)"  # noqa: E501
         )
 
 

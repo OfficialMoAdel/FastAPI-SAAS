@@ -1,4 +1,3 @@
-from fastapi import status
 """Unit tests for TenantService business logic.
 
 Tests cover:

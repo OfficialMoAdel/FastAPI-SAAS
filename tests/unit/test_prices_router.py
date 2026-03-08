@@ -67,7 +67,7 @@ def test_list_endpoint_supports_filters():
             client = TestClient(app)
 
             # Make request with filters
-            response = client.get("/api/v1/prices?product_id=1&is_active=true")
+            client.get("/api/v1/prices?product_id=1&is_active=true")
 
             # Service should be called with correct filters
             mock_instance.list_prices.assert_called_once()
@@ -98,7 +98,7 @@ def test_delete_is_soft_delete():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in prices_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in prices_router.routes for m in route.methods}
 
     # Expected: GET/, POST/, GET/{id}, PATCH/{id}, DELETE/{id}
     assert len(unique_paths) == 5
@@ -133,7 +133,7 @@ def test_create_price_integration():
 
     app = FastAPI()
     app.include_router(prices_router, prefix="/api/v1")
-    client = TestClient(app)
+    TestClient(app)
 
     # Verify the route exists and has proper structure
     routes = [(route.path, m) for route in app.routes for m in getattr(route, "methods", [])]

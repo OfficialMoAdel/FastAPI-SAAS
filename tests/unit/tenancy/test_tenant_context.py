@@ -105,8 +105,8 @@ def test_tenant_context_memory_size(sample_tenant: Tenant) -> None:
     """Verify TenantContext uses significantly less memory than Tenant."""
     context = TenantContext.from_model(sample_tenant)
 
-    context_size = sys.getsizeof(context)
-    tenant_size = sys.getsizeof(sample_tenant)
+    sys.getsizeof(context)
+    sys.getsizeof(sample_tenant)
 
     # Note: sys.getsizeof only measures the object itself, not referenced objects
     # Tenant model has SQLAlchemy state machinery and relationships

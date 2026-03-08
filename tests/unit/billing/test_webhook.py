@@ -1,10 +1,14 @@
+import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 import stripe
-import uuid
-from unittest.mock import MagicMock, patch, AsyncMock
 from fastapi import HTTPException
 
-from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature, handle_checkout_session_completed
+from src.app.modules.billing.webhook import (
+    handle_webhook_event,
+    verify_webhook_signature,
+)
 
 
 def test_verify_webhook_signature_success():
@@ -61,10 +65,10 @@ async def test_handle_webhook_event_checkout_completed():
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer in webhook handler
     plan_id = 456  # plan_id is also expected to be an integer
-    
+
     event = {
-        "id": "evt_test", 
-        "type": "checkout.session.completed", 
+        "id": "evt_test",
+        "type": "checkout.session.completed",
         "data": {
             "object": {
                 "id": "cs_test",
@@ -98,17 +102,17 @@ async def test_handle_webhook_event_checkout_completed():
     with patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.create", new_callable=AsyncMock) as mock_create, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False) as mock_exists, \
-         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-        
+         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:  # noqa: E501
+
         mock_to_thread.return_value = mock_stripe_sub
-        
+
         # Mock tenant db session
         mock_db = AsyncMock()
         mock_db.commit = AsyncMock()
         mock_ctx.return_value.__aenter__.return_value = mock_db
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
         mock_ctx.assert_called_once_with(tenant_id)
         mock_exists.assert_called_once()
@@ -121,7 +125,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
     """Test routing and bypass context for invoice.payment_succeeded."""
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer
-    
+
     event = {
         "id": "evt_invoice",
         "type": "invoice.payment_succeeded",
@@ -139,28 +143,28 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
     with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
          patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create:
-        
+
         # Mock bypass db session and subscription finding
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
-        
+
         mock_result = MagicMock()
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
-        
+
         # Mock tenant db session
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
-        
+
         # Verify bypass context used for lookup
         mock_bypass_ctx.assert_called_once_with("Webhook subscription lookup")
         mock_bypass_db.execute.assert_called_once()
-        
+
         # Verify tenant context used for creation
         mock_tenant_ctx.assert_called_once_with(tenant_id)
         mock_create.assert_called_once()
@@ -181,7 +185,7 @@ async def test_handle_webhook_event_invoice_payment_failed():
     """Test invoice.payment_failed handler."""
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer
-    
+
     event = {
         "id": "evt_failed",
         "type": "invoice.payment_failed",
@@ -201,7 +205,7 @@ async def test_handle_webhook_event_invoice_payment_failed():
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
          patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update:
-        
+
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -209,13 +213,13 @@ async def test_handle_webhook_event_invoice_payment_failed():
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
-        
+
         # Mock tenant db
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
         mock_create.assert_called_once()  # Billing record
         mock_update.assert_called_once()  # Subscription update to past_due
@@ -227,7 +231,7 @@ async def test_handle_webhook_event_subscription_updated():
     """Test customer.subscription.updated handler."""
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer
-    
+
     event = {
         "id": "evt_update",
         "type": "customer.subscription.updated",
@@ -245,7 +249,7 @@ async def test_handle_webhook_event_subscription_updated():
     with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update:
-        
+
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -253,13 +257,13 @@ async def test_handle_webhook_event_subscription_updated():
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
-        
+
         # Mock tenant db
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
         mock_update.assert_called_once()
         mock_tenant_db.commit.assert_called_once()
@@ -270,7 +274,7 @@ async def test_handle_webhook_event_subscription_deleted():
     """Test customer.subscription.deleted handler."""
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer
-    
+
     event = {
         "id": "evt_delete",
         "type": "customer.subscription.deleted",
@@ -285,8 +289,8 @@ async def test_handle_webhook_event_subscription_deleted():
     with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
          patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update, \
-         patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock) as mock_tenant_update:
-        
+         patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock):  # noqa: E501
+
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -294,16 +298,16 @@ async def test_handle_webhook_event_subscription_deleted():
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
-        
+
         # Mock tenant db
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
         mock_tenant_result = MagicMock()
         mock_tenant_result.scalar_one_or_none.return_value = MagicMock(id=99)
         mock_tenant_db.execute.return_value = mock_tenant_result
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
         mock_update.assert_called_once()
         # Verify status set to canceled
@@ -317,7 +321,7 @@ async def test_handle_webhook_event_charge_refunded():
     """Test charge.refunded handler."""
     tenant_id = uuid.uuid4()
     user_id = 123  # user_id is expected to be an integer
-    
+
     event = {
         "id": "evt_refund",
         "type": "charge.refunded",
@@ -333,12 +337,12 @@ async def test_handle_webhook_event_charge_refunded():
 
     # Mock invoice retrieval via asyncio.to_thread
     mock_invoice = {"id": "in_123", "subscription": "sub_123"}
-    
+
     with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
          patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
          patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create, \
          patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-        
+
         mock_to_thread.return_value = mock_invoice
 
         # Mock bypass db
@@ -348,13 +352,13 @@ async def test_handle_webhook_event_charge_refunded():
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
         mock_bypass_db.execute.return_value = mock_result
-        
+
         # Mock tenant db
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
-        
+
         result = await handle_webhook_event(event)
-        
+
         assert result == {"status": "success"}
         mock_create.assert_called_once()
         # Verify negative amount

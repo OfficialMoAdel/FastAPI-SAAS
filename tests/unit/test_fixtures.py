@@ -1,7 +1,5 @@
 """Tests for test fixtures."""
 
-import pytest
-from uuid6 import uuid7
 
 from src.app.modules.users.schemas import UserRead
 from tests.conftest import MockUser

@@ -83,7 +83,6 @@ async def test_benchmark_pattern_invalidation():
     # Let's try 100k first and extrapolate, or just do 1M if environment handles it.
     # 1M strings ~50MB RAM. Python handles it fine.
 
-    total_keys = 1_000_000
     match_count = 1_000
 
     # 1. Simulate SCAN (O(N))

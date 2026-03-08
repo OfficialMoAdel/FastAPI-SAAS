@@ -46,7 +46,7 @@ def test_all_crud_endpoints_exist():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in storage_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in storage_router.routes for m in route.methods}
 
     # Expected: GET / (get), POST / (create), PATCH / (update)
     assert len(unique_paths) == 3

@@ -1,11 +1,11 @@
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from unittest.mock import AsyncMock, MagicMock, patch, call
 from fastapi import UploadFile
 
 from src.app.modules.files.router import upload_file
-from src.app.modules.storage.local_storage import LocalStorage, CHUNK_SIZE
+from src.app.modules.storage.local_storage import CHUNK_SIZE, LocalStorage
 from src.app.modules.storage.s3_storage import S3Storage
 
 
@@ -38,7 +38,7 @@ async def test_router_upload_file_optimization():
     mock_service.upload_file.return_value = mock_result
 
     with patch("src.app.modules.files.router.get_file_service", return_value=mock_service):
-        result = await upload_file(
+        await upload_file(
             file=mock_file,
             tenant=mock_tenant,
             _user=mock_user,  # Use _user (matches router parameter name)
@@ -71,7 +71,7 @@ async def test_local_storage_streaming():
     mock_opener.__aenter__.return_value = mock_f
 
     with (
-        patch("aiofiles.open", return_value=mock_opener) as mock_open,
+        patch("aiofiles.open", return_value=mock_opener),
         patch("aiofiles.os.makedirs", new_callable=AsyncMock),
     ):
         await provider.upload(mock_file, "test/file.txt", "text/plain")

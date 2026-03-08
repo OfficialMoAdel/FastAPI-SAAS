@@ -162,7 +162,7 @@ class TestMiddlewarePerformance:
 
         for _ in range(iterations):
             perf_metrics.start_timer()
-            response = await async_client.get(
+            await async_client.get(
                 "/api/v1/health",
                 headers={"X-Tenant-ID": "test-tenant"},
             )

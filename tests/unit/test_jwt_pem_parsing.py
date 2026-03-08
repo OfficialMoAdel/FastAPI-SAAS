@@ -96,7 +96,7 @@ class TestCacheClearUtility:
 
         with patch("src.app.core.security.jwt_utils.settings", mock_settings):
             clear_jwt_key_cache()
-            key1 = _get_parsed_verification_key()
+            _get_parsed_verification_key()
 
             # Change secret
             mock_settings.SECRET_KEY.get_secret_value.return_value = "secret2"
@@ -129,7 +129,7 @@ class TestDecodeWithParsedKey:
                 with patch("src.app.core.security.jwt_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"sub": "user1"}
 
-                    result = decode_jwt_token("dummy.token.here")
+                    decode_jwt_token("dummy.token.here")
 
                     # Verify _get_parsed_verification_key was called
                     mock_get_key.assert_called_once()

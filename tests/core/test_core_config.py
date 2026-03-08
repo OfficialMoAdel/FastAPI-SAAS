@@ -9,7 +9,6 @@ from redis.asyncio import ConnectionPool
 from src.app.core import redis_factory, setup
 from src.app.core.config import CryptSettings, R1UnifiedSettings
 
-
 # ==================== Config Defaults ====================
 
 

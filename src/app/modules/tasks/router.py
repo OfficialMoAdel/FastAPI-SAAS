@@ -12,6 +12,7 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 
 from src.app.modules.users.models import User
 
+
 @router.post("/task", response_model=Job, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limiter_dependency)])
 async def create_task(
     body: TaskCreate,

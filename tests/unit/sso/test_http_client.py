@@ -85,7 +85,7 @@ class TestCloseSsoHttpClient:
     async def test_closes_existing_client(self):
         """Should close the client and reset the singleton."""
         # Create client first
-        client = await get_sso_http_client()
+        await get_sso_http_client()
         assert http_client._http_client is not None
 
         # Close it

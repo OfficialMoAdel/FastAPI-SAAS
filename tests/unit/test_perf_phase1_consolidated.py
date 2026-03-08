@@ -25,7 +25,6 @@ from src.app.core.events import EventBus, EventPriority
 from src.app.core.utils.cache import get_with_stampede_protection
 from src.app.modules.users.models import User
 
-
 # ==================== DB Config ====================
 
 

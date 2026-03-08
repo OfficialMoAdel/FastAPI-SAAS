@@ -211,12 +211,12 @@ def custom_openapi():
     }
 
     # Apply security to protected routes
-    for path in openapi_schema["paths"].values():
-        for method in path.values():
+    for path_str, path_item in openapi_schema["paths"].items():
+        for method in path_item.values():
             if method.get("security"):
                 continue
             # Apply JWT auth to all non-public routes
-            if path.startswith("/api/v1/auth"):
+            if path_str.startswith("/api/v1/auth"):
                 continue
             method.setdefault("security", []).append({"bearerAuth": []})
 

@@ -86,7 +86,7 @@ def compare_with_baseline(baseline_path: str, current_results: dict[str, Any]) -
 def compare_files(baseline_path: str, current_path: str) -> dict[str, Any]:
     """Compare two result files."""
     try:
-        baseline = json.loads(Path(baseline_path).read_text())
+        json.loads(Path(baseline_path).read_text())
         current = json.loads(Path(current_path).read_text())
     except FileNotFoundError as e:
         return {"error": str(e)}

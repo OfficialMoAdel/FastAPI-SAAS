@@ -44,7 +44,7 @@ def benchmark_hash_function(use_xxhash: bool, iterations: int = 10000) -> dict:
         bf = BloomFilter(100_000, 0.01)
 
         # Sample token for testing
-        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+        token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # noqa: E501
 
         # Benchmark single hash operation
         single_hash_ns = (
@@ -178,7 +178,7 @@ def main():
     # Check FPR consistency (within 50% of target)
     fpr_diff = abs(xxhash_results["actual_fpr"] - xxhash_results["target_fpr"])
     if fpr_diff > xxhash_results["target_fpr"] * 0.5:
-        print(f"WARNING: xxhash FPR {xxhash_results['actual_fpr']:.4f} deviates from target {xxhash_results['target_fpr']}")
+        print(f"WARNING: xxhash FPR {xxhash_results['actual_fpr']:.4f} deviates from target {xxhash_results['target_fpr']}")  # noqa: E501
         success = False
     else:
         print(f"PASS: xxhash FPR {xxhash_results['actual_fpr']:.4f} is within acceptable range")

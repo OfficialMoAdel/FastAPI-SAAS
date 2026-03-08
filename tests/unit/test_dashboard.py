@@ -124,6 +124,7 @@ class TestDashboardService:
     async def test_get_date_range_month(self):
         """Service should calculate correct date range for month."""
         from unittest.mock import AsyncMock
+
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
@@ -138,6 +139,7 @@ class TestDashboardService:
     async def test_get_date_range_week(self):
         """Service should calculate correct date range for week."""
         from unittest.mock import AsyncMock
+
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
@@ -152,6 +154,7 @@ class TestDashboardService:
     async def test_get_date_range_today(self):
         """Service should calculate correct date range for today."""
         from unittest.mock import AsyncMock
+
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 

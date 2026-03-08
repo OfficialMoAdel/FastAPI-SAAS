@@ -46,7 +46,7 @@ class TestRBACPermissionsCaching:
         """Test that cache hit returns cached permissions without DB query."""
         from src.app.modules.rbac.service import RoleService
 
-        cached_data = '[{"id": 1, "slug": "read:users", "description": "Read users", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'
+        cached_data = '[{"id": 1, "slug": "read:users", "description": "Read users", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'  # noqa: E501
         mock_redis.get.return_value = cached_data
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
@@ -107,7 +107,7 @@ class TestRBACPermissionsCaching:
 
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
-            permissions = await service.get_role_permissions(role_id=5)
+            await service.get_role_permissions(role_id=5)
 
             # Should query database
             assert mock_db.execute.call_count == 2  # Role check + permissions
@@ -180,7 +180,7 @@ class TestRBACPermissionsCaching:
             service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
             # Should not raise, should fall back to DB
-            permissions = await service.get_role_permissions(role_id=5)
+            await service.get_role_permissions(role_id=5)
 
             # Database should be queried
             assert mock_db.execute.call_count == 2

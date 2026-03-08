@@ -2,7 +2,6 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-
 from pydantic import SecretStr
 
 from src.app.modules.billing.service import CheckoutCreate, CheckoutService

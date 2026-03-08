@@ -39,7 +39,7 @@ class TestAutoBanThresholdE2E:
             # Make requests that trigger rate limits (but not ban)
             # Note: This assumes rate limiting is configured for the test endpoint
             for i in range(3):
-                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
+                await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
 
             # Check violation stats
             stats = await get_violation_stats(test_ip)
@@ -93,7 +93,7 @@ class TestBanEnforcementE2E:
 
             try:
                 # Attempt API access
-                response = await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
+                await async_client.get("/api/v1/health", headers={"X-Forwarded-For": test_ip})
 
                 # Banned IPs should be blocked at middleware level
                 # Note: Actual behavior depends on IPFilterMiddleware integration
@@ -405,7 +405,7 @@ class TestIntegrationWithRateLimitE2E:
 
             # Check if any violations were tracked
             # Note: Actual behavior depends on rate limit configuration
-            stats = await get_violation_stats(test_ip)
+            await get_violation_stats(test_ip)
 
             # Cleanup
             await reset_violations(test_ip)

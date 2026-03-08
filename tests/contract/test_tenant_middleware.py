@@ -10,7 +10,7 @@ import os
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from fastapi import status, FastAPI, status
+from fastapi import FastAPI, status
 from fastapi.testclient import TestClient
 
 from src.app.middleware.tenant import TenantMiddleware
@@ -82,7 +82,7 @@ class TestTenantMiddlewareContract:
             return {"message": "Protected endpoint"}
 
         # Add middleware with mocked _get_tenant_by_slug
-        middleware = TenantMiddleware(app)
+        TenantMiddleware(app)
 
         # Patch _get_tenant_by_slug at the module level to always return None
         with patch.object(TenantMiddleware, "_get_tenant_by_slug", new_callable=AsyncMock) as mock_get:

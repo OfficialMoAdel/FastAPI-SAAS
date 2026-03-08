@@ -48,7 +48,7 @@ async def seed_data():
                         INSERT INTO tenants (name, slug, is_active, storage_usage_bytes, file_count, feature_flags, created_at, updated_at)
                         VALUES (:name, :slug, :is_active, :storage_usage_bytes, :file_count, :feature_flags, NOW(), NOW())
                         ON CONFLICT DO NOTHING
-                    """),
+                    """),  # noqa: E501
                     {
                         "name": tenant_name,
                         "slug": tenant_slug,
@@ -87,7 +87,7 @@ async def seed_data():
                         VALUES (:email, :hashed_password, :name, :username, :tenant_id,
                                 :is_superuser, :is_email_verified, :is_deleted, :profile_image_url, :uuid, NOW(), NOW())
                         ON CONFLICT DO NOTHING
-                    """),
+                    """),  # noqa: E501
                     {
                         "email": email,
                         "hashed_password": hashed_password,
@@ -128,7 +128,7 @@ async def seed_data():
                         "action": random.choice(actions),
                         "entity_type": random.choice(entity_types),
                         "entity_id": str(fake.uuid4()),
-                        "details": f'{{"description": "{fake.sentence().replace(chr(39), chr(39) + chr(39))}", "metadata": {{"ip": "{fake.ipv4()}"}}}}',
+                        "details": f'{{"description": "{fake.sentence().replace(chr(39), chr(39) + chr(39))}", "metadata": {{"ip": "{fake.ipv4()}"}}}}',  # noqa: E501
                         "ip_address": fake.ipv4(),
                         "user_agent": fake.user_agent(),
                     }
@@ -139,9 +139,9 @@ async def seed_data():
                     for log_data in audit_logs_data:
                         await session.execute(
                             text("""
-                                INSERT INTO audit_logs (tenant_id, user_id, action, entity_type, 
+                                INSERT INTO audit_logs (tenant_id, user_id, action, entity_type,
                                                       entity_id, details, ip_address, user_agent, created_at)
-                                VALUES (:tenant_id, :user_id, :action, :entity_type, 
+                                VALUES (:tenant_id, :user_id, :action, :entity_type,
                                         :entity_id, CAST(:details AS JSONB), :ip_address, :user_agent, NOW())
                             """),
                             log_data,
@@ -152,9 +152,9 @@ async def seed_data():
             for log_data in audit_logs_data:
                 await session.execute(
                     text("""
-                        INSERT INTO audit_logs (tenant_id, user_id, action, entity_type, 
+                        INSERT INTO audit_logs (tenant_id, user_id, action, entity_type,
                                               entity_id, details, ip_address, user_agent, created_at)
-                        VALUES (:tenant_id, :user_id, :action, :entity_type, 
+                        VALUES (:tenant_id, :user_id, :action, :entity_type,
                                 :entity_id, CAST(:details AS JSONB), :ip_address, :user_agent, NOW())
                     """),
                     log_data,

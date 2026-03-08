@@ -309,6 +309,7 @@ class TestWebhookDelivery:
         self,
         async_client: AsyncClient,
         auth_headers: dict,
+        db_session,
     ) -> None:
         """Test that failed deliveries can be retried."""
         # Create endpoint pointing to non-existent URL (will fail)
@@ -337,6 +338,20 @@ class TestWebhookDelivery:
 
         if deliveries_resp.json()["items"]:
             delivery = deliveries_resp.json()["items"][0]
+
+            from uuid import UUID
+
+            from sqlalchemy import update
+
+            from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
+            # Directly mock the delivery failure in the DB since ARQ worker isn't processing
+            await db_session.execute(
+                update(WebhookDelivery)
+                .where(WebhookDelivery.id == UUID(delivery["id"]))
+                .values(status=WebhookDeliveryStatus.FAILED)
+            )
+            await db_session.commit()
 
             # Retry delivery
             retry_resp = await async_client.post(

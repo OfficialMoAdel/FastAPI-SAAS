@@ -12,10 +12,9 @@ import tracemalloc
 import pytest
 
 from src.app.core.tenancy.context import TenantContext
-from src.app.modules.tenants.models import Tenant
+
 # Import Notification to ensure it is registered in SQLAlchemy for the relationship
-from src.app.modules.notifications.models import Notification
-from src.app.modules.rbac.models import UserRole
+from src.app.modules.tenants.models import Tenant
 
 
 @pytest.fixture
@@ -34,8 +33,8 @@ def test_memory_reduction_single(sample_tenant: Tenant) -> None:
     """Compare sizeof Tenant vs TenantContext for single instance."""
     context = TenantContext.from_model(sample_tenant)
 
-    context_size = sys.getsizeof(context)
-    tenant_size = sys.getsizeof(sample_tenant)
+    sys.getsizeof(context)
+    sys.getsizeof(sample_tenant)
 
     # Note: sys.getsizeof only measures the object itself, not referenced objects
     # Tenant model has SQLAlchemy state machinery and relationships
@@ -69,7 +68,7 @@ def test_memory_reduction_1000_concurrent() -> None:
     tracemalloc.stop()
 
     memory_used_kb = (current - baseline) / 1024
-    peak_memory_kb = peak / 1024
+    peak / 1024
 
     # Should use less than 500KB total
     assert memory_used_kb < 500, f"Memory usage ({memory_used_kb:.2f} KB) should be less than 500KB for 1000 instances"

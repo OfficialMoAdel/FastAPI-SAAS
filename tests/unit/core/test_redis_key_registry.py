@@ -1,5 +1,5 @@
-import pytest
 from src.app.core.redis_key_registry import RedisKeys
+
 
 def test_security_keys():
     assert RedisKeys.Security.ip_whitelist("192.168.1.1") == "security:ip:whitelist:192.168.1.1"

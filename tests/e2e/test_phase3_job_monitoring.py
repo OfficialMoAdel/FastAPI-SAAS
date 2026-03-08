@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import patch
 from uuid import uuid4
 
 import pytest
@@ -9,9 +9,6 @@ from src.app.main import app
 
 # Import test helpers
 from tests.conftest import TestingSessionLocal, override_get_db
-
-
-
 
 
 @pytest.mark.asyncio

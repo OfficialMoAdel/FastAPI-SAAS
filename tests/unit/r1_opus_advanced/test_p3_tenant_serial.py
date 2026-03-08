@@ -54,10 +54,10 @@ class TestTenantSerialization:
         source = inspect.getsource(tenant)
 
         # Count occurrences of json_dumps
-        json_dumps_calls = source.count("json_dumps(")
+        source.count("json_dumps(")
 
         # Count occurrences of as_str=True
-        as_str_calls = source.count("as_str=True")
+        source.count("as_str=True")
 
         # After fix, there should be no as_str=True in tenant caching
         # (there might be as_str=True in other contexts, but not for tenant cache)

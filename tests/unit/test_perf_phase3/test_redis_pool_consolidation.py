@@ -183,7 +183,7 @@ class TestIsomorphismPoolConsolidation:
 
             # All should be the same instance
             assert all(c is mock_client for c in clients)
-            assert len(set(id(c) for c in clients)) == 1
+            assert len({id(c) for c in clients}) == 1
         finally:
             cache.client = original_client
 

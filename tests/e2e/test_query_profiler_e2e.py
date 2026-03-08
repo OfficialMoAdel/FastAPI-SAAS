@@ -8,14 +8,13 @@ Tests validate that the query profiler middleware correctly:
 - Handles various database operations
 """
 
+import asyncio
+from unittest.mock import patch
+
 import pytest
 from httpx import AsyncClient
-from typing import Any
-from unittest.mock import patch
-import asyncio
 
-from src.app.core.config import EnvironmentOption, settings
-from tests.factories import UserFactory, TenantFactory
+from tests.factories import TenantFactory, UserFactory
 
 
 @pytest.mark.e2e
@@ -225,8 +224,8 @@ class TestQueryProfilerE2E:
         caplog: pytest.LogCaptureFixture,
     ):
         """Test that query profiler integrates with logging system."""
-        with patch("src.app.middleware.query_profiler.logger.info") as mock_info:
-            with patch("src.app.middleware.query_profiler.logger.warning") as mock_warning:
+        with patch("src.app.middleware.query_profiler.logger.info"):
+            with patch("src.app.middleware.query_profiler.logger.warning"):
                 response = await e2e_client.get(
                     "/api/v1/users/me",
                     headers=self.user_headers,

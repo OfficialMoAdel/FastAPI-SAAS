@@ -1,10 +1,11 @@
-import pytest
-import json
 from unittest.mock import AsyncMock, patch
-from httpx import Response, HTTPStatusError, RequestError, Request
+
+import pytest
+from httpx import HTTPStatusError, Request, Response
 
 from src.app.modules.ai.anthropic_provider import AnthropicProvider
 from src.app.modules.ai.providers import AIProviderError
+
 
 @pytest.fixture
 def provider():
@@ -24,11 +25,11 @@ async def test_generate_text_success(provider):
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
         result = await provider.generate_text("Hi", "claude-3-opus-20240229", system_prompt="Sys")
-        
+
         assert result.content == "Hello Anthropic!"
         assert result.model == "claude-3-opus-20240229"
         assert result.token_usage.total_tokens == 15
-        
+
         mock_post.assert_awaited_once()
         kwargs = mock_post.call_args[1]
         assert kwargs["json"]["model"] == "claude-3-opus-20240229"
@@ -36,9 +37,9 @@ async def test_generate_text_success(provider):
 
 @pytest.mark.asyncio
 async def test_generate_text_http_error(provider):
-    mock_response = Response(status_code=400, request=Request("POST", "url"), json={"error": {"message": "Invalid auth"}})
+    mock_response = Response(status_code=400, request=Request("POST", "url"), json={"error": {"message": "Invalid auth"}})  # noqa: E501
     error = HTTPStatusError("Error", request=Request("POST", "url"), response=mock_response)
-    
+
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(AIProviderError) as exc_info:
             await provider.generate_text("Hi", "claude-base")
@@ -56,7 +57,7 @@ async def test_generate_json_success(provider):
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
         schema = {"type": "object", "properties": {"key": {"type": "string"}}}
         result = await provider.generate_json("Prompt", "claude", schema=schema)
-        
+
         assert result == {"key": "value"}
 
 @pytest.mark.asyncio

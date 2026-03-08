@@ -1,11 +1,7 @@
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, patch, MagicMock
 
+import pytest
 from fastapi.testclient import TestClient
-from src.app.core.utils.cache import async_get_redis
-from src.app.main import app
-
 
 # Use the standard test tenant slug from conftest
 TEST_TENANT_SLUG = "test-tenant-integration"
@@ -92,7 +88,7 @@ class TestAccountLockoutMechanism:
             normalized = username.lower().strip()
             lockout_key = f"login_attempts:{normalized}"
 
-            result = asyncio.run(
+            asyncio.run(
                 mock_redis.eval(
                     "mock_script",
                     1,

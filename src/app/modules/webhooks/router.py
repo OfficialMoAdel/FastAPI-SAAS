@@ -1,6 +1,7 @@
 """Webhooks API Router."""
 
 from datetime import datetime
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -334,7 +335,7 @@ async def test_webhook_endpoint(
     request: WebhookTestRequest,
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_user: dict[str, Any] = Depends(get_current_user),
 ) -> WebhookDeliveryResponse:
     """
     Test a webhook endpoint by sending a simulated event.
@@ -348,18 +349,23 @@ async def test_webhook_endpoint(
     from src.app.modules.rate_limits.models import RateLimit
 
     # Query the database directly for the tenant's rate limit for this endpoint
+    tier_id = current_user.get("tier_id")
+    if tier_id is None and isinstance(current_user.get("tier"), dict):
+        tier_id = current_user["tier"].get("id")
+
     stmt = select(RateLimit).where(
-        RateLimit.tier_id == current_user.tier_id,
+        RateLimit.tier_id == tier_id,
         RateLimit.path == _WEBHOOK_TEST_RATE_LIMIT_PATH,
     )
-    result = await db.execute(stmt)
-    rate_limit_config = result.scalar_one_or_none()
+    rate_limit_result = await db.execute(stmt)
+    rate_limit_config = rate_limit_result.scalar_one_or_none()
 
     # Fallback to defaults if tenant hasn't configured a specific limit
     limit = rate_limit_config.limit if rate_limit_config else 10
     period = rate_limit_config.period if rate_limit_config else 60
 
-    if await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", limit, period):
+    is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", limit, period)
+    if is_limited:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=f"Rate limit exceeded: {limit} tests per {period} seconds",
@@ -369,8 +375,8 @@ async def test_webhook_endpoint(
         WebhookEndpoint.id == endpoint_id,
         WebhookEndpoint.tenant_id == current_tenant.id,
     )
-    result = await db.execute(query)
-    endpoint = result.scalar_one_or_none()
+    endpoint_result = await db.execute(query)
+    endpoint = cast(WebhookEndpoint | None, endpoint_result.scalar_one_or_none())
 
     if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")

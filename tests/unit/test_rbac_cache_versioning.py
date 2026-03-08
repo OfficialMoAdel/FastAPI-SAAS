@@ -1,7 +1,5 @@
-import pytest
-from unittest.mock import patch
-from src.app.core.rbac.dependencies import _get_bitmask_cache_key
 from src.app.core.rbac.bitmask import PermissionBitmask
+from src.app.core.rbac.dependencies import _get_bitmask_cache_key
 
 
 def test_cache_key_versioning():

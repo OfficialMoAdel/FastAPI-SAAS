@@ -59,7 +59,7 @@ class TestUvloopImport:
     def test_uvloop_graceful_skip_windows(self) -> None:
         """Verify uvloop import fails gracefully on Windows."""
         try:
-            import uvloop
+            import uvloop  # noqa: F401
 
             pytest.fail("uvloop should not be importable on Windows")
         except ImportError:

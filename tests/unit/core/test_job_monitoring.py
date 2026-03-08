@@ -1,5 +1,5 @@
 import time
-from typing import Dict, List
+from typing import Dict, List  # noqa: UP035
 from unittest.mock import patch
 
 import pytest

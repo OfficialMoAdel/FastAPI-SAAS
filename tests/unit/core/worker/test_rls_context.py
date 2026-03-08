@@ -1,7 +1,8 @@
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
-from unittest.mock import MagicMock, patch, AsyncMock
-from sqlalchemy import text
-from src.app.core.worker.rls_context import job_tenant_context, job_bypass_context
+
+from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
 
 @pytest.mark.asyncio
@@ -32,9 +33,9 @@ async def test_job_tenant_context_yields_session_with_rls():
                 sql = args[0] if args else None
                 # Params might be in args[1] or kwargs
                 params = args[1] if len(args) > 1 else kwargs
-                
+
                 print(f"DEBUG: Checking call - SQL: {sql}, Params: {params}")
-                
+
                 # SQLAlchemy text object string representation
                 if "app.current_tenant_id" in str(sql) and str(params.get("tenant_id")) == "123":
                     tenant_set = True

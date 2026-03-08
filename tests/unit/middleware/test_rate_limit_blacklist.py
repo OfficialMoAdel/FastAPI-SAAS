@@ -1,6 +1,5 @@
 """Tests for rate limit blacklist integration."""
 
-from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -17,7 +16,6 @@ class TestBlacklistIntegration:
     @pytest.mark.asyncio
     async def test_user_in_state_with_blacklisted_token(self, mock_redis):
         """Test that blacklisted tokens are identified from request state."""
-        from src.app.api.dependencies import get_current_user
 
         # Create mock request with blacklisted token
         mock_request = MagicMock()
@@ -35,7 +33,6 @@ class TestBlacklistIntegration:
                 mock_verify.return_value = MagicMock(username_or_email="test@example.com")
 
                 # Should raise HTTPException for blacklisted token
-                from fastapi import HTTPException
 
                 # The get_current_user should check blacklist and reject
                 # This test verifies the blacklist check is called

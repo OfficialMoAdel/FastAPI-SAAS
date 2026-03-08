@@ -110,7 +110,7 @@ class TestEventBusIdempotency:
                 bus = EventBus()
                 bus._redis_client = mock_redis
 
-                result = await bus._check_idempotency("event-123")
+                await bus._check_idempotency("event-123")
 
                 # Lua manager should not be called
                 mock_lua_manager.execute.assert_not_called()

@@ -27,7 +27,7 @@ async def setup_test_data():
                     INSERT INTO tenants (name, slug, is_active, storage_usage_bytes, file_count, feature_flags, created_at, updated_at)
                     VALUES (:name, :slug, :is_active, :storage_usage_bytes, :file_count, :feature_flags, NOW(), NOW())
                     ON CONFLICT (slug) DO UPDATE SET is_active = TRUE
-                """),
+                """),  # noqa: E501
                 {
                     "name": "Test Tenant E2E",
                     "slug": "test-tenant-e2e",
@@ -62,7 +62,7 @@ async def setup_test_data():
                                          is_superuser, is_email_verified, is_deleted, profile_image_url, uuid, created_at, updated_at)
                         VALUES (:email, :hashed_password, :name, :username, :tenant_id,
                                 :is_superuser, :is_email_verified, :is_deleted, :profile_image_url, :uuid, NOW(), NOW())
-                    """),
+                    """),  # noqa: E501
                     {
                         "email": "premium_e2e@example.com",
                         "hashed_password": hashed_password,

@@ -194,13 +194,13 @@ def e2e_thresholds() -> dict:
     """Return E2E performance thresholds."""
     import sys
     thresholds = E2E_THRESHOLDS.copy()
-    
+
     # Coverage tracing adds significant overhead. Relax thresholds by 3x.
     if sys.gettrace() is not None:
         for k in thresholds:
             if k.endswith("_p95") or k.endswith("_p99") or k == "concurrent_p95":
                 thresholds[k] *= 3.0
-                
+
     return thresholds
 
 

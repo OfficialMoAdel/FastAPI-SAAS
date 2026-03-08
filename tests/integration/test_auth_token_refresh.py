@@ -4,11 +4,11 @@ Tests the A1-A3 security bug fixes with actual Redis and database interactions.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
 from src.app.modules.auth.service import AuthService
-from uuid import uuid4
 
 
 @pytest.fixture

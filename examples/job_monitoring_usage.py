@@ -42,7 +42,7 @@ async def main():
 
         # 2. Simulate Job Failure
         job_id_fail = "job_fail_002"
-        start_time_fail = datetime.now(UTC).timestamp()
+        datetime.now(UTC).timestamp()
 
         print(f"\n[3] Starting job {job_id_fail} ({function_name})...")
         await service.record_job_start(job_id_fail, function_name)

@@ -4,7 +4,7 @@ Verifies that audit logs are buffered in Redis and batch-flushed.
 """
 
 from typing import Any
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

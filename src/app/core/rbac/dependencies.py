@@ -28,7 +28,7 @@ from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_
 logger = get_logger(__name__)
 
 # OAuth2 scheme - same as used in api/dependencies.py
-_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/login")
+_oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 
 
 async def get_user_permissions(

@@ -7,10 +7,8 @@ Tests validate the core functionality of the module generator:
 - Validation logic
 """
 
-import argparse
 import sys
-from pathlib import Path
-from unittest.mock import MagicMock, mock_open, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -338,7 +336,7 @@ class TestTemplateRendering:
         mock_get_env.return_value = mock_env
 
         ctx = create_module_context("products", "name:str")
-        result = render_template("models.py", ctx)
+        render_template("models.py", ctx)
 
         mock_env.get_template.assert_called_once_with("models.py.j2")
         mock_template.render.assert_called_once()

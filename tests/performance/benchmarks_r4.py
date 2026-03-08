@@ -36,7 +36,7 @@ import hmac
 import time
 from datetime import UTC, datetime
 from functools import lru_cache
-from typing import Any, TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from unittest.mock import MagicMock, patch
 
 if TYPE_CHECKING:

@@ -16,7 +16,6 @@ import pytest
 from src.app.core.utils import cache
 from src.app.modules.storage.local_storage import LocalStorage
 
-
 # ==================== Async Storage ====================
 
 
@@ -63,7 +62,7 @@ async def test_async_storage_non_blocking():
         try:
             elapsed_monitor = await asyncio.wait_for(task_monitor, timeout=5.0)
             await asyncio.wait_for(task_upload, timeout=5.0)
-        except asyncio.TimeoutError:
+        except TimeoutError:
             task_monitor.cancel()
             task_upload.cancel()
             pytest.skip("Test skipped due to timeout - async storage may be blocking")

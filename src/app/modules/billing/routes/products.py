@@ -4,10 +4,9 @@ Provides /api/v1/products endpoints for frontend compatibility with old backend.
 All business logic is handled by the billing module's ProductService.
 """
 
-import logging
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
@@ -24,7 +23,6 @@ from src.app.modules.billing.schemas import (
 from src.app.modules.billing.service import get_product_service
 
 router = APIRouter(prefix="/products", tags=["products"])
-logger = logging.getLogger(__name__)
 
 
 @router.post(
@@ -64,99 +62,56 @@ async def list_products(
     }
 
 
-@router.get("/{product_id:path}", response_model=ProductRead)
+@router.get("/{product_id:int}", response_model=ProductRead)
 async def get_product(
-    product_id: str,
+    product_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
-    """Get a product by ID.
-
-    Note: Uses :path type to support Stripe product IDs (e.g., prod_xxx).
-    """
+    """Get a product by integer ID."""
     service = get_product_service(db)
-    # Try to convert to int first for database IDs
-    try:
-        product_id_int = int(product_id)
-        return await service.get_product(product_id_int)
-    except ValueError:
-        # If not a valid int, treat as Stripe ID string
-        # For now, we'll still pass to service which expects int
-        # This will be handled by service layer if needed
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
-        )
+    return await service.get_product(product_id)
 
 
 @router.patch(
-    "/{product_id:path}",
+    "/{product_id:int}",
     response_model=ProductRead,
     dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
 )
 async def update_product(
-    product_id: str,
+    product_id: int,
     data: ProductUpdate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
-    """Update a product (admin only).
-
-    Note: Uses :path type to support Stripe product IDs (e.g., prod_xxx).
-    """
+    """Update a product (admin only)."""
     service = get_product_service(db)
-    # Try to convert to int first for database IDs
-    try:
-        product_id_int = int(product_id)
-        return await service.update_product(product_id_int, data)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
-        )
+    return await service.update_product(product_id, data)
 
 
 @router.delete(
-    "/{product_id:path}",
+    "/{product_id:int}",
     dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
 )
 async def delete_product(
-    product_id: str,
+    product_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
-    """Delete/deactivate a product (admin only).
-
-    Note: Uses :path type to support Stripe product IDs (e.g., prod_xxx).
-    """
+    """Delete/deactivate a product (admin only)."""
     service = get_product_service(db)
-    # Try to convert to int first for database IDs
-    try:
-        product_id_int = int(product_id)
-        result = await service.deactivate_product(product_id_int)
-        return dict(result) if result else {}
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
-        )
+    result = await service.deactivate_product(product_id)
+    return dict(result) if result else {}
 
 
 @router.post(
-    "/{product_id:path}/pricing",
+    "/{product_id:int}/pricing",
     response_model=PricingRead,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires_permission(Permission.MANAGE_PRODUCTS))],
 )
 async def add_product_pricing(
-    product_id: str,
+    product_id: int,
     data: PricingCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> dict:
-    """Add a pricing tier to a product (admin only).
-
-    Note: Uses :path type to support Stripe product IDs (e.g., prod_xxx).
-    """
+    """Add a pricing tier to a product (admin only)."""
     service = get_product_service(db)
-    # Try to convert to int first for database IDs
-    try:
-        product_id_int = int(product_id)
-        return await service.add_pricing(product_id_int, data)
-    except ValueError:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid product ID format (must be integer ID)"
-        )
+    return await service.add_pricing(product_id, data)

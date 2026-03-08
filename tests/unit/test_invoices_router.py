@@ -66,7 +66,7 @@ def test_list_supports_status_filter():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in invoices_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in invoices_router.routes for m in route.methods}
 
     # Expected: GET/ (list), GET/{id} (get)
     assert len(unique_paths) == 2

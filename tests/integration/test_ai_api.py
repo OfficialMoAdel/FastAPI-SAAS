@@ -8,9 +8,8 @@ Tests cover:
 - Authentication and authorization
 """
 
-from uuid import uuid4
-
 from unittest.mock import AsyncMock, patch
+from uuid import uuid4
 
 # Test constants for consistent UUID usage
 TEST_TENANT_ID = uuid4()

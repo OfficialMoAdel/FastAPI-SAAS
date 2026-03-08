@@ -45,9 +45,9 @@ class TestBitarrayGetSetBit:
 
         bits[42] = True
 
-        assert bits[42] == True
-        assert bits[0] == False
-        assert bits[99] == False
+        assert bits[42]
+        assert not bits[0]
+        assert not bits[99]
 
     def test_set_multiple_bits(self):
         """Verify setting multiple bits works."""
@@ -59,10 +59,10 @@ class TestBitarrayGetSetBit:
         bits[30] = True
 
         assert bits.count() == 3
-        assert bits[10] == True
-        assert bits[20] == True
-        assert bits[30] == True
-        assert bits[15] == False
+        assert bits[10]
+        assert bits[20]
+        assert bits[30]
+        assert not bits[15]
 
 
 class TestBitarrayBufferInfo:

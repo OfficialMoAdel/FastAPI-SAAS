@@ -12,6 +12,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
+from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 
@@ -196,7 +197,7 @@ async def readiness_probe() -> dict[str, str]:
         return {"status": "not_ready", "reason": "health_check_failed"}
 
 
-@router.get("/metrics")
+@router.get("/metrics", response_class=PlainTextResponse)
 async def metrics_export() -> str:
     """Prometheus metrics export endpoint.
 

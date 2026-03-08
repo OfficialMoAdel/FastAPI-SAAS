@@ -116,7 +116,7 @@ class TestOrjsonSpecialTypes:
         data = {"name": "test", "value": 123}
         serialized = json_dumps(data)
 
-        assert isinstance(serialized, (str, bytes))
+        assert isinstance(serialized, str | bytes)
         logger.info("Serialization produces: %s", type(serialized).__name__)
 
 

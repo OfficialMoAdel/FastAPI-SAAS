@@ -59,7 +59,7 @@ class TestSessionPipelineOptimization:
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
-                result = await session_manager.register_session(
+                await session_manager.register_session(
                     user_id=123,
                     session_id="new_session",
                     device_info="Safari",
@@ -83,7 +83,7 @@ class TestSessionPipelineOptimization:
             mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
 
             with patch("src.app.core.security.session_manager.record_session_eviction") as mock_record:
-                result = await session_manager.register_session(
+                await session_manager.register_session(
                     user_id=123,
                     session_id="new_session",
                     device_info="Safari",

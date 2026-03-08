@@ -14,7 +14,7 @@ def generate_html_report(results: dict[str, Any], output_dir: Path) -> Path:
     # Calculate summary stats
     total_optimizations = results.get("metrics_summary", {}).get("total_optimizations_tested", 0)
     passed_optimizations = results.get("metrics_summary", {}).get("optimizations_passed", 0)
-    failed_optimizations = results.get("metrics_summary", {}).get("optimizations_failed", 0)
+    results.get("metrics_summary", {}).get("optimizations_failed", 0)
     overall_pass = results.get("overall_pass", False)
     isomorphism_pass = results.get("isomorphism_results", {}).get("all_passed", False)
 
@@ -114,7 +114,7 @@ def generate_html_report(results: dict[str, Any], output_dir: Path) -> Path:
     <pre>{json.dumps(results, indent=2, default=str)}</pre>
 </body>
 </html>
-"""
+"""  # noqa: E501
 
     output_path.write_text(html)
     return output_path

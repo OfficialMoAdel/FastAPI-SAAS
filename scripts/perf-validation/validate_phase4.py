@@ -22,7 +22,7 @@ async def validate_u16_projection() -> dict[str, Any]:
     source = schemas_path.read_text()
 
     has_list_schema = "UserListRead" in source or "UserRead" in source
-    has_minimal_fields = source.count("id:") > 0 and source.count("str") > 0
+    source.count("id:") > 0 and source.count("str") > 0
 
     passed = has_list_schema
 
@@ -38,7 +38,7 @@ async def validate_u17_service_registry() -> dict[str, Any]:
     deps_path = Path(__file__).parents[2] / "src" / "app" / "api" / "deps.py"
     source = deps_path.read_text() if deps_path.exists() else ""
 
-    has_caching = "cache" in source.lower() or "registry" in source.lower()
+    "cache" in source.lower() or "registry" in source.lower()
     uses_dependency_injection = "Depends(" in source
 
     # Service caching may be implicit through FastAPI's dependency system

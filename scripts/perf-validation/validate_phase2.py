@@ -23,7 +23,6 @@ async def validate_u5_composite_indexes() -> dict[str, Any]:
 
     has_tenant_email_idx = "idx_users_tenant_email" in source
     has_tenant_deleted_idx = "idx_users_tenant_deleted" in source
-    has_index_definition = "Index(" in source
 
     passed = has_tenant_email_idx and has_tenant_deleted_idx
 
@@ -40,7 +39,6 @@ async def validate_u6_n1_elimination() -> dict[str, Any]:
 
     uses_joinedload = "joinedload" in source
     has_tier_relation = "User.tier" in source
-    has_rate_limits = "Tier.rate_limits" in source or "rate_limits" in source
 
     passed = uses_joinedload and has_tier_relation
 

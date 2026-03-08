@@ -92,7 +92,7 @@ def test_additional_endpoints_preserved():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique route handlers (not route registrations)
-    route_handlers = set(route.endpoint for route in sso_router.routes)
+    route_handlers = {route.endpoint for route in sso_router.routes}
 
     # We should have:
     # 1. list_providers

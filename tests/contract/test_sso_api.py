@@ -91,7 +91,7 @@ class TestSSOAuthorizeEndpoint:
     def test_authorize_redirect_includes_state(self, client, auth_headers):
         """Verify authorize returns redirect URL with state parameter."""
         mock_service = _create_mock_sso_service(
-            get_authorization_url=("https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback", "test_state")
+            get_authorization_url=("https://accounts.google.com/o/oauth2/v2/auth?state=test_state&redirect_uri=https://example.com/callback", "test_state")  # noqa: E501
         )
         with override_sso_service(mock_service):
             response = client.get(

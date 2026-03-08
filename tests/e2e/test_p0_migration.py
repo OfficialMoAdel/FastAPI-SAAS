@@ -58,7 +58,7 @@ class TestMigrationFix:
 
     @pytest.mark.skipif(
         True,
-        reason="Cannot run full migration suite on SQLite due to constraint alteration limitations in old migrations (02_authentication). Requires Postgres.",
+        reason="Cannot run full migration suite on SQLite due to constraint alteration limitations in old migrations (02_authentication). Requires Postgres.",  # noqa: E501
     )
     def test_migration_upgrade_completes(self, alembic_config, test_db_path):
         """P0-1: Migration must complete without CONCURRENTLY error."""

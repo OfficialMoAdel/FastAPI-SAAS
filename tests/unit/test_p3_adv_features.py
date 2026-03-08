@@ -15,7 +15,6 @@ from src.app.core.config import settings
 from src.app.core.events import EventBus
 from src.app.core.utils import cache
 
-
 # ==================== Batch Enqueue ====================
 
 

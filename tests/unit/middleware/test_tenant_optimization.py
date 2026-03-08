@@ -77,7 +77,7 @@ async def test_tenant_optimization_concurrent_isolation():
         patch("src.app.middleware.tenant.settings") as mock_settings,
         patch("src.app.middleware.tenant.async_engine") as mock_engine,
         patch("src.app.middleware.tenant.set_current_tenant") as mock_set_context,
-        patch("src.app.middleware.tenant.clear_tenant_context") as mock_clear_context,
+        patch("src.app.middleware.tenant.clear_tenant_context"),
     ):
         mock_settings.performance.FEATURE_REMOVE_WASTED_CONNECTION = True
         # Mock separate tenants for separate requests
@@ -178,17 +178,17 @@ async def test_dispatch_optimized_logic():
     """Verify _dispatch_optimized logic sets context and calls next."""
     app = FastAPI()
     middleware = TenantMiddleware(app)
-    
+
     mock_request = MagicMock()
     mock_call_next = AsyncMock()
     tenant = MagicMock(id=1, slug="test", is_active=True)
-    
+
     with patch.object(middleware, "_get_tenant_by_slug", return_value=tenant), \
          patch("src.app.middleware.tenant.set_current_tenant") as mock_set, \
          patch("src.app.middleware.tenant.clear_tenant_context") as mock_clear:
-        
+
         await middleware._dispatch_optimized(mock_request, mock_call_next, "/api/v1/users")
-        
+
         mock_set.assert_called_once_with(tenant)
         mock_call_next.assert_called_once()
         mock_clear.assert_called_once()

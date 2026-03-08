@@ -44,7 +44,7 @@ from __future__ import annotations
 
 import asyncio
 import time
-from typing import Any, TYPE_CHECKING, Any, Final
+from typing import TYPE_CHECKING, Any, Final
 from unittest.mock import AsyncMock
 
 import pytest

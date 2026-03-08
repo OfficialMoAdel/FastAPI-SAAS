@@ -1,13 +1,13 @@
-import pytest
-from unittest.mock import AsyncMock, patch, MagicMock
-from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
-from src.app.modules.storage_settings.service import StorageSettingsService
+import pytest
+
 from src.app.modules.storage_settings.schemas import (
-    StorageSettingsCreate,
-    StorageProviderType,
     LocalCredentials,
+    StorageProviderType,
+    StorageSettingsCreate,
 )
+from src.app.modules.storage_settings.service import StorageSettingsService
 
 
 @pytest.fixture
@@ -16,15 +16,15 @@ def mock_redis_lifespan():
     mock_redis = AsyncMock()
     mock_redis.exists.return_value = 0
     mock_redis.get.return_value = None
-    
+
     # Mock encryption to avoid Fernet key issues
     with patch("src.app.core.setup.create_redis_queue_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.close_redis_cache_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock), \
          patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock), \
          patch("src.app.core.utils.cache.client", mock_redis), \
-         patch("src.app.modules.storage_settings.service.encrypt_value", side_effect=lambda x: f"enc_{x}".encode("utf-8")), \
-         patch("src.app.modules.storage_settings.service.decrypt_value", side_effect=lambda x: x.decode("utf-8").removeprefix("enc_")):
+         patch("src.app.modules.storage_settings.service.encrypt_value", side_effect=lambda x: f"enc_{x}".encode()), \
+         patch("src.app.modules.storage_settings.service.decrypt_value", side_effect=lambda x: x.decode("utf-8").removeprefix("enc_")):  # noqa: E501
         yield
 
 
@@ -41,7 +41,7 @@ async def test_file_upload_integration(
     """
     # 1. Configure Local Storage for the tenant
     from tests.conftest import get_testing_session_local
-    
+
     async with get_testing_session_local()() as db_session:
         settings_service = StorageSettingsService(db_session)
 
@@ -66,6 +66,6 @@ async def test_file_upload_integration(
 
     headers = {"X-Tenant-ID": tenant.slug}
     response = client_auth.post("/api/v1/files/upload", files=files, headers=headers)
-    
+
     # Accept various status codes due to mocked auth + real DB mismatch
     assert response.status_code in [201, 400, 401, 403, 404, 500], f"Upload failed: {response.text}"

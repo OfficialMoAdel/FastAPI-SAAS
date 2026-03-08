@@ -94,7 +94,7 @@ def test_provider_parameter_preserved():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in sso_settings_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in sso_settings_router.routes for m in route.methods}
 
     # Expected: GET/, POST/, GET/available-providers, GET/{provider}, PATCH/{provider}, DELETE/{provider}
     assert len(unique_paths) == 6

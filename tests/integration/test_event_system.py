@@ -136,7 +136,7 @@ class TestParallelEventHandlers:
 
         # Reset and run parallel
         counter["value"] = 0
-        par_results = await asyncio.gather(increment(), increment(), increment())
+        await asyncio.gather(increment(), increment(), increment())
 
         # Final count should be same
         # Note: Individual results may differ due to race conditions
@@ -198,10 +198,12 @@ class TestHandlerPreregistration:
         results = []
 
         # Simulate pre-registration at startup
-        pre_registered_handler = lambda: results.append("pre")
+        def pre_registered_handler():
+            return results.append("pre")
 
         # Simulate lazy registration on first event
-        lazy_registered_handler = lambda: results.append("lazy")
+        def lazy_registered_handler():
+            return results.append("lazy")
 
         # Both should be callable
         pre_registered_handler()
@@ -302,7 +304,7 @@ class TestHandlerTimeout:
             except TimeoutError:
                 return None
 
-        results = await asyncio.gather(
+        await asyncio.gather(
             run_with_timeout(handler_a(), 1.0),
             run_with_timeout(handler_b_slow(), 0.05),
             run_with_timeout(handler_c(), 1.0),

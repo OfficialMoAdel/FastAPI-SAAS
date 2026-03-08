@@ -1,6 +1,5 @@
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4, UUID
+from uuid import uuid4
 
 import pytest
 from arq.worker import Worker
@@ -93,7 +92,6 @@ async def test_enqueue_delivery_uses_arq(service):
 @pytest.mark.asyncio
 async def test_deliver_webhook_task_execution():
     """Test that the worker task calls the service method."""
-    from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 
     delivery_id = uuid4()
     ctx = MagicMock(spec=Worker)
@@ -125,7 +123,7 @@ async def test_deliver_webhook_task_execution():
                 # Setup service
                 MockServiceClass.return_value = mock_service_instance
 
-                result = await deliver_webhook_task(ctx, delivery_id)
+                await deliver_webhook_task(ctx, delivery_id)
 
                 # Service should be instantiated
                 MockServiceClass.assert_called_once_with(mock_tenant_db)

@@ -63,7 +63,7 @@ async def test_circuit_breaker_impact_on_job_monitoring(job_monitor, mock_redis)
         # This is what execute_query_with_circuit_breaker would do
         # We manually raise it to simulate the integration without mocking the entire DB layer
         # as we are testing the INTERACTION between CB and Job Monitor
-        recovery_in = db_circuit.recovery_timeout - (asyncio.get_running_loop().time() - db_circuit.last_failure_time)
+        db_circuit.recovery_timeout - (asyncio.get_running_loop().time() - db_circuit.last_failure_time)
         raise CircuitBreakerOpen(db_circuit.name, max(0, 10.0))
     except CircuitBreakerOpen as e:
         # Worker catches exception and records failure

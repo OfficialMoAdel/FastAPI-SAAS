@@ -82,7 +82,7 @@ class TestGetWebhookHttpClient:
 
     def test_client_has_connection_pooling(self):
         """Should configure connection pooling limits."""
-        client = get_webhook_http_client()
+        get_webhook_http_client()
 
         # Verify by checking the WEBHOOK_LIMITS constants
         assert WEBHOOK_LIMITS.max_connections == 50
@@ -113,7 +113,7 @@ class TestCloseWebhookHttpClient:
     async def test_closes_existing_client(self):
         """Should close the client and reset the singleton."""
         # Create client first
-        client = get_webhook_http_client()
+        get_webhook_http_client()
         assert http_client._webhook_http_client is not None
 
         # Close it

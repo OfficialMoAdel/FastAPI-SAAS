@@ -1,8 +1,10 @@
-import pytest
 from unittest.mock import AsyncMock, patch
-from httpx import Response, HTTPStatusError, TimeoutException, Request
+
+import pytest
+from httpx import HTTPStatusError, Request, Response, TimeoutException
 
 from src.app.modules.ai.ollama_client import OllamaClient, OllamaError
+
 
 @pytest.fixture
 def client():
@@ -22,7 +24,7 @@ async def test_chat_success(client):
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
         result = await client.chat("llama3", [{"role": "user", "content": "Hello"}], system_prompt="Sys")
-        
+
         assert result["message"] == "Hi!"
         assert result["model"] == "llama3"
         assert result["token_count"] == 10
@@ -39,7 +41,7 @@ async def test_chat_timeout(client):
 async def test_chat_http_error(client):
     mock_response = Response(status_code=500, request=Request("POST", "url"), text="Internal Sever Error")
     error = HTTPStatusError("Error", request=Request("POST", "url"), response=mock_response)
-    
+
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, side_effect=error):
         with pytest.raises(OllamaError) as exc_info:
             await client.chat("llama3", [{"role": "user", "content": "Hello"}])

@@ -1,7 +1,6 @@
 """Unit tests for the /account/register endpoint."""
 
 from unittest.mock import AsyncMock
-from uuid6 import uuid7
 
 import pytest
 from fastapi import FastAPI

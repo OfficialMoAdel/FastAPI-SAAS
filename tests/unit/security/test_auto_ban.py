@@ -9,8 +9,7 @@ Tests cover:
 - Statistics gathering
 """
 
-from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -178,7 +177,7 @@ class TestBanIP:
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
             patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
-            patch("src.app.core.security.auto_ban.log_security_event") as mock_log,
+            patch("src.app.core.security.auto_ban.log_security_event"),
         ):
             result = await ban_ip(sample_ip)
 
@@ -275,7 +274,7 @@ class TestUnbanIP:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.log_security_event") as mock_log,
+            patch("src.app.core.security.auto_ban.log_security_event"),
         ):
             result = await unban_ip(sample_ip)
 

@@ -417,7 +417,7 @@ def test_invalid_circuit_name_format(test_client):
 
     # Register circuit with special characters
     special_name = "circuit-with-special_chars.test"
-    circuit = registry.create(special_name, service_type=ServiceType.REDIS)
+    registry.create(special_name, service_type=ServiceType.REDIS)
 
     # Should be able to query it
     response = test_client.get(f"/api/v1/admin/circuit-breakers/{special_name}")

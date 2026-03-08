@@ -73,8 +73,8 @@ def generate_report():
     """Generate the comparison report."""
     print("\nGenerating report...")
 
-    benchmark_results = get_latest_results(BENCHMARK_RESULTS_DIR, "r1_opus_bench")
-    e2e_results = get_latest_results(E2E_RESULTS_DIR, "r1_opus_e2e")
+    get_latest_results(BENCHMARK_RESULTS_DIR, "r1_opus_bench")
+    get_latest_results(E2E_RESULTS_DIR, "r1_opus_e2e")
 
     # The main report is manually maintained at reports/r1_opus_comparison.md
     # This script validates and updates timestamp

@@ -1,5 +1,5 @@
 from __future__ import annotations
-from typing import Any
+
 """P0-4: Webhooks HMAC orjson Migration Tests.
 
 STATUS: CANCELLED - orjson is NOT compatible with stdlib json for HMAC signatures.

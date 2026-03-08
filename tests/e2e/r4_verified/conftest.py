@@ -169,10 +169,10 @@ async def ensure_test_tenant(ensure_tiers):
             text("""
                 INSERT INTO storage_settings (tenant_id, provider, max_file_size_mb, max_file_count, storage_quota_bytes, credentials_encrypted, created_at, updated_at)
                 VALUES (:tenant_id, 'local', 100, 10000, 10737418240, :encrypted, NOW(), NOW())
-                ON CONFLICT (tenant_id) DO UPDATE 
+                ON CONFLICT (tenant_id) DO UPDATE
                 SET credentials_encrypted = EXCLUDED.credentials_encrypted,
                     provider = 'local'
-            """),
+            """),  # noqa: E501
             {"tenant_id": tenant_id, "encrypted": encrypted},
         )
         await session.commit()
@@ -191,10 +191,11 @@ async def db_session(ensure_test_tenant) -> AsyncGenerator[AsyncSession, None]:
 @pytest.fixture
 async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
     """Provide async HTTP client for E2E tests with initialized Redis."""
-    from src.app.main import app
+    from redis import asyncio as aioredis
+
     from src.app.core.security.session_manager import session_manager
     from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
-    from redis import asyncio as aioredis
+    from src.app.main import app
 
     # Reset globals to avoid cross-loop resource reuse during coverage runs
     cache.client = None
@@ -295,16 +296,17 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
         await session.commit()
 
         # Create user directly in DB with explicit tenant_id and all required fields
-        from src.app.core.security import get_password_hash
         from uuid6 import uuid7
+
+        from src.app.core.security import get_password_hash
 
         hashed_password = await get_password_hash(user_data["password"])
 
         insert_result = await session.execute(
             text("""
                 INSERT INTO "user" (
-                    name, email, username, hashed_password, tenant_id, tier_id, 
-                    profile_image_url, uuid, is_active, is_deleted, is_superuser, 
+                    name, email, username, hashed_password, tenant_id, tier_id,
+                    profile_image_url, uuid, is_active, is_deleted, is_superuser,
                     is_email_verified, token_version, created_at, updated_at
                 )
                 VALUES (
@@ -411,16 +413,17 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
         await session.commit()
 
         # Create user directly in DB with explicit tenant_id and tier_id=2 (Pro)
-        from src.app.core.security import get_password_hash
         from uuid6 import uuid7
+
+        from src.app.core.security import get_password_hash
 
         hashed_password = await get_password_hash(user_data["password"])
 
         insert_result = await session.execute(
             text("""
                 INSERT INTO "user" (
-                    name, email, username, hashed_password, tenant_id, tier_id, 
-                    profile_image_url, uuid, is_active, is_deleted, is_superuser, 
+                    name, email, username, hashed_password, tenant_id, tier_id,
+                    profile_image_url, uuid, is_active, is_deleted, is_superuser,
                     is_email_verified, token_version, created_at, updated_at
                 )
                 VALUES (

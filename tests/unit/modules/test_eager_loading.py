@@ -92,7 +92,7 @@ class TestN1QueryPrevention:
         with patch.object(db_session, "execute", track_execute):
             # With joins (single query)
             query_count = 0
-            users = await service.get_multi_joined(
+            await service.get_multi_joined(
                 page=1,
                 per_page=10,
                 joins_config=[

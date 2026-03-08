@@ -119,7 +119,7 @@ class TestFeatureFlagsSpecialCases:
 
         flag = {
             "key": "unicode_flag",
-            "description": "Flag with special chars: \u00e9\u00e8\u00ea \u4e2d\u6587 \u0420\u0443\u0441\u0441\u043a\u0438\u0439",
+            "description": "Flag with special chars: \u00e9\u00e8\u00ea \u4e2d\u6587 \u0420\u0443\u0441\u0441\u043a\u0438\u0439",  # noqa: E501
             "config": {
                 "accents": "\u00e9\u00e8\u00ea\u00eb",
                 "quotes": 'He said "hello"',

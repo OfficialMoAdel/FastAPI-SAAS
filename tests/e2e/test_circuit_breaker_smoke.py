@@ -1,4 +1,3 @@
-from fastapi import status
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -36,8 +35,8 @@ async def test_smoke_circuit_breaker_registry(e2e_client):
     assert response.status_code == 200
 
     # 2. Access the circuit breaker registry directly
-    from src.app.core.resilience.registry import CircuitState, get_registry
     from src.app.core.resilience.db_circuit_breaker import db_circuit
+    from src.app.core.resilience.registry import CircuitState, get_registry
 
     registry = get_registry()
 
@@ -49,7 +48,7 @@ async def test_smoke_circuit_breaker_registry(e2e_client):
     assert "database" in circuit_names
 
     # 3. Verify initial state
-    db_circuit = registry.get("database")
+    db_circuit = registry.get("database")  # noqa: F811
     assert db_circuit is not None
     assert db_circuit.state == CircuitState.CLOSED
 

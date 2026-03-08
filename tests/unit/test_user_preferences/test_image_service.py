@@ -2,12 +2,11 @@
 
 from io import BytesIO
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
-from src.app.modules.storage.interfaces import StorageResult
 from src.app.modules._base import ValidationError
+from src.app.modules.storage.interfaces import StorageResult
 
 
 class MockUploadFile:

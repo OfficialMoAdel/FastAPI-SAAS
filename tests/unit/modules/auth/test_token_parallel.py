@@ -29,7 +29,6 @@ class TestTokenGenerationParallel:
 
         with patch("src.app.core.security._bcrypt_executor") as mock_executor:
             # Create a mock future that returns a valid JWT-like string
-            import asyncio
 
             async def mock_submit(*args, **kwargs):
                 return "mock_rs256_token"

@@ -159,7 +159,6 @@ async def test_notification_sent_when_type_not_disabled(async_db: AsyncSession):
 async def test_notification_skipped_during_quiet_hours(async_db: AsyncSession):
     """Test that notifications are skipped during quiet hours."""
     user_id = 1005
-    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours enabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -188,7 +187,6 @@ async def test_notification_skipped_during_quiet_hours(async_db: AsyncSession):
 async def test_notification_sent_outside_quiet_hours(async_db: AsyncSession):
     """Test that notifications are sent outside quiet hours."""
     user_id = 1006
-    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours enabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -217,7 +215,6 @@ async def test_notification_sent_outside_quiet_hours(async_db: AsyncSession):
 async def test_notification_sent_when_quiet_hours_disabled(async_db: AsyncSession):
     """Test that notifications are sent when quiet hours are disabled."""
     user_id = 1007
-    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with quiet hours disabled
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -277,7 +274,6 @@ async def test_default_preferences_allow_notifications(async_db: AsyncSession):
 async def test_cross_day_quiet_hours(async_db: AsyncSession):
     """Test quiet hours that cross midnight."""
     user_id = 1009
-    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with cross-day quiet hours (22:00 - 07:00)
     prefs = UserPreferences(user_id=user_id, preferences={})
@@ -310,7 +306,6 @@ async def test_cross_day_quiet_hours(async_db: AsyncSession):
 async def test_same_day_quiet_hours(async_db: AsyncSession):
     """Test quiet hours within the same day."""
     user_id = 1010
-    tenant_id: UUID = MockUser.DEFAULT_TENANT_ID  # Use UUID
 
     # Create user preferences with same-day quiet hours (13:00 - 14:00)
     prefs = UserPreferences(user_id=user_id, preferences={})

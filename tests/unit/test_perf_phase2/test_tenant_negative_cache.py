@@ -5,7 +5,6 @@ with proper TTL and propagates to L1.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
 
 import pytest
 
@@ -42,11 +41,11 @@ class TestNegativeCache:
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = None
             mock_db.execute = AsyncMock(return_value=mock_result)
-            
+
             with patch("src.app.middleware.tenant.local_session") as mock_session:
                 mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
                 mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
-                
+
                 result = await middleware._get_tenant_by_slug(tenant_slug)
 
         # Verify result is None
@@ -68,12 +67,12 @@ class TestNegativeCache:
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = None
             mock_db.execute = AsyncMock(return_value=mock_result)
-            
+
             with patch("src.app.middleware.tenant.local_session") as mock_session:
                 mock_session.return_value.__aenter__ = AsyncMock(return_value=mock_db)
                 mock_session.return_value.__aexit__ = AsyncMock(return_value=None)
-                
-                result = await middleware._get_tenant_by_slug(tenant_slug)
+
+                await middleware._get_tenant_by_slug(tenant_slug)
 
         # Verify L1 was set with negative result
         assert tenant_slug in _L1_TENANT_CACHE
@@ -128,7 +127,7 @@ class TestNegativeCachePropagation:
         mock_redis.get = AsyncMock(return_value="null")
 
         with patch("src.app.middleware.tenant.redis_client", mock_redis):
-            result = await middleware._get_tenant_by_slug("l2-negative")
+            await middleware._get_tenant_by_slug("l2-negative")
 
         # L1 should be populated with None
         assert "l2-negative" in _L1_TENANT_CACHE

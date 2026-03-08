@@ -11,17 +11,16 @@ Tests cover:
 from collections import defaultdict
 
 import pytest
-from sqlalchemy import create_engine, event, text
-from sqlalchemy.ext.asyncio import create_async_engine
+from sqlalchemy import create_engine
 
 from src.app.core.db.profiler import (
+    _request_queries,
     end_request_tracking,
     get_query_stats,
     is_profiler_enabled,
     reset_query_tracker,
     setup_query_profiler,
     start_request_tracking,
-    _request_queries,
 )
 
 
@@ -73,9 +72,9 @@ class TestQueryNormalization:
         from src.app.core.db.profiler import _normalize_query
 
         query = """
-            SELECT u.name, p.title 
-            FROM users u 
-            JOIN posts p ON u.id = p.user_id 
+            SELECT u.name, p.title
+            FROM users u
+            JOIN posts p ON u.id = p.user_id
             WHERE u.status = 'active' AND p.created_at > '2024-01-01'
         """
         result = _normalize_query(query)
@@ -290,12 +289,11 @@ class TestIntegration:
 Ensures query tracking is properly isolated between requests.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 
-class TestRequestTracking:
+class TestRequestTracking:  # noqa: F811
     """Tests for request-level query tracking isolation."""
 
     @pytest.fixture(autouse=True)

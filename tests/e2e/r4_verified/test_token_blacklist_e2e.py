@@ -63,7 +63,7 @@ async def test_token_blacklist_full_flow(authenticated_user: dict, client: Async
     # Step 3: Logout (blacklist token)
     log_step("Logging out to blacklist token")
     start_time = time.perf_counter()
-    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}
+    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}  # noqa: E501
     response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
     logout_time = time.perf_counter() - start_time
 
@@ -115,7 +115,7 @@ async def test_blacklist_expiration(authenticated_user: dict, client: AsyncClien
 
     # Step 1: Blacklist token
     log_step("Blacklisting token")
-    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}
+    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}  # noqa: E501
     response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
     assert response.status_code == 200
 
@@ -219,7 +219,7 @@ async def test_blacklist_performance(authenticated_user: dict, client: AsyncClie
     log_step("Measuring blacklist operation time")
     start_time = time.perf_counter()
 
-    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}
+    logout_cookies = {"refresh_token": authenticated_user.get("refresh_token")} if authenticated_user.get("refresh_token") else {}  # noqa: E501
     response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
     assert response.status_code == 200
 

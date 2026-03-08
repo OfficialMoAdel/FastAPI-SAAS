@@ -36,23 +36,23 @@ def test_all_crud_endpoints_exist():
     # Expected routes (note: uses :path type for Stripe IDs)
     assert ("/products", "GET") in routes  # List
     assert ("/products", "POST") in routes  # Create
-    assert ("/products/{product_id:path}", "GET") in routes  # Get
-    assert ("/products/{product_id:path}", "PATCH") in routes  # Update
-    assert ("/products/{product_id:path}", "DELETE") in routes  # Delete
-    assert ("/products/{product_id:path}/pricing", "POST") in routes  # Add pricing
+    assert ("/products/{product_id:int}", "GET") in routes  # Get
+    assert ("/products/{product_id:int}", "PATCH") in routes  # Update
+    assert ("/products/{product_id:int}", "DELETE") in routes  # Delete
+    assert ("/products/{product_id:int}/pricing", "POST") in routes  # Add pricing
 
 
 def test_path_parameter_for_stripe_ids():
-    """Test that product_id uses :path type for Stripe IDs like prod_xxx."""
-    # Find the GET /{product_id:path} route
+    """Test that product_id uses :int type for integer IDs."""
+    # Find the GET /{product_id:int} route
     get_routes = [route for route in products_router.routes if "GET" in route.methods]
-    product_detail_routes = [r for r in get_routes if "{product_id:path}" in r.path]
+    product_detail_routes = [r for r in get_routes if "{product_id:int}" in r.path]
 
-    # Should have at least one route with {product_id:path}
+    # Should have at least one route with {product_id:int}
     assert len(product_detail_routes) > 0
 
-    # The path should contain the parameter with :path type
-    assert any("{product_id:path}" in r.path for r in product_detail_routes)
+    # The path should contain the parameter with :int type
+    assert any("{product_id:int}" in r.path for r in product_detail_routes)
 
 
 def test_list_endpoint_pagination():
@@ -80,7 +80,7 @@ def test_list_endpoint_pagination():
             client = TestClient(app)
 
             # Make request with pagination
-            response = client.get("/api/v1/products?page=1&per_page=20")
+            client.get("/api/v1/products?page=1&per_page=20")
 
             # Service should be called with correct params
             mock_service.get_products.assert_called_once()
@@ -102,7 +102,7 @@ def test_delegates_to_billing_service():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in products_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in products_router.routes for m in route.methods}
 
     # Expected: GET/, POST/, GET/{id}, PATCH/{id}, DELETE/{id}, POST/{id}/pricing
     assert len(unique_paths) == 6
@@ -112,7 +112,7 @@ def test_pricing_endpoint_exists():
     """Test that the pricing endpoint is available."""
     routes = {(route.path, m): route for route in products_router.routes for m in route.methods}
 
-    assert ("/products/{product_id:path}/pricing", "POST") in routes
+    assert ("/products/{product_id:int}/pricing", "POST") in routes
 
 
 def test_response_models():

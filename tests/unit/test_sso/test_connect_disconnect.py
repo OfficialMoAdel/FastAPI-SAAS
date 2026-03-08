@@ -8,8 +8,8 @@ Connect provider: Allow authenticated users to link additional SSO providers.
 Disconnect provider: Remove SSO provider from account (with last-auth-method check).
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
 import uuid
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 

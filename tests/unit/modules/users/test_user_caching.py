@@ -190,13 +190,13 @@ class TestUserCacheInvalidation:
 
                 # Verify the right keys were invalidated (tenant-scoped)
                 expected_keys = [
-                    f"user:profile:550e8400-e29b-41d4-a716-446655440000",
+                    "user:profile:550e8400-e29b-41d4-a716-446655440000",
                     f"user:profile:{mock_tenant.id}:email:test@example.com",
                     f"user:profile:{mock_tenant.id}:username:testuser",
                     f"user:auth:{mock_tenant.id}:testuser",
                     f"user:auth:{mock_tenant.id}:test@example.com",
-                    f"user:testuser:token_version",
-                    f"user:test@example.com:token_version",
+                    "user:testuser:token_version",
+                    "user:test@example.com:token_version",
                 ]
                 for key in expected_keys:
                     assert key in call_args, f"Expected {key} to be invalidated"

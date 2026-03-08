@@ -139,7 +139,7 @@ class TestProductPricingDataIntegrity:
         # The response should still have pricing_tiers as empty list
         response = {
             "id": mock_product.id,
-            "pricing_tiers": [tier for tier in mock_product.pricing_tiers],
+            "pricing_tiers": list(mock_product.pricing_tiers),
         }
 
         assert "pricing_tiers" in response

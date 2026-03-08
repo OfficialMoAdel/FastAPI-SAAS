@@ -141,7 +141,7 @@ class TestSessionManagerIntegration:
     """E2E tests for Session Manager ZSET optimization."""
 
     @pytest.fixture
-    def mock_redis_session(self):
+    def mock_redis_session(self):  # noqa: C901
         """Create a mock Redis with real-like behavior."""
         # Simulate Redis data structures
         zsets: dict[str, dict[str, float]] = {}  # ZSET: {key: {member: score}}
@@ -530,7 +530,7 @@ class TestFullOptimizationFlow:
     """E2E test combining all optimizations in realistic flow."""
 
     @pytest.fixture
-    def mock_redis_flow(self):
+    def mock_redis_flow(self):  # noqa: C901
         """Create a mock Redis with real-like behavior for flow test."""
         # Simulate Redis data structures
         zsets: dict[str, dict[str, float]] = {}
@@ -645,7 +645,7 @@ class TestFullOptimizationFlow:
         # 1. Login simulation (creates token, registers session)
         token = "jwt_token_for_user_42_abc123"
         start = time.perf_counter()
-        session_result = await sm.register_session(user_id=user_id, session_id="sess_1", device_info="Chrome/Windows")
+        await sm.register_session(user_id=user_id, session_id="sess_1", device_info="Chrome/Windows")
         login_ms = (time.perf_counter() - start) * 1000
         results["login_ms"] = round(login_ms, 2)
         logger.info(f"Login: {login_ms:.2f}ms")

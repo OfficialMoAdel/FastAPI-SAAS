@@ -24,7 +24,7 @@ import csv
 import json
 import sys
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 
@@ -69,7 +69,7 @@ class ComparisonReport:
 
     baseline_file: str
     optimized_file: str
-    generated_at: str = field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    generated_at: str = field(default_factory=lambda: datetime.now(UTC).isoformat())
     metrics: list[MetricComparison] = field(default_factory=list)
 
     @property

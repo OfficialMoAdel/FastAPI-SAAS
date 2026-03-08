@@ -3,9 +3,9 @@
 Tests T067: Integration test for checkout endpoints in tests/integration/billing/test_checkout_api.py
 """
 
+import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 
 class TestCheckoutAPI:

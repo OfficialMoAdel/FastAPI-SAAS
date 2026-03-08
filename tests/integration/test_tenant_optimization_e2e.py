@@ -1,11 +1,13 @@
-import pytest
-from httpx import AsyncClient, ASGITransport
 from unittest.mock import patch
-from src.app.main import app
+
+import pytest
+from httpx import ASGITransport, AsyncClient
+
 from src.app.core.config import settings
+from src.app.core.security import get_password_hash
+from src.app.main import app
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
-from src.app.core.security import get_password_hash
 
 
 # Fixtures for this test file
@@ -22,9 +24,9 @@ async def tenant_alpha(db_session):
 async def user_alpha(db_session, tenant_alpha):
     pw = await get_password_hash("password")
     user = User(
-        email="alpha@test.com", 
-        username="alpha", 
-        hashed_password=pw, 
+        email="alpha@test.com",
+        username="alpha",
+        hashed_password=pw,
         tenant_id=tenant_alpha.id,
         name="Alpha User"
     )
@@ -47,9 +49,9 @@ async def tenant_beta(db_session):
 async def user_beta(db_session, tenant_beta):
     pw = await get_password_hash("password")
     user = User(
-        email="beta@test.com", 
-        username="beta", 
-        hashed_password=pw, 
+        email="beta@test.com",
+        username="beta",
+        hashed_password=pw,
         tenant_id=tenant_beta.id,
         name="Beta User"
     )
@@ -71,9 +73,9 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     fake_redis.get.return_value = None
     fake_redis.setex = AsyncMock()
     fake_redis.set = AsyncMock()
-    
+
     from src.app.core.utils import cache
-    
+
     # Patch local_session in middleware to use our test db_session
     # This ensures the middleware sees the tenants we created in SQLite
     mock_session_factory = MagicMock()
@@ -84,7 +86,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     with patch.object(settings, "FEATURE_REMOVE_WASTED_CONNECTION", True), \
          patch.object(cache, "client", fake_redis), \
          patch("src.app.middleware.tenant.local_session", mock_session_factory):
-        
+
         # Set User-Agent to avoid Bad Bot detection
         headers = {"User-Agent": "E2ETest/1.0"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:

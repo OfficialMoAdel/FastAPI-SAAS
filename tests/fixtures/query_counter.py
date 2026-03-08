@@ -179,7 +179,7 @@ def assert_query_reduces(
 
     assert reduction >= expected_reduction, (
         message
-        or f"Query reduction {reduction} below expected {expected_reduction}. Before: {before_count}, After: {after_count}"
+        or f"Query reduction {reduction} below expected {expected_reduction}. Before: {before_count}, After: {after_count}"  # noqa: E501
     )
 
     logger.info(f"[QUERIES] Reduction assertion passed: {before_count} → {after_count} queries (-{reduction})")

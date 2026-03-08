@@ -40,7 +40,7 @@ class TestCompositeIndexes:
                 WHERE tablename = 'user' AND indexname = 'idx_users_tenant_email'
             """)
         )
-        indexes = result.fetchall()
+        result.fetchall()
         # Note: Index may have different name - check for composite on tenant_id, email
         # This is a schema verification test
 
@@ -108,7 +108,7 @@ class TestN1Elimination:
     async def test_n1_isomorphism(self, real_postgres):
         """Verify joinedload returns same data as separate queries."""
         # Joinedload approach
-        joined_result = await real_postgres.execute(
+        await real_postgres.execute(
             text("""
                 SELECT u.id, t.name as tier_name
                 FROM "user" u
@@ -166,9 +166,9 @@ class TestFilesQuotaFusion:
         fused_row = fused.fetchone()
 
         # Separate (baseline)
-        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
+        count_result = await real_postgres.execute(text("SELECT COUNT(*) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))  # noqa: E501
         size_result = await real_postgres.execute(
-            text("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'")
+            text("SELECT COALESCE(SUM(size_bytes), 0) FROM files WHERE tenant_id = '00000000-0000-0000-0000-000000000001'")  # noqa: E501
         )
 
         count_row = count_result.fetchone()
@@ -299,8 +299,8 @@ class TestStorageSettingsN1:
             pytest.skip("storage_settings table not found - run scripts/init_test_db.py")
 
         # Two queries for same tenant should return same result
-        result1 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
-        result2 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))
+        result1 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))  # noqa: E501
+        result2 = await real_postgres.execute(text("SELECT * FROM storage_settings WHERE tenant_id = '00000000-0000-0000-0000-000000000001'"))  # noqa: E501
 
         row1 = result1.fetchone()
         row2 = result2.fetchone()

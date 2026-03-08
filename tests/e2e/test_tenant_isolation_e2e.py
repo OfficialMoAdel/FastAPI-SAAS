@@ -256,8 +256,8 @@ class TestTenantIsolationE2E:
         async def mock_get_current_user():
             return fake_user
 
-        from src.app.core.security import oauth2_scheme
         from src.app.core.rbac.dependencies import _oauth2_scheme
+        from src.app.core.security import oauth2_scheme
 
         app.dependency_overrides[get_current_user] = mock_get_current_user
         app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
@@ -403,8 +403,8 @@ class TestTenantIsolationE2E:
         async def mock_get_current_user_b():
             return fake_user_b
 
-        from src.app.core.security import oauth2_scheme
         from src.app.core.rbac.dependencies import _oauth2_scheme
+        from src.app.core.security import oauth2_scheme
 
         app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
         app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
@@ -484,8 +484,8 @@ class TestTenantIsolationE2E:
             async def mock_get_current_user():
                 return fake_user
 
-            from src.app.core.security import oauth2_scheme
             from src.app.core.rbac.dependencies import _oauth2_scheme
+            from src.app.core.security import oauth2_scheme
 
             app.dependency_overrides[get_current_user] = mock_get_current_user
             app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
@@ -636,8 +636,8 @@ class TestTenantIsolationE2E:
                         return fake_user
 
                     app.dependency_overrides[get_current_user] = mock_get_current_user
-                    from src.app.core.security import oauth2_scheme
                     from src.app.core.rbac.dependencies import _oauth2_scheme
+                    from src.app.core.security import oauth2_scheme
 
                     app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
                     app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
@@ -657,7 +657,7 @@ class TestTenantIsolationE2E:
                     }
                     if request_num % 10 == 0:  # Log every 10th request to reduce noise
                         logger.info(
-                            f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}"
+                            f"Request {request_num}: tenant_id={tenant_id}, operation=list_users, result_count={len(data)}"  # noqa: E501
                         )
                     return result
 
@@ -694,7 +694,7 @@ class TestTenantIsolationE2E:
                     # Verify each request for this tenant sees exactly 10 users
                     for result in tenant_results:
                         assert result["result_count"] == 10, (
-                            f"Tenant {tenant_id} request {result['request_num']} saw {result['result_count']} users, expected 10"
+                            f"Tenant {tenant_id} request {result['request_num']} saw {result['result_count']} users, expected 10"  # noqa: E501
                         )
 
                 logger.info("✅ PASSED: 100 concurrent requests across 10 tenants - zero data leakage detected")

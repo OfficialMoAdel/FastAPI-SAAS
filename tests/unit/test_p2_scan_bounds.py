@@ -16,7 +16,7 @@ async def test_migrate_tenant_cache_index_scan_bounds():
     mock_client.scan.return_value = (1, ["key"])
 
     with patch.object(cache, "client", mock_client), patch("src.app.core.utils.cache.stampede_logger") as mock_logger:
-        result = await cache.migrate_tenant_cache_index()
+        await cache.migrate_tenant_cache_index()
 
         # Should have called scan 1000 times (MAX_ITERATIONS)
         assert mock_client.scan.call_count == 1000

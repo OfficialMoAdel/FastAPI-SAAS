@@ -285,7 +285,7 @@ class TestPerformance:
             json_dumps(large_payload, as_str=True)
             latencies.append((time.perf_counter() - start) * 1000)  # ms
 
-        avg_latency = sum(latencies) / len(latencies)
+        sum(latencies) / len(latencies)
         p95_latency = sorted(latencies)[int(len(latencies) * 0.95)]
 
         # Should be fast (< 5ms for 100-item payload)

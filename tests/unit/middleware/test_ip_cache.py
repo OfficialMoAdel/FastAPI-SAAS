@@ -11,7 +11,6 @@ from src.app.core.utils.ip_utils import (
 )
 
 
-
 @pytest.fixture(autouse=True)
 def clear_cache():
     """Clear the LRU cache before each test."""
@@ -62,7 +61,7 @@ class TestIsIpInTrustedNetworks:
         # Second call - cache hit
         result2 = _is_ip_in_trusted_networks("10.0.0.1")
 
-        assert result1 == result2 == True
+        assert result1 == result2 is True
 
         # Check cache stats
         info = _is_ip_in_trusted_networks.cache_info()

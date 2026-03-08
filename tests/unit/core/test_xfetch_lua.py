@@ -158,7 +158,7 @@ class TestXFetchLuaOptimization:
                     async def fetch_fn():
                         return {"name": "fresh"}
 
-                    result = await cache.get_with_stampede_protection(
+                    await cache.get_with_stampede_protection(
                         "test:key",
                         fetch_fn,
                         ttl=3600,

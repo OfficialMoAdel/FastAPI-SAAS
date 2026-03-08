@@ -76,12 +76,12 @@ def measure_memory(detailed: bool = False, limit: int = 10):
         yield ctx
     finally:
         current, peak = tracemalloc.get_traced_memory()
-        
+
         top_stats = None
         if detailed:
             snapshot = tracemalloc.take_snapshot()
             top_stats = [str(stat) for stat in snapshot.statistics("lineno")[:limit]]
-            
+
         tracemalloc.stop()
         ctx.snapshot = MemorySnapshot(current=current, peak=peak, top_stats=top_stats)
 

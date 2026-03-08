@@ -22,9 +22,10 @@ def mock_health_checks():
 
 @pytest.fixture
 def mock_event_bus():
-    from unittest.mock import patch, PropertyMock
+    from unittest.mock import PropertyMock, patch
+
     from src.app.core.events import EventBus
-    
+
     with patch.object(EventBus, 'is_ready', new_callable=PropertyMock) as mock_is_ready:
         mock_is_ready.return_value = True
         yield mock_is_ready
@@ -50,7 +51,7 @@ async def test_ready_check_success(async_client: AsyncClient, mock_health_checks
     queue_mock.return_value = HealthResult(status="healthy")
 
     response = await async_client.get("/api/v1/ready")
-    
+
     data = response.json()
     print("\n\nRESPONSE DATA:", data, "\n\n")
 

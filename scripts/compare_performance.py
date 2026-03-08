@@ -108,7 +108,7 @@ def compare(baseline: dict, current: dict) -> dict[str, Any]:
             {
                 "metric": "L1 Tenant Cache",
                 "before": "Disabled",
-                "after": f"Enabled (maxsize={current['metrics']['l1_tenant_cache']['maxsize']}, ttl={current['metrics']['l1_tenant_cache']['ttl']}s)",
+                "after": f"Enabled (maxsize={current['metrics']['l1_tenant_cache']['maxsize']}, ttl={current['metrics']['l1_tenant_cache']['ttl']}s)",  # noqa: E501
                 "expected_improvement": "50-90% Redis call reduction for hot tenants",
             }
         )
@@ -118,7 +118,7 @@ def compare(baseline: dict, current: dict) -> dict[str, Any]:
             {
                 "metric": "L1 RBAC Cache",
                 "before": "Disabled",
-                "after": f"Enabled (maxsize={current['metrics']['l1_rbac_cache']['maxsize']}, ttl={current['metrics']['l1_rbac_cache']['ttl']}s)",
+                "after": f"Enabled (maxsize={current['metrics']['l1_rbac_cache']['maxsize']}, ttl={current['metrics']['l1_rbac_cache']['ttl']}s)",  # noqa: E501
                 "expected_improvement": "50-90% Redis call reduction for permission checks",
             }
         )

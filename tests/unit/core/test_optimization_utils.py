@@ -1,7 +1,6 @@
-import pytest
 from src.app.core.utils.pool_metrics import PoolMetrics
-from tests.fixtures.query_counter import QueryLog
 from tests.fixtures.memory_profiler import measure_memory
+from tests.fixtures.query_counter import QueryLog
 
 
 def test_pool_metrics_snapshot():
@@ -35,7 +34,7 @@ def test_query_log_clear():
 def test_memory_profiler_detailed():
     # Basic smoke test for detailed capture
     with measure_memory(detailed=True, limit=5) as ctx:
-        _ = [i for i in range(1000)]
+        _ = list(range(1000))
 
     assert ctx.snapshot is not None
     assert ctx.snapshot.top_stats is not None

@@ -14,7 +14,7 @@ class TestTenantPermissions:
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
         response = await async_client.get("/api/v1/tenants")
-        
+
         # Currently 200, expecting 403 after fix
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
@@ -28,7 +28,7 @@ class TestTenantPermissions:
             "/api/v1/tenants",
             json={"name": "Hacker Tenant", "slug": "hacker-tenant"}
         )
-        
+
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     async def test_deactivate_tenant_forbidden_for_regular_user(
@@ -39,7 +39,7 @@ class TestTenantPermissions:
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
         response = await async_client.post("/api/v1/tenants/1/deactivate")
-        
+
         assert response.status_code == status.HTTP_403_FORBIDDEN
 
     async def test_get_tenant_allowed_for_member(
@@ -58,16 +58,16 @@ class TestTenantPermissions:
             is_active=True,
             tenant_id=tenant.id,
         )
-        
+
         # Access the app from the fixture to update override
         get_test_app.dependency_overrides[get_current_user] = lambda: fake_regular_user
 
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
-        
+
         # Access the specific tenant ID
         response = await async_client.get(f"/api/v1/tenants/{tenant.id}")
-        
+
         assert response.status_code == status.HTTP_200_OK
 
     async def test_get_tenant_forbidden_for_non_member(
@@ -75,16 +75,16 @@ class TestTenantPermissions:
     ) -> None:
         """Test that regular users cannot access other tenants."""
         import uuid
-        
+
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
-        
+
         # Accessing a different tenant ID (random UUID that doesn't exist)
         # MockUser is in tenant 1 (from regular_user_token_headers default)
         # The created tenant likely has ID=1.
         # So we try to access a random UUID that the user doesn't belong to.
-        
+
         forbidden_id = uuid.uuid4()  # Random UUID that doesn't match user's tenant
         response = await async_client.get(f"/api/v1/tenants/{forbidden_id}")
-        
+
         assert response.status_code == status.HTTP_403_FORBIDDEN

@@ -10,7 +10,7 @@ Based on latest pytest-benchmark docs (Jan 2026):
 from __future__ import annotations
 
 import os
-from typing import Any, TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any
 from unittest.mock import AsyncMock
 
 import pytest

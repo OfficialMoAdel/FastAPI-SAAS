@@ -254,7 +254,7 @@ class TestInvalidateTenantCache:
         mock_pipeline.execute.return_value = [2, 1, 2]  # delete keys, delete sharded index, srem from global
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            result = await invalidate_tenant_cache(1, prefix="user")
+            await invalidate_tenant_cache(1, prefix="user")
 
             # Now uses sharded index directly, so smembers is called on tenant_index:1:user
             mock_redis.smembers.assert_called_once_with("tenant_index:1:user")

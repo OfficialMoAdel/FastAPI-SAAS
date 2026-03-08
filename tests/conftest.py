@@ -1,7 +1,6 @@
 import os
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
-from contextlib import asynccontextmanager
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
@@ -142,45 +141,31 @@ def get_testing_session_local():
 
 
 from src.app.core.db.database import Base
+from src.app.modules.api_keys.models import APIKey  # noqa: F401
+from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
+from src.app.modules.files.models import File  # noqa: F401
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
-
 # 1. Independent / Leaf models (or close to leaf)
-from src.app.modules.tiers.models import Tier
-from src.app.modules.rate_limits.models import RateLimit
-from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
-from src.app.modules.files.models import File
-from src.app.modules.api_keys.models import APIKey
-from src.app.modules.notifications.models import Notification, EmailTemplateOverride
-from src.app.modules.webhooks.models import WebhookEndpoint, WebhookDelivery
-from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage
-from src.app.modules.auth.models import PasswordResetToken, EmailVerificationToken
-from src.app.core.db.token_blacklist import TokenBlacklist
-from src.app.modules.billing.models import (
-    StripeSettings,
-    SubscriptionPlan,
-    Product,
-    Pricing,
-    UserSubscription,
-    BillingRecord,
-)
-from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
-from src.app.modules.magic_link.models import MagicLink
-from src.app.modules.mfa.models import MFAMethod
-from src.app.modules.passkey.models import PasskeyCredential
-from src.app.modules.posts.models import Post
-from src.app.modules.sso.models import UserSSOConnection
-from src.app.modules.sso_settings.models import SSOSettings
-from src.app.modules.storage_settings.models import StorageSettings
-from src.app.modules.user_preferences.models import UserPreferences
+from src.app.modules.magic_link.models import MagicLink  # noqa: F401
+from src.app.modules.mfa.models import MFAMethod  # noqa: F401
+from src.app.modules.passkey.models import PasskeyCredential  # noqa: F401
+from src.app.modules.posts.models import Post  # noqa: F401
+from src.app.modules.rate_limits.models import RateLimit  # noqa: F401
+from src.app.modules.rbac.models import Role, RolePermission, UserRole  # noqa: F401
+from src.app.modules.sso.models import UserSSOConnection  # noqa: F401
+from src.app.modules.sso_settings.models import SSOSettings  # noqa: F401
+from src.app.modules.storage_settings.models import StorageSettings  # noqa: F401
+
+# 3. Models that depend on User/Others (Root)
+from src.app.modules.tenants.models import Tenant  # noqa: F401
+from src.app.modules.tiers.models import Tier  # noqa: F401
+from src.app.modules.user_preferences.models import UserPreferences  # noqa: F401
 
 # 2. Models that depend on above
 from src.app.modules.users.models import User
-
-# 3. Models that depend on User/Others (Root)
-from src.app.modules.tenants.models import Tenant
+from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
 
 # Debug: Print registered tables to verify imports
 print(f"DEBUG: Registered tables: {Base.metadata.tables.keys()}")
@@ -247,9 +232,9 @@ def reset_circuit_breaker_registry():
     Prevents asyncio.Lock binding issues when event loops change between tests.
     This is critical for test isolation during coverage runs.
     """
-    from src.app.core.resilience.registry import reset_registry, get_registry, ServiceType
-    from src.app.core.utils.circuit_breaker import reset_all_circuit_breakers
     from src.app.core.resilience.db_circuit_breaker import db_circuit
+    from src.app.core.resilience.registry import ServiceType, get_registry, reset_registry
+    from src.app.core.utils.circuit_breaker import reset_all_circuit_breakers
 
     reset_registry()
     reset_all_circuit_breakers()
@@ -277,8 +262,8 @@ def reset_singletons():
     # Import reset functions - these are added for test isolation
     from src.app.core.events import reset_event_bus
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
-    from src.app.core.utils.rate_limit import reset_rate_limiter
     from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
+    from src.app.core.utils.rate_limit import reset_rate_limiter
 
     # Pre-test reset
     reset_rate_limiter()
@@ -424,7 +409,6 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
 
     # Note: We use dependency_overrides for async_get_db because FastAPI
     # needs to properly handle the async generator in dependency injection
-    from src.app.core.db.database import async_get_db
 
     app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[async_get_db] = override_get_db
@@ -726,7 +710,6 @@ async def full_mock_context(get_test_app):
 
     # Note: We use dependency_overrides for async_get_db because FastAPI
     # needs to properly handle the async generator in dependency injection
-    from src.app.core.db.database import async_get_db
 
     app.dependency_overrides[get_current_user] = mock_get_current_user
     app.dependency_overrides[async_get_db] = override_get_db
@@ -778,7 +761,6 @@ async def unauthenticated_mock_context(get_test_app):
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.core.db.database import async_get_db
 
     # Note: We use dependency_overrides for async_get_db instead of patch
     # because override_get_db is an async context manager
@@ -1236,7 +1218,7 @@ class FakeRedis:
         # Called with 1 key and 4 ARGV: now_ms, emission_interval_ms, limit, period_ms
         if primary_key.startswith("gcra:") and len(keys_and_args) >= 5:
             now_ms = int(keys_and_args[1])
-            emission_interval_ms = int(keys_and_args[2])
+            int(keys_and_args[2])
             limit = int(keys_and_args[3])
             period_ms = int(keys_and_args[4])
 
@@ -1342,7 +1324,8 @@ class FakeRedis:
 def mock_event_bus(monkeypatch):
     """Mock event bus to prevent Redis connections in tests."""
     from unittest.mock import AsyncMock, MagicMock
-    from src.app.core.events import EventBus, EventPriority
+
+    from src.app.core.events import EventBus
 
     # Create a mock event bus that does nothing
     mock_bus = MagicMock(spec=EventBus)
@@ -1378,22 +1361,20 @@ def mock_redis(request):
     fake_redis = FakeRedis()
 
     # Ensure setup module is imported for patching
-    import os
 
     from src.app.core import setup
-    from src.app.core import redis_factory
 
     # Force attribute to exist for pkgutil.resolve_name used by mock.patch
     if not hasattr(setup, "create_redis_cache_pool"):
         setup.create_redis_cache_pool = setup.create_redis_cache_pool
 
     from src.app.core.security.session_manager import session_manager
+    from src.app.core.security.token_blacklist_cache import _token_cache_key
+    from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks
 
     # Clear L1 caches before test to ensure isolation
     from src.app.middleware.tenant import _L1_TENANT_CACHE
     from src.app.modules.rbac.service import _L1_RBAC_CACHE
-    from src.app.core.security.token_blacklist_cache import _token_cache_key
-    from src.app.core.utils.ip_utils import _is_ip_in_trusted_networks
 
     _L1_TENANT_CACHE.clear()
     _L1_RBAC_CACHE.clear()
@@ -1404,7 +1385,7 @@ def mock_redis(request):
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
         patch("src.app.core.utils.cache.client", new=fake_redis),
         # Patch all top-level importers of redis_client to avoid NoneType errors
-        # patch("src.app.modules.security.service.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client
+        # patch("src.app.modules.security.service.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client  # noqa: E501
         patch("src.app.modules.feature_flags.service.redis_client", new=fake_redis),
         patch("src.app.modules.mfa.router.redis_client", new=fake_redis),
         patch("src.app.core.security.auto_ban.redis_client", new=fake_redis),
@@ -1447,11 +1428,12 @@ async def init_real_redis_async(request):
         return
 
     # Initialize real Redis client
-    from src.app.core.utils import cache
+    import redis.asyncio as redis
+
     from src.app.core import redis_factory
     from src.app.core.security.session_manager import session_manager
-    from src.app.core.utils.gcra_rate_limit import gcra_rate_limiter as gcra_global, GCRARateLimiter
-    import redis.asyncio as redis
+    from src.app.core.utils import cache
+    from src.app.core.utils.gcra_rate_limit import GCRARateLimiter
 
     # CRITICAL: Reset ALL global state to prevent "Event loop is closed" errors
     # The redis_factory caches the pool globally, and that pool gets bound to
@@ -1774,7 +1756,6 @@ async def real_postgres_engine():
     Uses function scope to prevent event loop binding issues.
     """
     from sqlalchemy.ext.asyncio import create_async_engine
-    from sqlalchemy.orm import sessionmaker
     from sqlalchemy.pool import NullPool
 
     # Build full async URL with scheme prefix
@@ -1939,8 +1920,8 @@ async def other_user(real_postgres, other_tenant):
 
     Returns a dict with access_token for authenticated requests.
     """
-    from tests.factories import UserFactory
     from src.app.core.security import create_access_token, create_refresh_token
+    from tests.factories import UserFactory
 
     user = await UserFactory.create_async(
         real_postgres,
@@ -1986,8 +1967,8 @@ async def test_user(real_postgres, test_tenant):
     Returns:
         dict: {"access_token": str, "user": User, "refresh_token": str, "tenant": Tenant}
     """
-    from tests.factories import UserFactory
     from src.app.core.security import create_access_token, create_refresh_token
+    from tests.factories import UserFactory
 
     # Create test user
     user = await UserFactory.create_async(real_postgres, tenant_id=test_tenant.id)
@@ -2018,8 +1999,8 @@ async def admin_user(real_postgres, test_tenant):
     Returns:
         dict: {"access_token": str, "user": User, "refresh_token": str, "tenant": Tenant}
     """
-    from tests.factories import UserFactory
     from src.app.core.security import create_access_token, create_refresh_token
+    from tests.factories import UserFactory
 
     # Create admin user with superuser privileges
     user = await UserFactory.create_async(

@@ -3,9 +3,9 @@
 Tests T116: Unit test for ProductService in tests/unit/billing/test_product_service.py
 """
 
+import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
-import uuid
 
 import pytest
 

@@ -278,6 +278,7 @@ async def real_redis() -> AsyncGenerator[Redis, None]:
 
 from src.app.core.utils import cache
 
+
 @pytest_asyncio.fixture
 async def clean_redis(real_redis) -> AsyncGenerator[Redis, None]:
     """Alias for real_redis for backward compatibility with existing tests.
@@ -303,7 +304,7 @@ async def cleanup_redis():
         for pattern in ["ratelimit:*", "gcra:*", "user:auth:*", "tenant:*", "blacklist:*"]:
             async for key in cache.client.scan_iter(match=pattern):
                 keys_to_delete.append(key)
-        
+
         if keys_to_delete:
             await cache.client.delete(*keys_to_delete)
 
@@ -315,7 +316,7 @@ async def cleanup_redis():
         for pattern in ["ratelimit:*", "gcra:*", "user:auth:*", "tenant:*", "blacklist:*"]:
             async for key in cache.client.scan_iter(match=pattern):
                 keys_to_delete.append(key)
-        
+
         if keys_to_delete:
             await cache.client.delete(*keys_to_delete)
 

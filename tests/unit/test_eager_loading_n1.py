@@ -232,7 +232,7 @@ class TestEagerLoadingQueryLogging:
         service = BaseService(User, db_session)
 
         with count_queries() as log:
-            users = await service.get_multi(page=1, per_page=10, eager_loads=["role"])
+            await service.get_multi(page=1, per_page=10, eager_loads=["role"])
 
         # Log query summary
         log_query_summary("eager_loading_test", log)

@@ -35,7 +35,7 @@ async def benchmark_bloom_filter() -> dict:
     from app.core.security.bloom_filter import BloomFilter
 
     bf = BloomFilter(100_000, 0.01)
-    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # noqa: E501
 
     # Benchmark single hash operation
     single_hash_ns = (
@@ -62,7 +62,7 @@ async def benchmark_session_eviction() -> dict:
         from app.core.security.session_manager import SessionManager
 
         # Create session manager with small limit for testing
-        manager = SessionManager(max_sessions=50)
+        SessionManager(max_sessions=50)
 
         # Simulate 50 sessions
         test_sessions = []
@@ -107,7 +107,6 @@ async def benchmark_jwt_pem_parsing() -> dict:
 
         # Sample RS256 token and public key (for testing only)
         # In production, this would be real keys
-        sample_token = "eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiYWRtaW4iOnRydWUsImlhdCI6MTUxNjIzOTAyMn0.sample"
 
         # Note: This is a simplified benchmark
         # Real benchmark would require actual RS256 keys
@@ -163,7 +162,7 @@ async def benchmark_file_query() -> dict:
         # For baseline, we document the expected query pattern
         return {
             "file_query_explain": "Seq Scan or single-column index + filesort",
-            "query_pattern": "SELECT * FROM files WHERE tenant_id = X AND user_id = Y ORDER BY created_at DESC LIMIT 20",
+            "query_pattern": "SELECT * FROM files WHERE tenant_id = X AND user_id = Y ORDER BY created_at DESC LIMIT 20",  # noqa: E501
             "current_indexes": ["tenant_id", "user_id", "storage_path (unique)"],
             "note": "Actual EXPLAIN ANALYZE requires database connection",
         }

@@ -1,9 +1,8 @@
-import pytest
-from httpx import AsyncClient
-from sqlalchemy import text
 from unittest.mock import Mock, patch
 from uuid import UUID
-from src.app.core.config import settings
+
+import pytest
+from httpx import AsyncClient
 from uuid6 import uuid7
 
 

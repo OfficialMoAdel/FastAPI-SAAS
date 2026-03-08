@@ -5,7 +5,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, HttpUrl
-from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
@@ -13,7 +12,6 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.utils.cache import async_get_redis
 from src.app.modules.billing.schemas import (
     BillingRecordList,
     BillingRecordRead,
@@ -59,7 +57,6 @@ logger = logging.getLogger(__name__)
 async def stripe_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
-    redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> Any:
     """
     Handle Stripe webhooks.
@@ -92,18 +89,7 @@ async def stripe_webhook(
         None, verify_webhook_signature, payload, sig_header, webhook_secret
     )
 
-    # Idempotency check (T050)
-    event_id = event["id"]
-    # FIXED: Use consistent key prefix and TTL with webhook worker
-    key = f"stripe:webhook:processed:{event_id}"
-    if await redis.exists(key):
-        logger.info(f"Duplicate webhook event ignored: {event_id}")
-        return {"status": "success", "message": "Already processed"}
-
-    # Set key with expiry (7 days) - matches worker retention
-    await redis.setex(key, 604800, "1")
-
-    # Handle event in background task (T051)
+    # Handle event in background task (idempotency is enforced atomically in webhook worker)
     background_tasks.add_task(handle_webhook_event, event, background_tasks)
 
     return {"status": "success"}

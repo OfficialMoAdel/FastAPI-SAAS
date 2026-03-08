@@ -135,14 +135,6 @@ class TestMiddlewareExecutionOrder:
 
         # The expected order based on LIFO middleware addition
         # Last added (RequestID) runs first on request
-        expected_request_order = [
-            "RequestID_start",
-            "RateLimit_start",
-            "Tenant_start",
-            "BodyLimit_start",
-            "Security_start",
-            "GZip_start",
-        ]
 
         # Just verify we understand the LIFO pattern
         # In LIFO: add_middleware(A), add_middleware(B) -> B runs before A

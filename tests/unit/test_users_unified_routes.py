@@ -109,7 +109,7 @@ def test_db_delete_endpoint_moved():
 def test_route_count():
     """Test that we have the expected number of route handlers."""
     # Count unique endpoints
-    unique_paths = set((route.path, m) for route in users_router.routes for m in route.methods)
+    unique_paths = {(route.path, m) for route in users_router.routes for m in route.methods}
 
     # Expected: GET/, POST/, GET/me, GET/{id}, PATCH/{id}, PUT/{id}, DELETE/{id},
     #           DELETE/db/{id}, GET/{id}/rate-limits, GET/{id}/tier, PATCH/{id}/tier

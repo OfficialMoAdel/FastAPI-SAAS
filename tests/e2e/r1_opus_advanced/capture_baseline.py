@@ -185,7 +185,7 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
             return_exceptions=True,
         )
 
-        total_time = (time.perf_counter() - start) * 1000
+        (time.perf_counter() - start) * 1000
         concurrent_delay = results[0] if isinstance(results[0], float) else 0
 
         # If concurrent task took much longer than expected, blocking detected

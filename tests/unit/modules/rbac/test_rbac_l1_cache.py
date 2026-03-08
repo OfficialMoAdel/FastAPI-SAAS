@@ -98,7 +98,7 @@ class TestL1CacheMissL2Hit:
         # Mock Redis with cached data
         mock_db = AsyncMock()
         mock_redis = AsyncMock()
-        cached_data = '[{"id": 5, "slug": "admin", "description": "Admin", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'
+        cached_data = '[{"id": 5, "slug": "admin", "description": "Admin", "created_at": "2024-01-01T00:00:00", "updated_at": "2024-01-01T00:00:00"}]'  # noqa: E501
         mock_redis.get = AsyncMock(return_value=cached_data)
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:

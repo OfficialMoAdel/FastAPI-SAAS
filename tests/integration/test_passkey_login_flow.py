@@ -86,7 +86,7 @@ def test_passkey_login_flow(
     assert "publicKey" in options
     assert "challenge" in options["publicKey"]
     assert "rpId" in options["publicKey"]
-    
+
     # Extract challenge_id from the login response for verification
     challenge_id = options.get("challenge_id") or options["publicKey"]["challenge"]
 
