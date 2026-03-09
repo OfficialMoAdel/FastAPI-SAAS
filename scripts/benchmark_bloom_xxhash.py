@@ -47,19 +47,11 @@ def benchmark_hash_function(use_xxhash: bool, iterations: int = 10000) -> dict:
         token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # noqa: E501
 
         # Benchmark single hash operation
-        single_hash_ns = (
-            timeit.timeit(lambda: bf._hash_values(token), number=iterations)
-            / iterations
-            * 1e9
-        )
+        single_hash_ns = timeit.timeit(lambda: bf._hash_values(token), number=iterations) / iterations * 1e9
 
         # Benchmark might_contain (common case)
         bf.add(token)
-        contain_check_ns = (
-            timeit.timeit(lambda: bf.might_contain(token), number=iterations)
-            / iterations
-            * 1e9
-        )
+        contain_check_ns = timeit.timeit(lambda: bf.might_contain(token), number=iterations) / iterations * 1e9
 
         # Test with multiple tokens to verify FPR
         test_tokens = [f"token_{i}" for i in range(1000)]
@@ -178,7 +170,9 @@ def main():
     # Check FPR consistency (within 50% of target)
     fpr_diff = abs(xxhash_results["actual_fpr"] - xxhash_results["target_fpr"])
     if fpr_diff > xxhash_results["target_fpr"] * 0.5:
-        print(f"WARNING: xxhash FPR {xxhash_results['actual_fpr']:.4f} deviates from target {xxhash_results['target_fpr']}")  # noqa: E501
+        print(
+            f"WARNING: xxhash FPR {xxhash_results['actual_fpr']:.4f} deviates from target {xxhash_results['target_fpr']}"  # noqa: E501
+        )
         success = False
     else:
         print(f"PASS: xxhash FPR {xxhash_results['actual_fpr']:.4f} is within acceptable range")

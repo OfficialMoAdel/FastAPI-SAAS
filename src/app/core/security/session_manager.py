@@ -574,16 +574,16 @@ class SessionManager:
                         migrated += 1
 
                         if migrated % 100 == 0:
-                            logger.info(f"Migrated {migrated} users to ZSET")
+                            logger.info("Migrated users to ZSET", migrated=migrated)
 
                 except Exception as e:
                     errors.append((key, str(e)))
-                    logger.error(f"Failed to migrate {key} to ZSET: {e}")
+                    logger.error("Failed to migrate to ZSET:", key=key, error=e)
 
             if cursor == 0:
                 break
 
-        logger.info(f"ZSET migration completed. Migrated {migrated} users, {len(errors)} errors.")
+        logger.info("ZSET migration completed. Migrated users, errors.", migrated=migrated, val=len(errors))
         return {"migrated": migrated, "errors": errors}
 
     async def migrate_to_hash(self, batch_size: int = 100) -> int:
@@ -646,12 +646,12 @@ class SessionManager:
 
                 count += 1
                 if count % 100 == 0:
-                    logger.info(f"Migrated {count} users")
+                    logger.info("Migrated users", count=count)
 
             except Exception as e:
-                logger.error(f"Failed to migrate session key {key}: {e}")
+                logger.error("Failed to migrate session key :", key=key, error=e)
 
-        logger.info(f"Session migration completed. Migrated {count} users.")
+        logger.info("Session migration completed. Migrated users.", count=count)
         return count
 
 

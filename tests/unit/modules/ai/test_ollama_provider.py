@@ -11,6 +11,7 @@ from src.app.modules.ai.providers import AIProviderError
 def provider():
     return OllamaProvider(base_url="http://localhost:11434")
 
+
 @pytest.mark.asyncio
 async def test_generate_text_success(provider):
     mock_response = Response(
@@ -21,8 +22,8 @@ async def test_generate_text_success(provider):
             "message": {"role": "assistant", "content": "Hello Ollama!"},
             "done_reason": "stop",
             "prompt_eval_count": 5,
-            "eval_count": 10
-        }
+            "eval_count": 10,
+        },
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response) as mock_post:
         result = await provider.generate_text("Hi", "llama2", system_prompt="Sys")
@@ -36,6 +37,7 @@ async def test_generate_text_success(provider):
         assert kwargs["json"]["model"] == "llama2"
         assert kwargs["json"]["system"] == "Sys"
 
+
 @pytest.mark.asyncio
 async def test_generate_text_http_error(provider):
     mock_response = Response(status_code=500, request=Request("POST", "url"), json={"error": "Internal error"})
@@ -46,14 +48,11 @@ async def test_generate_text_http_error(provider):
             await provider.generate_text("Hi", "llama2")
         assert exc_info.value.error_code == "500"
 
+
 @pytest.mark.asyncio
 async def test_generate_json_success(provider):
     mock_response = Response(
-        status_code=200,
-        request=Request("POST", "url"),
-        json={
-            "message": {"content": '```json\n{"key": "value"}\n```'}
-        }
+        status_code=200, request=Request("POST", "url"), json={"message": {"content": '```json\n{"key": "value"}\n```'}}
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
         schema = {"type": "object", "properties": {"key": {"type": "string"}}}
@@ -61,31 +60,27 @@ async def test_generate_json_success(provider):
 
         assert result == {"key": "value"}
 
+
 @pytest.mark.asyncio
 async def test_embed_text_success(provider):
     mock_response = Response(
-        status_code=200,
-        request=Request("POST", "url"),
-        json={
-            "embedding": [0.1, 0.2, 0.3],
-            "model": "llama2"
-        }
+        status_code=200, request=Request("POST", "url"), json={"embedding": [0.1, 0.2, 0.3], "model": "llama2"}
     )
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock, return_value=mock_response):
         result = await provider.embed_text("Test", "llama2")
 
         assert result.embedding == [0.1, 0.2, 0.3]
 
+
 @pytest.mark.asyncio
 async def test_list_models_success(provider):
     mock_response = Response(
-        status_code=200,
-        request=Request("GET", "url"),
-        json={"models": [{"name": "llama2"}, {"name": "mistral"}]}
+        status_code=200, request=Request("GET", "url"), json={"models": [{"name": "llama2"}, {"name": "mistral"}]}
     )
     with patch("httpx.AsyncClient.get", new_callable=AsyncMock, return_value=mock_response):
         models = await provider.list_models()
         assert models == ["llama2", "mistral"]
+
 
 @pytest.mark.asyncio
 async def test_health_check_success(provider):

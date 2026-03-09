@@ -69,12 +69,14 @@ def test_get_current_subscription_active(client: TestClient):
     """GET /checkouts/current - returns first active subscription."""
     with patch(
         "src.app.modules.billing.service.UserSubscriptionService.get_user_subscriptions",
-        new=AsyncMock(return_value={
-            "data": [
-                {**MOCK_SUBSCRIPTION, "id": 1, "status": "canceled"},
-                {**MOCK_SUBSCRIPTION, "id": 2, "status": "active"},
-            ]
-        }),
+        new=AsyncMock(
+            return_value={
+                "data": [
+                    {**MOCK_SUBSCRIPTION, "id": 1, "status": "canceled"},
+                    {**MOCK_SUBSCRIPTION, "id": 2, "status": "active"},
+                ]
+            }
+        ),
     ):
         client.headers.update({"X-Tenant-ID": "test-tenant"})
         response = client.get("/api/v1/checkouts/current")
@@ -89,9 +91,7 @@ def test_get_current_subscription_no_active(client: TestClient):
     """GET /checkouts/current - returns null when no active subscriptions."""
     with patch(
         "src.app.modules.billing.service.UserSubscriptionService.get_user_subscriptions",
-        new=AsyncMock(return_value={
-            "data": [{**MOCK_SUBSCRIPTION, "status": "canceled"}]
-        }),
+        new=AsyncMock(return_value={"data": [{**MOCK_SUBSCRIPTION, "status": "canceled"}]}),
     ):
         client.headers.update({"X-Tenant-ID": "test-tenant"})
         response = client.get("/api/v1/checkouts/current")

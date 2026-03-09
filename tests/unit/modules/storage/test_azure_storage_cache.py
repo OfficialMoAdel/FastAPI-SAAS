@@ -12,10 +12,7 @@ from src.app.modules.storage.azure_storage import AzureBlobStorage
 
 # Test connection string constant to avoid line length issues
 TEST_CONNECTION_STRING = (
-    "DefaultEndpointsProtocol=https;"
-    "AccountName=testaccount;"
-    "AccountKey=testkey123;"
-    "EndpointSuffix=core.windows.net"
+    "DefaultEndpointsProtocol=https;AccountName=testaccount;AccountKey=testkey123;EndpointSuffix=core.windows.net"
 )
 
 

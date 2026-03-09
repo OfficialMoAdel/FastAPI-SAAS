@@ -409,7 +409,9 @@ class TestDisableMFA:
             mock_crud.get = AsyncMock(return_value=mock_user)
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
-                    with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):  # noqa: E501
+                    with patch.object(
+                        mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"
+                    ):  # noqa: E501
                         with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
                             mock_totp_instance = Mock()
                             mock_totp_instance.verify.return_value = False
@@ -440,7 +442,9 @@ class TestDisableMFA:
             with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=True):
                 with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
                     with patch.object(crud_mfa_methods, "delete", new_callable=AsyncMock):
-                        with patch.object(mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"):  # noqa: E501
+                        with patch.object(
+                            mfa_service, "_decrypt_secret", new_callable=AsyncMock, return_value="JBSWY3DPEHPK3PXP"
+                        ):  # noqa: E501
                             with patch("src.app.modules.mfa.service.pyotp.TOTP") as mock_totp:
                                 mock_totp_instance = Mock()
                                 mock_totp_instance.verify.return_value = True
@@ -581,9 +585,7 @@ class TestMFALockout:
     """Test MFA lockout mechanism after failed attempts."""
 
     @pytest.mark.asyncio
-    async def test_verify_totp_token_multiple_failures_raise_unauthorized(
-        self, mfa_service, mock_db, mock_user_id
-    ):
+    async def test_verify_totp_token_multiple_failures_raise_unauthorized(self, mfa_service, mock_db, mock_user_id):
         """Test that multiple failed TOTP attempts raise UnauthorizedException.
 
         Note: Rate limiting is enforced at the router layer, not in the service.

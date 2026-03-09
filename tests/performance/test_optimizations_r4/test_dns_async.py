@@ -33,9 +33,7 @@ class TestP01AsyncDNS:
     @pytest.mark.asyncio
     async def test_async_dns_uses_to_thread(self) -> None:
         """Verify asyncio.to_thread is used for non-blocking DNS resolution."""
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
 
         with patch("asyncio.to_thread", return_value=mock_addr_info) as mock_to_thread:
             await validate_webhook_url("https://example.com/webhook")
@@ -49,16 +47,11 @@ class TestP01AsyncDNS:
     @pytest.mark.asyncio
     async def test_concurrent_dns_resolutions(self) -> None:
         """Multiple concurrent DNS lookups should work without blocking."""
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
 
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             # Run 10 concurrent validations
-            tasks = [
-                validate_webhook_url(f"https://example{i}.com/webhook")
-                for i in range(10)
-            ]
+            tasks = [validate_webhook_url(f"https://example{i}.com/webhook") for i in range(10)]
             # All should complete without blocking
             await asyncio.gather(*tasks)
 
@@ -72,9 +65,7 @@ class TestP01AsyncDNS:
     @pytest.mark.asyncio
     async def test_private_ip_blocked_after_resolution(self) -> None:
         """URLs resolving to private IPs should be blocked."""
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))]
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             with pytest.raises(SSRFProtectionError, match="blocked IP"):
                 await validate_webhook_url("https://internal.example.com/webhook")
@@ -82,9 +73,7 @@ class TestP01AsyncDNS:
     @pytest.mark.asyncio
     async def test_public_ip_allowed_after_resolution(self) -> None:
         """URLs resolving to public IPs should be allowed."""
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             # Should not raise
             await validate_webhook_url("https://example.com/webhook")

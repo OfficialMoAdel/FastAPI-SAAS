@@ -1,5 +1,4 @@
 import functools
-import logging
 import random
 import re
 import time
@@ -16,6 +15,7 @@ from src.app.core.exceptions.cache_exceptions import (
     MissingClientError,
 )
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.core.monitoring.r1_unified_metrics import record_xfetch_latency
 from src.app.core.utils.lua_manager import get_lua_manager
 
@@ -29,7 +29,7 @@ _BRACKET_PATTERN = re.compile(r"{(.*?)}")
 MAX_SCAN_ITERATIONS = 1000
 
 # Standard library logger
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Structlog logger for stampede
 # We import get_logger from structlog, and type it as Any to bypass mypy checks
@@ -732,22 +732,10 @@ def _extract_data_inside_brackets(input_string: str) -> list[str]:
 
 
 def _construct_data_dict(data_inside_brackets: list[str], kwargs: dict[str, Any]) -> dict[str, Any]:
-    """Construct a dictionary based on data inside brackets and keyword arguments.
-
-    Parameters
-    ----------
-    data_inside_brackets: List[str]
-        A list of keys inside brackets.
-    kwargs: Dict[str, Any]
-        A dictionary of keyword arguments.
-
-    Returns
-    -------
-    Dict[str, Any]: A dictionary with keys from data_inside_brackets and corresponding values from kwargs.
-    """
+    """Construct a dictionary based on data inside brackets and keyword arguments."""
     data_dict = {}
     for key in data_inside_brackets:
-        data_dict[key] = kwargs[key]
+        data_dict[key] = kwargs.get(key, f"_{key}_missing_")
     return data_dict
 
 

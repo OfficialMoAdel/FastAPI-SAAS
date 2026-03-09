@@ -22,12 +22,14 @@ from src.app.modules.billing.service import (
 def mock_db():
     return AsyncMock()
 
+
 @pytest.fixture
 def mock_tenant():
     tenant = MagicMock()
     tenant.id = uuid4()
     tenant.is_active = True
     return tenant
+
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
@@ -40,6 +42,7 @@ async def test_stripe_settings_service_get(mock_crud, mock_get_tenant, mock_db, 
     settings = await service.get_settings()
 
     assert settings["stripe_customer_id"] == "cus_123"
+
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
@@ -61,6 +64,7 @@ async def test_subscription_plan_service_create(mock_crud, mock_get_tenant, mock
     assert result["name"] == "Pro"
     mock_crud.create.assert_awaited_once()
 
+
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
@@ -73,6 +77,7 @@ async def test_product_service_create(mock_crud, mock_get_tenant, mock_db, mock_
     result = await service.create_product(data)
 
     assert result["name"] == "Test Product"
+
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.crud_pricing")
@@ -87,13 +92,16 @@ async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, moc
 
     assert result["amount_cents"] == 1000
 
+
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
 @patch("src.app.modules.billing.service.StripeSettingsService.get_settings")
 @patch("src.app.modules.billing.service.SubscriptionPlanService.get_plan")
 @patch("src.app.modules.billing.service.settings")
 @patch("asyncio.to_thread")
-async def test_checkout_service_create_session(mock_to_thread, mock_settings, mock_get_plan, mock_get_settings, mock_get_tenant, mock_db, mock_tenant):  # noqa: E501
+async def test_checkout_service_create_session(
+    mock_to_thread, mock_settings, mock_get_plan, mock_get_settings, mock_get_tenant, mock_db, mock_tenant
+):  # noqa: E501
     mock_get_tenant.return_value = mock_tenant
 
     # Mock settings.STRIPE_SECRET_KEY
@@ -115,7 +123,9 @@ async def test_checkout_service_create_session(mock_to_thread, mock_settings, mo
     mock_to_thread.return_value = mock_session
 
     service = CheckoutService(mock_db)
-    data = CheckoutCreate(plan_id=1, billing_interval="monthly", success_url="http://success", cancel_url="http://cancel")
+    data = CheckoutCreate(
+        plan_id=1, billing_interval="monthly", success_url="http://success", cancel_url="http://cancel"
+    )
 
     result = await service.create_session(user_id=1, user_email="test@example.com", data=data)
 

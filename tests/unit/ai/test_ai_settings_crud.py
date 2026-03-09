@@ -54,13 +54,10 @@ class TestAISettingsCRUD:
         mock_settings.created_at = datetime.now(UTC)
         mock_settings.updated_at = None
 
-        with patch.object(crud_ai_settings, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_ai_settings, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_settings
 
-            result = await crud_ai_settings.create(
-                db=mock_db_session,
-                object=ai_settings_data
-            )
+            result = await crud_ai_settings.create(db=mock_db_session, object=ai_settings_data)
 
             assert result.id == 1
             assert result.user_id == user_id
@@ -81,33 +78,24 @@ class TestAISettingsCRUD:
         mock_settings.temperature = 0.7
         mock_settings.max_tokens = 2048
 
-        with patch.object(crud_ai_settings, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_ai_settings, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_settings
 
-            result = await crud_ai_settings.get(
-                db=mock_db_session,
-                user_id=user_id
-            )
+            result = await crud_ai_settings.get(db=mock_db_session, user_id=user_id)
 
             assert result is not None
             assert result.user_id == user_id
-            mock_get.assert_called_once_with(
-                db=mock_db_session,
-                user_id=user_id
-            )
+            mock_get.assert_called_once_with(db=mock_db_session, user_id=user_id)
 
     @pytest.mark.asyncio
     async def test_get_ai_settings_not_found(self, mock_db_session):
         """Test retrieving non-existent settings returns None."""
         user_id = 999
 
-        with patch.object(crud_ai_settings, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_ai_settings, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_ai_settings.get(
-                db=mock_db_session,
-                user_id=user_id
-            )
+            result = await crud_ai_settings.get(db=mock_db_session, user_id=user_id)
 
             assert result is None
 
@@ -123,13 +111,11 @@ class TestAISettingsCRUD:
 
         update_data = AISettingsUpdate(model="llama3")
 
-        with patch.object(crud_ai_settings, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_ai_settings, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_settings
 
             result = await crud_ai_settings.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=settings_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=settings_id
             )
 
             assert result.model == "llama3"
@@ -147,13 +133,11 @@ class TestAISettingsCRUD:
 
         update_data = AISettingsUpdate(temperature=0.9)
 
-        with patch.object(crud_ai_settings, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_ai_settings, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_settings
 
             result = await crud_ai_settings.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=settings_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=settings_id
             )
 
             assert result.temperature == 0.9
@@ -171,13 +155,11 @@ class TestAISettingsCRUD:
 
         update_data = AISettingsUpdate(max_tokens=4096)
 
-        with patch.object(crud_ai_settings, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_ai_settings, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_settings
 
             result = await crud_ai_settings.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=settings_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=settings_id
             )
 
             assert result.max_tokens == 4096
@@ -196,13 +178,11 @@ class TestAISettingsCRUD:
 
         update_data = AISettingsUpdate(system_prompt=new_prompt)
 
-        with patch.object(crud_ai_settings, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_ai_settings, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_settings
 
             result = await crud_ai_settings.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=settings_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=settings_id
             )
 
             assert result.system_prompt == new_prompt
@@ -221,13 +201,11 @@ class TestAISettingsCRUD:
 
         update_data = AISettingsUpdate(model="llama3")  # Only model
 
-        with patch.object(crud_ai_settings, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_ai_settings, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_settings
 
             result = await crud_ai_settings.update(
-                db=mock_db_session,
-                object=update_data.model_dump(exclude_unset=True),
-                id=settings_id
+                db=mock_db_session, object=update_data.model_dump(exclude_unset=True), id=settings_id
             )
 
             assert result.model == "llama3"
@@ -246,14 +224,11 @@ class TestAISettingsCRUD:
         mock_settings.id = 1
         mock_settings.user_id = user_id
 
-        with patch.object(crud_ai_settings, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_ai_settings, "get", new_callable=AsyncMock) as mock_get:
             # Simulate unique constraint - first get returns existing settings
             mock_get.return_value = {"id": 1, "user_id": user_id}
 
-            result = await crud_ai_settings.get(
-                db=mock_db_session,
-                user_id=user_id
-            )
+            result = await crud_ai_settings.get(db=mock_db_session, user_id=user_id)
 
             # Should return existing settings
             assert result["user_id"] == user_id

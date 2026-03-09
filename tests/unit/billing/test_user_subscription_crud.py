@@ -62,16 +62,12 @@ class TestUserSubscriptionCRUD:
         mock_subscription.stripe_subscription_id = None
 
         # Setup mock behavior
-        mock_db_session.refresh = AsyncMock(side_effect=lambda obj: setattr(obj, 'id', 1))
+        mock_db_session.refresh = AsyncMock(side_effect=lambda obj: setattr(obj, "id", 1))
 
-        with patch.object(crud_user_subscriptions, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_user_subscriptions, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_subscription
 
-            result = await crud_user_subscriptions.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_user_subscriptions.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.id == 1
             assert result.user_id == user_subscription_data["user_id"]
@@ -89,22 +85,14 @@ class TestUserSubscriptionCRUD:
         mock_subscription.tenant_id = tenant_id
         mock_subscription.status = "active"
 
-        with patch.object(crud_user_subscriptions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_user_subscriptions, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_subscription
 
-            result = await crud_user_subscriptions.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=subscription_id
-            )
+            result = await crud_user_subscriptions.get(db=mock_db_session, tenant_id=tenant_id, id=subscription_id)
 
             assert result is not None
             assert result.id == subscription_id
-            mock_get.assert_called_once_with(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=subscription_id
-            )
+            mock_get.assert_called_once_with(db=mock_db_session, tenant_id=tenant_id, id=subscription_id)
 
     @pytest.mark.asyncio
     async def test_get_user_subscription_not_found(self, mock_db_session):
@@ -112,14 +100,10 @@ class TestUserSubscriptionCRUD:
         tenant_id = 1
         subscription_id = 999
 
-        with patch.object(crud_user_subscriptions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_user_subscriptions, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_user_subscriptions.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=subscription_id
-            )
+            result = await crud_user_subscriptions.get(db=mock_db_session, tenant_id=tenant_id, id=subscription_id)
 
             assert result is None
 
@@ -136,14 +120,11 @@ class TestUserSubscriptionCRUD:
 
         update_data = UserSubscriptionUpdate(status="canceled")
 
-        with patch.object(crud_user_subscriptions, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_user_subscriptions, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_subscription
 
             result = await crud_user_subscriptions.update(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                db_obj=MagicMock(),
-                obj_in=update_data
+                db=mock_db_session, tenant_id=tenant_id, db_obj=MagicMock(), obj_in=update_data
             )
 
             assert result.status == "canceled"
@@ -161,19 +142,13 @@ class TestUserSubscriptionCRUD:
         mock_subscription.cancel_at_period_end = True
         mock_subscription.canceled_at = now
 
-        update_data = UserSubscriptionUpdate(
-            cancel_at_period_end=True,
-            canceled_at=now
-        )
+        update_data = UserSubscriptionUpdate(cancel_at_period_end=True, canceled_at=now)
 
-        with patch.object(crud_user_subscriptions, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_user_subscriptions, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_subscription
 
             result = await crud_user_subscriptions.update(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                db_obj=MagicMock(),
-                obj_in=update_data
+                db=mock_db_session, tenant_id=tenant_id, db_obj=MagicMock(), obj_in=update_data
             )
 
             assert result.cancel_at_period_end is True
@@ -190,7 +165,7 @@ class TestUserSubscriptionCRUD:
             MagicMock(spec=UserSubscription, id=2, user_id=user_id, status="expired"),
         ]
 
-        with patch.object(crud_user_subscriptions, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_user_subscriptions, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = mock_subscriptions
 
             result = await crud_user_subscriptions.get_multi(
@@ -235,21 +210,13 @@ class TestUserSubscriptionCRUD:
         mock_subscription.id = subscription_id
         mock_subscription.tenant_id = tenant_id_1
 
-        with patch.object(crud_user_subscriptions, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_user_subscriptions, "get", new_callable=AsyncMock) as mock_get:
             # When querying with tenant_id=1, should find subscription
             mock_get.return_value = mock_subscription
-            result = await crud_user_subscriptions.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_1,
-                id=subscription_id
-            )
+            result = await crud_user_subscriptions.get(db=mock_db_session, tenant_id=tenant_id_1, id=subscription_id)
             assert result is not None
 
             # When querying with tenant_id=2, should not find subscription
             mock_get.return_value = None
-            result = await crud_user_subscriptions.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_2,
-                id=subscription_id
-            )
+            result = await crud_user_subscriptions.get(db=mock_db_session, tenant_id=tenant_id_2, id=subscription_id)
             assert result is None

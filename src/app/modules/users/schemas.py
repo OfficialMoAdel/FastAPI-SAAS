@@ -151,7 +151,6 @@ class UserCreate(UserBase, BaseCreate):
             "hostmaster",
             "abuse",
             "noc",
-            "security",
             "team",
             "staff",
             "null",

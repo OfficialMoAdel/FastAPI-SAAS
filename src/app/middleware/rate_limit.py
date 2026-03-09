@@ -40,6 +40,7 @@ TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
 # Default for users without tier or unknown tier
 DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
 
+
 class RateLimitMiddleware(BaseHTTPMiddleware):
     """Middleware for tier-aware rate limiting.
 
@@ -229,9 +230,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Authenticated user - use tier-based limits
             # If we successfully identified the user (via state or JWT), we use their specific key
             if tier_name:
-                limit, period = TIER_RATE_LIMITS.get(
-                    tier_name.lower(), DEFAULT_AUTHENTICATED_LIMIT
-                )
+                limit, period = TIER_RATE_LIMITS.get(tier_name.lower(), DEFAULT_AUTHENTICATED_LIMIT)
             else:
                 limit, period = DEFAULT_AUTHENTICATED_LIMIT
             key = f"user:{user_id}"

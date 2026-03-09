@@ -245,8 +245,10 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_username_success(self, user_service, mock_existing_user):
         """Test successful user retrieval by username."""
-        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
-             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
+            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
 
@@ -258,8 +260,10 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_username_not_found(self, user_service):
         """Test user retrieval when not found."""
-        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
-             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
+            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = None
 
@@ -279,8 +283,10 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_email_success(self, user_service, mock_existing_user):
         """Test get user by email."""
-        with patch("src.app.modules.users.service.get_current_tenant") as mock_tenant, \
-             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
+            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+        ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
 
@@ -407,8 +413,10 @@ class TestUserServiceDelete:
         current_user = {"username": "testuser", "is_superuser": False}
         token = "test_token"
 
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get, \
-             patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock):
+        with (
+            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+            patch("src.app.modules.users.service.blacklist_token", new_callable=AsyncMock),
+        ):
             mock_get.return_value = other_user
 
             with pytest.raises(ForbiddenException):

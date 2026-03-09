@@ -38,16 +38,12 @@ class LogSanitizer:
         ),
         # API keys (key-value)
         (
-            re.compile(
-                r"(?i)(api[_-]?key|apikey)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"
-            ),
+            re.compile(r"(?i)(api[_-]?key|apikey)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"),
             r"\1=[REDACTED]",
         ),
         # Secrets/tokens/passwords
         (
-            re.compile(
-                r"(?i)(secret|token|password|passwd|pwd)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"
-            ),
+            re.compile(r"(?i)(secret|token|password|passwd|pwd)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"),
             r"\1=[REDACTED]",
         ),
         # PostgreSQL URLs (sync and async)
@@ -72,9 +68,7 @@ class LogSanitizer:
         ),
         # Email addresses (PARTIAL MASK - preserve domain)
         (
-            re.compile(
-                r"\b([A-Za-z0-9])[A-Za-z0-9._%+-]*(@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b"
-            ),
+            re.compile(r"\b([A-Za-z0-9])[A-Za-z0-9._%+-]*(@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,})\b"),
             r"\1***\2",
         ),
         # Credit card numbers
@@ -94,9 +88,7 @@ class LogSanitizer:
         ),
         # AWS Secret Keys
         (
-            re.compile(
-                r"(?i)(aws_secret[_]?access[_]?key)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})[\"']?"
-            ),
+            re.compile(r"(?i)(aws_secret[_]?access[_]?key)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})[\"']?"),
             r"\1=[REDACTED]",
         ),
         # Stripe Keys
@@ -122,13 +114,13 @@ class LogSanitizer:
     # Uses re.IGNORECASE since this is a pre-check — false positives just trigger
     # the individual patterns which do their own precise matching.
     _ANY_SENSITIVE: re.Pattern[str] = re.compile(
-        r"eyJ[A-Za-z0-9\-_]+\."                              # JWT prefix
+        r"eyJ[A-Za-z0-9\-_]+\."  # JWT prefix
         r"|(?:api[_-]?key|secret|token|password|passwd|pwd|bearer|authorization)"  # key-value secrets
-        r"|(?:postgresql|mysql|redis|mongodb)(?:\+\w+)?://"   # DB connection strings
-        r"|AKIA[0-9A-Z]{16}"                                  # AWS access keys
-        r"|[sprk]k_(?:live|test)_"                            # Stripe keys
-        r"|\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b"                  # SSN
-        r"|\b(?:\d{4}[\s-]?){3}\d{4}\b"                      # Credit card
+        r"|(?:postgresql|mysql|redis|mongodb)(?:\+\w+)?://"  # DB connection strings
+        r"|AKIA[0-9A-Z]{16}"  # AWS access keys
+        r"|[sprk]k_(?:live|test)_"  # Stripe keys
+        r"|\b\d{3}[\s-]?\d{2}[\s-]?\d{4}\b"  # SSN
+        r"|\b(?:\d{4}[\s-]?){3}\d{4}\b"  # Credit card
         r"|[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}",  # Email
         re.IGNORECASE,
     )
@@ -148,17 +140,13 @@ class LogSanitizer:
             try:
                 sanitized = pattern.sub(replacement, sanitized)
             except Exception as e:
-                logging.warning(
-                    "Error applying sanitization pattern: %s", e, exc_info=True
-                )
+                logging.warning("Error applying sanitization pattern: %s", e, exc_info=True)
                 continue
 
         return sanitized
 
     @classmethod
-    def sanitize_dict(
-        cls, data: dict[str, Any], _depth: int = 0, _max_depth: int = 10
-    ) -> dict[str, Any]:
+    def sanitize_dict(cls, data: dict[str, Any], _depth: int = 0, _max_depth: int = 10) -> dict[str, Any]:
         """
         Recursively sanitize dictionary values.
 
@@ -243,9 +231,7 @@ class SanitizingProcessor:
         """
         self._max_depth = max_depth
 
-    def __call__(
-        self, logger: Any, method_name: str, event_dict: MutableMapping[str, Any]
-    ) -> dict[str, Any]:
+    def __call__(self, logger: Any, method_name: str, event_dict: MutableMapping[str, Any]) -> dict[str, Any]:
         """Process log event by sanitizing all values in-place."""
         for key, value in event_dict.items():
             if isinstance(value, str):
@@ -289,9 +275,7 @@ class SecureFormatter(logging.Formatter):
             if isinstance(record.args, dict):
                 record.args = LogSanitizer.sanitize_dict(record.args)
             elif isinstance(record.args, list | tuple):
-                record.args = tuple(
-                    LogSanitizer.sanitize_value(arg) for arg in record.args
-                )
+                record.args = tuple(LogSanitizer.sanitize_value(arg) for arg in record.args)
 
         # Format with parent formatter
         formatted = super().format(record)

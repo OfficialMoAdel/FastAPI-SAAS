@@ -40,6 +40,7 @@ async def test_redis_consolidation_single_pool():
     # Cleanup
     await redis_factory.close_redis_pool()
 
+
 @pytest.mark.uses_real_redis
 @pytest.mark.asyncio
 async def test_setup_uses_shared_pool():
@@ -52,15 +53,17 @@ async def test_setup_uses_shared_pool():
         # Patch where it is used in setup.py
         # setup.py imports: import redis.asyncio as redis
         # So we patch 'src.app.core.setup.redis.Redis'
-        with patch("src.app.core.setup.redis.Redis") as mock_redis_cls, \
-             patch("src.app.core.setup.ArqRedis") as mock_arq_cls:
-
+        with (
+            patch("src.app.core.setup.redis.Redis") as mock_redis_cls,
+            patch("src.app.core.setup.ArqRedis") as mock_arq_cls,
+        ):
             await setup.create_redis_cache_pool()
             await setup.create_redis_queue_pool()
 
             # Verify setup uses the same pool instance
             mock_redis_cls.assert_called_with(connection_pool=mock_pool, decode_responses=True)
             mock_arq_cls.assert_called_with(connection_pool=mock_pool)
+
 
 @pytest.mark.uses_real_redis
 @pytest.mark.asyncio

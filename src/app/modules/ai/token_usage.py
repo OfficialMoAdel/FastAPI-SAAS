@@ -161,9 +161,9 @@ class AITokenUsageService:
             session.add(usage_record)
             await session.commit()
 
-            logger.debug(f"Saved token usage record: {usage_record.id}")
+            logger.debug("Saved token usage record:", id=usage_record.id)
         except Exception as e:
-            logger.error(f"Failed to save token usage: {e}")
+            logger.error("Failed to save token usage:", error=e)
             await session.rollback()
 
 

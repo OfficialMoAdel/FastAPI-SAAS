@@ -6,7 +6,6 @@ error handling across the AI module.
 T135: Unified AI Error Exceptions
 """
 
-
 from __future__ import annotations
 
 from uuid import UUID

@@ -55,14 +55,10 @@ class TestProductCRUD:
         mock_product.created_at = datetime.now(UTC)
         mock_product.updated_at = None
 
-        with patch.object(crud_products, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_products, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_product
 
-            result = await crud_products.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_products.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.id == 1
             assert result.name == product_data["name"]
@@ -83,23 +79,15 @@ class TestProductCRUD:
         mock_product.name = product_data["name"]
         mock_product.is_active = True
 
-        with patch.object(crud_products, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_products, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_product
 
-            result = await crud_products.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=product_id
-            )
+            result = await crud_products.get(db=mock_db_session, tenant_id=tenant_id, id=product_id)
 
             assert result is not None
             assert result.id == product_id
             assert result.name == product_data["name"]
-            mock_get.assert_called_once_with(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=product_id
-            )
+            mock_get.assert_called_once_with(db=mock_db_session, tenant_id=tenant_id, id=product_id)
 
     @pytest.mark.asyncio
     async def test_get_product_not_found(self, mock_db_session):
@@ -107,14 +95,10 @@ class TestProductCRUD:
         tenant_id = 1
         product_id = 999
 
-        with patch.object(crud_products, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_products, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_products.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=product_id
-            )
+            result = await crud_products.get(db=mock_db_session, tenant_id=tenant_id, id=product_id)
 
             assert result is None
 
@@ -135,14 +119,11 @@ class TestProductCRUD:
 
         update_data = ProductUpdate(name=new_name, description="Updated description")
 
-        with patch.object(crud_products, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_products, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_product
 
             result = await crud_products.update(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                db_obj=MagicMock(),
-                obj_in=update_data
+                db=mock_db_session, tenant_id=tenant_id, db_obj=MagicMock(), obj_in=update_data
             )
 
             assert result.name == new_name
@@ -163,14 +144,11 @@ class TestProductCRUD:
 
         update_data = ProductUpdate(is_active=False)
 
-        with patch.object(crud_products, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_products, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_product
 
             result = await crud_products.update(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                db_obj=MagicMock(),
-                obj_in=update_data
+                db=mock_db_session, tenant_id=tenant_id, db_obj=MagicMock(), obj_in=update_data
             )
 
             assert result.is_active is False
@@ -197,7 +175,7 @@ class TestProductCRUD:
 
         mock_products = [mock_product_1, mock_product_2, mock_product_3]
 
-        with patch.object(crud_products, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_products, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = mock_products
 
             result = await crud_products.get_multi(
@@ -218,7 +196,7 @@ class TestProductCRUD:
             MagicMock(spec=Product, id=2, name="Product 2", is_active=True),
         ]
 
-        with patch.object(crud_products, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_products, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = mock_active_products
 
             result = await crud_products.get_multi(
@@ -242,23 +220,15 @@ class TestProductCRUD:
         mock_product.id = product_id
         mock_product.tenant_id = tenant_id_1
 
-        with patch.object(crud_products, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_products, "get", new_callable=AsyncMock) as mock_get:
             # When querying with tenant_id=1, should find product
             mock_get.return_value = mock_product
-            result = await crud_products.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_1,
-                id=product_id
-            )
+            result = await crud_products.get(db=mock_db_session, tenant_id=tenant_id_1, id=product_id)
             assert result is not None
 
             # When querying with tenant_id=2, should not find product
             mock_get.return_value = None
-            result = await crud_products.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_2,
-                id=product_id
-            )
+            result = await crud_products.get(db=mock_db_session, tenant_id=tenant_id_2, id=product_id)
             assert result is None
 
     @pytest.mark.asyncio
@@ -276,14 +246,10 @@ class TestProductCRUD:
         mock_product.stripe_product_id = None
         mock_product.is_active = True
 
-        with patch.object(crud_products, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_products, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_product
 
-            result = await crud_products.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_products.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.id == 1
             assert result.name == minimal_data["name"]

@@ -13,7 +13,6 @@ Three operation modes:
 Whitelist bypass: IPs in whitelist skip attack detection entirely.
 """
 
-import logging
 import re
 from enum import Enum
 from typing import cast
@@ -23,11 +22,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AttackType(str, Enum):
@@ -254,14 +254,16 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         # Scan raw bytes directly — no UTF-8 decode needed
                         self._check_for_patterns(body, "request_body", detected_attacks)
                 except Exception as e:
-                    logger.error(f"Error reading request body in AttackDetectionMiddleware: {e}")
+                    logger.error("Error reading request body in AttackDetectionMiddleware:", error=e)
                     # Fail closed on body read error
-                    detected_attacks.append({
-                        "attack_type": "invalid_body",
-                        "pattern_name": "body_read_error",
-                        "location": "request_body",
-                        "matched_content": "Error reading body",
-                    })
+                    detected_attacks.append(
+                        {
+                            "attack_type": "invalid_body",
+                            "pattern_name": "body_read_error",
+                            "location": "request_body",
+                            "matched_content": "Error reading body",
+                        }
+                    )
 
         return detected_attacks
 
@@ -358,7 +360,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 reason=f"Auto-banned for {detected_attacks[0]['attack_type']} attack",
             )
 
-            logger.warning(f"IP auto-banned | ip={client_ip} | attack={detected_attacks[0]['attack_type']} | mode=ban")
+            logger.warning(
+                "IP auto-banned | ip= | attack= | mode=ban", client_ip=client_ip, val=detected_attacks[0]["attack_type"]
+            )
 
             return Response(
                 content='{"detail":"Forbidden - Attack detected and IP banned"}',
@@ -391,7 +395,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         # Skip if IP is whitelisted (set by IPFilterMiddleware)
         is_whitelisted = getattr(request.state, "ip_whitelisted", False)
         if is_whitelisted:
-            logger.debug(f"Attack detection skipped for whitelisted IP | path={path}")
+            logger.debug("Attack detection skipped for whitelisted IP | path=", path=path)
             response = await call_next(request)
             return cast(Response, response)
 

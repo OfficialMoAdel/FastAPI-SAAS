@@ -293,9 +293,7 @@ class TestEventBusMultiHandlerE2E:
 
         # Parallel execution
         start = time.perf_counter()
-        asyncio.get_event_loop().run_until_complete(
-            asyncio.gather(*[h() for h in handlers])
-        )
+        asyncio.get_event_loop().run_until_complete(asyncio.gather(*[h() for h in handlers]))
         parallel_ms = (time.perf_counter() - start) * 1000
 
         # Parallel should be significantly faster
@@ -467,9 +465,7 @@ class TestRedisPoolConfigurationE2E:
         assert settings.REDIS_QUEUE_CONN_RETRIES >= 1
 
         # Queue and cache should have matching capacity
-        assert (
-            settings.REDIS_QUEUE_MAX_CONNECTIONS == settings.REDIS_CACHE_MAX_CONNECTIONS
-        )
+        assert settings.REDIS_QUEUE_MAX_CONNECTIONS == settings.REDIS_CACHE_MAX_CONNECTIONS
 
         result = ValidationResult(
             scenario="redis_queue_pool_config",

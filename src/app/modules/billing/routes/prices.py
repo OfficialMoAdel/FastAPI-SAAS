@@ -4,20 +4,20 @@ Provides /api/v1/prices endpoints for frontend compatibility with old backend.
 All business logic is handled by the billing module's PricingService.
 """
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.billing.schemas import PricingCreate, PricingRead, PricingUpdate
 from src.app.modules.billing.service import PricingService
 
 router = APIRouter(prefix="/prices", tags=["prices"])
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @router.post(

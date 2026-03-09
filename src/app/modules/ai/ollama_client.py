@@ -3,7 +3,6 @@
 Provides async interface to Ollama API for chat completions with streaming support.
 """
 
-import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -12,8 +11,9 @@ from pydantic import BaseModel
 
 from src.app.core.config import settings
 from src.app.core.json_utils import json_loads
+from src.app.core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OllamaMessage(BaseModel):
@@ -123,16 +123,16 @@ class OllamaClient:
             }
 
         except httpx.TimeoutException as e:
-            logger.error(f"Ollama timeout: {e}")
+            logger.error("Ollama timeout:", error=e)
             raise OllamaError("Request timed out", "timeout") from e
         except httpx.HTTPStatusError as e:
-            logger.error(f"Ollama HTTP error: {e.response.status_code} - {e.response.text}")
+            logger.error("Ollama HTTP error: -", status_code=e.response.status_code, text=e.response.text)
             raise OllamaError(
                 f"HTTP {e.response.status_code}: {e.response.text}",
                 "http_error",
             ) from e
         except Exception as e:
-            logger.error(f"Ollama error: {e}")
+            logger.error("Ollama error:", error=e)
             raise OllamaError(str(e), "unknown") from e
 
     async def chat_stream(
@@ -181,16 +181,16 @@ class OllamaClient:
                         }
 
         except httpx.TimeoutException as e:
-            logger.error(f"Ollama stream timeout: {e}")
+            logger.error("Ollama stream timeout:", error=e)
             raise OllamaError("Stream timed out", "timeout") from e
         except httpx.HTTPStatusError as e:
-            logger.error(f"Ollama stream HTTP error: {e.response.status_code}")
+            logger.error("Ollama stream HTTP error:", status_code=e.response.status_code)
             raise OllamaError(
                 f"HTTP {e.response.status_code}",
                 "http_error",
             ) from e
         except Exception as e:
-            logger.error(f"Ollama stream error: {e}")
+            logger.error("Ollama stream error:", error=e)
             raise OllamaError(str(e), "unknown") from e
 
     async def list_models(self) -> list[str]:
@@ -203,7 +203,7 @@ class OllamaClient:
             data = response.json()
             return [m["name"] for m in data.get("models", [])]
         except Exception as e:
-            logger.error(f"Failed to list models: {e}")
+            logger.error("Failed to list models:", error=e)
             return []
 
     async def health_check(self) -> bool:

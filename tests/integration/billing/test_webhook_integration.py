@@ -16,13 +16,16 @@ def mock_redis_lifespan():
     mock_redis.exists.return_value = 0  # Not blacklisted
     mock_redis.get.return_value = None
 
-    with patch("src.app.core.setup.create_redis_queue_pool", new_callable=AsyncMock), \
-         patch("src.app.core.setup.close_redis_cache_pool", new_callable=AsyncMock), \
-         patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock), \
-         patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock), \
-         patch("src.app.core.utils.cache.client", mock_redis), \
-         patch("src.app.core.config.settings.STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")):
+    with (
+        patch("src.app.core.setup.create_redis_queue_pool", new_callable=AsyncMock),
+        patch("src.app.core.setup.close_redis_cache_pool", new_callable=AsyncMock),
+        patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock),
+        patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock),
+        patch("src.app.core.utils.cache.client", mock_redis),
+        patch("src.app.core.config.settings.STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")),
+    ):
         yield
+
 
 @pytest.mark.asyncio
 async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, tenant, create_test_user):
@@ -54,17 +57,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
         "current_period_start": 1600000000,
         "current_period_end": 1600000000 + 31536000,  # 1 year
         "status": "active",
-        "items": {
-            "data": [
-                {
-                    "price": {
-                        "recurring": {
-                            "interval": "year"
-                        }
-                    }
-                }
-            ]
-        }
+        "items": {"data": [{"price": {"recurring": {"interval": "year"}}}]},
     }
     mock_stripe_sub.get.side_effect = lambda k, default=None: mock_stripe_data.get(k, default)
     mock_stripe_sub.__getitem__.side_effect = lambda k: mock_stripe_data[k]
@@ -87,9 +80,11 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
 
     # We need to patch where they are imported/used
     # router.py imports verify_webhook_signature, so we must patch it there
-    with patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub):
+    with (
+        patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub),
+    ):
         # Bypass signature verification
         mock_verify.return_value = event_payload
 
@@ -119,7 +114,9 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
 
 
 @pytest.mark.asyncio
-async def test_webhook_invoice_payment_succeeded_flow(mock_redis_lifespan, client, db_session, tenant, create_test_user):  # noqa: E501
+async def test_webhook_invoice_payment_succeeded_flow(
+    mock_redis_lifespan, client, db_session, tenant, create_test_user
+):  # noqa: E501
     """
     E2E test for invoice.payment_succeeded flow.
     Verifies that a BillingRecord is created.

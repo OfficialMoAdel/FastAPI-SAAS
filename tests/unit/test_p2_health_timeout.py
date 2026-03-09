@@ -11,10 +11,12 @@ from src.app.core import health
 async def test_check_database_health_timeout():
     """Verify database health check times out."""
     mock_db = AsyncMock()
+
     # Simulate hang logic isn't needed if we patch wait_for, but for completeness
     async def side_effect(*args, **kwargs):
         await asyncio.sleep(6.0)
         return 1
+
     mock_db.execute.side_effect = side_effect
 
     # Patch asyncio.wait_for to raise TimeoutError
@@ -24,6 +26,7 @@ async def test_check_database_health_timeout():
         # Should return unhealthy status, NOT raise exception
         assert result.status == "unhealthy"
         assert "Timeout after" in str(result.error)
+
 
 @pytest.mark.asyncio
 async def test_check_redis_health_timeout():
@@ -35,6 +38,7 @@ async def test_check_redis_health_timeout():
 
         assert result.status == "unhealthy"
         assert "Timeout after" in str(result.error)
+
 
 @pytest.mark.asyncio
 async def test_check_redis_queue_health_timeout():
@@ -49,6 +53,7 @@ async def test_check_redis_queue_health_timeout():
             assert result.status == "unhealthy"
             assert "Timeout after" in str(result.error)
 
+
 @pytest.mark.asyncio
 async def test_check_database_health_success():
     """Verify success path."""
@@ -61,6 +66,7 @@ async def test_check_database_health_success():
     result = await health.check_database_health(mock_db)
     assert result.status == "healthy"
     assert result.latency_ms is not None
+
 
 @pytest.mark.asyncio
 async def test_check_database_health_operational_error():

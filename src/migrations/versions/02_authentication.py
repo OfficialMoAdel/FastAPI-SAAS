@@ -81,7 +81,9 @@ def upgrade() -> None:
         sa.Column("name", sa.String(length=50), nullable=False),
         sa.Column("type", sa.String(length=20), nullable=False),
         sa.Column("secret", sa.String(length=255), nullable=False),
-        sa.Column("backup_codes", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'"), nullable=True),
+        sa.Column(
+            "backup_codes", postgresql.JSONB(astext_type=sa.Text()), server_default=sa.text("'[]'"), nullable=True
+        ),
         sa.Column("is_primary", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),

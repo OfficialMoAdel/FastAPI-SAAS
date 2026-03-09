@@ -9,6 +9,7 @@ router = APIRouter(prefix="/api")
 # router.include_router(v1_router)
 router.include_router(monitoring_router, tags=["monitoring"])
 
+
 def get_router() -> APIRouter:
     """Get the main API router with v1 routes included.
 

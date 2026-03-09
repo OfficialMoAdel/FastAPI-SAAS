@@ -4,13 +4,13 @@ Provides /api/v1/configurations/stripe endpoints for frontend compatibility.
 Delegates to billing module's StripeSettingsService and webhook handler.
 """
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.utils.cache import async_get_redis
@@ -19,7 +19,7 @@ from src.app.modules.billing.service import get_stripe_settings_service
 from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature
 
 router = APIRouter(prefix="/configurations/stripe", tags=["configurations", "stripe"])
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @router.get(
@@ -119,19 +119,18 @@ async def handle_stripe_webhooks(
         from src.app.core.db.database import local_session
 
         if stripe_account_id:
-            logger.info(f"Looking up webhook secret for Stripe account: {stripe_account_id}")
+            logger.info("Looking up webhook secret for Stripe account:", stripe_account_id=stripe_account_id)
             async with local_session() as db:
                 settings = await crud_stripe_settings.get_by_account_id(db, stripe_account_id)
                 if settings and settings.webhook_secret:
                     webhook_secret = settings.webhook_secret
     except Exception as e:
-        logger.warning(f"Failed to lookup tenant webhook secret: {e}")
+        logger.warning("Failed to lookup tenant webhook secret:", error=e)
 
     # Fallback to global secret
     if not webhook_secret:
         webhook_secret = (
-            app_settings.STRIPE_WEBHOOK_SECRET.get_secret_value()
-            if app_settings.STRIPE_WEBHOOK_SECRET else None
+            app_settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if app_settings.STRIPE_WEBHOOK_SECRET else None
         )
 
     if not webhook_secret:
@@ -142,14 +141,14 @@ async def handle_stripe_webhooks(
     try:
         event = verify_webhook_signature(payload, sig_header, webhook_secret)
     except Exception as e:
-        logger.error(f"Webhook signature verification failed: {e}")
+        logger.error("Webhook signature verification failed:", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     # Idempotency check
     event_id = event.get("id")
     key = f"stripe_webhook:{event_id}"
     if await redis.exists(key):
-        logger.info(f"Duplicate webhook event ignored: {event_id}")
+        logger.info("Duplicate webhook event ignored:", event_id=event_id)
         return {"status": "duplicate"}
 
     # Mark as processed for 24 hours

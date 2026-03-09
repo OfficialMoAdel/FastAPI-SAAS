@@ -6,13 +6,15 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, MetaData,
 from sqlalchemy.dialects.postgresql import UUID
 from uuid6 import uuid7  # 126
 
+from src.app.core.logger import get_logger
+
 from ..app.core.config import settings
 from ..app.core.db.database import AsyncSession, async_engine, local_session
 from ..app.core.security import get_password_hash
 from ..app.modules.users.models import User
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def create_first_user(session: AsyncSession) -> None:
@@ -59,13 +61,13 @@ async def create_first_user(session: AsyncSession) -> None:
                 await conn.execute(stmt)
                 await conn.commit()
 
-            logger.info(f"Admin user {username} created successfully.")
+            logger.info("Admin user created successfully.", username=username)
 
         else:
-            logger.info(f"Admin user {username} already exists.")
+            logger.info("Admin user already exists.", username=username)
 
     except Exception as e:
-        logger.error(f"Error creating admin user: {e}")
+        logger.error("Error creating admin user:", error=e)
 
 
 async def main():

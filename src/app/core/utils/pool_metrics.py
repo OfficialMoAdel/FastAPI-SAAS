@@ -7,13 +7,14 @@ Tracks SQLAlchemy connection pool health:
 - Connection checkout/checkin events
 """
 
-import logging
 from dataclasses import dataclass
 from typing import Any
 
 from sqlalchemy import event
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

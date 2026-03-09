@@ -20,6 +20,7 @@ async def test_job_monitoring_e2e_flow(e2e_client, auth_headers):
     app.dependency_overrides[async_get_db] = override_get_db
 
     from contextlib import nullcontext
+
     with nullcontext():
         # Patch local_session in functions.py so workers use test DB too
         with patch("src.app.core.db.database.local_session", TestingSessionLocal):

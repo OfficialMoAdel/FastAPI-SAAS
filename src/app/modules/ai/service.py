@@ -3,7 +3,6 @@
 Business logic for AI chat sessions, messages, and user settings.
 """
 
-import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -11,12 +10,13 @@ from typing import Any
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
+from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.ai.unified_errors import SessionLimitExceededError
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
@@ -336,7 +336,7 @@ class ChatCompletionService:
         Returns:
             Dict with assistant response, model, token_count
         """
-        logger.info(f"Chat completion request for session {session_id} by user {user_id}")
+        logger.info("Chat completion request for session by user", session_id=session_id, user_id=user_id)
 
         # Sequential fetch to avoid SQLAlchemy AsyncSession concurrency issues
         session = await self._session_service.get_session(session_id, user_id)
@@ -369,7 +369,7 @@ class ChatCompletionService:
 
         # Phase 2: Call LLM (connection released, no DB hold during inference)
         try:
-            logger.debug(f"Calling Ollama with model={model}, temperature={temperature}")
+            logger.debug("Calling Ollama with model=, temperature=", model=model, temperature=temperature)
             result = await self.ollama.chat(
                 model=model,
                 messages=history,
@@ -377,10 +377,10 @@ class ChatCompletionService:
                 max_tokens=max_tokens,
                 system_prompt=system_prompt,
             )
-            logger.info(f"Chat completion successful, tokens={result.get('token_count')}")
+            logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
 
         except OllamaError as e:
-            logger.error(f"Chat completion failed: {e.message} ({e.error_code})")
+            logger.error("Chat completion failed: ()", message=e.message, error_code=e.error_code)
             raise ChatCompletionError(e.message, e.error_code, model) from e
 
         # Phase 3: Get fresh session for writing response
@@ -494,7 +494,7 @@ class ChatCompletionService:
                             )
                             await fresh_db.commit()
                     except Exception as e:
-                        logger.error(f"Failed to save AI chat response in background task: {e!s}")
+                        logger.error("Failed to save AI chat response in background task", error=e)
 
                 # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream
                 asyncio.create_task(_save_response(full_response, token_count))

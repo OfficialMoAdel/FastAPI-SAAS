@@ -3,7 +3,6 @@
 Tests: U16 (FastCRUD Projection), U17 (Service Registry), U22 (Slug Normalization)
 """
 
-
 import pytest
 import structlog
 

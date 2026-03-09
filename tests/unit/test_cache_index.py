@@ -128,9 +128,7 @@ class TestSetTenantCache:
             assert result is True
 
             # Verify setex called on pipeline
-            mock_pipeline.setex.assert_called_once_with(
-                "tenant:1:user:42", 300, '{"data": 1}'
-            )
+            mock_pipeline.setex.assert_called_once_with("tenant:1:user:42", 300, '{"data": 1}')
             # sadd now called twice: main index and prefix index
             assert mock_pipeline.sadd.call_count == 2
             mock_pipeline.execute.assert_called_once()
@@ -181,9 +179,7 @@ class TestDeleteTenantCache:
 
             # Verify delete and srem called on pipeline
             mock_pipeline.delete.assert_called_once_with("tenant:1:user:42")
-            mock_pipeline.srem.assert_called_once_with(
-                "tenant_index:1", "tenant:1:user:42"
-            )
+            mock_pipeline.srem.assert_called_once_with("tenant_index:1", "tenant:1:user:42")
             mock_pipeline.execute.assert_called_once()
 
 

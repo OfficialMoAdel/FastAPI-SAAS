@@ -83,11 +83,12 @@ async def refresh_access_token(
     refresh_token = request.cookies.get("refresh_token")
     if not refresh_token:
         from fastapi import HTTPException, status
+
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
     return await auth_service.refresh_access_token(refresh_token, response, db)
 
 
-@router.post("/logout", response_model=LogoutResponse)
+@router.post("/logout", response_model=LogoutResponse, responses={401: {"description": "Unauthorized"}})
 async def logout(
     response: Response,
     request: Request,
@@ -100,7 +101,11 @@ async def logout(
     return await auth_service.logout(access_token, refresh_token, response, request, db)
 
 
-@router.patch("/password", response_model=PasswordChangeResponse)
+@router.patch(
+    "/password",
+    response_model=PasswordChangeResponse,
+    responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}},
+)
 async def change_password(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
@@ -162,7 +167,7 @@ async def verify_email(
     return EmailVerificationResponse(**result)
 
 
-@router.get("/sessions", response_model=SessionListResponse)
+@router.get("/sessions", response_model=SessionListResponse, responses={401: {"description": "Unauthorized"}})
 async def list_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     redis: Annotated[Redis, Depends(async_get_redis)],
@@ -172,6 +177,7 @@ async def list_sessions(
     sessions = await session_manager.get_active_sessions(user_id=current_user["id"])
 
     from datetime import datetime
+
     session_infos = []
     for s in sessions:
         device_info = s.get("device_info") or ""
@@ -191,19 +197,21 @@ async def list_sessions(
         except (ValueError, TypeError):
             created_at_ts = 0
 
-        session_infos.append(SessionInfo(
-            id=s.get("session_id", ""),
-            user_id=current_user["id"],
-            created_at=created_at_ts,
-            last_accessed_at=created_at_ts,
-            ip_address=ip_address,
-            user_agent=user_agent
-        ))
+        session_infos.append(
+            SessionInfo(
+                id=s.get("session_id", ""),
+                user_id=current_user["id"],
+                created_at=created_at_ts,
+                last_accessed_at=created_at_ts,
+                ip_address=ip_address,
+                user_agent=user_agent,
+            )
+        )
 
     return SessionListResponse(sessions=session_infos)
 
 
-@router.get("/sessions/count", response_model=SessionCountResponse)
+@router.get("/sessions/count", response_model=SessionCountResponse, responses={401: {"description": "Unauthorized"}})
 async def count_sessions(
     current_user: Annotated[dict, Depends(get_current_user)],
     redis: Annotated[Redis, Depends(async_get_redis)],

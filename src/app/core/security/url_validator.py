@@ -109,9 +109,7 @@ async def validate_webhook_url(url: str) -> None:
     # OPT P0-1: Use asyncio.to_thread to avoid blocking the event loop during DNS resolution
     try:
         # Get all IP addresses for the hostname (non-blocking via thread pool)
-        addr_info = await asyncio.to_thread(
-            socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM
-        )
+        addr_info = await asyncio.to_thread(socket.getaddrinfo, hostname, None, socket.AF_UNSPEC, socket.SOCK_STREAM)
         resolved_ips = {info[4][0] for info in addr_info}
     except socket.gaierror as e:
         raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}")

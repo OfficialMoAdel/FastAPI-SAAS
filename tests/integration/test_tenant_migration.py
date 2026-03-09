@@ -9,7 +9,6 @@ Tests that the migration correctly:
 NOTE: These tests require PostgreSQL and are skipped when running with SQLite.
 """
 
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import func, select, text
@@ -65,6 +64,7 @@ async def seed_default_tenant(db_session: AsyncSession):
     db_session.add(default_tenant)
     await db_session.commit()
 
+
 @pytest.mark.asyncio
 class TestTenantMigration:
     """Integration tests for tenant migration."""
@@ -88,9 +88,7 @@ class TestTenantMigration:
 
     async def test_all_users_have_tenant_id(self, db_session: AsyncSession) -> None:
         """Test that all existing users have been backfilled with tenant_id."""
-        result = await db_session.execute(
-            select(func.count()).select_from(User).where(User.tenant_id.is_(None))
-        )
+        result = await db_session.execute(select(func.count()).select_from(User).where(User.tenant_id.is_(None)))
         users_without_tenant = result.scalar()
 
         assert users_without_tenant == 0, "No users should have NULL tenant_id after migration"
@@ -103,9 +101,7 @@ class TestTenantMigration:
         if tenant is None:
             pytest.skip("Default tenant not found - migration may not have run")
 
-        result = await db_session.execute(
-            select(func.count()).select_from(User).where(User.tenant_id != tenant.id)
-        )
+        result = await db_session.execute(select(func.count()).select_from(User).where(User.tenant_id != tenant.id))
         users_other_tenant = result.scalar()
 
         assert users_other_tenant == 0, "All existing users should be assigned to default tenant"

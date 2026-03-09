@@ -5,10 +5,10 @@ Provides a unified interface for accessing different AI providers
 """
 
 import hashlib
-import logging
 from typing import Any
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.modules.ai.anthropic_provider import AnthropicProvider
 from src.app.modules.ai.ollama_provider import OllamaProvider
 from src.app.modules.ai.openai_provider import OpenAIProvider
@@ -17,7 +17,7 @@ from src.app.modules.ai.unified_errors import (
     AIServerError,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_PROVIDER = "ollama"
 SUPPORTED_PROVIDERS = {
@@ -95,17 +95,17 @@ class AIProviderFactory:
         cache_key = cls._get_cache_key(provider_name, api_key, base_url)
 
         if cache_key in cls._instances:
-            logger.debug(f"Returning cached provider instance: {provider_name}")
+            logger.debug("Returning cached provider instance:", provider_name=provider_name)
             return cls._instances[cache_key]
 
-        logger.info(f"Creating new provider instance: {provider_name}")
+        logger.info("Creating new provider instance:", provider_name=provider_name)
 
         try:
             provider = cls._create_provider(provider_class, provider_name, api_key, base_url)  # type: ignore[arg-type]
             cls._instances[cache_key] = provider
             return provider
         except Exception as e:
-            logger.error(f"Failed to create provider {provider_name}: {e}")
+            logger.error("Failed to create provider :", provider_name=provider_name, error=e)
             raise AIServerError(
                 provider=provider_name,
                 message=f"Failed to create provider: {e}",

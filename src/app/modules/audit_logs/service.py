@@ -421,6 +421,7 @@ async def handle_audit_log_event(data: dict[str, Any]) -> None:
         logger.error("audit_log_event_failed", error=str(e), exc_info=True)
         # Fallback inline mechanism to ensure log survives Redis failures
         from src.app.core.db.database import get_db_context
+
         try:
             async with get_db_context() as db:
                 await _direct_insert_log(log_data, db)

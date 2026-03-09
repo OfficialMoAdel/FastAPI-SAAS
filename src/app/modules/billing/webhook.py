@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from datetime import UTC, datetime
 from typing import Any, Literal, cast
 from uuid import UUID
@@ -9,6 +8,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.billing.crud import crud_billing_records, crud_user_subscriptions
@@ -19,7 +19,7 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionUpdate,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Redis key prefix for webhook idempotency tracking
 # Stripe events have at-least-once delivery guarantee, so we must track processed events
@@ -52,7 +52,7 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
         result = await redis_client.set(key, "1", nx=True, ex=_WEBHOOK_EVENT_TTL_SECONDS)
         return result is not None  # True = lock acquired, False = already processed
     except Exception as e:
-        logger.error(f"Failed to acquire webhook event lock: {e}")
+        logger.error("Failed to acquire webhook event lock:", error=e)
         # Fail open - allow processing to avoid losing events
         return True
 
@@ -79,11 +79,11 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         return cast(stripe.Event, event)
     except ValueError as e:
         # Invalid payload
-        logger.error(f"Invalid payload: {e}")
+        logger.error("Invalid payload:", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
     except stripe.error.SignatureVerificationError as e:
         # Invalid signature
-        logger.error(f"Invalid signature: {e}")
+        logger.error("Invalid signature:", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
 
@@ -105,12 +105,12 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     """
     event_type = event["type"]
     event_id = event["id"]
-    logger.info(f"Received Stripe webhook event: {event_type} (ID: {event_id})")
+    logger.info("Received Stripe webhook event: (ID: )", event_type=event_type, event_id=event_id)
 
     # IDEMPOTENCY CHECK: Atomically acquire processing lock
     # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race
     if not await _try_acquire_event_lock(event_id):
-        logger.info(f"Event {event_id} already processed, skipping")
+        logger.info("Event already processed, skipping", event_id=event_id)
         return {"status": "already_processed"}
 
     try:
@@ -128,7 +128,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
         elif event_type == "charge.refunded":
             await handle_charge_refunded(event)
         else:
-            logger.info(f"Unhandled event type: {event_type}")
+            logger.info("Unhandled event type:", event_type=event_type)
             # Lock already acquired, event is marked as processed
             return {"status": "unhandled"}
 
@@ -136,7 +136,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
         # No need to mark again - atomic SET NX handles this
 
     except Exception as e:
-        logger.error(f"Error handling webhook event {event_type} (ID: {event_id}): {e}")
+        logger.error("Error handling webhook event (ID: ):", event_type=event_type, event_id=event_id, error=e)
         # Do NOT mark as processed on failure - allow Stripe to retry
         # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
         # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
@@ -144,7 +144,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             try:
                 await redis_client.delete(f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
             except Exception as redis_e:
-                logger.error(f"Failed to release webhook event lock: {redis_e}")
+                logger.error("Failed to release webhook event lock:", redis_e=redis_e)
         raise
 
     return {"status": "success"}
@@ -159,7 +159,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     T074: checkout.session.completed webhook handler
     """
     session = event["data"]["object"]
-    logger.info(f"Processing checkout.session.completed: {session['id']}")
+    logger.info("Processing checkout.session.completed:", val=session["id"])
 
     # Extract metadata
     metadata = session.get("metadata", {})
@@ -173,7 +173,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
         try:
             tenant_id = UUID(tenant_id_str)
         except ValueError:
-            logger.warning(f"Invalid UUID format for tenant_id: {tenant_id_str}")
+            logger.warning("Invalid UUID format for tenant_id:", tenant_id_str=tenant_id_str)
 
     user_id = int(user_id_str) if user_id_str and user_id_str.isdigit() else None
     plan_id = int(plan_id_str) if plan_id_str and plan_id_str.isdigit() else None
@@ -285,9 +285,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                             "current_period_start": datetime.fromtimestamp(
                                 stripe_sub.get("current_period_start", 0), UTC
                             ),
-                            "current_period_end": datetime.fromtimestamp(
-                                stripe_sub.get("current_period_end", 0), UTC
-                            ),
+                            "current_period_end": datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC),
                             "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                         }
                         canceled_at = stripe_sub.get("canceled_at")
@@ -301,13 +299,13 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         )
                         await db.commit()
 
-            logger.info(f"Created subscription for user {user_id} in tenant {tenant_id}")
+            logger.info("Created subscription for user in tenant", user_id=user_id, tenant_id=tenant_id)
 
         except stripe.error.StripeError as e:
-            logger.error(f"Stripe API error retrieving subscription: {e}")
+            logger.error("Stripe API error retrieving subscription:", error=e)
             raise
     else:
-        logger.warning(f"No subscription ID in checkout session: {session['id']}")
+        logger.warning("No subscription ID in checkout session:", val=session["id"])
 
 
 async def handle_subscription_updated(event: stripe.Event) -> None:
@@ -320,7 +318,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     """
     subscription = event["data"]["object"]
     stripe_subscription_id = subscription["id"]
-    logger.info(f"Processing subscription.updated: {stripe_subscription_id}")
+    logger.info("Processing subscription.updated:", stripe_subscription_id=stripe_subscription_id)
 
     # Find subscription by stripe_subscription_id using bypass context
     tenant_id = None
@@ -380,26 +378,21 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             from src.app.modules.tenants.crud import crud_tenants
 
             # Find the free plan
-            free_plan_stmt = select(crud_subscription_plans.model).where(
-                crud_subscription_plans.model.name.ilike("%free%")
-            ).limit(1)
+            free_plan_stmt = (
+                select(crud_subscription_plans.model).where(crud_subscription_plans.model.name.ilike("%free%")).limit(1)
+            )
             free_plan_result = await db.execute(free_plan_stmt)
             free_plan = free_plan_result.scalar_one_or_none()
 
             if free_plan:
-                await crud_tenants.update(
-                    db=db,
-                    id=tenant_id,
-                    object={"tier_id": free_plan.id}
-                )
+                await crud_tenants.update(db=db, id=tenant_id, object={"tier_id": free_plan.id})
                 logger.info(
-                    f"Downgraded tenant {tenant_id} to free tier ({free_plan.id}) "
-                    f"due to subscription {new_status}"
+                    f"Downgraded tenant {tenant_id} to free tier ({free_plan.id}) due to subscription {new_status}"
                 )
 
         await db.commit()
 
-    logger.info(f"Updated subscription {stripe_subscription_id} to status {new_status}")
+    logger.info("Updated subscription to status", stripe_subscription_id=stripe_subscription_id, new_status=new_status)
 
 
 async def handle_subscription_deleted(event: stripe.Event) -> None:
@@ -410,7 +403,7 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
     """
     subscription = event["data"]["object"]
     stripe_subscription_id = subscription["id"]
-    logger.info(f"Processing subscription.deleted: {stripe_subscription_id}")
+    logger.info("Processing subscription.deleted:", stripe_subscription_id=stripe_subscription_id)
 
     # Find subscription by stripe_subscription_id using bypass context
     tenant_id = None
@@ -452,23 +445,19 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         from src.app.modules.tenants.crud import crud_tenants
 
         # Find the free plan
-        free_plan_stmt = select(crud_subscription_plans.model).where(
-            crud_subscription_plans.model.name.ilike("%free%")
-        ).limit(1)
+        free_plan_stmt = (
+            select(crud_subscription_plans.model).where(crud_subscription_plans.model.name.ilike("%free%")).limit(1)
+        )
         free_plan_result = await db.execute(free_plan_stmt)
         free_plan = free_plan_result.scalar_one_or_none()
 
         if free_plan:
-            await crud_tenants.update(
-                db=db,
-                id=tenant_id,
-                object={"tier_id": free_plan.id}
-            )
-            logger.info(f"Downgraded tenant {tenant_id} to free tier ({free_plan.id})")
+            await crud_tenants.update(db=db, id=tenant_id, object={"tier_id": free_plan.id})
+            logger.info("Downgraded tenant to free tier ()", tenant_id=tenant_id, id=free_plan.id)
 
         await db.commit()
 
-    logger.info(f"Marked subscription {stripe_subscription_id} as canceled")
+    logger.info("Marked subscription as canceled", stripe_subscription_id=stripe_subscription_id)
 
 
 async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
@@ -480,11 +469,11 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     T075: invoice.payment_succeeded webhook handler
     """
     invoice = event["data"]["object"]
-    logger.info(f"Processing invoice.payment_succeeded: {invoice['id']}")
+    logger.info("Processing invoice.payment_succeeded:", val=invoice["id"])
 
     stripe_subscription_id = invoice.get("subscription")
     if not stripe_subscription_id:
-        logger.info(f"Invoice {invoice['id']} is not for a subscription, skipping")
+        logger.info("Invoice is not for a subscription, skipping", val=invoice["id"])
         return
 
     # Find subscription by stripe_subscription_id using bypass context
@@ -531,7 +520,7 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
         )
         await db.commit()
 
-    logger.info(f"Created succeeded billing record for invoice {invoice['id']}")
+    logger.info("Created succeeded billing record for invoice", val=invoice["id"])
 
 
 async def handle_invoice_payment_failed(event: stripe.Event) -> None:
@@ -543,11 +532,11 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
     T076: invoice.payment_failed webhook handler
     """
     invoice = event["data"]["object"]
-    logger.info(f"Processing invoice.payment_failed: {invoice['id']}")
+    logger.info("Processing invoice.payment_failed:", val=invoice["id"])
 
     stripe_subscription_id = invoice.get("subscription")
     if not stripe_subscription_id:
-        logger.info(f"Invoice {invoice['id']} is not for a subscription, skipping")
+        logger.info("Invoice is not for a subscription, skipping", val=invoice["id"])
         return
 
     # Find subscription by stripe_subscription_id using bypass context
@@ -602,7 +591,7 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
         )
         await db.commit()
 
-    logger.info(f"Created failed billing record and updated subscription to past_due for invoice {invoice['id']}")
+    logger.info("Created failed billing record and updated subscription to past_due for invoice", val=invoice["id"])
 
 
 async def handle_charge_refunded(event: stripe.Event) -> None:
@@ -614,14 +603,14 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     T077: charge.refunded webhook handler
     """
     charge = event["data"]["object"]
-    logger.info(f"Processing charge.refunded: {charge['id']}")
+    logger.info("Processing charge.refunded:", val=charge["id"])
 
     # Get the invoice if available
     stripe_invoice_id = charge.get("invoice")
     stripe_payment_intent_id = charge.get("payment_intent")
 
     if not stripe_invoice_id and not stripe_payment_intent_id:
-        logger.info(f"Charge {charge['id']} has no invoice or payment_intent, skipping")
+        logger.info("Charge has no invoice or payment_intent, skipping", val=charge["id"])
         return
 
     # Try to find the subscription through the invoice
@@ -638,14 +627,14 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
         except stripe.error.StripeError as e:
-            logger.error(f"Error retrieving invoice: {e}")
+            logger.error("Error retrieving invoice:", error=e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve invoice {stripe_invoice_id} from Stripe"
+                detail=f"Failed to retrieve invoice {stripe_invoice_id} from Stripe",
             )
 
     if not stripe_subscription_id:
-        logger.warning(f"Could not determine subscription for charge {charge['id']}")
+        logger.warning("Could not determine subscription for charge", val=charge["id"])
         return
 
     async with job_bypass_context("Webhook subscription lookup") as db:
@@ -688,4 +677,4 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         )
         await db.commit()
 
-    logger.info(f"Created refunded billing record for charge {charge['id']}")
+    logger.info("Created refunded billing record for charge", val=charge["id"])

@@ -85,16 +85,16 @@ class SMTPProvider(EmailProvider):
 
     async def send_email(self, message: EmailMessage) -> bool:
         """Send email via SMTP with circuit breaker protection."""
-        import logging
         from email.mime.multipart import MIMEMultipart
         from email.mime.text import MIMEText
         from email.utils import formataddr
 
         import aiosmtplib
 
+        from src.app.core.logger import get_logger
         from src.app.core.utils.circuit_breaker import email_circuit
 
-        logger = logging.getLogger(__name__)
+        logger = get_logger(__name__)
 
         # Check circuit breaker before attempting send
         if not email_circuit.is_closed:
@@ -156,7 +156,7 @@ class SMTPProvider(EmailProvider):
         except Exception as e:
             # Record failure with circuit breaker
             await email_circuit.record_failure(e)
-            logger.error(f"Failed to send email: {e}")
+            logger.error("Failed to send email:", error=e)
             return False
 
     async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:

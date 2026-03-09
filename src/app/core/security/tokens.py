@@ -27,19 +27,18 @@ Usage:
         ...
 """
 
-
 from __future__ import annotations
 
 import json
-import logging
 import secrets
 from typing import Any, cast
 
 from redis.asyncio import Redis
 
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Lua script for atomic GETDEL (get and delete) to prevent race conditions.
 # Returns the value if key existed, None otherwise.

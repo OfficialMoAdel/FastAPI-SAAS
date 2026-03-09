@@ -74,9 +74,9 @@ class BenchmarkResult:
 
     def log_summary(self):
         """Log statistical summary."""
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"Benchmark: {self.name}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"Iterations: {self.iterations}")
         logger.info(f"Min:        {self.min * 1000:.3f} ms")
         logger.info(f"Max:        {self.max * 1000:.3f} ms")
@@ -86,7 +86,7 @@ class BenchmarkResult:
         logger.info(f"P50:        {self.p50 * 1000:.3f} ms")
         logger.info(f"P95:        {self.p95 * 1000:.3f} ms")
         logger.info(f"P99:        {self.p99 * 1000:.3f} ms")
-        logger.info(f"{'='*60}\n")
+        logger.info(f"{'=' * 60}\n")
 
 
 @pytest.fixture
@@ -129,17 +129,10 @@ def benchmark_runner():
         if threshold_ms is not None:
             mean_ms = result.mean * 1000
             if mean_ms > threshold_ms:
-                logger.error(
-                    f"THRESHOLD EXCEEDED: {mean_ms:.3f}ms > {threshold_ms}ms"
-                )
-                pytest.fail(
-                    f"Benchmark {name} exceeded threshold: "
-                    f"{mean_ms:.3f}ms > {threshold_ms}ms"
-                )
+                logger.error(f"THRESHOLD EXCEEDED: {mean_ms:.3f}ms > {threshold_ms}ms")
+                pytest.fail(f"Benchmark {name} exceeded threshold: {mean_ms:.3f}ms > {threshold_ms}ms")
             else:
-                logger.info(
-                    f"✓ Threshold check passed: {mean_ms:.3f}ms <= {threshold_ms}ms"
-                )
+                logger.info(f"✓ Threshold check passed: {mean_ms:.3f}ms <= {threshold_ms}ms")
 
         return result
 
@@ -190,17 +183,10 @@ def async_benchmark_runner():
         if threshold_ms is not None:
             mean_ms = result.mean * 1000
             if mean_ms > threshold_ms:
-                logger.error(
-                    f"THRESHOLD EXCEEDED: {mean_ms:.3f}ms > {threshold_ms}ms"
-                )
-                pytest.fail(
-                    f"Benchmark {name} exceeded threshold: "
-                    f"{mean_ms:.3f}ms > {threshold_ms}ms"
-                )
+                logger.error(f"THRESHOLD EXCEEDED: {mean_ms:.3f}ms > {threshold_ms}ms")
+                pytest.fail(f"Benchmark {name} exceeded threshold: {mean_ms:.3f}ms > {threshold_ms}ms")
             else:
-                logger.info(
-                    f"✓ Threshold check passed: {mean_ms:.3f}ms <= {threshold_ms}ms"
-                )
+                logger.info(f"✓ Threshold check passed: {mean_ms:.3f}ms <= {threshold_ms}ms")
 
         return result
 
@@ -236,9 +222,9 @@ def baseline_comparator():
         ratio = current_mean / baseline_mean
         percent_change = (ratio - 1.0) * 100
 
-        logger.info(f"\n{'='*60}")
+        logger.info(f"\n{'=' * 60}")
         logger.info(f"Baseline Comparison: {result.name}")
-        logger.info(f"{'='*60}")
+        logger.info(f"{'=' * 60}")
         logger.info(f"Baseline:  {baseline_mean:.3f} ms")
         logger.info(f"Current:   {current_mean:.3f} ms")
         logger.info(f"Ratio:     {ratio:.2f}x")
@@ -248,14 +234,11 @@ def baseline_comparator():
 
         if is_regression:
             logger.error(f"⚠️  REGRESSION DETECTED: {percent_change:+.1f}% slower")
-            logger.info(f"{'='*60}\n")
-            pytest.fail(
-                f"Performance regression in {result.name}: "
-                f"{percent_change:+.1f}% slower than baseline"
-            )
+            logger.info(f"{'=' * 60}\n")
+            pytest.fail(f"Performance regression in {result.name}: {percent_change:+.1f}% slower than baseline")
         else:
             logger.info("✓ No regression detected")
-            logger.info(f"{'='*60}\n")
+            logger.info(f"{'=' * 60}\n")
 
         return {
             "has_baseline": True,

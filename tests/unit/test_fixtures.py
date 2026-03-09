@@ -1,6 +1,5 @@
 """Tests for test fixtures."""
 
-
 from src.app.modules.users.schemas import UserRead
 from tests.conftest import MockUser
 

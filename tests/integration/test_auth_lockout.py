@@ -32,7 +32,7 @@ class TestAccountLockoutMechanism:
                 )
             )
             # First 5 attempts should return the attempt count (1-5)
-            assert result == i + 1, f"Attempt {i+1}: Expected {i+1}, got {result}"
+            assert result == i + 1, f"Attempt {i + 1}: Expected {i + 1}, got {result}"
 
         # 6th attempt should return -1 (locked)
         result = asyncio.run(

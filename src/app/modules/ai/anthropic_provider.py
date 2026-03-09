@@ -4,11 +4,12 @@ Implements the AIProvider interface for Anthropic's Claude models.
 """
 
 import json
-import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from httpx import AsyncClient, HTTPStatusError, RequestError
+
+from src.app.core.logger import get_logger
 
 try:
     from jsonschema import validate
@@ -23,7 +24,7 @@ from src.app.modules.ai.providers import (
     EmbeddingResponse,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AnthropicProvider(AIProvider):
@@ -143,14 +144,14 @@ class AnthropicProvider(AIProvider):
             return self._parse_chat_response(data)
         except HTTPStatusError as e:
             error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error(f"Anthropic API error: {error_msg}")
+            logger.error("Anthropic API error:", error_msg=error_msg)
             raise AIProviderError(
                 f"Anthropic API error: {error_msg}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"Anthropic request error: {e}")
+            logger.error("Anthropic request error:", error=e)
             raise AIProviderError(
                 f"Anthropic request error: {e}",
                 error_code="request_error",
@@ -221,14 +222,14 @@ class AnthropicProvider(AIProvider):
                             continue
         except HTTPStatusError as e:
             error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error(f"Anthropic streaming error: {error_msg}")
+            logger.error("Anthropic streaming error:", error_msg=error_msg)
             raise AIProviderError(
                 f"Anthropic streaming error: {error_msg}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"Anthropic request error: {e}")
+            logger.error("Anthropic request error:", error=e)
             raise AIProviderError(
                 f"Anthropic request error: {e}",
                 error_code="request_error",
@@ -299,7 +300,7 @@ class AnthropicProvider(AIProvider):
 
             return parsed
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from Anthropic response: {response.content}")
+            logger.error("Failed to parse JSON from Anthropic response:", content=response.content)
             raise AIProviderError(
                 f"Failed to parse JSON: {e}",
                 error_code="json_parse_error",
@@ -374,7 +375,7 @@ class AnthropicProvider(AIProvider):
             )
             return response.status_code == 200
         except Exception as e:
-            logger.error(f"Anthropic health check failed: {e}")
+            logger.error("Anthropic health check failed:", error=e)
             return False
 
     async def close(self) -> None:

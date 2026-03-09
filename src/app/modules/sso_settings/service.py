@@ -1,4 +1,3 @@
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -7,9 +6,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 from src.app.core.exceptions.http_exceptions import (
     DuplicateValueException,
     NotFoundException,
@@ -237,9 +237,9 @@ async def warm_sso_settings(session: AsyncSession) -> int:
                 await redis_client.setex(cache_key, 300, json_dumps(setting_data, as_str=True))
                 cached_count += 1
 
-            logger.info(f"Warmed cache for {cached_count} SSO settings")
+            logger.info("Warmed cache for SSO settings", cached_count=cached_count)
         except Exception as e:
-            logger.error(f"Failed to warm SSO settings cache: {e}")
+            logger.error("Failed to warm SSO settings cache:", error=e)
             return 0
 
     return cached_count

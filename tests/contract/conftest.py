@@ -128,9 +128,7 @@ async def unauthenticated_contract_context(get_contract_test_app):
 
 
 @pytest.fixture
-async def async_client(
-    get_contract_test_app, contract_mock_context
-) -> AsyncGenerator[AsyncClient, None]:
+async def async_client(get_contract_test_app, contract_mock_context) -> AsyncGenerator[AsyncClient, None]:
     """Async client fixture for contract tests."""
     app = get_contract_test_app
     async with AsyncClient(

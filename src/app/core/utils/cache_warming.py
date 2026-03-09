@@ -5,7 +5,6 @@ Reduces cold-start latency by populating Redis cache with:
 - Tier names and configurations (for rate limiting)
 """
 
-import logging
 import time
 from dataclasses import dataclass
 
@@ -13,10 +12,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
+from src.app.core.logger import get_logger
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.tiers.models import Tier
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Cache TTLs (in seconds)
 TENANT_CACHE_TTL = 3600  # 1 hour
@@ -68,9 +68,9 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
             await pipe.execute()
         cached_count = len(tenants)
-        logger.info(f"Cache warming completed: {cached_count} tenants")
+        logger.info("Cache warming completed: tenants", cached_count=cached_count)
     except Exception as e:
-        logger.error(f"Cache warming failed: {e}")
+        logger.error("Cache warming failed:", error=e)
         return 0
 
     return cached_count
@@ -101,9 +101,9 @@ async def warm_tier_cache(session: AsyncSession) -> int:
                 pipe.setex(cache_key, TIER_CACHE_TTL, tier.name)
             await pipe.execute()
         cached_count = len(tiers)
-        logger.info(f"Tier cache warming completed: {cached_count} tiers")
+        logger.info("Tier cache warming completed: tiers", cached_count=cached_count)
     except Exception as e:
-        logger.error(f"Tier cache warming failed: {e}")
+        logger.error("Tier cache warming failed:", error=e)
         return 0
 
     return cached_count

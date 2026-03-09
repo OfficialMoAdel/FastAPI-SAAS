@@ -12,11 +12,13 @@ def mock_event_bus():
         mock_bus.publish = AsyncMock()
         yield mock_bus
 
+
 @pytest.fixture
 def mock_logger():
     """Mock the structlog logger instance."""
     with patch("src.app.modules.auth.audit.logger") as mock_log:
         yield mock_log
+
 
 async def test_log_event_with_tenant(mock_event_bus, mock_logger):
     """Test log_event publishes to event bus when tenant_id is provided."""
@@ -26,7 +28,7 @@ async def test_log_event_with_tenant(mock_event_bus, mock_logger):
         user_id=2,
         details={"key": "value"},
         ip_address="127.0.0.1",
-        user_agent="pytest"
+        user_agent="pytest",
     )
 
     # Verify structlog log
@@ -50,25 +52,20 @@ async def test_log_event_with_tenant(mock_event_bus, mock_logger):
     assert event_payload["ip_address"] == "127.0.0.1"
     assert event_payload["user_agent"] == "pytest"
 
+
 async def test_log_event_without_tenant(mock_event_bus, mock_logger):
     """Test log_event logs but does not publish to event bus when tenant_id is omitted."""
-    await auth_audit.log_event(
-        action="test.action",
-        tenant_id=None,
-        user_id=None
-    )
+    await auth_audit.log_event(action="test.action", tenant_id=None, user_id=None)
 
     mock_logger.info.assert_called_once()
     mock_event_bus.publish.assert_not_called()
+
 
 async def test_log_event_bus_exception(mock_event_bus, mock_logger):
     """Test log_event handles exceptions gracefully when publishing to event bus."""
     mock_event_bus.publish.side_effect = Exception("Bus error")
 
-    await auth_audit.log_event(
-        action="test.action",
-        tenant_id=1
-    )
+    await auth_audit.log_event(action="test.action", tenant_id=1)
 
     # Log info should succeed
     mock_logger.info.assert_called_once()
@@ -76,6 +73,7 @@ async def test_log_event_bus_exception(mock_event_bus, mock_logger):
     mock_logger.error.assert_called_once()
     assert mock_logger.error.call_args[1]["error"] == "Bus error"
     assert mock_logger.error.call_args[1]["action"] == "test.action"
+
 
 async def test_magic_link_events(mock_event_bus):
     await auth_audit.log_magic_link_sent(1, "test@example.com")
@@ -97,6 +95,7 @@ async def test_magic_link_events(mock_event_bus):
     assert payload["action"] == "auth.magic_link.failed"
     assert payload["details"]["reason"] == "invalid_token"
     mock_event_bus.publish.reset_mock()
+
 
 async def test_sso_events(mock_event_bus):
     await auth_audit.log_sso_initiated(1, "google")
@@ -120,6 +119,7 @@ async def test_sso_events(mock_event_bus):
     assert mock_event_bus.publish.call_args[0][1]["action"] == "auth.sso.disconnected"
     mock_event_bus.publish.reset_mock()
 
+
 async def test_passkey_events(mock_event_bus):
     await auth_audit.log_passkey_registered(1, 2, "webauthn")
     assert mock_event_bus.publish.call_args[0][1]["action"] == "auth.passkey.registered"
@@ -136,6 +136,7 @@ async def test_passkey_events(mock_event_bus):
     await auth_audit.log_passkey_deleted(1, 2, 3)
     assert mock_event_bus.publish.call_args[0][1]["action"] == "auth.passkey.deleted"
     mock_event_bus.publish.reset_mock()
+
 
 async def test_general_login_events(mock_event_bus):
     await auth_audit.log_login_success(1, 2, "password")

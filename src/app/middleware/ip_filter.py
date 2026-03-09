@@ -4,7 +4,6 @@ This middleware checks incoming requests against IP whitelist and blacklist
 stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocked.
 """
 
-import logging
 from typing import cast
 
 from fastapi import Request, Response, status
@@ -12,11 +11,12 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 EXEMPT_PATHS: frozenset[str] = frozenset(
     [
@@ -80,7 +80,12 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                     )
                     log_security_event(event)
 
-                    logger.warning(f"Blocked bad bot: {bad_bot} | ip={client_ip} | user_agent={user_agent}")
+                    logger.warning(
+                        "Blocked bad bot: | ip= | user_agent=",
+                        bad_bot=bad_bot,
+                        client_ip=client_ip,
+                        user_agent=user_agent,
+                    )
                     return Response(
                         content='{"detail":"Forbidden - Bad bot detected"}',
                         status_code=status.HTTP_403_FORBIDDEN,
@@ -104,7 +109,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 # Mark request as whitelisted for other middleware (e.g., rate limiting)
                 request.state.ip_whitelisted = True
 
-                logger.debug(f"IP {client_ip} allowed via whitelist for {path}")
+                logger.debug("IP allowed via whitelist for", client_ip=client_ip, path=path)
                 response = await call_next(request)
                 return cast(Response, response)
 
@@ -117,7 +122,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
             )
             log_security_event(event)
 
-            logger.warning(f"IP {client_ip} blocked - not in whitelist for {path}")
+            logger.warning("IP blocked - not in whitelist for", client_ip=client_ip, path=path)
             return Response(
                 content='{"detail":"Forbidden - IP not whitelisted"}',
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -137,7 +142,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 )
                 log_security_event(event)
 
-                logger.warning(f"IP {client_ip} blocked - blacklisted for {path}")
+                logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
                 return Response(
                     content='{"detail":"Forbidden - IP is blacklisted"}',
                     status_code=status.HTTP_403_FORBIDDEN,

@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -32,11 +32,10 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
     "/send",
     response_model=NotificationResponse,
     status_code=status.HTTP_202_ACCEPTED,
-    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))]
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
 )
 async def send_notification(
     request: SendEmailRequest,
-    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
@@ -91,7 +90,7 @@ async def list_notifications(
         start_date=start_date,
         end_date=end_date,
         limit=per_page,
-        offset=offset
+        offset=offset,
     )
 
     return {
@@ -130,7 +129,7 @@ async def get_notification(
 @router.get(
     "/templates/overrides",
     response_model=list[EmailTemplateOverrideResponse],
-    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))]
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_MANAGE))],
 )
 async def list_template_overrides(
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
@@ -165,7 +164,7 @@ async def create_template_override(
         tenant_id=current_tenant.id,
         template_name=request.template_name,
         subject_override=request.subject_override,
-        content=request.content
+        content=request.content,
     )
 
     return EmailTemplateOverrideResponse.model_validate(override)

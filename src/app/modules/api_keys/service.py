@@ -2,7 +2,6 @@
 
 import hashlib
 import inspect
-import logging
 import secrets
 from datetime import UTC, datetime
 from typing import Any
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
@@ -20,7 +20,7 @@ from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 from src.app.modules.audit_logs.service import AuditLogService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Cache configuration for API key validation
 API_KEY_CACHE_PREFIX = "api_key"

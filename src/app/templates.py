@@ -1,6 +1,5 @@
 """Email templates service."""
 
-import logging
 import re
 from pathlib import Path
 from typing import Any, cast
@@ -9,9 +8,10 @@ from jinja2 import Template, TemplateNotFound
 from sqlalchemy import select
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.modules.notifications.models import EmailTemplateOverride
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # OPT-12: Pre-compile regex patterns at module level
 _TITLE_PATTERN = re.compile(r"<title>(.*?)</title>", re.DOTALL)
@@ -73,7 +73,12 @@ class EmailTemplatesService:
                 return rendered_subject, rendered_html
 
             except Exception as e:
-                logger.error(f"Failed to render custom template {template_name} for tenant {tenant_id}: {e}")
+                logger.error(
+                    "Failed to render custom template for tenant :",
+                    template_name=template_name,
+                    tenant_id=tenant_id,
+                    error=e,
+                )
                 # Fall back to default template
 
         # Load default template
@@ -100,7 +105,7 @@ class EmailTemplatesService:
             return subject, rendered_html
 
         except Exception as e:
-            logger.error(f"Failed to render template {template_name}: {e}")
+            logger.error("Failed to render template :", template_name=template_name, error=e)
             raise
 
 

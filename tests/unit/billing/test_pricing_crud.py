@@ -61,13 +61,10 @@ class TestPricingCRUD:
         mock_pricing.created_at = datetime.now(UTC)
         mock_pricing.updated_at = None
 
-        with patch.object(crud_pricing, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_pricing, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_pricing
 
-            result = await crud_pricing.create(
-                db=mock_db_session,
-                obj_in=create_schema
-            )
+            result = await crud_pricing.create(db=mock_db_session, obj_in=create_schema)
 
             assert result.id == 1
             assert result.name == pricing_data["name"]
@@ -91,13 +88,10 @@ class TestPricingCRUD:
         mock_pricing.amount_cents = pricing_data["amount_cents"]
         mock_pricing.is_active = True
 
-        with patch.object(crud_pricing, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_pricing, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_pricing
 
-            result = await crud_pricing.get(
-                db=mock_db_session,
-                id=pricing_id
-            )
+            result = await crud_pricing.get(db=mock_db_session, id=pricing_id)
 
             assert result is not None
             assert result.id == pricing_id
@@ -109,13 +103,10 @@ class TestPricingCRUD:
         """Test retrieving a non-existent pricing returns None."""
         pricing_id = 999
 
-        with patch.object(crud_pricing, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_pricing, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_pricing.get(
-                db=mock_db_session,
-                id=pricing_id
-            )
+            result = await crud_pricing.get(db=mock_db_session, id=pricing_id)
 
             assert result is None
 
@@ -134,14 +125,10 @@ class TestPricingCRUD:
 
         update_data = PricingUpdate(amount_cents=new_amount)
 
-        with patch.object(crud_pricing, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_pricing, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_pricing
 
-            result = await crud_pricing.update(
-                db=mock_db_session,
-                db_obj=MagicMock(),
-                obj_in=update_data
-            )
+            result = await crud_pricing.update(db=mock_db_session, db_obj=MagicMock(), obj_in=update_data)
 
             assert result.amount_cents == new_amount
             mock_update.assert_called_once()
@@ -158,14 +145,10 @@ class TestPricingCRUD:
 
         update_data = PricingUpdate(is_active=False)
 
-        with patch.object(crud_pricing, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_pricing, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_pricing
 
-            result = await crud_pricing.update(
-                db=mock_db_session,
-                db_obj=MagicMock(),
-                obj_in=update_data
-            )
+            result = await crud_pricing.update(db=mock_db_session, db_obj=MagicMock(), obj_in=update_data)
 
             assert result.is_active is False
 
@@ -179,7 +162,7 @@ class TestPricingCRUD:
             MagicMock(spec=Pricing, id=2, product_id=product_id, name="Yearly", amount_cents=9999, interval="yearly"),
         ]
 
-        with patch.object(crud_pricing, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_pricing, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = mock_pricing_list
 
             result = await crud_pricing.get_multi(
@@ -204,14 +187,10 @@ class TestPricingCRUD:
 
         update_data = PricingUpdate(features=new_features)
 
-        with patch.object(crud_pricing, 'update', new_callable=AsyncMock) as mock_update:
+        with patch.object(crud_pricing, "update", new_callable=AsyncMock) as mock_update:
             mock_update.return_value = mock_pricing
 
-            result = await crud_pricing.update(
-                db=mock_db_session,
-                db_obj=MagicMock(),
-                obj_in=update_data
-            )
+            result = await crud_pricing.update(db=mock_db_session, db_obj=MagicMock(), obj_in=update_data)
 
             assert result.features == new_features
             assert len(result.features) == 2
@@ -244,11 +223,7 @@ class TestPricingSchema:
 
     def test_pricing_create_minimal(self):
         """Test creating PricingCreate with only required fields."""
-        schema = PricingCreate(
-            name="Basic",
-            amount_cents=999,
-            interval="monthly"
-        )
+        schema = PricingCreate(name="Basic", amount_cents=999, interval="monthly")
         assert schema.name == "Basic"
         assert schema.amount_cents == 999
         assert schema.interval == "monthly"
@@ -266,41 +241,23 @@ class TestPricingSchema:
     def test_pricing_intervals_valid(self):
         """Test valid pricing intervals."""
         for interval in ["monthly", "yearly", "one_time"]:
-            schema = PricingCreate(
-                name="Test",
-                amount_cents=100,
-                interval=interval
-            )
+            schema = PricingCreate(name="Test", amount_cents=100, interval=interval)
             assert schema.interval == interval
 
     def test_pricing_amount_zero(self):
         """Test pricing with zero amount (free tier)."""
-        schema = PricingCreate(
-            name="Free Tier",
-            amount_cents=0,
-            interval="monthly"
-        )
+        schema = PricingCreate(name="Free Tier", amount_cents=0, interval="monthly")
         assert schema.amount_cents == 0
 
     def test_pricing_different_currencies(self):
         """Test pricing with different currencies."""
         for currency in ["usd", "eur", "gbp"]:
-            schema = PricingCreate(
-                name="Test",
-                amount_cents=999,
-                interval="monthly",
-                currency=currency
-            )
+            schema = PricingCreate(name="Test", amount_cents=999, interval="monthly", currency=currency)
             assert schema.currency == currency
 
     def test_pricing_features_list(self):
         """Test pricing with features list."""
         features = ["Feature 1", "Feature 2", "Feature 3"]
-        schema = PricingCreate(
-            name="Test",
-            amount_cents=999,
-            interval="monthly",
-            features=features
-        )
+        schema = PricingCreate(name="Test", amount_cents=999, interval="monthly", features=features)
         assert schema.features == features
         assert len(schema.features) == 3

@@ -142,9 +142,7 @@ class TestPhase4EnvValidatorE2E:
         "insecure_password",
         ["password", "123456", "admin", "root", "secret", "changeme"],
     )
-    def test_production_blocks_all_insecure_defaults(
-        self, insecure_password: str, monkeypatch
-    ):
+    def test_production_blocks_all_insecure_defaults(self, insecure_password: str, monkeypatch):
         """
         Test that production blocks ALL known insecure default passwords.
 
@@ -198,9 +196,7 @@ class TestPhase4ValidationLogic:
                 results = EnvironmentValidator._check_insecure_defaults()
 
                 # Should detect as insecure
-                assert any(
-                    r.key == "ADMIN_PASSWORD" for r in results
-                ), f"Failed to detect insecure password: {variant}"
+                assert any(r.key == "ADMIN_PASSWORD" for r in results), f"Failed to detect insecure password: {variant}"
 
     def test_validation_summary_accuracy(self):
         """Test that validation summary counts are accurate."""
@@ -251,9 +247,9 @@ class TestPhase4ValidationLogic:
                 results = EnvironmentValidator._check_insecure_defaults()
 
                 # Should NOT flag as insecure
-                assert not any(
-                    r.key == "ADMIN_PASSWORD" for r in results
-                ), f"Strong password incorrectly flagged: {password}"
+                assert not any(r.key == "ADMIN_PASSWORD" for r in results), (
+                    f"Strong password incorrectly flagged: {password}"
+                )
 
 
 class TestPhase4ProductionSafety:

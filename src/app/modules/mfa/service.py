@@ -397,7 +397,6 @@ class MFAService:
         # Reconstruct full code with prefix for verification
         formatted_code = f"{BACKUP_CODE_PREFIX}{normalized_code[:5]}-{normalized_code[5:]}"
 
-
         matched_hash = None
 
         # We now use fast SHA256 hashing to prevent bcrypt DoS when iterating 10 codes
@@ -691,6 +690,7 @@ class MFAService:
             Hashed code string.
         """
         import hashlib
+
         salt = settings.SECRET_KEY.get_secret_value().encode()
         return hashlib.sha256(salt + code.encode()).hexdigest()
 

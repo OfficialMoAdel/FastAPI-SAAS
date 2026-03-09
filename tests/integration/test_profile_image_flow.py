@@ -25,6 +25,7 @@ def test_upload_profile_image_flow(client, regular_user_token_headers):
             # Verify call to storage
             mock_storage.upload.assert_called()
 
+
 def test_upload_invalid_file_type(client, regular_user_token_headers):
     files = {"file": ("doc.txt", b"text content", "text/plain")}
 
@@ -32,6 +33,7 @@ def test_upload_invalid_file_type(client, regular_user_token_headers):
 
     assert response.status_code == 400
     assert "Invalid file type" in response.json()["detail"]
+
 
 def test_delete_profile_image_flow(client, regular_user_token_headers):
     with patch("src.app.modules.user_preferences.service.get_storage") as mock_get_storage:
@@ -41,16 +43,17 @@ def test_delete_profile_image_flow(client, regular_user_token_headers):
         # We also need to mock crud_users.get inside service to return a user with image_url
 
         with patch("src.app.modules.user_preferences.service.crud_users") as mock_crud_users:
-             from unittest.mock import Mock
-             mock_user = Mock()
-             mock_user.profile_image_url = "https://example.com/profile.png"
-             mock_crud_users.get = AsyncMock(return_value=mock_user)
-             mock_crud_users.update = AsyncMock(return_value=None)
+            from unittest.mock import Mock
 
-             response = client.delete("/api/v1/user/me/image", headers=regular_user_token_headers)
+            mock_user = Mock()
+            mock_user.profile_image_url = "https://example.com/profile.png"
+            mock_crud_users.get = AsyncMock(return_value=mock_user)
+            mock_crud_users.update = AsyncMock(return_value=None)
 
-             assert response.status_code == 204
+            response = client.delete("/api/v1/user/me/image", headers=regular_user_token_headers)
 
-             # Verify call to storage & update
-             mock_storage.delete.assert_called()
-             mock_crud_users.update.assert_called()
+            assert response.status_code == 204
+
+            # Verify call to storage & update
+            mock_storage.delete.assert_called()
+            mock_crud_users.update.assert_called()

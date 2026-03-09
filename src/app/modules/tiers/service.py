@@ -1,6 +1,5 @@
 """Tier service layer - encapsulates all tier business logic."""
 
-import logging
 from typing import Any
 
 from fastapi import Depends
@@ -9,13 +8,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.tiers.crud import crud_tiers
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class TierService(BaseService[Tier]):
@@ -246,9 +246,9 @@ async def warm_tiers(session: AsyncSession) -> int:
                 await redis_client.setex(cache_key, 300, json_dumps(tier, as_str=True))
                 cached_count += 1
 
-            logger.info(f"Warmed cache for {cached_count} tiers")
+            logger.info("Warmed cache for tiers", cached_count=cached_count)
         except Exception as e:
-            logger.error(f"Failed to warm tiers cache: {e}")
+            logger.error("Failed to warm tiers cache:", error=e)
             return 0
 
     return cached_count

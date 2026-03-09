@@ -10,7 +10,6 @@ Handles:
 """
 
 import asyncio
-import logging
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -40,10 +39,11 @@ from webauthn.helpers.structs import (
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, NotFoundException
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.modules.passkey.crud import crud_passkey_credentials
 from src.app.modules.passkey.schemas import PasskeyCredentialCreate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Lua script for atomic GETDEL (get and delete) to prevent race conditions.
 _GETDEL_LUA = """
@@ -176,7 +176,7 @@ class PasskeyService:
                 expected_rp_id=_get_rp_id(),
             )
         except Exception as e:
-            logger.warning(f"Passkey verification failed for user {user_id}: {e}")
+            logger.warning("Passkey verification failed for user :", user_id=user_id, error=e)
             raise BadRequestException(detail="Passkey verification failed.")
 
         # 3. Encrypt sensitive data
@@ -313,7 +313,7 @@ class PasskeyService:
                 db_credential=db_credential,
             )
         except Exception as e:
-            logger.warning(f"Passkey authentication failed: {e}")
+            logger.warning("Passkey authentication failed:", error=e)
             raise BadRequestException(detail="Passkey authentication failed.")
 
         # 4. Check counter for replay prevention
@@ -646,11 +646,7 @@ class PasskeyService:
         stmt = (
             select(User)
             .options(joinedload(User.tier))
-            .where(
-                User.id == credential.user_id,
-                User.is_deleted.is_(False),
-                User.is_active.is_(True)
-            )
+            .where(User.id == credential.user_id, User.is_deleted.is_(False), User.is_active.is_(True))
         )
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

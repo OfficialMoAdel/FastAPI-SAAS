@@ -8,7 +8,6 @@ Provides:
 - Query execution time tracking
 """
 
-import logging
 import re
 import time
 from collections import defaultdict
@@ -19,8 +18,10 @@ from typing import Any
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine
 
+from src.app.core.logger import get_logger
+
 # Create dedicated logger for query profiling
-logger = logging.getLogger("sqlalchemy.profiler")
+logger = get_logger(__name__)
 
 # Track repeated queries for N+1 detection (global across all requests)
 _query_tracker: dict[str, dict[str, Any]] = {}

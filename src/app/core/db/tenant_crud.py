@@ -83,6 +83,7 @@ class TenantAwareCRUD(
                 # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
                 if isinstance(tenant_id, str):
                     import uuid
+
                     try:
                         tenant_id = uuid.UUID(tenant_id)
                     except ValueError:

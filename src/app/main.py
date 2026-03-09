@@ -1,6 +1,5 @@
 """FastAPI SaaS application entry point."""
 
-import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
@@ -13,6 +12,7 @@ from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
 from src.app.middleware.body_limit import RequestBodyLimitMiddleware
@@ -24,7 +24,7 @@ from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 
 admin = create_admin_interface()
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 CACHE_WARMING_ENABLED = True
 CACHE_WARMING_DELAY = timedelta(seconds=2)
@@ -127,8 +127,11 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Starting application cache warming...")
         await _warm_application_caches()
 
-        if CACHE_WARMING_DELAY.total_seconds() > 0:
-            logger.info(f"Cache warming completed, sleeping {CACHE_WARMING_DELAY.total_seconds()}s before ready")
+        if getattr(settings, "ENVIRONMENT", "") == "production" and CACHE_WARMING_DELAY.total_seconds() > 0:
+            logger.info(
+                "Cache warming completed, sleeping before ready in production",
+                total_seconds=CACHE_WARMING_DELAY.total_seconds(),
+            )
             import asyncio
 
             await asyncio.sleep(CACHE_WARMING_DELAY.total_seconds())
@@ -168,19 +171,20 @@ app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurat
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+app.add_middleware(
+    RequestBodyLimitMiddleware, max_body_size=getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
+)  # 10MB configurable limit
 app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal
-app.add_middleware(RequestBodyLimitMiddleware, max_body_size=10 * 1024 * 1024)  # 10MB limit
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
 
-# Mount admin interface if enabled
 if admin:
     try:
         if hasattr(settings, "ADMIN_ENABLE") and settings.ADMIN_ENABLE:
             app.mount("/admin", admin)  # type: ignore[arg-type]
     except Exception as e:
-        logger.warning(f"Failed to mount admin interface: {e}")
+        logger.warning("Failed to mount admin interface", error=e)
 
 
 # OpenAPI custom schema

@@ -1,4 +1,3 @@
-import logging
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -13,6 +12,7 @@ from src.app.core.exceptions.http_exceptions import (
     NotFoundException,
     UnauthorizedException,
 )
+from src.app.core.logger import get_logger
 from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.service_registry import get_service
@@ -28,7 +28,7 @@ from src.app.modules.sso.schemas import SSOProvider, UserSSOConnectionCreate, Us
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class SSOService:
@@ -426,7 +426,7 @@ class SSOService:
                 pass
             except Exception as e:
                 # Any other error -> disabled safety fallback
-                logger.error(f"SSO provider status check failed: {e}")
+                logger.error("SSO provider status check failed:", error=e)
                 pass
 
             # If the endpoint is strictly for "enabled" providers as buttons, we might filter here.

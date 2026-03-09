@@ -102,9 +102,7 @@ class TestDNSResolutionBenchmark:
 
         def blocking_resolve() -> list[str]:
             with patch("socket.getaddrinfo", return_value=mock_addr_info):
-                addr_info = socket.getaddrinfo(
-                    "example.com", None, socket.AF_UNSPEC, socket.SOCK_STREAM
-                )
+                addr_info = socket.getaddrinfo("example.com", None, socket.AF_UNSPEC, socket.SOCK_STREAM)
                 return [info[4][0] for info in addr_info]
 
         result = benchmark(blocking_resolve)

@@ -4,7 +4,6 @@ Provides /api/v1/invoices endpoints for frontend compatibility with old backend.
 All business logic is handled by the billing module's BillingRecordService.
 """
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -12,11 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.modules.billing.schemas import BillingRecordList, BillingRecordRead
 from src.app.modules.billing.service import get_billing_record_service
 
 router = APIRouter(prefix="/invoices", tags=["invoices"])
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @router.get("", response_model=BillingRecordList)

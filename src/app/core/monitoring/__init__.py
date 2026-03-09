@@ -4,7 +4,6 @@ Provides Prometheus metrics and helper functions for tracking
 performance of R1-UNIFIED optimizations.
 """
 
-
 from __future__ import annotations
 
 from src.app.core.monitoring.r1_unified_metrics import (

@@ -60,14 +60,10 @@ class TestBillingRecordCRUD:
         mock_record.stripe_invoice_id = billing_record_data["stripe_invoice_id"]
         mock_record.created_at = datetime.now(UTC)
 
-        with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_billing_records, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record
 
-            result = await crud_billing_records.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_billing_records.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.id == 1
             assert result.amount_cents == 9900
@@ -94,14 +90,10 @@ class TestBillingRecordCRUD:
         mock_record.status = "failed"
         mock_record.description = record_data["description"]
 
-        with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_billing_records, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record
 
-            result = await crud_billing_records.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_billing_records.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.status == "failed"
             assert "declined" in result.description
@@ -124,14 +116,10 @@ class TestBillingRecordCRUD:
         mock_record.tenant_id = tenant_id
         mock_record.status = "refunded"
 
-        with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_billing_records, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record
 
-            result = await crud_billing_records.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_billing_records.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.status == "refunded"
 
@@ -147,14 +135,10 @@ class TestBillingRecordCRUD:
         mock_record.amount_cents = 9900
         mock_record.status = "succeeded"
 
-        with patch.object(crud_billing_records, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_billing_records, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_record
 
-            result = await crud_billing_records.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=record_id
-            )
+            result = await crud_billing_records.get(db=mock_db_session, tenant_id=tenant_id, id=record_id)
 
             assert result is not None
             assert result.id == record_id
@@ -166,14 +150,10 @@ class TestBillingRecordCRUD:
         tenant_id = 1
         record_id = 999
 
-        with patch.object(crud_billing_records, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_billing_records, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_billing_records.get(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                id=record_id
-            )
+            result = await crud_billing_records.get(db=mock_db_session, tenant_id=tenant_id, id=record_id)
 
             assert result is None
 
@@ -188,15 +168,10 @@ class TestBillingRecordCRUD:
             MagicMock(spec=BillingRecord, id=3, status="failed", amount_cents=9900),
         ]
 
-        with patch.object(crud_billing_records, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_billing_records, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = mock_records
 
-            result = await crud_billing_records.get_multi(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                skip=0,
-                limit=10
-            )
+            result = await crud_billing_records.get_multi(db=mock_db_session, tenant_id=tenant_id, skip=0, limit=10)
 
             assert len(result) == 3
             assert result[0].status == "succeeded"
@@ -228,14 +203,10 @@ class TestBillingRecordCRUD:
         mock_record.stripe_payment_intent_id = "pi_test_123"
         mock_record.stripe_invoice_id = "in_test_123"
 
-        with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_billing_records, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record
 
-            result = await crud_billing_records.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_billing_records.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.stripe_payment_intent_id == "pi_test_123"
             assert result.stripe_invoice_id == "in_test_123"
@@ -258,14 +229,10 @@ class TestBillingRecordCRUD:
         mock_record.id = 1
         mock_record.user_subscription_id = None
 
-        with patch.object(crud_billing_records, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_billing_records, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_record
 
-            result = await crud_billing_records.create(
-                db=mock_db_session,
-                tenant_id=tenant_id,
-                obj_in=create_schema
-            )
+            result = await crud_billing_records.create(db=mock_db_session, tenant_id=tenant_id, obj_in=create_schema)
 
             assert result.user_subscription_id is None
 
@@ -280,23 +247,15 @@ class TestBillingRecordCRUD:
         mock_record.id = record_id
         mock_record.tenant_id = tenant_id_1
 
-        with patch.object(crud_billing_records, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_billing_records, "get", new_callable=AsyncMock) as mock_get:
             # When querying with correct tenant, should find record
             mock_get.return_value = mock_record
-            result = await crud_billing_records.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_1,
-                id=record_id
-            )
+            result = await crud_billing_records.get(db=mock_db_session, tenant_id=tenant_id_1, id=record_id)
             assert result is not None
 
             # When querying with different tenant, should not find record
             mock_get.return_value = None
-            result = await crud_billing_records.get(
-                db=mock_db_session,
-                tenant_id=tenant_id_2,
-                id=record_id
-            )
+            result = await crud_billing_records.get(db=mock_db_session, tenant_id=tenant_id_2, id=record_id)
             assert result is None
 
     @pytest.mark.asyncio

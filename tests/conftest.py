@@ -761,7 +761,6 @@ async def unauthenticated_mock_context(get_test_app):
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-
     # Note: We use dependency_overrides for async_get_db instead of patch
     # because override_get_db is an async context manager
 

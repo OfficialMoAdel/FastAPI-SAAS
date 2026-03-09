@@ -50,21 +50,23 @@ def test_optimization_flag_exists(flag_name: str, flag_path: str, default_value:
     from unittest.mock import patch
 
     # Mock required settings to avoid validation errors
-    with patch.dict(os.environ, {
-        "ADMIN_PASSWORD": "test",
-        "SECRET_KEY": "test-secret-key-for-testing-only",
-        "POSTGRES_USER": "test",
-        "POSTGRES_PASSWORD": "test",
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {
+            "ADMIN_PASSWORD": "test",
+            "SECRET_KEY": "test-secret-key-for-testing-only",
+            "POSTGRES_USER": "test",
+            "POSTGRES_PASSWORD": "test",
+        },
+        clear=False,
+    ):
         from src.app.core.config import Settings
 
         settings = Settings()  # type: ignore[call-arg]
         actual_value = getattr(settings, flag_name, None)
 
         assert actual_value is not None, f"Flag {flag_name} not found in Settings"
-        assert actual_value == default_value, (
-            f"Flag {flag_name} should default to {default_value}, got {actual_value}"
-        )
+        assert actual_value == default_value, f"Flag {flag_name} should default to {default_value}, got {actual_value}"
 
 
 @pytest.mark.parametrize("flag_name,flag_path,default_value", OPTIMIZATION_FLAGS)
@@ -75,19 +77,21 @@ def test_optimization_flag_can_be_disabled(flag_name: str, flag_path: str, defau
     from src.app.core.config import Settings
 
     # Create settings with flag disabled, mocking required env vars
-    with patch.dict(os.environ, {
-        flag_name: "false",
-        "ADMIN_PASSWORD": "test",
-        "SECRET_KEY": "test-secret-key-for-testing-only",
-        "POSTGRES_USER": "test",
-        "POSTGRES_PASSWORD": "test",
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {
+            flag_name: "false",
+            "ADMIN_PASSWORD": "test",
+            "SECRET_KEY": "test-secret-key-for-testing-only",
+            "POSTGRES_USER": "test",
+            "POSTGRES_PASSWORD": "test",
+        },
+        clear=False,
+    ):
         settings = Settings()  # type: ignore[call-arg]
         actual_value = getattr(settings, flag_name)
 
-        assert actual_value is False, (
-            f"Flag {flag_name} should be disableable, got {actual_value}"
-        )
+        assert actual_value is False, f"Flag {flag_name} should be disableable, got {actual_value}"
 
 
 # =============================================================================
@@ -108,13 +112,17 @@ def test_feature_remove_wasted_connection_rollback() -> None:
     from src.app.core.config import Settings
 
     # Verify flag can be toggled
-    with patch.dict(os.environ, {
-        "FEATURE_REMOVE_WASTED_CONNECTION": "false",
-        "ADMIN_PASSWORD": "test",
-        "SECRET_KEY": "test-secret-key-for-testing-only",
-        "POSTGRES_USER": "test",
-        "POSTGRES_PASSWORD": "test",
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {
+            "FEATURE_REMOVE_WASTED_CONNECTION": "false",
+            "ADMIN_PASSWORD": "test",
+            "SECRET_KEY": "test-secret-key-for-testing-only",
+            "POSTGRES_USER": "test",
+            "POSTGRES_PASSWORD": "test",
+        },
+        clear=False,
+    ):
         settings = Settings()  # type: ignore[call-arg]
         assert settings.FEATURE_REMOVE_WASTED_CONNECTION is False
 
@@ -136,13 +144,17 @@ def test_feature_streaming_uploads_rollback() -> None:
     from src.app.core.config import Settings
 
     # Verify flag can be toggled
-    with patch.dict(os.environ, {
-        "FEATURE_STREAMING_UPLOADS": "false",
-        "ADMIN_PASSWORD": "test",
-        "SECRET_KEY": "test-secret-key-for-testing-only",
-        "POSTGRES_USER": "test",
-        "POSTGRES_PASSWORD": "test",
-    }, clear=False):
+    with patch.dict(
+        os.environ,
+        {
+            "FEATURE_STREAMING_UPLOADS": "false",
+            "ADMIN_PASSWORD": "test",
+            "SECRET_KEY": "test-secret-key-for-testing-only",
+            "POSTGRES_USER": "test",
+            "POSTGRES_PASSWORD": "test",
+        },
+        clear=False,
+    ):
         settings = Settings()  # type: ignore[call-arg]
         assert settings.FEATURE_STREAMING_UPLOADS is False
 
@@ -299,12 +311,16 @@ def test_full_rollback_scenario() -> None:
 
     with patch.dict(os.environ, env_patches, clear=False):
         # Import fresh to pick up env changes, with mocked required vars
-        with patch.dict(os.environ, {
-            "ADMIN_PASSWORD": "test",
-            "SECRET_KEY": "test-secret-key-for-testing-only",
-            "POSTGRES_USER": "test",
-            "POSTGRES_PASSWORD": "test",
-        }, clear=False):
+        with patch.dict(
+            os.environ,
+            {
+                "ADMIN_PASSWORD": "test",
+                "SECRET_KEY": "test-secret-key-for-testing-only",
+                "POSTGRES_USER": "test",
+                "POSTGRES_PASSWORD": "test",
+            },
+            clear=False,
+        ):
             from src.app.core.config import Settings
 
             settings = Settings()  # type: ignore[call-arg]

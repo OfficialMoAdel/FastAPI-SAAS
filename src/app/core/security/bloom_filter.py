@@ -25,11 +25,9 @@ Usage:
     return await is_token_in_redis(token)
 """
 
-
 from __future__ import annotations
 
 import hashlib
-import logging
 import math
 import threading
 from typing import Final
@@ -38,8 +36,9 @@ import xxhash
 from bitarray import bitarray
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Default configuration for token blacklist
 # Expected items: 100K tokens, 1% false positive rate

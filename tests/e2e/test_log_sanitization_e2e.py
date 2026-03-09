@@ -34,9 +34,7 @@ class TestLogSanitizationE2E:
         root.setLevel(original_level)
 
     @pytest.mark.asyncio
-    async def test_jwt_not_leaked_in_auth_logs(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_jwt_not_leaked_in_auth_logs(self, captured_logs: io.StringIO) -> None:
         """JWT in Authorization header must not appear in logs."""
         jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiJ0ZXN0In0.signature"
 
@@ -62,14 +60,10 @@ class TestLogSanitizationE2E:
         # If JWT appears in logs at all, it should be sanitized
         if "Bearer" in logs:
             # Either completely redacted or replaced with token placeholder
-            assert (
-                "[REDACTED]" in logs or "[JWT_TOKEN]" in logs
-            ), "JWT not properly sanitized"
+            assert "[REDACTED]" in logs or "[JWT_TOKEN]" in logs, "JWT not properly sanitized"
 
     @pytest.mark.asyncio
-    async def test_email_masked_in_request_logs(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_email_masked_in_request_logs(self, captured_logs: io.StringIO) -> None:
         """Email in request should be partially masked in logs."""
         email = "testuser@example.com"
 
@@ -99,9 +93,7 @@ class TestLogSanitizationE2E:
                 assert "testuser" not in logs or "t***@example.com" in logs
 
     @pytest.mark.asyncio
-    async def test_api_key_sanitized_in_logs(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_api_key_sanitized_in_logs(self, captured_logs: io.StringIO) -> None:
         """API key in header should be sanitized in logs."""
         api_key = "sk_live_1234567890abcdefghij"
 
@@ -120,9 +112,7 @@ class TestLogSanitizationE2E:
         logs = captured_logs.getvalue()
 
         # API key should be sanitized
-        assert (
-            "sk_live_1234567890abcdefghij" not in logs
-        ), "API key leaked in logs!"
+        assert "sk_live_1234567890abcdefghij" not in logs, "API key leaked in logs!"
 
         # If Stripe key pattern appears, it should be replaced
         if "sk_live" in logs or "sk_test" in logs:
@@ -150,14 +140,10 @@ class TestLogSanitizationE2E:
 
         # If password field is logged, it should be redacted
         if "password" in logs.lower():
-            assert (
-                "[REDACTED]" in logs or "password=[REDACTED]" in logs
-            ), "Password field not sanitized"
+            assert "[REDACTED]" in logs or "password=[REDACTED]" in logs, "Password field not sanitized"
 
     @pytest.mark.asyncio
-    async def test_database_url_sanitized_on_startup(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_database_url_sanitized_on_startup(self, captured_logs: io.StringIO) -> None:
         """Database connection strings should be sanitized in logs."""
         # This test captures logs during app initialization
         # Database URLs might be logged during startup or errors
@@ -168,19 +154,13 @@ class TestLogSanitizationE2E:
         # Should never see actual passwords
         if "postgresql://" in logs:
             # Should see sanitized version
-            assert (
-                "[USER]:[REDACTED]@" in logs or "postgresql://[" in logs
-            ), "PostgreSQL URL not sanitized"
+            assert "[USER]:[REDACTED]@" in logs or "postgresql://[" in logs, "PostgreSQL URL not sanitized"
 
         if "mysql://" in logs:
-            assert (
-                "[USER]:[REDACTED]@" in logs or "mysql://[" in logs
-            ), "MySQL URL not sanitized"
+            assert "[USER]:[REDACTED]@" in logs or "mysql://[" in logs, "MySQL URL not sanitized"
 
         if "redis://" in logs:
-            assert (
-                "[USER]:[REDACTED]@" in logs or "redis://[" in logs
-            ), "Redis URL not sanitized"
+            assert "[USER]:[REDACTED]@" in logs or "redis://[" in logs, "Redis URL not sanitized"
 
     @pytest.mark.asyncio
     async def test_credit_card_sanitized(self, captured_logs: io.StringIO) -> None:
@@ -232,9 +212,7 @@ class TestLogSanitizationE2E:
             assert "[AWS_ACCESS_KEY]" in logs, "AWS key not properly sanitized"
 
     @pytest.mark.asyncio
-    async def test_multiple_sensitive_data_in_single_request(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_multiple_sensitive_data_in_single_request(self, captured_logs: io.StringIO) -> None:
         """Multiple sensitive data types in one request should all be sanitized."""
         jwt = "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"
         email = "admin@company.com"
@@ -266,9 +244,7 @@ class TestLogSanitizationE2E:
         assert "admin@company.com" not in logs, "Full email leaked"
 
     @pytest.mark.asyncio
-    async def test_exception_with_sensitive_data_sanitized(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_exception_with_sensitive_data_sanitized(self, captured_logs: io.StringIO) -> None:
         """Exceptions containing sensitive data should be sanitized."""
         # This test verifies that even exception messages are sanitized
 
@@ -290,14 +266,10 @@ class TestLogSanitizationE2E:
         # Even in error logs, JWT should be sanitized
         if "eyJ" in logs:
             # If any JWT fragment appears, it should be in sanitized form
-            assert (
-                "[JWT_TOKEN]" in logs or "[REDACTED]" in logs
-            ), "JWT in exception not sanitized"
+            assert "[JWT_TOKEN]" in logs or "[REDACTED]" in logs, "JWT in exception not sanitized"
 
     @pytest.mark.asyncio
-    async def test_nested_sensitive_data_sanitized(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_nested_sensitive_data_sanitized(self, captured_logs: io.StringIO) -> None:
         """Nested sensitive data in complex objects should be sanitized."""
         transport = ASGITransport(app=app)
         async with AsyncClient(transport=transport, base_url="http://test") as client:
@@ -324,9 +296,7 @@ class TestLogSanitizationE2E:
         assert "sk_live_nested123" not in logs, "Nested API key leaked"
 
     @pytest.mark.asyncio
-    async def test_performance_no_significant_overhead(
-        self, captured_logs: io.StringIO
-    ) -> None:
+    async def test_performance_no_significant_overhead(self, captured_logs: io.StringIO) -> None:
         """Log sanitization should not add significant performance overhead."""
         import time
 

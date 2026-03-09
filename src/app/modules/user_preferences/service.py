@@ -12,13 +12,13 @@ Handles:
 """
 
 import asyncio
-import logging
 from typing import Any
 
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.storage import get_storage
 from src.app.modules.user_preferences.crud import crud_user_preferences
@@ -26,7 +26,7 @@ from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
 from src.app.modules.users import crud_users
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # Constants for image upload
@@ -127,7 +127,7 @@ class PreferencesService:
             # No updates provided, just return current preferences
             return await self.get_preferences(db=db, user_id=user_id)
 
-        logger.debug(f"Updating preferences for user {user_id}: {update_dict}")
+        logger.debug("Updating preferences for user :", user_id=user_id, update_dict=update_dict)
 
         # Update preferences
         if "email_notifications_enabled" in update_dict:
@@ -204,8 +204,7 @@ class PreferencesService:
             region=settings.STORAGE_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=(
-                settings.AWS_SECRET_ACCESS_KEY.get_secret_value()
-                if settings.AWS_SECRET_ACCESS_KEY else None
+                settings.AWS_SECRET_ACCESS_KEY.get_secret_value() if settings.AWS_SECRET_ACCESS_KEY else None
             ),
             endpoint_url=settings.AWS_ENDPOINT_URL,
         )
@@ -218,7 +217,7 @@ class PreferencesService:
         result = await storage.upload(file.file, path, file.content_type)
 
         if not result.success:
-            logger.error(f"Failed to upload image for user {user_id}: {result.error}")
+            logger.error("Failed to upload image for user :", user_id=user_id, error=result.error)
             raise StorageError("upload", result.error or "Unknown error")
 
         # 4. Get URL
@@ -263,8 +262,7 @@ class PreferencesService:
             region=settings.STORAGE_REGION,
             aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
             aws_secret_access_key=(
-                settings.AWS_SECRET_ACCESS_KEY.get_secret_value()
-                if settings.AWS_SECRET_ACCESS_KEY else None
+                settings.AWS_SECRET_ACCESS_KEY.get_secret_value() if settings.AWS_SECRET_ACCESS_KEY else None
             ),
             endpoint_url=settings.AWS_ENDPOINT_URL,
         )

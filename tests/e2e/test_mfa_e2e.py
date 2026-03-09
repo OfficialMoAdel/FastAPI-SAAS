@@ -10,7 +10,6 @@ Tests the complete MFA flow from setup through verification, including:
 6. Regenerate backup codes
 """
 
-
 from collections.abc import AsyncGenerator
 from unittest.mock import patch
 
@@ -27,9 +26,11 @@ async def mock_redis() -> AsyncGenerator[FakeRedis, None]:
     async def fake_async_get_redis():
         yield fake_redis
 
-    with patch("src.app.modules.mfa.service.redis", new=fake_redis), \
-         patch("src.app.core.utils.cache.client", new=fake_redis), \
-         patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis):
+    with (
+        patch("src.app.modules.mfa.service.redis", new=fake_redis),
+        patch("src.app.core.utils.cache.client", new=fake_redis),
+        patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis),
+    ):
         yield fake_redis
 
 
@@ -38,7 +39,9 @@ from unittest.mock import AsyncMock
 
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
-    with patch("src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)):  # noqa: E501
+    with patch(
+        "src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)
+    ):  # noqa: E501
         yield
 
 
@@ -89,6 +92,7 @@ class TestMFASetupFlow:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -187,6 +191,7 @@ class TestMFALoginWithTOTP:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -234,7 +239,9 @@ class TestMFALoginWithTOTP:
 
         assert "access_token" in complete_data
         # refresh_token is set as a cookie by the complete-login endpoint
-        assert complete_response.cookies.get("refresh_token") is not None or "refresh_token" in complete_response.headers.get("set-cookie", "")  # noqa: E501
+        assert complete_response.cookies.get(
+            "refresh_token"
+        ) is not None or "refresh_token" in complete_response.headers.get("set-cookie", "")  # noqa: E501
 
         # Verify MFA last_used_at is updated
         new_headers = {"Authorization": f"Bearer {complete_data['access_token']}"}
@@ -285,6 +292,7 @@ class TestMFALoginWithBackupCode:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -400,6 +408,7 @@ class TestMFALockoutFlow:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -496,6 +505,7 @@ class TestMFADisableFlow:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 
@@ -581,6 +591,7 @@ class TestMFARegenerateBackupCodes:
         setup_token = setup_data["setup_token"]
 
         from urllib.parse import parse_qs, urlparse
+
         parsed_url = urlparse(setup_data["otpauth_url"])
         secret = parse_qs(parsed_url.query)["secret"][0]
 

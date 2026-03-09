@@ -50,6 +50,7 @@ class TestSSOSettingsServiceCreate:
             obj.id = 1
             obj.created_at = datetime.now(UTC)
             obj.updated_at = datetime.now(UTC)
+
         mock_db.refresh = mock_refresh
 
         mock_encryption = MagicMock()

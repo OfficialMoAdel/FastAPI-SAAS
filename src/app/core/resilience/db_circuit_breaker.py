@@ -2,18 +2,18 @@
 
 import asyncio
 import json
-import logging
 from collections.abc import Callable
 from typing import Any, Optional
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.logger import get_logger
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
 from src.app.core.utils import cache
 from src.app.core.utils.circuit_breaker import CircuitState
 
-logger = logging.getLogger("db.circuit_breaker")
+logger = get_logger(__name__)
 
 # Create database circuit breaker with lower thresholds (critical service)
 db_circuit = create_circuit_breaker(
@@ -58,15 +58,15 @@ async def execute_query_with_circuit_breaker(
             try:
                 cached = await cache.client.get(cache_key)
                 if cached:
-                    logger.info(f"Using cached data for key: {cache_key}")
+                    logger.info("Using cached data for key:", cache_key=cache_key)
                     # Assume simple JSON serialization for fallback data
                     return list(json.loads(cached))
             except Exception as cache_error:
-                logger.error(f"Cache retrieval failed: {cache_error}")
+                logger.error("Cache retrieval failed:", cache_error=cache_error)
 
         # Use static fallback if provided
         if fallback_data is not None:
-            logger.warning(f"Using fallback data for query: {query[:50]}...")
+            logger.warning("Using fallback data for query", query_snippet=query[:100])
             return fallback_data
 
         # No fallback available
@@ -104,7 +104,7 @@ async def execute_query_with_circuit_breaker(
                 # Using strings for non-serializable types for fallback purposes
                 await cache.client.setex(cache_key, cache_ttl, json.dumps(rows, default=str))
             except Exception as cache_error:
-                logger.warning(f"Failed to cache result: {cache_error}")
+                logger.warning("Failed to cache result:", cache_error=cache_error)
 
         return rows
 
@@ -117,7 +117,7 @@ async def execute_query_with_circuit_breaker(
             try:
                 cached = await cache.client.get(cache_key)
                 if cached:
-                    logger.info(f"Using cached data after failure for key: {cache_key}")
+                    logger.info("Using cached data after failure for key:", cache_key=cache_key)
                     return list(json.loads(cached))
             except Exception as cache_error:
                 logger.debug("Circuit breaker cache fallback failed: %s", cache_error)
@@ -151,7 +151,7 @@ async def execute_transaction_with_circuit_breaker(
         # Check circuit state
         current_state = db_circuit.state
         if current_state == CircuitState.OPEN:
-            logger.error(f"Database circuit OPEN, aborting transaction after {attempt} attempts")
+            logger.error("Database circuit OPEN, aborting transaction after attempts", attempt=attempt)
             break
 
         # Handle HALF_OPEN transition manually

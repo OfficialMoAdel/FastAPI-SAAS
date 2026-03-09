@@ -18,7 +18,6 @@ blacklist update. Relying on Redis + negative cache instead.
 """
 
 import asyncio
-import logging
 import time
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -26,6 +25,7 @@ from functools import lru_cache
 import xxhash
 from redis.asyncio import Redis
 
+from src.app.core.logger import get_logger
 from src.app.core.utils import cache
 
 
@@ -34,7 +34,7 @@ def _get_redis_client() -> Redis | None:
     return cache.client
 
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Redis key for the blacklist sorted set
 BLACKLIST_KEY = "token:blacklist"
@@ -168,7 +168,7 @@ async def _ensure_script_loaded() -> str | None:
             _release_script_lock(should_release)
         return _script_sha
     except Exception as e:
-        logger.warning(f"Failed to load Lua script: {e}")
+        logger.warning("Failed to load Lua script:", error=e)
         return None
 
 
@@ -254,7 +254,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
             raise  # Re-raise if not a NOSCRIPT error
 
     except Exception as e:
-        logger.warning(f"Redis blacklist check failed, falling back to DB: {e}")
+        logger.warning("Redis blacklist check failed, falling back to DB:", error=e)
         return None  # Fail open - let DB check handle it
 
 
@@ -292,7 +292,7 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
 
         return True
     except Exception as e:
-        logger.warning(f"Redis blacklist fallback check failed: {e}")
+        logger.warning("Redis blacklist fallback check failed:", error=e)
         return None
 
 
@@ -322,7 +322,7 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         await pipe.execute()
         return True
     except Exception as e:
-        logger.warning(f"Failed to add token to Redis blacklist: {e}")
+        logger.warning("Failed to add token to Redis blacklist:", error=e)
         return False
 
 
@@ -357,7 +357,7 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         added = results[0] if results else 0
         return added if isinstance(added, int) else len(tokens)
     except Exception as e:
-        logger.warning(f"Failed to bulk add tokens to Redis blacklist: {e}")
+        logger.warning("Failed to bulk add tokens to Redis blacklist:", error=e)
         return 0
 
 
@@ -377,7 +377,7 @@ async def remove_expired_tokens() -> int:
         removed = await redis_client.zremrangebyscore(BLACKLIST_KEY, "-inf", now)
         return removed if isinstance(removed, int) else 0
     except Exception as e:
-        logger.warning(f"Failed to cleanup expired tokens: {e}")
+        logger.warning("Failed to cleanup expired tokens:", error=e)
         return 0
 
 
@@ -410,7 +410,7 @@ async def warm_cache_from_db(db_tokens: list[tuple[str, datetime]]) -> int:
         return 0
 
     count = await add_tokens_to_blacklist(active_tokens)
-    logger.info(f"Warmed token blacklist cache with {count} tokens")
+    logger.info("Warmed token blacklist cache with tokens", count=count)
     return count
 
 
@@ -431,7 +431,7 @@ async def get_cache_stats() -> dict:
             "token_count": count,
         }
     except Exception as e:
-        logger.warning(f"Failed to get cache stats: {e}")
+        logger.warning("Failed to get cache stats:", error=e)
         return {"enabled": True, "error": str(e)}
 
 

@@ -4,7 +4,6 @@ This module defines the API endpoints for file operations.
 Endpoints require appropriate FILES_* permissions.
 """
 
-
 from __future__ import annotations
 
 from urllib.parse import quote
@@ -167,6 +166,7 @@ async def get_quota(
         dict: Quota usage, limit, and remaining bytes.
     """
     from src.app.modules.storage_settings.service import StorageSettingsService
+
     settings_service = StorageSettingsService(service.db)
     settings = await settings_service.get_settings_or_raise(tenant.id)
 

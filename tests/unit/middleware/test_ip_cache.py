@@ -97,7 +97,7 @@ class TestIsIpInTrustedNetworks:
     def test_different_ips_cached_separately(self) -> None:
         """Different IPs should have separate cache entries."""
         result1 = _is_ip_in_trusted_networks("10.0.0.1")  # trusted
-        result2 = _is_ip_in_trusted_networks("8.8.8.8")   # not trusted
+        result2 = _is_ip_in_trusted_networks("8.8.8.8")  # not trusted
 
         assert result1 is True
         assert result2 is False

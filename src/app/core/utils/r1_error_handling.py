@@ -17,7 +17,6 @@ Usage:
     )
 """
 
-
 from __future__ import annotations
 
 import asyncio
@@ -27,7 +26,9 @@ import time
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 
@@ -229,7 +230,13 @@ async def with_retry(
             if on_retry:
                 on_retry(e, attempt)
             else:
-                logger.debug(f"Attempt {attempt}/{max_attempts} failed: {e}, retrying in {delay:.2f}s")
+                logger.debug(
+                    "Attempt / failed: , retrying in s",
+                    attempt=attempt,
+                    max_attempts=max_attempts,
+                    error=e,
+                    delay=delay,
+                )
 
             await asyncio.sleep(delay)
             delay *= backoff_factor
@@ -307,7 +314,9 @@ def log_optimization_error(
                 )
                 raise
             except Exception as e:
-                logger.error(f"[R1-{optimization_name}] Unexpected error in {fn.__name__}: {e}")
+                logger.error(
+                    "[R1-] Unexpected error in :", optimization_name=optimization_name, __name__=fn.__name__, error=e
+                )
                 raise
 
         return wrapper
@@ -422,7 +431,12 @@ def safe_get(
         return default
 
     if expected_type is not None and not isinstance(value, expected_type):
-        logger.debug(f"Type mismatch for key '{key}': expected {expected_type.__name__}, got {type(value).__name__}")
+        logger.debug(
+            "Type mismatch for key '': expected , got",
+            key=key,
+            expected=expected_type.__name__,
+            got=type(value).__name__,
+        )
         return default
 
     return value  # type: ignore

@@ -53,13 +53,13 @@ class CRUDStripeSettingsClass(
         StripeSettingsRead,
     ]
 ):
-    async def get_by_account_id(
-        self, db: AsyncSession, stripe_account_id: str
-    ) -> StripeSettings | None:
+    async def get_by_account_id(self, db: AsyncSession, stripe_account_id: str) -> StripeSettings | None:
         from sqlalchemy import select
+
         stmt = select(self.model).where(self.model.stripe_account_id == stripe_account_id)
         result = await db.execute(stmt)
         return result.scalar_one_or_none()  # type: ignore[no-any-return]
+
 
 crud_stripe_settings = CRUDStripeSettingsClass(StripeSettings)
 

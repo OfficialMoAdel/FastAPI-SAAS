@@ -4,11 +4,11 @@ from typing import Optional
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.logger import logging
+from src.app.core.logger import get_logger
 from src.app.core.utils import cache
 from src.app.modules.rate_limits.schemas import sanitize_path
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Lua script for atomic rate limit check
 # Returns the current count after increment
@@ -79,7 +79,7 @@ class RateLimiter:
                 return True, current_count
 
         except Exception as e:
-            logger.exception(f"Error checking rate limit for key {key}: {e}")
+            logger.exception("Error checking rate limit for key :", key=key, error=e)
             # Use configurable fail-open/fail-closed behavior
             from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open

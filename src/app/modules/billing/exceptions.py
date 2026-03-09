@@ -5,8 +5,6 @@ Provides exception classes for billing and payment error scenarios.
 T079: HTTP 402 PaymentError response handling
 """
 
-
-
 from __future__ import annotations
 
 

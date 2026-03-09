@@ -66,7 +66,7 @@ class NotificationService:
                 if cached:
                     return tuple(json_loads(cached))
             except Exception as e:
-                logger.debug(f"Cache get failed: {e}")
+                logger.debug("Cache get failed:", error=e)
 
         # Check for tenant override
         query = select(EmailTemplateOverride).where(
@@ -104,7 +104,7 @@ class NotificationService:
             try:
                 await redis_client.set(cache_key, json_dumps(data, as_str=True), ex=3600)
             except Exception as e:
-                logger.debug(f"Cache set failed: {e}")
+                logger.debug("Cache set failed:", error=e)
 
         return data
 
@@ -218,6 +218,7 @@ class NotificationService:
                 "to_email": to_email,
                 "subject": subject,
                 "html_content": html_content,
+                "tenant_id": str(tenant_id),
             },
             priority=EventPriority.NORMAL,
         )
@@ -345,8 +346,8 @@ class NotificationService:
             )
             return False
 
-        # Check if this notification type is disabled
-        if notification_type in prefs.disabled_notification_types:
+        disabled_types = prefs.disabled_notification_types or []
+        if notification_type in disabled_types:
             logger.debug(
                 "notification_type_disabled",
                 user_id=user_id,
@@ -389,10 +390,7 @@ class NotificationService:
         return True
 
     async def list_template_overrides(
-        self,
-        tenant_id: UUID,
-        limit: int = 100,
-        offset: int = 0
+        self, tenant_id: UUID, limit: int = 100, offset: int = 0
     ) -> list[EmailTemplateOverride]:
         """List all email template overrides for a tenant"""
         query = (
@@ -405,11 +403,7 @@ class NotificationService:
         return list(result.scalars().all())
 
     async def create_template_override(
-        self,
-        tenant_id: UUID,
-        template_name: str,
-        subject_override: str | None,
-        content: str
+        self, tenant_id: UUID, template_name: str, subject_override: str | None, content: str
     ) -> EmailTemplateOverride:
         """Create or update an email template override"""
         query = select(EmailTemplateOverride).where(
@@ -449,11 +443,7 @@ class NotificationService:
 
         return override
 
-    async def delete_template_override(
-        self,
-        tenant_id: UUID,
-        template_name: str
-    ) -> bool:
+    async def delete_template_override(self, tenant_id: UUID, template_name: str) -> bool:
         """Delete an email template override returns True if deleted, False if not found"""
         query = select(EmailTemplateOverride).where(
             EmailTemplateOverride.tenant_id == tenant_id,
@@ -482,6 +472,7 @@ async def send_email_task(
     to_email: str,
     subject: str,
     html_content: str,
+    tenant_id: str | None = None,
 ) -> None:
     """ARQ worker task to send emails via SMTP.
 
@@ -492,14 +483,18 @@ async def send_email_task(
         subject: Email subject
         html_content: HTML body content
     """
-    from src.app.core.db.database import get_db_context
+    from src.app.core.db.database import async_session_maker
+    from src.app.core.db.rls import rls_context
 
-    async with get_db_context() as db:
+    async with async_session_maker() as db:
         try:
-            service = NotificationService(db)
+            # Reconstruct the tenant context for RLS checks if tenant is present
+            if tenant_id:
+                async with rls_context(db, tenant_id):
+                    service = NotificationService(db)
 
-            # Create SMTP message
-            msg = MIMEMultipart("alternative")
+                    # Create SMTP message
+                    msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = settings.EMAIL_FROM_ADDRESS
             msg["To"] = to_email
@@ -533,7 +528,11 @@ async def send_email_task(
             )
 
             # Mark as failed
-            await service.mark_failed(UUID(notification_id), str(e))
+            if tenant_id:
+                async with rls_context(db, tenant_id):
+                    await service.mark_failed(UUID(notification_id), str(e))
+            else:
+                await service.mark_failed(UUID(notification_id), str(e))
             raise  # Re-raise for ARQ retry
 
 
@@ -558,6 +557,7 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
     to_email = data.get("to_email")
     subject = data.get("subject")
     html_content = data.get("html_content")
+    tenant_id = data.get("tenant_id")
 
     if not all([notification_id, to_email, subject, html_content]):
         logger.warning(
@@ -578,6 +578,7 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
                 to_email,
                 subject,
                 html_content,
+                tenant_id,
             )
             logger.debug(
                 "email_task_enqueued",

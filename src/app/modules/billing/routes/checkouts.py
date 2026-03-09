@@ -4,7 +4,6 @@ Provides /api/v1/checkouts endpoints for frontend compatibility with old backend
 Delegates to billing module's CheckoutService and UserSubscriptionService.
 """
 
-import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
@@ -12,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.modules.billing.schemas import (
     CheckoutCreate,
     UserSubscriptionRead,
@@ -25,7 +25,7 @@ from src.app.modules.billing.service import (
 )
 
 router = APIRouter(prefix="/checkouts", tags=["checkouts"])
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @router.post("", response_model=CheckoutSessionSchema)

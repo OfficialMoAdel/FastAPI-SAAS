@@ -8,7 +8,6 @@ Tests that after migration:
 NOTE: These tests require PostgreSQL and are skipped when running with SQLite.
 """
 
-
 import pytest
 import pytest_asyncio
 from sqlalchemy import select, text
@@ -71,7 +70,7 @@ async def test_tenants(db_session: AsyncSession):
 
     # Cleanup: Delete test users first (FK constraint), then tenants
     await db_session.execute(
-        text("DELETE FROM \"user\" WHERE tenant_id IN (:t1, :t2)"),
+        text('DELETE FROM "user" WHERE tenant_id IN (:t1, :t2)'),
         {"t1": tenant1_id, "t2": tenant2_id},
     )
     await db_session.execute(
@@ -100,9 +99,7 @@ class TestPerTenantEmailUniqueness:
 
         assert index_count >= 1, "Composite unique index on (email, tenant_id) should exist"
 
-    async def test_same_email_allowed_in_different_tenants(
-        self, db_session: AsyncSession, test_tenants: dict
-    ) -> None:
+    async def test_same_email_allowed_in_different_tenants(self, db_session: AsyncSession, test_tenants: dict) -> None:
         """Test that the same email can be used in different tenants."""
         shared_email = "shared@example.com"
 
@@ -129,16 +126,12 @@ class TestPerTenantEmailUniqueness:
         await db_session.commit()
 
         # Verify both users exist
-        result = await db_session.execute(
-            select(User).where(User.email == shared_email)
-        )
+        result = await db_session.execute(select(User).where(User.email == shared_email))
         users = result.scalars().all()
 
         assert len(users) == 2, "Same email should be allowed in different tenants"
 
-    async def test_duplicate_email_rejected_in_same_tenant(
-        self, db_session: AsyncSession, test_tenants: dict
-    ) -> None:
+    async def test_duplicate_email_rejected_in_same_tenant(self, db_session: AsyncSession, test_tenants: dict) -> None:
         """Test that duplicate email in the same tenant is rejected."""
         duplicate_email = "duplicate@example.com"
 
@@ -167,9 +160,7 @@ class TestPerTenantEmailUniqueness:
         # Rollback for cleanup
         await db_session.rollback()
 
-    async def test_old_global_email_unique_constraint_removed(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_old_global_email_unique_constraint_removed(self, db_session: AsyncSession) -> None:
         """Test that the old global email unique constraint was removed."""
         result = await db_session.execute(
             text("""

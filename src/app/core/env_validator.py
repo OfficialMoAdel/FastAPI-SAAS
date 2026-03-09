@@ -1,13 +1,14 @@
 """Environment variable validation with severity levels."""
 
-import logging
 import os
 import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Optional
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class ValidationSeverity(Enum):
@@ -203,11 +204,11 @@ class EnvironmentValidator:
         has_errors = False
         for result in results:
             if result.severity == ValidationSeverity.ERROR:
-                logger.error(f"[ENV VALIDATION ERROR] {result.key}: {result.message}")
+                logger.error("[ENV VALIDATION ERROR] :", key=result.key, message=result.message)
                 has_errors = True
             elif result.severity == ValidationSeverity.WARNING:
-                logger.warning(f"[ENV VALIDATION WARNING] {result.key}: {result.message}")
+                logger.warning("[ENV VALIDATION WARNING] :", key=result.key, message=result.message)
             else:
-                logger.info(f"[ENV VALIDATION INFO] {result.key}: {result.message}")
+                logger.info("[ENV VALIDATION INFO] :", key=result.key, message=result.message)
 
         return not has_errors

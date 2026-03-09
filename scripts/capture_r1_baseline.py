@@ -38,15 +38,11 @@ async def benchmark_bloom_filter() -> dict:
     token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # noqa: E501
 
     # Benchmark single hash operation
-    single_hash_ns = (
-        timeit.timeit(lambda: bf._hash_values(token), number=10000) / 10000 * 1e9
-    )
+    single_hash_ns = timeit.timeit(lambda: bf._hash_values(token), number=10000) / 10000 * 1e9
 
     # Benchmark might_contain (common case)
     bf.add(token)
-    contain_check_ns = (
-        timeit.timeit(lambda: bf.might_contain(token), number=10000) / 10000 * 1e9
-    )
+    contain_check_ns = timeit.timeit(lambda: bf.might_contain(token), number=10000) / 10000 * 1e9
 
     return {
         "bloom_sha256_hash_ns": round(single_hash_ns, 2),
@@ -104,7 +100,6 @@ async def benchmark_session_eviction() -> dict:
 async def benchmark_jwt_pem_parsing() -> dict:
     """Benchmark JWT decode with PEM string parsing overhead."""
     try:
-
         # Sample RS256 token and public key (for testing only)
         # In production, this would be real keys
 
@@ -136,11 +131,7 @@ async def benchmark_bitmask_decode() -> dict:
         full_mask = (1 << perm_count) - 1
 
         # Benchmark decode operation
-        decode_us = (
-            timeit.timeit(lambda: PermissionBitmask.decode(full_mask), number=1000)
-            / 1000
-            * 1e6
-        )
+        decode_us = timeit.timeit(lambda: PermissionBitmask.decode(full_mask), number=1000) / 1000 * 1e6
 
         return {
             "bitmask_decode_full_us": round(decode_us, 2),
@@ -222,15 +213,9 @@ async def main():
     print(f"\nBaseline metrics saved to: {output_file}")
     print("\nSummary:")
     print(f"  - Bloom Filter hash: {baseline.get('bloom_sha256_hash_ns', 'N/A')} ns")
-    print(
-        f"  - Bloom might_contain: {baseline.get('bloom_might_contain_ns', 'N/A')} ns"
-    )
-    print(
-        f"  - Session eviction: {baseline.get('session_evict_at_limit_ms', 'N/A')} ms"
-    )
-    print(
-        f"  - Bitmask decode: {baseline.get('bitmask_decode_full_us', 'N/A')} us"
-    )
+    print(f"  - Bloom might_contain: {baseline.get('bloom_might_contain_ns', 'N/A')} ns")
+    print(f"  - Session eviction: {baseline.get('session_evict_at_limit_ms', 'N/A')} ms")
+    print(f"  - Bitmask decode: {baseline.get('bitmask_decode_full_us', 'N/A')} us")
 
 
 if __name__ == "__main__":

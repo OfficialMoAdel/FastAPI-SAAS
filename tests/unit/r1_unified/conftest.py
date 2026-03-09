@@ -1,4 +1,5 @@
 """Shared fixtures for R1-UNIFIED unit tests."""
+
 from collections.abc import AsyncGenerator
 from unittest.mock import AsyncMock, MagicMock
 

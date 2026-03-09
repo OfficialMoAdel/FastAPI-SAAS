@@ -10,15 +10,15 @@ Usage:
     decrypted = decrypt_value(encrypted, encryption_key)
 """
 
-
 from __future__ import annotations
 
-import logging
 import os
 
 from cryptography.fernet import Fernet, InvalidToken
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 def get_encryption_key() -> bytes:

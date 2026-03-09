@@ -193,6 +193,7 @@ def perf_metrics() -> PerformanceMetrics:
 def e2e_thresholds() -> dict:
     """Return E2E performance thresholds."""
     import sys
+
     thresholds = E2E_THRESHOLDS.copy()
 
     # Coverage tracing adds significant overhead. Relax thresholds by 3x.

@@ -51,12 +51,11 @@ class TestAIChatMessageCRUD:
 
         create_schema = ChatMessageCreate(**chat_message_data)
 
-        with patch.object(crud_chat_messages, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_chat_messages, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_message
 
             result = await crud_chat_messages.create(
-                db=mock_db_session,
-                object={**create_schema.model_dump(), "session_id": session_id}
+                db=mock_db_session, object={**create_schema.model_dump(), "session_id": session_id}
             )
 
             assert result.id == 1
@@ -83,12 +82,11 @@ class TestAIChatMessageCRUD:
 
         create_schema = ChatMessageCreate(**message_data)
 
-        with patch.object(crud_chat_messages, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_chat_messages, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_message
 
             result = await crud_chat_messages.create(
-                db=mock_db_session,
-                object={**create_schema.model_dump(), "session_id": session_id, "token_count": 25}
+                db=mock_db_session, object={**create_schema.model_dump(), "session_id": session_id, "token_count": 25}
             )
 
             assert result.id == 2
@@ -106,33 +104,24 @@ class TestAIChatMessageCRUD:
         mock_message.role = "user"
         mock_message.content = "Test content"
 
-        with patch.object(crud_chat_messages, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_chat_messages, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_message
 
-            result = await crud_chat_messages.get(
-                db=mock_db_session,
-                id=message_id
-            )
+            result = await crud_chat_messages.get(db=mock_db_session, id=message_id)
 
             assert result is not None
             assert result.id == message_id
-            mock_get.assert_called_once_with(
-                db=mock_db_session,
-                id=message_id
-            )
+            mock_get.assert_called_once_with(db=mock_db_session, id=message_id)
 
     @pytest.mark.asyncio
     async def test_get_message_not_found(self, mock_db_session):
         """Test retrieving a non-existent message returns None."""
         message_id = 999
 
-        with patch.object(crud_chat_messages, 'get', new_callable=AsyncMock) as mock_get:
+        with patch.object(crud_chat_messages, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = None
 
-            result = await crud_chat_messages.get(
-                db=mock_db_session,
-                id=message_id
-            )
+            result = await crud_chat_messages.get(db=mock_db_session, id=message_id)
 
             assert result is None
 
@@ -147,13 +136,10 @@ class TestAIChatMessageCRUD:
             MagicMock(spec=AIChatMessage, id=3, session_id=session_id, role="user", content="How are you?"),
         ]
 
-        with patch.object(crud_chat_messages, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_chat_messages, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = {"data": mock_messages, "total_count": 3}
 
-            result = await crud_chat_messages.get_multi(
-                db=mock_db_session,
-                session_id=session_id
-            )
+            result = await crud_chat_messages.get_multi(db=mock_db_session, session_id=session_id)
 
             assert result["total_count"] == 3
             assert len(result["data"]) == 3
@@ -169,15 +155,10 @@ class TestAIChatMessageCRUD:
             MagicMock(spec=AIChatMessage, id=4, role="assistant"),
         ]
 
-        with patch.object(crud_chat_messages, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_chat_messages, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = {"data": mock_messages, "total_count": 10}
 
-            result = await crud_chat_messages.get_multi(
-                db=mock_db_session,
-                session_id=session_id,
-                offset=2,
-                limit=2
-            )
+            result = await crud_chat_messages.get_multi(db=mock_db_session, session_id=session_id, offset=2, limit=2)
 
             assert len(result["data"]) == 2
             assert result["total_count"] == 10
@@ -213,7 +194,7 @@ class TestAIChatMessageCRUD:
         mock_message.content = "A longer response with more tokens."
         mock_message.token_count = token_count
 
-        with patch.object(crud_chat_messages, 'create', new_callable=AsyncMock) as mock_create:
+        with patch.object(crud_chat_messages, "create", new_callable=AsyncMock) as mock_create:
             mock_create.return_value = mock_message
 
             result = await crud_chat_messages.create(
@@ -222,8 +203,8 @@ class TestAIChatMessageCRUD:
                     "session_id": session_id,
                     "role": "assistant",
                     "content": "A longer response with more tokens.",
-                    "token_count": token_count
-                }
+                    "token_count": token_count,
+                },
             )
 
             assert result.token_count == token_count
@@ -243,21 +224,15 @@ class TestAIChatMessageCRUD:
             MagicMock(spec=AIChatMessage, id=3, session_id=session_id_2),
         ]
 
-        with patch.object(crud_chat_messages, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_chat_messages, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             # Get messages for session 1
             mock_get_multi.return_value = {"data": mock_messages_session_1, "total_count": 2}
-            result = await crud_chat_messages.get_multi(
-                db=mock_db_session,
-                session_id=session_id_1
-            )
+            result = await crud_chat_messages.get_multi(db=mock_db_session, session_id=session_id_1)
             assert len(result["data"]) == 2
 
             # Get messages for session 2
             mock_get_multi.return_value = {"data": mock_messages_session_2, "total_count": 1}
-            result = await crud_chat_messages.get_multi(
-                db=mock_db_session,
-                session_id=session_id_2
-            )
+            result = await crud_chat_messages.get_multi(db=mock_db_session, session_id=session_id_2)
             assert len(result["data"]) == 1
 
     @pytest.mark.asyncio
@@ -272,13 +247,10 @@ class TestAIChatMessageCRUD:
             MagicMock(spec=AIChatMessage, id=3, created_at=now),
         ]
 
-        with patch.object(crud_chat_messages, 'get_multi', new_callable=AsyncMock) as mock_get_multi:
+        with patch.object(crud_chat_messages, "get_multi", new_callable=AsyncMock) as mock_get_multi:
             mock_get_multi.return_value = {"data": mock_messages, "total_count": 3}
 
-            result = await crud_chat_messages.get_multi(
-                db=mock_db_session,
-                session_id=session_id
-            )
+            result = await crud_chat_messages.get_multi(db=mock_db_session, session_id=session_id)
 
             # Messages should be returned in order
             ids = [m.id for m in result["data"]]

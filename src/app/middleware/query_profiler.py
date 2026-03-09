@@ -247,4 +247,4 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
         # Detailed debug log for N+1 issues
         if n_plus_1_queries and getattr(settings, "QUERY_PROFILER_DETAILED_LOGS", False):
             for query, count in sorted(n_plus_1_queries, key=lambda x: -x[1])[:3]:
-                logger.warning(f"Potential N+1: executed {count} times | {query[:100]}...")
+                logger.warning("Potential N+1", count=count, query_snippet=query[:80])

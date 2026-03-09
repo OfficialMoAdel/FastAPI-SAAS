@@ -5,7 +5,6 @@ States: CLOSED (normal) → OPEN (failing) → HALF_OPEN (testing recovery)
 """
 
 import asyncio
-import logging
 import time
 from collections.abc import Callable, Coroutine
 from dataclasses import dataclass, field
@@ -13,7 +12,9 @@ from enum import Enum
 from functools import wraps
 from typing import Any, TypeVar
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 T = TypeVar("T")
 

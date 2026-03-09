@@ -26,7 +26,7 @@ def mock_event_bus():
 
     from src.app.core.events import EventBus
 
-    with patch.object(EventBus, 'is_ready', new_callable=PropertyMock) as mock_is_ready:
+    with patch.object(EventBus, "is_ready", new_callable=PropertyMock) as mock_is_ready:
         mock_is_ready.return_value = True
         yield mock_is_ready
 

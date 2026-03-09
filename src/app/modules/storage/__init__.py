@@ -23,7 +23,6 @@ Usage:
     result = await storage.upload(file, "uploads/file.txt", "text/plain")
 """
 
-
 from __future__ import annotations
 
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult

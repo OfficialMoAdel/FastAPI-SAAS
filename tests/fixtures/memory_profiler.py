@@ -51,6 +51,7 @@ class MemorySnapshot:
 @dataclass
 class MemoryContext:
     """Context object yielded by measure_memory."""
+
     snapshot: MemorySnapshot | None = None
 
 

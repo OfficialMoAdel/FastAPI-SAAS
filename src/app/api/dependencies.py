@@ -138,7 +138,7 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
     except HTTPException as http_exc:
         if http_exc.status_code != 401:
-            logger.error(f"Unexpected HTTPException in get_optional_user: {http_exc.detail}")
+            logger.error("Unexpected HTTPException in get_optional_user:", detail=http_exc.detail)
         return None
 
     except (jwt.ExpiredSignatureError, jwt.InvalidTokenError, jwt.DecodeError, jwt.InvalidSignatureError):
@@ -147,7 +147,7 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
     except Exception as exc:
         # Log unexpected errors but don't break the request for optional auth
-        logger.error(f"Unexpected error in get_optional_user: {exc}")
+        logger.error("Unexpected error in get_optional_user:", exc=exc)
         return None
 
 
@@ -213,7 +213,7 @@ async def rate_limiter_dependency(
                 )
                 limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
         else:
-            logger.warning(f"User {user_id} has no assigned tier. Applying default rate limit.")
+            logger.warning("User has no assigned tier. Applying default rate limit.", user_id=user_id)
             limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
     else:
         # Use a unique identifier per request when client info is unavailable

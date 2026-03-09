@@ -24,7 +24,6 @@ Decision:
 """
 
 
-
 import hashlib
 import hmac
 import json
@@ -59,8 +58,7 @@ class TestP04OrjsonIncompatibility:
 
         # CRITICAL: These are NOT equal!
         assert stdlib_bytes != orjson_bytes, (
-            "If this assertion fails, orjson behavior has changed and "
-            "migration should be reconsidered"
+            "If this assertion fails, orjson behavior has changed and migration should be reconsidered"
         )
 
         # Show the specific difference
@@ -79,20 +77,14 @@ class TestP04OrjsonIncompatibility:
 
         # Current production signature (stdlib)
         stdlib_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-        stdlib_signature = hmac.new(
-            secret.encode("utf-8"), stdlib_bytes, hashlib.sha256
-        ).hexdigest()
+        stdlib_signature = hmac.new(secret.encode("utf-8"), stdlib_bytes, hashlib.sha256).hexdigest()
 
         # Would-be signature with orjson
         orjson_bytes = orjson.dumps(payload, option=orjson.OPT_SORT_KEYS)
-        orjson_signature = hmac.new(
-            secret.encode("utf-8"), orjson_bytes, hashlib.sha256
-        ).hexdigest()
+        orjson_signature = hmac.new(secret.encode("utf-8"), orjson_bytes, hashlib.sha256).hexdigest()
 
         # CRITICAL: Signatures are DIFFERENT!
-        assert stdlib_signature != orjson_signature, (
-            "Signatures match - if this happens, orjson behavior has changed"
-        )
+        assert stdlib_signature != orjson_signature, "Signatures match - if this happens, orjson behavior has changed"
 
         # This means existing webhook consumers would fail verification
         # if we switched to orjson

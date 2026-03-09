@@ -121,6 +121,7 @@ class BaselineReport:
 # S3 UPLOAD METRICS
 # =============================================================================
 
+
 async def measure_s3_blocking_detection(report: BaselineReport) -> None:
     """Measure S3 upload blocking behavior and concurrent request handling.
 
@@ -192,22 +193,31 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
         blocking_detected = concurrent_delay > 50  # Expected 10ms, if >50ms = blocked
         blocking_duration_ms = concurrent_delay - 10 if blocking_detected else 0
 
-    report.add_metric("s3_upload", "blocking_detected", MetricResult(
-        name="blocking_detected",
-        value=blocking_detected,
-        unit="bool",
-        details={"concurrent_delay_ms": round(concurrent_delay, 2)},
-    ))
+    report.add_metric(
+        "s3_upload",
+        "blocking_detected",
+        MetricResult(
+            name="blocking_detected",
+            value=blocking_detected,
+            unit="bool",
+            details={"concurrent_delay_ms": round(concurrent_delay, 2)},
+        ),
+    )
 
-    report.add_metric("s3_upload", "blocking_duration_ms", MetricResult(
-        name="blocking_duration_ms",
-        value=round(blocking_duration_ms, 2),
-        unit="ms",
-    ))
+    report.add_metric(
+        "s3_upload",
+        "blocking_duration_ms",
+        MetricResult(
+            name="blocking_duration_ms",
+            value=round(blocking_duration_ms, 2),
+            unit="ms",
+        ),
+    )
 
     # Test 2: Count blocking methods in source
     try:
         from pathlib import Path
+
         s3_path = Path("src/app/modules/storage/s3_storage.py")
         if s3_path.exists():
             content = s3_path.read_text()
@@ -216,12 +226,16 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
                 if f"self.client.{method}" in content:
                     blocking_methods.append(method)
 
-            report.add_metric("s3_upload", "blocking_method_count", MetricResult(
-                name="blocking_method_count",
-                value=len(blocking_methods),
-                unit="methods",
-                details={"methods": blocking_methods},
-            ))
+            report.add_metric(
+                "s3_upload",
+                "blocking_method_count",
+                MetricResult(
+                    name="blocking_method_count",
+                    value=len(blocking_methods),
+                    unit="methods",
+                    details={"methods": blocking_methods},
+                ),
+            )
     except Exception as e:
         report.add_error(f"S3 source analysis failed: {e}")
 
@@ -229,6 +243,7 @@ async def measure_s3_blocking_detection(report: BaselineReport) -> None:
 # =============================================================================
 # FILE UPLOAD MEMORY METRICS
 # =============================================================================
+
 
 async def measure_file_upload_memory(report: BaselineReport) -> None:
     """Measure memory usage during file upload operations.
@@ -262,29 +277,36 @@ async def measure_file_upload_memory(report: BaselineReport) -> None:
         del content
         gc.collect()
 
-    report.add_metric("file_upload", "memory_scaling", MetricResult(
-        name="memory_scaling",
-        value="O(FileSize)",
-        unit="complexity",
-        details=memory_results,
-    ))
+    report.add_metric(
+        "file_upload",
+        "memory_scaling",
+        MetricResult(
+            name="memory_scaling",
+            value="O(FileSize)",
+            unit="complexity",
+            details=memory_results,
+        ),
+    )
 
     # Calculate memory per MB
     if "10mb" in memory_results and "1mb" in memory_results:
-        memory_per_mb = (
-            memory_results["10mb"]["peak_mb"] - memory_results["1mb"]["peak_mb"]
-        ) / 9
-        report.add_metric("file_upload", "memory_per_mb", MetricResult(
-            name="memory_per_mb",
-            value=round(memory_per_mb, 2),
-            unit="MB/MB",
-            details={"expected_after_fix": "~0 (streaming)"},
-        ))
+        memory_per_mb = (memory_results["10mb"]["peak_mb"] - memory_results["1mb"]["peak_mb"]) / 9
+        report.add_metric(
+            "file_upload",
+            "memory_per_mb",
+            MetricResult(
+                name="memory_per_mb",
+                value=round(memory_per_mb, 2),
+                unit="MB/MB",
+                details={"expected_after_fix": "~0 (streaming)"},
+            ),
+        )
 
 
 # =============================================================================
 # STRIPE WEBHOOK LATENCY METRICS
 # =============================================================================
+
 
 async def measure_stripe_webhook_latency(report: BaselineReport) -> None:
     """Measure Stripe SDK blocking call latency.
@@ -299,6 +321,7 @@ async def measure_stripe_webhook_latency(report: BaselineReport) -> None:
     # Analyze source for blocking patterns
     try:
         from pathlib import Path
+
         webhook_path = Path("src/app/modules/billing/webhook.py")
         if webhook_path.exists():
             content = webhook_path.read_text()
@@ -311,12 +334,16 @@ async def measure_stripe_webhook_latency(report: BaselineReport) -> None:
                 if "stripe.Invoice.retrieve" in line and "asyncio.to_thread" not in line:
                     blocking_calls.append({"line": i, "call": "Invoice.retrieve"})
 
-            report.add_metric("stripe_webhook", "blocking_calls_found", MetricResult(
-                name="blocking_calls_found",
-                value=len(blocking_calls),
-                unit="calls",
-                details={"locations": blocking_calls},
-            ))
+            report.add_metric(
+                "stripe_webhook",
+                "blocking_calls_found",
+                MetricResult(
+                    name="blocking_calls_found",
+                    value=len(blocking_calls),
+                    unit="calls",
+                    details={"locations": blocking_calls},
+                ),
+            )
     except Exception as e:
         report.add_error(f"Stripe source analysis failed: {e}")
 
@@ -324,23 +351,32 @@ async def measure_stripe_webhook_latency(report: BaselineReport) -> None:
     # In production, these calls typically take 200-500ms
     simulated_latencies = [250, 300, 280, 350, 290]  # ms
 
-    report.add_metric("stripe_webhook", "estimated_p50_ms", MetricResult(
-        name="estimated_p50_ms",
-        value=statistics.median(simulated_latencies),
-        unit="ms",
-        details={"note": "Simulated - actual measurement requires Stripe API"},
-    ))
+    report.add_metric(
+        "stripe_webhook",
+        "estimated_p50_ms",
+        MetricResult(
+            name="estimated_p50_ms",
+            value=statistics.median(simulated_latencies),
+            unit="ms",
+            details={"note": "Simulated - actual measurement requires Stripe API"},
+        ),
+    )
 
-    report.add_metric("stripe_webhook", "estimated_p95_ms", MetricResult(
-        name="estimated_p95_ms",
-        value=statistics.quantiles(simulated_latencies, n=20)[18],
-        unit="ms",
-    ))
+    report.add_metric(
+        "stripe_webhook",
+        "estimated_p95_ms",
+        MetricResult(
+            name="estimated_p95_ms",
+            value=statistics.quantiles(simulated_latencies, n=20)[18],
+            unit="ms",
+        ),
+    )
 
 
 # =============================================================================
 # WEBHOOK DELIVERY METRICS
 # =============================================================================
+
 
 async def measure_webhook_delivery_performance(report: BaselineReport) -> None:
     """Measure webhook delivery performance characteristics.
@@ -355,6 +391,7 @@ async def measure_webhook_delivery_performance(report: BaselineReport) -> None:
     # Analyze source for DB connection holding pattern
     try:
         from pathlib import Path
+
         service_path = Path("src/app/modules/webhooks/service.py")
         if service_path.exists():
             content = service_path.read_text()
@@ -373,46 +410,59 @@ async def measure_webhook_delivery_performance(report: BaselineReport) -> None:
                     has_http_before_commit = True
                     break
 
-            report.add_metric("webhook_delivery", "db_held_during_http", MetricResult(
-                name="db_held_during_http",
-                value=has_http_before_commit,
-                unit="bool",
-                details={
-                    "http_line": http_line,
-                    "commit_line": commit_line,
-                    "connection_hold_lines": commit_line - http_line if http_line and commit_line else 0,
-                },
-            ))
+            report.add_metric(
+                "webhook_delivery",
+                "db_held_during_http",
+                MetricResult(
+                    name="db_held_during_http",
+                    value=has_http_before_commit,
+                    unit="bool",
+                    details={
+                        "http_line": http_line,
+                        "commit_line": commit_line,
+                        "connection_hold_lines": commit_line - http_line if http_line and commit_line else 0,
+                    },
+                ),
+            )
 
             # Check for N+1 query pattern
             n_plus_1_detected = (
-                "await self.db.get(WebhookDelivery" in content and
-                "await self.db.get(WebhookEndpoint" in content and
-                "selectinload" not in content
+                "await self.db.get(WebhookDelivery" in content
+                and "await self.db.get(WebhookEndpoint" in content
+                and "selectinload" not in content
             )
 
-            report.add_metric("webhook_delivery", "n_plus_1_query", MetricResult(
-                name="n_plus_1_query",
-                value=n_plus_1_detected,
-                unit="bool",
-                details={"fix": "Use selectinload(WebhookDelivery.endpoint)"},
-            ))
+            report.add_metric(
+                "webhook_delivery",
+                "n_plus_1_query",
+                MetricResult(
+                    name="n_plus_1_query",
+                    value=n_plus_1_detected,
+                    unit="bool",
+                    details={"fix": "Use selectinload(WebhookDelivery.endpoint)"},
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Webhook source analysis failed: {e}")
 
     # Estimated concurrent capacity based on DB pool (default 10 connections)
-    report.add_metric("webhook_delivery", "estimated_concurrent_capacity", MetricResult(
-        name="estimated_concurrent_capacity",
-        value=10,
-        unit="webhooks",
-        details={"limited_by": "DB connection pool", "expected_after_fix": "100+"},
-    ))
+    report.add_metric(
+        "webhook_delivery",
+        "estimated_concurrent_capacity",
+        MetricResult(
+            name="estimated_concurrent_capacity",
+            value=10,
+            unit="webhooks",
+            details={"limited_by": "DB connection pool", "expected_after_fix": "100+"},
+        ),
+    )
 
 
 # =============================================================================
 # AUDIT LOG METRICS
 # =============================================================================
+
 
 async def measure_audit_log_iops(report: BaselineReport) -> None:
     """Measure audit log I/O operations per second.
@@ -426,6 +476,7 @@ async def measure_audit_log_iops(report: BaselineReport) -> None:
 
     try:
         from pathlib import Path
+
         service_path = Path("src/app/modules/audit_logs/service.py")
         if service_path.exists():
             content = service_path.read_text()
@@ -441,28 +492,40 @@ async def measure_audit_log_iops(report: BaselineReport) -> None:
                 if "async_session()" in line:
                     session_creates += 1
 
-            report.add_metric("audit_log", "commits_per_create", MetricResult(
-                name="commits_per_create",
-                value=commits_in_create,
-                unit="commits",
-                details={"expected_after_batching": "1 per batch (100 logs)"},
-            ))
+            report.add_metric(
+                "audit_log",
+                "commits_per_create",
+                MetricResult(
+                    name="commits_per_create",
+                    value=commits_in_create,
+                    unit="commits",
+                    details={"expected_after_batching": "1 per batch (100 logs)"},
+                ),
+            )
 
-            report.add_metric("audit_log", "sessions_per_event", MetricResult(
-                name="sessions_per_event",
-                value=session_creates,
-                unit="sessions",
-                details={"lines_found": session_creates},
-            ))
+            report.add_metric(
+                "audit_log",
+                "sessions_per_event",
+                MetricResult(
+                    name="sessions_per_event",
+                    value=session_creates,
+                    unit="sessions",
+                    details={"lines_found": session_creates},
+                ),
+            )
 
             # Estimate IOPS for 1000 logs
             iops_1000_logs = commits_in_create * 1000
-            report.add_metric("audit_log", "estimated_iops_1000_logs", MetricResult(
-                name="estimated_iops_1000_logs",
-                value=iops_1000_logs,
-                unit="operations",
-                details={"expected_after_batching": "~10 (batches of 100)"},
-            ))
+            report.add_metric(
+                "audit_log",
+                "estimated_iops_1000_logs",
+                MetricResult(
+                    name="estimated_iops_1000_logs",
+                    value=iops_1000_logs,
+                    unit="operations",
+                    details={"expected_after_batching": "~10 (batches of 100)"},
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Audit log source analysis failed: {e}")
@@ -471,6 +534,7 @@ async def measure_audit_log_iops(report: BaselineReport) -> None:
 # =============================================================================
 # CACHE PERFORMANCE METRICS
 # =============================================================================
+
 
 async def measure_cache_performance(report: BaselineReport) -> None:
     """Measure cache invalidation and serialization performance.
@@ -485,6 +549,7 @@ async def measure_cache_performance(report: BaselineReport) -> None:
     # Analyze cache.py for sequential deletes
     try:
         from pathlib import Path
+
         cache_path = Path("src/app/core/utils/cache.py")
         if cache_path.exists():
             content = cache_path.read_text()
@@ -493,24 +558,32 @@ async def measure_cache_performance(report: BaselineReport) -> None:
             sequential_deletes = content.count("await client.delete(")
             uses_pipeline = "pipeline(" in content
 
-            report.add_metric("cache", "sequential_delete_calls", MetricResult(
-                name="sequential_delete_calls",
-                value=sequential_deletes,
-                unit="calls",
-                details={"uses_pipeline": uses_pipeline},
-            ))
+            report.add_metric(
+                "cache",
+                "sequential_delete_calls",
+                MetricResult(
+                    name="sequential_delete_calls",
+                    value=sequential_deletes,
+                    unit="calls",
+                    details={"uses_pipeline": uses_pipeline},
+                ),
+            )
 
             # Estimate timing for 5 deletes (typical cache invalidation)
             # Each Redis roundtrip ~0.5ms local, ~2ms remote
             estimated_time_5_deletes = 5 * 0.5  # 2.5ms for sequential
             estimated_time_pipeline = 0.5  # 0.5ms for pipeline
 
-            report.add_metric("cache", "invalidation_time_5_keys_ms", MetricResult(
-                name="invalidation_time_5_keys_ms",
-                value=estimated_time_5_deletes,
-                unit="ms",
-                details={"expected_after_pipeline": estimated_time_pipeline},
-            ))
+            report.add_metric(
+                "cache",
+                "invalidation_time_5_keys_ms",
+                MetricResult(
+                    name="invalidation_time_5_keys_ms",
+                    value=estimated_time_5_deletes,
+                    unit="ms",
+                    details={"expected_after_pipeline": estimated_time_pipeline},
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Cache source analysis failed: {e}")
@@ -523,12 +596,16 @@ async def measure_cache_performance(report: BaselineReport) -> None:
 
             uses_as_str_true = "as_str=True" in content
 
-            report.add_metric("cache", "tenant_unnecessary_encode", MetricResult(
-                name="tenant_unnecessary_encode",
-                value=uses_as_str_true,
-                unit="bool",
-                details={"issue": "as_str=True causes bytes→str→bytes conversion"},
-            ))
+            report.add_metric(
+                "cache",
+                "tenant_unnecessary_encode",
+                MetricResult(
+                    name="tenant_unnecessary_encode",
+                    value=uses_as_str_true,
+                    unit="bool",
+                    details={"issue": "as_str=True causes bytes→str→bytes conversion"},
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Tenant source analysis failed: {e}")
@@ -537,6 +614,7 @@ async def measure_cache_performance(report: BaselineReport) -> None:
 # =============================================================================
 # SECURITY BASELINE METRICS
 # =============================================================================
+
 
 async def measure_security_baseline(report: BaselineReport) -> None:
     """Measure security-related baseline metrics.
@@ -550,6 +628,7 @@ async def measure_security_baseline(report: BaselineReport) -> None:
     # Analyze token blacklist for collision potential
     try:
         from pathlib import Path
+
         blacklist_path = Path("src/app/core/security/token_blacklist_cache.py")
         if blacklist_path.exists():
             content = blacklist_path.read_text()
@@ -558,16 +637,20 @@ async def measure_security_baseline(report: BaselineReport) -> None:
             uses_prefix_key = "token[:32]" in content
             uses_hash = "hashlib.sha256" in content or "xxhash" in content
 
-            report.add_metric("security", "token_prefix_collision_risk", MetricResult(
-                name="token_prefix_collision_risk",
-                value=uses_prefix_key and not uses_hash,
-                unit="bool",
-                details={
-                    "uses_prefix_32": uses_prefix_key,
-                    "uses_hash": uses_hash,
-                    "issue": "JWT headers often share first 20+ chars",
-                },
-            ))
+            report.add_metric(
+                "security",
+                "token_prefix_collision_risk",
+                MetricResult(
+                    name="token_prefix_collision_risk",
+                    value=uses_prefix_key and not uses_hash,
+                    unit="bool",
+                    details={
+                        "uses_prefix_32": uses_prefix_key,
+                        "uses_hash": uses_hash,
+                        "issue": "JWT headers often share first 20+ chars",
+                    },
+                ),
+            )
 
             # Demonstrate collision potential
             # JWTs with same header have identical first ~36 chars
@@ -578,16 +661,20 @@ async def measure_security_baseline(report: BaselineReport) -> None:
             prefix2 = jwt2[:32]
             collision = prefix1 == prefix2
 
-            report.add_metric("security", "collision_demo", MetricResult(
-                name="collision_demo",
-                value=collision,
-                unit="bool",
-                details={
-                    "jwt1_prefix": prefix1,
-                    "jwt2_prefix": prefix2,
-                    "note": "Different JWTs, same cache key!",
-                },
-            ))
+            report.add_metric(
+                "security",
+                "collision_demo",
+                MetricResult(
+                    name="collision_demo",
+                    value=collision,
+                    unit="bool",
+                    details={
+                        "jwt1_prefix": prefix1,
+                        "jwt2_prefix": prefix2,
+                        "note": "Different JWTs, same cache key!",
+                    },
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Token blacklist analysis failed: {e}")
@@ -601,16 +688,20 @@ async def measure_security_baseline(report: BaselineReport) -> None:
             has_periodic_sync = "periodic" in content.lower() or "schedule" in content.lower()
             has_arq_task = "@arq_task" in content or "arq" in content.lower()
 
-            report.add_metric("security", "bloom_filter_periodic_sync", MetricResult(
-                name="bloom_filter_periodic_sync",
-                value=has_periodic_sync or has_arq_task,
-                unit="bool",
-                details={
-                    "has_periodic": has_periodic_sync,
-                    "has_arq": has_arq_task,
-                    "issue": "Multi-instance deployments need periodic sync",
-                },
-            ))
+            report.add_metric(
+                "security",
+                "bloom_filter_periodic_sync",
+                MetricResult(
+                    name="bloom_filter_periodic_sync",
+                    value=has_periodic_sync or has_arq_task,
+                    unit="bool",
+                    details={
+                        "has_periodic": has_periodic_sync,
+                        "has_arq": has_arq_task,
+                        "issue": "Multi-instance deployments need periodic sync",
+                    },
+                ),
+            )
 
     except Exception as e:
         report.add_error(f"Bloom filter analysis failed: {e}")
@@ -619,6 +710,7 @@ async def measure_security_baseline(report: BaselineReport) -> None:
 # =============================================================================
 # MAIN EXECUTION
 # =============================================================================
+
 
 async def capture_all_baselines() -> BaselineReport:
     """Capture all baseline metrics."""
@@ -650,6 +742,7 @@ def main():
         # Change to project root for imports
         import sys
         from pathlib import Path
+
         project_root = Path(__file__).parent.parent.parent.parent
         sys.path.insert(0, str(project_root))
 
@@ -669,7 +762,7 @@ def main():
         print(f"Output: {filepath}")
         print("=" * 60)
 
-        return 0 if data['summary']['capture_complete'] else 1
+        return 0 if data["summary"]["capture_complete"] else 1
 
     except Exception as e:
         logger.exception(f"Baseline capture failed: {e}")

@@ -1,5 +1,5 @@
-import logging
 import os
+import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -13,9 +13,10 @@ from sqlalchemy.pool import NullPool
 from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context, rls_context
+from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class Base(DeclarativeBase, MappedAsDataclass):
@@ -45,7 +46,7 @@ _is_testing = (
     "pytest" in os.environ.get("_", "")
     or "PYTEST_CURRENT_TEST" in os.environ
     or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
-    or "pytest" in __import__("sys").modules
+    or "pytest" in sys.modules
 )
 
 if _is_testing:
@@ -68,7 +69,9 @@ else:
         # P1-1: Configure asyncpg statement cache for better performance
         # Default 100 statements, 1KB max - increase for complex workloads
         connect_args={
-            "statement_cache_size": 0,  # Disabled to prevent memory bloat with connection poolers
+            "statement_cache_size": getattr(
+                settings, "DB_STATEMENT_CACHE_SIZE", 100
+            ),  # Configurable statement cache size for pg_bouncer/asyncpg usage
             "max_cacheable_statement_size": 10240,  # 10KB max statement size
         },
     )
@@ -122,10 +125,7 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
         await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        logger.error(
-            f"Database transaction failed for tenant {tenant_context}, rolling back",
-            exc_info=exc
-        )
+        logger.error(f"Database transaction failed for tenant {tenant_context}, rolling back", exc_info=exc)
         raise
     finally:
         # Always close session to prevent connection pool exhaustion
@@ -161,10 +161,7 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        logger.error(
-            f"Database transaction failed for tenant {tenant_context}, rolling back",
-            exc_info=exc
-        )
+        logger.error(f"Database transaction failed for tenant {tenant_context}, rolling back", exc_info=exc)
         raise
     finally:
         # Always close session to prevent connection pool exhaustion

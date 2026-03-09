@@ -221,11 +221,29 @@ def parametrize_flags():
     combinations = [
         {
             "name": "all_enabled",
-            "flags": dict.fromkeys(["FEATURE_REMOVE_WASTED_CONNECTION", "FEATURE_STREAMING_UPLOADS", "FEATURE_CONTEXTVAR_OPTIMIZATION", "FEATURE_EAGER_LOADING", "FEATURE_AUDIT_FLUSH_LIMIT"], True),  # noqa: E501
+            "flags": dict.fromkeys(
+                [
+                    "FEATURE_REMOVE_WASTED_CONNECTION",
+                    "FEATURE_STREAMING_UPLOADS",
+                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
+                    "FEATURE_EAGER_LOADING",
+                    "FEATURE_AUDIT_FLUSH_LIMIT",
+                ],
+                True,
+            ),  # noqa: E501
         },
         {
             "name": "all_disabled",
-            "flags": dict.fromkeys(["FEATURE_REMOVE_WASTED_CONNECTION", "FEATURE_STREAMING_UPLOADS", "FEATURE_CONTEXTVAR_OPTIMIZATION", "FEATURE_EAGER_LOADING", "FEATURE_AUDIT_FLUSH_LIMIT"], False),  # noqa: E501
+            "flags": dict.fromkeys(
+                [
+                    "FEATURE_REMOVE_WASTED_CONNECTION",
+                    "FEATURE_STREAMING_UPLOADS",
+                    "FEATURE_CONTEXTVAR_OPTIMIZATION",
+                    "FEATURE_EAGER_LOADING",
+                    "FEATURE_AUDIT_FLUSH_LIMIT",
+                ],
+                False,
+            ),  # noqa: E501
         },
         {
             "name": "streaming_only",

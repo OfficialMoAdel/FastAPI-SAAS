@@ -24,11 +24,7 @@ async def tenant_alpha(db_session):
 async def user_alpha(db_session, tenant_alpha):
     pw = await get_password_hash("password")
     user = User(
-        email="alpha@test.com",
-        username="alpha",
-        hashed_password=pw,
-        tenant_id=tenant_alpha.id,
-        name="Alpha User"
+        email="alpha@test.com", username="alpha", hashed_password=pw, tenant_id=tenant_alpha.id, name="Alpha User"
     )
     db_session.add(user)
     await db_session.commit()
@@ -48,13 +44,7 @@ async def tenant_beta(db_session):
 @pytest.fixture
 async def user_beta(db_session, tenant_beta):
     pw = await get_password_hash("password")
-    user = User(
-        email="beta@test.com",
-        username="beta",
-        hashed_password=pw,
-        tenant_id=tenant_beta.id,
-        name="Beta User"
-    )
+    user = User(email="beta@test.com", username="beta", hashed_password=pw, tenant_id=tenant_beta.id, name="Beta User")
     db_session.add(user)
     await db_session.commit()
     await db_session.refresh(user)
@@ -68,8 +58,9 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     """
     # Mock Redis manually since integration tests might skip the global mock
     from unittest.mock import AsyncMock, MagicMock
+
     fake_redis = AsyncMock()
-    fake_redis.exists.return_value = False # Not blacklisted
+    fake_redis.exists.return_value = False  # Not blacklisted
     fake_redis.get.return_value = None
     fake_redis.setex = AsyncMock()
     fake_redis.set = AsyncMock()
@@ -83,10 +74,11 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     mock_session_factory.return_value.__aexit__.return_value = None
 
     # Patch the setting, Redis client, AND DB session factory
-    with patch.object(settings, "FEATURE_REMOVE_WASTED_CONNECTION", True), \
-         patch.object(cache, "client", fake_redis), \
-         patch("src.app.middleware.tenant.local_session", mock_session_factory):
-
+    with (
+        patch.object(settings, "FEATURE_REMOVE_WASTED_CONNECTION", True),
+        patch.object(cache, "client", fake_redis),
+        patch("src.app.middleware.tenant.local_session", mock_session_factory),
+    ):
         # Set User-Agent to avoid Bad Bot detection
         headers = {"User-Agent": "E2ETest/1.0"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:

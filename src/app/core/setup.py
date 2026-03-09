@@ -145,9 +145,9 @@ def lifespan_factory(
                 await warm_caches()
             except Exception as e:
                 # Log but don't fail startup - caches will be populated on-demand
-                import logging
+                from src.app.core.logger import get_logger
 
-                logging.getLogger(__name__).warning("Cache warming failed: %s", e)
+                get_logger(__name__).warning("Cache warming failed: %s", e)
 
             initialization_complete.set()
 

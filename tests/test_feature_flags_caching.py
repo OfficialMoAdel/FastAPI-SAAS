@@ -11,6 +11,7 @@ def mock_redis():
     with patch("src.app.modules.feature_flags.utils.redis_client", new_callable=AsyncMock) as m:
         yield m
 
+
 @pytest.mark.asyncio
 async def test_is_feature_enabled_cached(mock_redis):
     tenant_id = uuid4()
@@ -25,6 +26,7 @@ async def test_is_feature_enabled_cached(mock_redis):
     assert result is True
     mock_redis.get.assert_called_with(f"tenant:{tenant_id}:feature:test_flag")
     db.get.assert_not_called()
+
 
 @pytest.mark.asyncio
 async def test_is_feature_enabled_cache_miss(mock_redis):
@@ -43,6 +45,7 @@ async def test_is_feature_enabled_cache_miss(mock_redis):
     assert result is True
     # Verify cache set
     mock_redis.setex.assert_called_with(f"tenant:{tenant_id}:feature:test_flag", 300, "true")
+
 
 @pytest.mark.asyncio
 async def test_update_invalidates_cache(mock_redis):

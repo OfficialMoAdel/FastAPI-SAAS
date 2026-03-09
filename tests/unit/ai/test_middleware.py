@@ -26,9 +26,7 @@ class TestRateLimitDependency:
         return {"id": 1, "email": "test@example.com"}
 
     @pytest.mark.asyncio
-    async def test_rate_limit_allows_request_within_limit(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_allows_request_within_limit(self, mock_response, mock_current_user):
         """Test that requests within limit are allowed."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
@@ -46,9 +44,7 @@ class TestRateLimitDependency:
             assert mock_response.headers["X-RateLimit-Reset"] == "60"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_adds_headers_on_success(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_adds_headers_on_success(self, mock_response, mock_current_user):
         """Test that rate limit headers are added to response."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
@@ -67,9 +63,7 @@ class TestRateLimitDependency:
             assert mock_response.headers["X-RateLimit-Reset"] == "45"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_raises_429_when_exceeded(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_raises_429_when_exceeded(self, mock_response, mock_current_user):
         """Test that HTTP 429 is raised when rate limit is exceeded."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
         from src.app.modules.ai.rate_limiter import RateLimitError
@@ -88,9 +82,7 @@ class TestRateLimitDependency:
             assert exc_info.value.detail["retry_after"] == 30
 
     @pytest.mark.asyncio
-    async def test_rate_limit_429_includes_retry_after_header(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_429_includes_retry_after_header(self, mock_response, mock_current_user):
         """Test that 429 response includes Retry-After header."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
         from src.app.modules.ai.rate_limiter import RateLimitError
@@ -108,9 +100,7 @@ class TestRateLimitDependency:
             assert exc_info.value.headers["Retry-After"] == "45"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_429_includes_rate_limit_headers(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_429_includes_rate_limit_headers(self, mock_response, mock_current_user):
         """Test that 429 response includes all rate limit headers."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
         from src.app.modules.ai.rate_limiter import RateLimitError
@@ -130,9 +120,7 @@ class TestRateLimitDependency:
             assert headers["X-RateLimit-Reset"] == "60"
 
     @pytest.mark.asyncio
-    async def test_rate_limit_uses_correct_user_id(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_uses_correct_user_id(self, mock_response, mock_current_user):
         """Test that rate limit check uses the correct user ID."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 
@@ -147,9 +135,7 @@ class TestRateLimitDependency:
             mock_check.assert_called_once_with(mock_current_user["id"])
 
     @pytest.mark.asyncio
-    async def test_rate_limit_with_zero_remaining(
-        self, mock_response, mock_current_user
-    ):
+    async def test_rate_limit_with_zero_remaining(self, mock_response, mock_current_user):
         """Test response when at exact rate limit (0 remaining)."""
         from src.app.modules.ai.middleware import check_rate_limit_dependency
 

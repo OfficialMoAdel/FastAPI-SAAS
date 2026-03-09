@@ -375,13 +375,7 @@ class TestSanitizingProcessor:
     def test_respects_max_depth(self) -> None:
         """Test processor respects max_depth parameter."""
         processor = SanitizingProcessor(max_depth=2)
-        deep_event = {
-            "level1": {
-                "level2": {
-                    "level3": {"jwt": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"}
-                }
-            }
-        }
+        deep_event = {"level1": {"level2": {"level3": {"jwt": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"}}}}
         result = processor(None, "info", deep_event)
         # Should still sanitize within depth limit
         assert "[JWT_TOKEN]" in result["level1"]["level2"]["level3"]["jwt"]

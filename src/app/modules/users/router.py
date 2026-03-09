@@ -44,7 +44,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     "",
     response_model=UserRead,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))]
+    dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
 )
 async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> UserRead:
     """Create a new user."""
@@ -94,9 +94,13 @@ async def read_users_me(
 
     try:
         if user_id is not None:
-            return UserRead.model_validate(await service.get(int(user_id)))
+            user = await service.get(int(user_id))
+            if user:
+                return UserRead.model_validate(user)
         elif username:
-            return UserRead.model_validate(await service.get_by_username(username))
+            user = await service.get_by_username(username)
+            if user:
+                return UserRead.model_validate(user)
     except (ValueError, TypeError, KeyError):
         pass
     raise HTTPException(status_code=401, detail="Invalid user context")

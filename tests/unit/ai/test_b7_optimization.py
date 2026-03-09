@@ -38,9 +38,7 @@ class TestB7ParallelReads:
 
         # Mock the sub-services
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            return_value={"id": 1, "model": "gemma3"}
-        )
+        service._session_service.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3"})
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock(
@@ -48,15 +46,11 @@ class TestB7ParallelReads:
         )
 
         service._message_service = MagicMock()
-        service._message_service.get_session_messages = AsyncMock(
-            return_value={"data": [], "total": 0}
-        )
+        service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
         service.ollama = MagicMock()
-        service.ollama.chat = AsyncMock(
-            return_value={"message": "Hello!", "token_count": 10}
-        )
+        service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -96,9 +90,7 @@ class TestB7ParallelReads:
 
         # Mock session service to raise an exception
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            side_effect=ValueError("Session not found")
-        )
+        service._session_service.get_session = AsyncMock(side_effect=ValueError("Session not found"))
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock()
@@ -132,9 +124,7 @@ class TestB7UserMessageTiming:
 
         # Mock sub-services
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            return_value={"id": 1, "model": "gemma3"}
-        )
+        service._session_service.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3"})
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock(
@@ -142,9 +132,7 @@ class TestB7UserMessageTiming:
         )
 
         service._message_service = MagicMock()
-        service._message_service.get_session_messages = AsyncMock(
-            return_value={"data": [], "total": 0}
-        )
+        service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
 
         async def track_add_message(*args, **kwargs):
             call_order.append("add_user_message")
@@ -183,8 +171,7 @@ class TestB7UserMessageTiming:
         ollama_index = call_order.index("ollama_chat")
 
         assert user_msg_index < ollama_index, (
-            f"User message should be saved before Ollama call. "
-            f"Order was: {call_order}"
+            f"User message should be saved before Ollama call. Order was: {call_order}"
         )
 
         logger.info(f"Verified: Call order correct - {call_order}")
@@ -203,9 +190,7 @@ class TestB7BatchedWrites:
 
         # Mock sub-services
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            return_value={"id": 1, "model": "gemma3"}
-        )
+        service._session_service.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3"})
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock(
@@ -213,15 +198,11 @@ class TestB7BatchedWrites:
         )
 
         service._message_service = MagicMock()
-        service._message_service.get_session_messages = AsyncMock(
-            return_value={"data": [], "total": 0}
-        )
+        service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
         service.ollama = MagicMock()
-        service.ollama.chat = AsyncMock(
-            return_value={"message": "Hello!", "token_count": 10}
-        )
+        service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -242,8 +223,10 @@ class TestB7BatchedWrites:
                     # Track ChatMessageService calls in Phase 3
                     with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
                         mock_msg_instance = MagicMock()
+
                         async def track_assistant_msg(*args, **kwargs):
                             add_message_calls.append(("assistant", kwargs))
+
                         mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
                         MockMsgService.return_value = mock_msg_instance
                         await service.complete(session_id=1, user_id=1, request=request)
@@ -263,9 +246,7 @@ class TestB7BatchedWrites:
         service = ChatCompletionService(db=mock_db)
 
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            return_value={"id": 1, "model": "gemma3"}
-        )
+        service._session_service.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3"})
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock(
@@ -273,16 +254,12 @@ class TestB7BatchedWrites:
         )
 
         service._message_service = MagicMock()
-        service._message_service.get_session_messages = AsyncMock(
-            return_value={"data": [], "total": 0}
-        )
+        service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
         expected_token_count = 42
         service.ollama = MagicMock()
-        service.ollama.chat = AsyncMock(
-            return_value={"message": "Test response", "token_count": expected_token_count}
-        )
+        service.ollama.chat = AsyncMock(return_value={"message": "Test response", "token_count": expected_token_count})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -302,8 +279,10 @@ class TestB7BatchedWrites:
                     # Track ChatMessageService calls in Phase 3
                     with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
                         mock_msg_instance = MagicMock()
+
                         async def track_assistant_msg(*args, **kwargs):
                             assistant_message_kwargs.update(kwargs)
+
                         mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
                         MockMsgService.return_value = mock_msg_instance
                         await service.complete(session_id=1, user_id=1, request=request)
@@ -327,9 +306,7 @@ class TestB7ErrorHandling:
         service = ChatCompletionService(db=mock_db)
 
         service._session_service = MagicMock()
-        service._session_service.get_session = AsyncMock(
-            return_value={"id": 1, "model": "gemma3"}
-        )
+        service._session_service.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3"})
 
         service._settings_service = MagicMock()
         service._settings_service.get_or_create_settings = AsyncMock(
@@ -337,16 +314,12 @@ class TestB7ErrorHandling:
         )
 
         service._message_service = MagicMock()
-        service._message_service.get_session_messages = AsyncMock(
-            return_value={"data": [], "total": 0}
-        )
+        service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
         # Ollama fails
         service.ollama = MagicMock()
-        service.ollama.chat = AsyncMock(
-            side_effect=OllamaError("Model not found", "MODEL_NOT_FOUND")
-        )
+        service.ollama.chat = AsyncMock(side_effect=OllamaError("Model not found", "MODEL_NOT_FOUND"))
 
         request = ChatCompletionRequest(message="Hello")
 

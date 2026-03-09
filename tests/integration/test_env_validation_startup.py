@@ -67,9 +67,12 @@ class TestEnvValidationStartup:
             EnvironmentValidator.validate_and_log()
 
             # Verify logs
-            assert "[ENV VALIDATION ERROR] TEST_ERR: Error msg" in caplog.text
-            assert "[ENV VALIDATION WARNING] TEST_WARN: Warn msg" in caplog.text
-            assert "[ENV VALIDATION INFO] TEST_INFO: Info msg" in caplog.text
+            assert "TEST_ERR" in caplog.text
+            assert "Error msg" in caplog.text
+            assert "TEST_WARN" in caplog.text
+            assert "Warn msg" in caplog.text
+            assert "TEST_INFO" in caplog.text
+            assert "Info msg" in caplog.text
 
     async def test_real_validation_logic(self, monkeypatch):
         """Test actual validation logic against mocked environment variables."""

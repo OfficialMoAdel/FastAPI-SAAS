@@ -40,7 +40,7 @@ class WorkerSettings:
         flush_audit_logs_task,
         sync_bloom_filter_task,
         process_event_handler,  # FIXED: Was missing - handles async event bus events
-        send_email_task,        # FIXED: Was missing - handles email notifications
+        send_email_task,  # FIXED: Was missing - handles email notifications
     ]
     redis_settings = RedisSettings(host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT)
     on_startup = startup

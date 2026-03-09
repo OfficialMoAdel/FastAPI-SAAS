@@ -6,7 +6,6 @@ Tests cover:
 - Template override model
 """
 
-
 import pytest
 
 

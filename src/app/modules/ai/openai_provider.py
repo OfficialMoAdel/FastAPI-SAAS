@@ -4,11 +4,12 @@ Implements the AIProvider interface for OpenAI's GPT models.
 """
 
 import json
-import logging
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from httpx import AsyncClient, HTTPStatusError, RequestError
+
+from src.app.core.logger import get_logger
 
 try:
     from jsonschema import validate
@@ -23,7 +24,7 @@ from src.app.modules.ai.providers import (
     EmbeddingResponse,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class OpenAIProvider(AIProvider):
@@ -132,14 +133,14 @@ class OpenAIProvider(AIProvider):
             return self._parse_chat_response(data)
         except HTTPStatusError as e:
             error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error(f"OpenAI API error: {error_msg}")
+            logger.error("OpenAI API error:", error_msg=error_msg)
             raise AIProviderError(
                 f"OpenAI API error: {error_msg}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"OpenAI request error: {e}")
+            logger.error("OpenAI request error:", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -207,14 +208,14 @@ class OpenAIProvider(AIProvider):
                             continue
         except HTTPStatusError as e:
             error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error(f"OpenAI streaming error: {error_msg}")
+            logger.error("OpenAI streaming error:", error_msg=error_msg)
             raise AIProviderError(
                 f"OpenAI streaming error: {error_msg}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"OpenAI request error: {e}")
+            logger.error("OpenAI request error:", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -285,7 +286,7 @@ class OpenAIProvider(AIProvider):
 
             return parsed
         except json.JSONDecodeError as e:
-            logger.error(f"Failed to parse JSON from OpenAI response: {response.content}")
+            logger.error("Failed to parse JSON from OpenAI response:", content=response.content)
             raise AIProviderError(
                 f"Failed to parse JSON: {e}",
                 error_code="json_parse_error",
@@ -333,14 +334,14 @@ class OpenAIProvider(AIProvider):
             )
         except HTTPStatusError as e:
             error_msg = e.response.json().get("error", {}).get("message", str(e))
-            logger.error(f"OpenAI embedding error: {error_msg}")
+            logger.error("OpenAI embedding error:", error_msg=error_msg)
             raise AIProviderError(
                 f"OpenAI embedding error: {error_msg}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"OpenAI request error: {e}")
+            logger.error("OpenAI request error:", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -365,14 +366,14 @@ class OpenAIProvider(AIProvider):
             models = [m.get("id") for m in data.get("data", [])]
             return models
         except HTTPStatusError as e:
-            logger.error(f"OpenAI list models error: {e}")
+            logger.error("OpenAI list models error:", error=e)
             raise AIProviderError(
                 f"Failed to list models: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error(f"OpenAI request error: {e}")
+            logger.error("OpenAI request error:", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -390,7 +391,7 @@ class OpenAIProvider(AIProvider):
             response = await client.get("/models", timeout=5.0)
             return response.status_code == 200
         except Exception as e:
-            logger.error(f"OpenAI health check failed: {e}")
+            logger.error("OpenAI health check failed:", error=e)
             return False
 
     async def close(self) -> None:

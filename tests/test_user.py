@@ -47,7 +47,9 @@ def mock_user_service_override():
 class TestWriteUser:
     """Test user creation endpoint."""
 
-    def test_create_user_success(self, client, auth_headers, sample_user_data, sample_user_read, mock_user_service_override):  # noqa: E501
+    def test_create_user_success(
+        self, client, auth_headers, sample_user_data, sample_user_read, mock_user_service_override
+    ):  # noqa: E501
         """Test successful user creation."""
         # Use sample_user_data to build expected result so values match
         expected_result = {

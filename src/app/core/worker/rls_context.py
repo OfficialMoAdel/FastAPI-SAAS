@@ -5,7 +5,6 @@ Provides context managers for setting RLS context in background jobs:
 - job_bypass_context: Bypass RLS for system jobs with audit logging
 """
 
-import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from uuid import UUID
@@ -15,8 +14,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.db.rls import RLS_BYPASS_VAR, RLS_TENANT_VAR, RLS_USER_VAR
+from src.app.core.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 @asynccontextmanager

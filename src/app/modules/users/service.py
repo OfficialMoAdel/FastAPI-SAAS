@@ -1,6 +1,5 @@
 """User service layer - encapsulates all user business logic."""
 
-import logging
 from typing import Any
 from uuid import UUID
 
@@ -13,6 +12,7 @@ from sqlalchemy.orm import joinedload
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_current_tenant
@@ -24,7 +24,7 @@ from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Cache configuration
 USER_CACHE_TTL = 60  # seconds
@@ -187,7 +187,7 @@ class UserService(BaseService[User]):
             )
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning(f"Failed to invalidate cache for user {user_id_log}: {e}")
+            logger.warning("Failed to invalidate cache for user :", user_id_log=user_id_log, error=e)
 
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
@@ -200,7 +200,7 @@ class UserService(BaseService[User]):
                 result: dict[str, Any] = json_loads(cached)
                 return result
         except Exception as e:
-            logger.warning(f"Failed to get cached user: {e}")
+            logger.warning("Failed to get cached user:", error=e)
         return None
 
     async def create(self, user: UserCreate) -> User:  # type: ignore[override]
@@ -318,7 +318,7 @@ class UserService(BaseService[User]):
                 serialized = json_dumps(user_with_tier)
                 await cache.client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
             except Exception as e:
-                logger.warning(f"Failed to cache auth info for {identifier}: {e}")
+                logger.warning("Failed to cache auth info for :", identifier=identifier, error=e)
 
         # FIXED: Ensure return type is dict as expected by callers and hinted in signature.
         # This resolves the type mismatch between ORM objects and dictionaries.
@@ -365,7 +365,7 @@ class UserService(BaseService[User]):
         # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_username_cache_key(username))
         if cached:
-            logger.debug(f"Cache hit for username {username}")
+            logger.debug("Cache hit for username", username=username)
             return cached
 
         db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
@@ -391,7 +391,7 @@ class UserService(BaseService[User]):
         # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_cache_key(user_id))
         if cached:
-            logger.debug(f"Cache hit for user {user_id}")
+            logger.debug("Cache hit for user", user_id=user_id)
             return cached
 
         user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
@@ -415,7 +415,7 @@ class UserService(BaseService[User]):
         # Try cache first - return cached data directly to avoid DB query
         cached = await self._get_cached_user(_user_email_cache_key(email))
         if cached:
-            logger.debug(f"Cache hit for user email {email}")
+            logger.debug("Cache hit for user email", email=email)
             return cached
 
         user = await self.crud.get(db=self.db, email=email, is_deleted=False)
@@ -529,11 +529,7 @@ class UserService(BaseService[User]):
         # Increment token_version to globally invalidate all existing JWTs immediately
         # ORM object needs to be updated before soft delete
         token_version = db_user["token_version"] if isinstance(db_user, dict) else db_user.token_version
-        await self.crud.update(
-            db=self.db,
-            object={"token_version": token_version + 1},
-            username=username
-        )
+        await self.crud.update(db=self.db, object={"token_version": token_version + 1}, username=username)
 
         await self.crud.delete(db=self.db, username=username)
         await self._invalidate_user_cache(db_user)

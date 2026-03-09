@@ -3,7 +3,6 @@
 Provides Prometheus metrics export and health check endpoints for monitoring.
 """
 
-
 from __future__ import annotations
 
 import asyncio

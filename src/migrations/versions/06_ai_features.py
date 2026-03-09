@@ -96,7 +96,12 @@ def upgrade() -> None:
         sa.Column("completion_tokens", sa.Integer(), nullable=False),
         sa.Column("total_tokens", sa.Integer(), nullable=False),
         sa.Column("cost_usd", sa.Float(), nullable=False, server_default=sa.text("0.0")),
-        sa.Column("usage_metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'{}'::jsonb")),
+        sa.Column(
+            "usage_metadata",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_token_usage")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_ai_token_usage_tenant_id")),

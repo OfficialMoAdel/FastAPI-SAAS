@@ -11,6 +11,8 @@ from datetime import UTC, datetime
 from enum import Enum
 from typing import Any
 
+from src.app.core.logger import get_logger
+
 
 class SecurityEventType(str, Enum):
     """Enumeration of all security event types.
@@ -123,7 +125,7 @@ class SecurityEvent:
 
 
 # Security event logger instance
-security_logger = logging.getLogger("app.security")
+security_logger = get_logger(__name__)
 
 
 def log_security_event(

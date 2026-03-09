@@ -85,7 +85,12 @@ def upgrade() -> None:
         ),
         sa.Column("email_notifications_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
         sa.Column("push_notifications_enabled", sa.Boolean(), nullable=False, server_default=sa.text("true")),
-        sa.Column("disabled_notification_types", postgresql.JSONB(astext_type=sa.Text()), nullable=False, server_default=sa.text("'[]'")),
+        sa.Column(
+            "disabled_notification_types",
+            postgresql.JSONB(astext_type=sa.Text()),
+            nullable=False,
+            server_default=sa.text("'[]'"),
+        ),
         sa.Column("quiet_hours_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("quiet_hours_start", sa.Time(timezone=True), nullable=True),
         sa.Column("quiet_hours_end", sa.Time(timezone=True), nullable=True),
@@ -96,7 +101,9 @@ def upgrade() -> None:
     )
     op.create_index("idx_user_preferences_user_id", "user_preferences", ["user_id"], unique=True)
     op.create_index("idx_user_preferences_quiet_hours", "user_preferences", ["quiet_hours_enabled"])
-    op.execute("CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences jsonb_path_ops)")
+    op.execute(
+        "CREATE INDEX idx_user_preferences_preferences_gin ON user_preferences USING GIN (preferences jsonb_path_ops)"
+    )
 
     # ===== FEATURE_FLAGS =====
     op.create_table(

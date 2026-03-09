@@ -85,7 +85,7 @@ class WebhookService:
         await self.db.commit()
         await self.db.refresh(endpoint)
 
-        logger.info(f"Created webhook endpoint for tenant {tenant_id}: {event_type} -> {url}")
+        logger.info("Created webhook endpoint for tenant : ->", tenant_id=tenant_id, event_type=event_type, url=url)
         return endpoint
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
@@ -177,7 +177,9 @@ class WebhookService:
                         error_type=type(enqueue_result).__name__,
                     )
 
-        logger.info(f"Triggered {len(deliveries)} webhooks for event {event_type} in tenant {tenant_id}")
+        logger.info(
+            "Triggered webhooks for event in tenant", val=len(deliveries), event_type=event_type, tenant_id=tenant_id
+        )
         return deliveries
 
     async def trigger_endpoint(
@@ -220,7 +222,7 @@ class WebhookService:
 
         await self._enqueue_delivery(delivery.id)
 
-        logger.info(f"Triggered webhook delivery {delivery.id} for endpoint {endpoint.id}")
+        logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
         return delivery
 
     def _generate_signature(self, payload: dict[str, Any], secret: str) -> str:
@@ -264,9 +266,9 @@ class WebhookService:
                     delivery_id=str(delivery_id),
                     result_type=type(enqueue_result).__name__,
                 )
-            logger.debug(f"Enqueued delivery task for {delivery_id}")
+            logger.debug("Enqueued delivery task for", delivery_id=delivery_id)
         else:
-            logger.warning(f"Redis queue pool not initialized. Cannot enqueue delivery {delivery_id}")
+            logger.warning("Redis queue pool not initialized. Cannot enqueue delivery", delivery_id=delivery_id)
 
     async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:
         """Deliver a webhook (called by background task).
@@ -383,7 +385,11 @@ class WebhookService:
                 await webhook_circuit.record_success()
                 delivery.status = WebhookDeliveryStatus.DELIVERED
                 # Note: delivered_at tracked via updated_at timestamp
-                logger.info(f"Webhook delivered successfully: {delivery_id} (attempt {delivery.attempt_count})")
+                logger.info(
+                    "Webhook delivered successfully: (attempt )",
+                    delivery_id=delivery_id,
+                    attempt_count=delivery.attempt_count,
+                )
             else:
                 # HTTP error - record failure and retry if attempts remain
                 await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
@@ -398,7 +404,7 @@ class WebhookService:
 
         elif http_error is not None:
             # Network/timeout error - record failure and retry
-            logger.error(f"Webhook delivery failed: {delivery_id} - {http_error!s}")
+            logger.error("Webhook delivery failed", delivery_id=delivery_id, http_error=http_error)
             await webhook_circuit.record_failure(http_error)
             delivery.attempt_count += 1
             delivery.response_body = str(http_error)[:1000]
@@ -427,7 +433,11 @@ class WebhookService:
         else:
             # Max retries exhausted
             delivery.status = WebhookDeliveryStatus.FAILED
-            logger.error(f"Webhook delivery failed permanently after {delivery.attempt_count} attempts: {delivery.id}")
+            logger.error(
+                "Webhook delivery failed permanently after attempts:",
+                attempt_count=delivery.attempt_count,
+                id=delivery.id,
+            )
 
     async def verify_signature(self, payload: dict[str, Any], signature: str, secret: str) -> bool:
         """Verify webhook signature.

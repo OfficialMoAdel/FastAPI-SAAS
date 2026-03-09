@@ -46,9 +46,7 @@ class TestGetOptionalUserWithValidToken:
     """Tests for get_optional_user with valid authentication token."""
 
     @pytest.mark.asyncio
-    async def test_returns_user_dict_with_valid_token(
-        self, mock_request, mock_db, mock_user_dict
-    ):
+    async def test_returns_user_dict_with_valid_token(self, mock_request, mock_db, mock_user_dict):
         """Test that get_optional_user returns user dict when token is valid."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer valid_token_123"}
@@ -139,9 +137,7 @@ class TestGetOptionalUserRateLimitIntegration:
     """Tests for rate limit integration with get_optional_user."""
 
     @pytest.mark.asyncio
-    async def test_premium_user_identified_for_rate_limiting(
-        self, mock_request, mock_db, mock_user_dict
-    ):
+    async def test_premium_user_identified_for_rate_limiting(self, mock_request, mock_db, mock_user_dict):
         """Test that premium users are correctly identified for rate limit tier."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer premium_user_token"}

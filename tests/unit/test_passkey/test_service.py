@@ -520,7 +520,9 @@ class TestPasskeyServiceAuthentication:
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
                                     result = await service.verify_authentication(
-                                        db=mock_db, redis=mock_redis, credential=mock_cred_payload,
+                                        db=mock_db,
+                                        redis=mock_redis,
+                                        credential=mock_cred_payload,
                                         challenge_id="test-challenge-id",
                                     )
 
@@ -550,7 +552,9 @@ class TestPasskeyServiceAuthentication:
                     mock_verify.return_value = MagicMock(new_sign_count=10)
 
                     with pytest.raises(BadRequestException) as exc:
-                        await service.verify_authentication(db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
+                        await service.verify_authentication(
+                            db=mock_db, redis=mock_redis, credential={"id": "x"}, challenge_id="test-challenge-id"
+                        )  # noqa: E501
 
                     assert "replay" in str(exc.value.detail).lower()
 
@@ -566,7 +570,9 @@ class TestPasskeyServiceAuthentication:
             mock_get_challenge.return_value = None
 
             with pytest.raises(BadRequestException) as exc:
-                await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
+                await service.verify_authentication(
+                    db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
+                )  # noqa: E501
 
             assert "challenge" in str(exc.value.detail).lower()
 
@@ -585,6 +591,8 @@ class TestPasskeyServiceAuthentication:
                 mock_find.return_value = None
 
                 with pytest.raises(BadRequestException) as exc:
-                    await service.verify_authentication(db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id")  # noqa: E501
+                    await service.verify_authentication(
+                        db=AsyncMock(), redis=AsyncMock(), credential={"id": "x"}, challenge_id="test-challenge-id"
+                    )  # noqa: E501
 
                 assert "credential not found" in str(exc.value.detail).lower()

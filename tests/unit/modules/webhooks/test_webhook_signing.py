@@ -384,7 +384,7 @@ class TestWebhookModelSigningSecret:
             secret="encrypted_secret_value",
         )
 
-        assert hasattr(endpoint, 'signing_secret')
+        assert hasattr(endpoint, "signing_secret")
 
     def test_signing_secret_defaults_to_none(self) -> None:
         """Test that signing_secret defaults to None when not auto-generated."""
@@ -421,11 +421,11 @@ class TestWebhookModelSigningSecret:
         from src.app.modules.webhooks.schemas import WebhookEndpointRead
 
         schema_fields = WebhookEndpointRead.model_fields.keys()
-        assert 'signing_secret' not in schema_fields
+        assert "signing_secret" not in schema_fields
 
     def test_signing_secret_included_in_admin_read(self) -> None:
         """Test that signing_secret is included in admin read schema."""
         from src.app.modules.webhooks.schemas import WebhookEndpointAdminRead
 
         schema_fields = WebhookEndpointAdminRead.model_fields.keys()
-        assert 'signing_secret' in schema_fields
+        assert "signing_secret" in schema_fields

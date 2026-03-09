@@ -52,9 +52,7 @@ class TestSessionListPagination:
     @pytest.mark.asyncio
     async def test_list_sessions_empty(self, mock_db_session, mock_user):
         """Test listing sessions when none exist."""
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": [], "total_count": 0}
 
             result = await crud_chat_sessions.get_multi(
@@ -87,9 +85,7 @@ class TestSessionListPagination:
             ),
         ]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": mock_sessions, "total_count": 2}
 
             result = await crud_chat_sessions.get_multi(
@@ -103,14 +99,9 @@ class TestSessionListPagination:
     @pytest.mark.asyncio
     async def test_list_sessions_pagination_first_page(self, mock_db_session, mock_user):
         """Test listing sessions with pagination - first page."""
-        mock_sessions = [
-            MagicMock(spec=AIChatSession, id=i, title=f"Session {i}")
-            for i in range(1, 11)
-        ]
+        mock_sessions = [MagicMock(spec=AIChatSession, id=i, title=f"Session {i}") for i in range(1, 11)]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": mock_sessions, "total_count": 25}
 
             result = await crud_chat_sessions.get_multi(
@@ -125,18 +116,11 @@ class TestSessionListPagination:
             mock_get.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_list_sessions_pagination_second_page(
-        self, mock_db_session, mock_user
-    ):
+    async def test_list_sessions_pagination_second_page(self, mock_db_session, mock_user):
         """Test listing sessions with pagination - second page."""
-        mock_sessions = [
-            MagicMock(spec=AIChatSession, id=i, title=f"Session {i}")
-            for i in range(11, 21)
-        ]
+        mock_sessions = [MagicMock(spec=AIChatSession, id=i, title=f"Session {i}") for i in range(11, 21)]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": mock_sessions, "total_count": 25}
 
             result = await crud_chat_sessions.get_multi(
@@ -152,14 +136,9 @@ class TestSessionListPagination:
     @pytest.mark.asyncio
     async def test_list_sessions_pagination_last_page(self, mock_db_session, mock_user):
         """Test listing sessions with pagination - last page with fewer items."""
-        mock_sessions = [
-            MagicMock(spec=AIChatSession, id=i, title=f"Session {i}")
-            for i in range(21, 26)
-        ]
+        mock_sessions = [MagicMock(spec=AIChatSession, id=i, title=f"Session {i}") for i in range(21, 26)]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": mock_sessions, "total_count": 25}
 
             result = await crud_chat_sessions.get_multi(
@@ -173,9 +152,7 @@ class TestSessionListPagination:
             assert result["total_count"] == 25
 
     @pytest.mark.asyncio
-    async def test_list_sessions_ordered_by_created_at(
-        self, mock_db_session, mock_user
-    ):
+    async def test_list_sessions_ordered_by_created_at(self, mock_db_session, mock_user):
         """Test sessions are returned ordered by created_at descending."""
         now = datetime.now(UTC)
         mock_sessions = [
@@ -193,9 +170,7 @@ class TestSessionListPagination:
             ),
         ]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = {"data": mock_sessions, "total_count": 2}
 
             result = await crud_chat_sessions.get_multi(
@@ -212,29 +187,19 @@ class TestSessionListPagination:
         user_1_id = 1
         user_2_id = 2
 
-        user_1_sessions = [
-            MagicMock(spec=AIChatSession, id=1, user_id=user_1_id, title="User 1 Session")
-        ]
-        user_2_sessions = [
-            MagicMock(spec=AIChatSession, id=2, user_id=user_2_id, title="User 2 Session")
-        ]
+        user_1_sessions = [MagicMock(spec=AIChatSession, id=1, user_id=user_1_id, title="User 1 Session")]
+        user_2_sessions = [MagicMock(spec=AIChatSession, id=2, user_id=user_2_id, title="User 2 Session")]
 
-        with patch.object(
-            crud_chat_sessions, "get_multi", new_callable=AsyncMock
-        ) as mock_get:
+        with patch.object(crud_chat_sessions, "get_multi", new_callable=AsyncMock) as mock_get:
             # User 1's sessions
             mock_get.return_value = {"data": user_1_sessions, "total_count": 1}
-            result = await crud_chat_sessions.get_multi(
-                db=mock_db_session, user_id=user_1_id
-            )
+            result = await crud_chat_sessions.get_multi(db=mock_db_session, user_id=user_1_id)
             assert len(result["data"]) == 1
             assert result["data"][0].user_id == user_1_id
 
             # User 2's sessions
             mock_get.return_value = {"data": user_2_sessions, "total_count": 1}
-            result = await crud_chat_sessions.get_multi(
-                db=mock_db_session, user_id=user_2_id
-            )
+            result = await crud_chat_sessions.get_multi(db=mock_db_session, user_id=user_2_id)
             assert len(result["data"]) == 1
             assert result["data"][0].user_id == user_2_id
 
@@ -271,9 +236,7 @@ class TestSessionServiceListPagination:
                 assert len(result["data"]) == 2
 
     @pytest.mark.asyncio
-    async def test_get_user_sessions_with_pagination(
-        self, mock_db_session, mock_user, mock_tenant
-    ):
+    async def test_get_user_sessions_with_pagination(self, mock_db_session, mock_user, mock_tenant):
         """Test getting user sessions with pagination parameters."""
         mock_sessions = {
             "data": [{"id": 1, "title": "Session 1"}],
@@ -292,9 +255,7 @@ class TestSessionServiceListPagination:
                 from src.app.modules.ai.service import ChatSessionService
 
                 service = ChatSessionService(mock_db_session)
-                result = await service.get_user_sessions(
-                    mock_user["id"], page=2, limit=10
-                )
+                result = await service.get_user_sessions(mock_user["id"], page=2, limit=10)
 
                 assert result["total_count"] == 50
                 mock_get.assert_called_once()

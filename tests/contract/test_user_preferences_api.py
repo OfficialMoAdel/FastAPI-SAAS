@@ -35,17 +35,14 @@ class TestUserPreferencesAPIContract:
         try:
             # GET without auth, but WITH tenant header
             # TenantMiddleware runs before auth, so we need satisfied tenant check to reach auth check
-            response = client.get(
-                "/api/v1/user/me/preferences",
-                headers={"X-Tenant-ID": "test-tenant-integration"}
-            )
+            response = client.get("/api/v1/user/me/preferences", headers={"X-Tenant-ID": "test-tenant-integration"})
             assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
 
             # PATCH without auth
             response = client.patch(
                 "/api/v1/user/me/preferences",
                 json={"theme": "dark"},
-                headers={"X-Tenant-ID": "test-tenant-integration"}
+                headers={"X-Tenant-ID": "test-tenant-integration"},
             )
             assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
         finally:

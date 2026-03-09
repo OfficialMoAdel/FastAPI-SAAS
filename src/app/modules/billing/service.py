@@ -5,7 +5,6 @@ products, pricing, and billing records.
 """
 
 import asyncio
-import logging
 from datetime import UTC, datetime
 from typing import Any
 
@@ -16,12 +15,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
+from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 from src.app.core.config import settings
 from src.app.modules.billing.crud import (
@@ -455,7 +455,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
-        logger.info(f"Creating subscription for user {user_id} in tenant {tenant.id}")
+        logger.info("Creating subscription for user in tenant", user_id=user_id, id=tenant.id)
         sub_data = data.model_dump()
         sub_data["tenant_id"] = tenant.id
         sub_data["user_id"] = user_id
@@ -463,7 +463,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         result = await crud_user_subscriptions.create(
             db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead
         )
-        logger.info(f"Subscription created: {result.get('id') if result else None}")
+        logger.info("Subscription created:", val=result.get("id") if result else None)
         return result
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
@@ -509,7 +509,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             ModelNotFoundError: If subscription not found
             HTTPException: If Stripe API call fails
         """
-        logger.info(f"Cancelling subscription {subscription_id}")
+        logger.info("Cancelling subscription", subscription_id=subscription_id)
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
@@ -527,9 +527,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                         api_key=api_key,
                         cancel_at_period_end=True,
                     )
-                    logger.info(f"Stripe subscription {stripe_subscription_id} marked for cancellation")
+                    logger.info(
+                        "Stripe subscription marked for cancellation", stripe_subscription_id=stripe_subscription_id
+                    )
                 except stripe.error.StripeError as e:
-                    logger.error(f"Failed to cancel Stripe subscription: {e}")
+                    logger.error("Failed to cancel Stripe subscription:", error=e)
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to cancel subscription in Stripe: {str(e)}",
@@ -629,9 +631,7 @@ class CheckoutService:
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
                 )
         except AttributeError:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe configuration error"
-            )
+            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe configuration error")
 
         # Get settings to find Customer ID
         settings_service = StripeSettingsService(self.db)
@@ -723,7 +723,7 @@ class CheckoutService:
             if not (is_relative or is_allowed_origin):
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid return_url form: Must be relative or match allowed origins."
+                    detail="Invalid return_url form: Must be relative or match allowed origins.",
                 )
 
             # Stripe requires absolute URLs
@@ -731,7 +731,7 @@ class CheckoutService:
                 if not frontend_url:
                     raise HTTPException(
                         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Server misconfiguration: Need FRONTEND_URL to resolve relative return_url."
+                        detail="Server misconfiguration: Need FRONTEND_URL to resolve relative return_url.",
                     )
                 return_url = f"{frontend_url}{return_url}"
 

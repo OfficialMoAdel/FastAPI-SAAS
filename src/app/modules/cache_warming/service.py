@@ -7,20 +7,20 @@ Provides safe execution wrapper for cache warming operations with:
 """
 
 import asyncio
-import logging
 from collections.abc import Callable
 from datetime import timedelta
 from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache_warming import (
     CacheWarmingResult,
     warm_tenant_cache,
     warm_tier_cache,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 CACHE_WARMING_ENABLED = True
 CACHE_WARMING_DELAY = timedelta(seconds=2)
@@ -53,10 +53,10 @@ async def warm_cache_safely(
         cached_count: int = await asyncio.wait_for(warmer_func(session), timeout=timeout)
         return True, cached_count, None
     except TimeoutError as e:
-        logger.error(f"Cache warming timeout for {warmer_name}: {e}")
+        logger.error("Cache warming timeout for :", warmer_name=warmer_name, error=e)
         return False, None, e
     except Exception as e:
-        logger.error(f"Cache warming failed for {warmer_name}: {e}")
+        logger.error("Cache warming failed for :", warmer_name=warmer_name, error=e)
         return False, None, e
 
 
@@ -140,7 +140,7 @@ async def warm_specific_cache(
     warmer_map = dict(DEFAULT_WARMERS)
 
     if cache_type not in warmer_map:
-        logger.error(f"Unknown cache type: {cache_type}")
+        logger.error("Unknown cache type:", cache_type=cache_type)
         return CacheWarmingResult(errors=[f"Unknown cache type: {cache_type}"])
 
     warmer = warmer_map[cache_type]

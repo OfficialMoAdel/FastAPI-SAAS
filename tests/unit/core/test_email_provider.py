@@ -15,8 +15,9 @@ def smtp_provider():
         password=SecretStr("pass"),
         use_tls=True,
         from_email="noreply@example.com",
-        from_name="Test App"
+        from_name="Test App",
     )
+
 
 @pytest.fixture
 def email_message():
@@ -26,20 +27,16 @@ def email_message():
         html_content="<p>Hello World</p>",
         text_content="Hello World",
         reply_to="support@example.com",
-        attachments=[
-            EmailAttachment(
-                filename="test.txt",
-                content=b"hello",
-                content_type="text/plain"
-            )
-        ]
+        attachments=[EmailAttachment(filename="test.txt", content=b"hello", content_type="text/plain")],
     )
+
 
 @pytest.mark.asyncio
 async def test_send_email_success(smtp_provider, email_message):
-    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send, \
-         patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
-
+    with (
+        patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send,
+        patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit,
+    ):
         mock_circuit.is_closed = True
         mock_circuit.record_success = AsyncMock()
 
@@ -56,6 +53,7 @@ async def test_send_email_success(smtp_provider, email_message):
         assert msg["From"] == "Test App <noreply@example.com>"
         assert msg["Reply-To"] == "support@example.com"
 
+
 @pytest.mark.asyncio
 async def test_send_email_circuit_open(smtp_provider, email_message):
     with patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
@@ -64,11 +62,13 @@ async def test_send_email_circuit_open(smtp_provider, email_message):
         result = await smtp_provider.send_email(email_message)
         assert result is False
 
+
 @pytest.mark.asyncio
 async def test_send_email_failure(smtp_provider, email_message):
-    with patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send, \
-         patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit:
-
+    with (
+        patch("aiosmtplib.send", new_callable=AsyncMock) as mock_send,
+        patch("src.app.core.utils.circuit_breaker.email_circuit") as mock_circuit,
+    ):
         mock_circuit.is_closed = True
         mock_circuit.record_failure = AsyncMock()
         mock_send.side_effect = Exception("SMTP Error")
@@ -77,6 +77,7 @@ async def test_send_email_failure(smtp_provider, email_message):
 
         assert result is False
         mock_circuit.record_failure.assert_awaited_once()
+
 
 @pytest.mark.asyncio
 async def test_send_bulk_emails(smtp_provider):

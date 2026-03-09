@@ -1,6 +1,5 @@
 """Feature Flags API Router."""
 
-
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.app.api.dependencies import get_current_tenant, get_current_user

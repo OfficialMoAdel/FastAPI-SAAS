@@ -38,8 +38,11 @@ async def test_batch_enqueue():
     bus.set_arq_queue(mock_arq)
 
     # Mock handlers
-    async def handler1(data): pass
-    async def handler2(data): pass
+    async def handler1(data):
+        pass
+
+    async def handler2(data):
+        pass
 
     bus._handlers["test.event"] = [handler1, handler2]
 
@@ -55,6 +58,7 @@ async def test_batch_enqueue():
     assert mock_pipe.psetex.called
     assert mock_pipe.zadd.called
     mock_pipe.execute.assert_called_once()
+
 
 @pytest.mark.asyncio
 async def test_concurrency_semaphore():
@@ -90,6 +94,7 @@ async def test_concurrency_semaphore():
     # on max_active without careful timing or proper await.
     # In this simple test, we just verify no crash.
     assert True
+
 
 @pytest.mark.asyncio
 async def test_stampede_protection_lock():

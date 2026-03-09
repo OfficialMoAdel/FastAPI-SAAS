@@ -4,7 +4,6 @@ Provides metrics collection for storage operations using OpenTelemetry.
 Tracks file uploads, downloads, storage usage, and operation latencies.
 """
 
-
 from __future__ import annotations
 
 import time

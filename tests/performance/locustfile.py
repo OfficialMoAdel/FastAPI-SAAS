@@ -92,6 +92,7 @@ logger = logging.getLogger("perf-test")
 # METRICS COLLECTION
 # =============================================================================
 
+
 class MetricsCollector:
     """Collects and logs detailed performance metrics."""
 
@@ -140,7 +141,7 @@ class MetricsCollector:
                 f"  p99: {self.get_percentile(name, 99):.1f}ms\n"
                 f"  min: {min(times):.1f}ms\n"
                 f"  max: {max(times):.1f}ms\n"
-                f"  avg: {sum(times)/len(times):.1f}ms"
+                f"  avg: {sum(times) / len(times):.1f}ms"
             )
         logger.info("=" * 60)
 
@@ -152,6 +153,7 @@ metrics = MetricsCollector()
 # =============================================================================
 # LOCUST EVENT HANDLERS
 # =============================================================================
+
 
 @events.request.add_listener
 def on_request(
@@ -198,6 +200,7 @@ def on_test_stop(environment: Any, **kwargs: Any) -> None:
 # =============================================================================
 # USER BEHAVIOR
 # =============================================================================
+
 
 class FastAPISaaSUser(HttpUser):
     """
@@ -369,6 +372,7 @@ class FastAPISaaSUser(HttpUser):
 # ADDITIONAL TEST USERS (for load variety)
 # =============================================================================
 
+
 class ReadOnlyUser(HttpUser):
     """
     A lighter user that only reads data (no AI calls).
@@ -414,12 +418,17 @@ if __name__ == "__main__":
     # Default to headless mode with basic load
     args = [
         "locust",
-        "-f", __file__,
+        "-f",
+        __file__,
         "--headless",
-        "-u", "10",
-        "-r", "2",
-        "--run-time", "1m",
-        "--host", os.getenv("API_HOST", "http://localhost:8000"),
+        "-u",
+        "10",
+        "-r",
+        "2",
+        "--run-time",
+        "1m",
+        "--host",
+        os.getenv("API_HOST", "http://localhost:8000"),
     ]
 
     print(f"Running: {' '.join(args)}")

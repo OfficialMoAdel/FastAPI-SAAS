@@ -12,17 +12,17 @@ Usage:
     record_xfetch_latency(0.005)  # 5ms
 """
 
-
 from __future__ import annotations
 
-import logging
 import time
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from typing import Any
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 @dataclass

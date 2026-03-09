@@ -19,7 +19,7 @@ logger = logging.getLogger(__name__)
 # Skip all tests in this module if not using PostgreSQL
 pytestmark = pytest.mark.skipif(
     True,  # Skip in unit tests - these are PostgreSQL integration tests
-    reason="Composite index tests require PostgreSQL (pg_indexes, EXPLAIN FORMAT)"
+    reason="Composite index tests require PostgreSQL (pg_indexes, EXPLAIN FORMAT)",
 )
 
 
@@ -44,8 +44,7 @@ class TestCompositeIndex:
         row = result.fetchone()
 
         assert row is not None, (
-            "Composite index 'idx_ai_chat_messages_session_created' not found. "
-            "Run: uv run alembic upgrade head"
+            "Composite index 'idx_ai_chat_messages_session_created' not found. Run: uv run alembic upgrade head"
         )
 
         indexname, indexdef = row
@@ -58,9 +57,7 @@ class TestCompositeIndex:
         # Note: PostgreSQL may not show DESC explicitly in pg_indexes
 
     @pytest.mark.asyncio
-    async def test_composite_index_columns_order(
-        self, db_session: AsyncSession
-    ) -> None:
+    async def test_composite_index_columns_order(self, db_session: AsyncSession) -> None:
         """Verify the index has correct column order (session_id, created_at).
 
         Column order matters for composite indexes - the leading column
@@ -84,12 +81,8 @@ class TestCompositeIndex:
         logger.info(f"Index columns in order: {columns}")
 
         assert len(columns) == 2, f"Expected 2 columns, got {len(columns)}"
-        assert columns[0] == "session_id", (
-            f"First column should be session_id, got {columns[0]}"
-        )
-        assert columns[1] == "created_at", (
-            f"Second column should be created_at, got {columns[1]}"
-        )
+        assert columns[0] == "session_id", f"First column should be session_id, got {columns[0]}"
+        assert columns[1] == "created_at", f"Second column should be created_at, got {columns[1]}"
 
 
 class TestIndexUsage:
@@ -125,11 +118,7 @@ class TestIndexUsage:
         logger.info(f"Query plan:\n{plan}")
 
         # Check for index usage (could be Index Scan or Index Only Scan)
-        uses_index = (
-            "Index Scan" in plan
-            or "Index Only Scan" in plan
-            or "Bitmap Index Scan" in plan
-        )
+        uses_index = "Index Scan" in plan or "Index Only Scan" in plan or "Bitmap Index Scan" in plan
 
         # Note: On empty tables, PostgreSQL may choose Seq Scan
         # This is acceptable for unit tests
@@ -142,8 +131,7 @@ class TestIndexUsage:
             return
 
         assert uses_index, (
-            f"Expected Index Scan but got:\n{plan}\n"
-            "The composite index may not be optimal for this query."
+            f"Expected Index Scan but got:\n{plan}\nThe composite index may not be optimal for this query."
         )
 
     @pytest.mark.asyncio
@@ -170,10 +158,7 @@ class TestIndexUsage:
 
         # If "Sort" appears as a separate step, the index isn't helping with ordering
         # Note: "Sort Key" in index description is fine - we're looking for "Sort" as operation
-        has_sort_operation = any(
-            line.strip().startswith("Sort") and "Sort Key" not in line
-            for line in plan_lines
-        )
+        has_sort_operation = any(line.strip().startswith("Sort") and "Sort Key" not in line for line in plan_lines)
 
         if has_sort_operation:
             logger.warning(

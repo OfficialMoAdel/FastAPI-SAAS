@@ -26,8 +26,10 @@ def service(mock_db):
 @pytest.fixture(autouse=True)
 def mock_encryption():
     """Mock encryption to avoid key issues."""
-    with patch("src.app.core.encryption.encrypt_value") as mock_encrypt, \
-         patch("src.app.core.encryption.decrypt_value") as mock_decrypt:
+    with (
+        patch("src.app.core.encryption.encrypt_value") as mock_encrypt,
+        patch("src.app.core.encryption.decrypt_value") as mock_decrypt,
+    ):
         mock_encrypt.return_value = "encrypted_secret"
         mock_decrypt.return_value = b"decrypted_secret"
         yield mock_encrypt, mock_decrypt
@@ -37,6 +39,7 @@ def mock_encryption():
 def mock_endpoint():
     """Create a mock webhook endpoint."""
     from src.app.modules.webhooks.models import WebhookEndpoint
+
     endpoint = MagicMock(spec=WebhookEndpoint)
     endpoint.id = uuid4()
     endpoint.url = "https://example.com/webhook"

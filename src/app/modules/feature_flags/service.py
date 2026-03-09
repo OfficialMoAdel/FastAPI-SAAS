@@ -160,7 +160,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                     result_data: dict[str, Any] = json_loads(cached_value)
                     return result_data
             except Exception as e:
-                logger.debug(f"Cache get failed: {e}")
+                logger.debug("Cache get failed:", error=e)
 
         # Fallback to DB
         tenant = await self.db.get(Tenant, tenant_id)
@@ -174,7 +174,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             try:
                 await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
             except Exception as e:
-                logger.debug(f"Cache operation failed: {e}")
+                logger.debug("Cache operation failed:", error=e)
 
         return flags
 
@@ -200,7 +200,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                     val_str: str = cached_value.decode().lower()
                     return val_str == "true"
             except Exception as e:
-                logger.debug(f"Cache get failed: {e}")
+                logger.debug("Cache get failed:", error=e)
 
         # Fallback to DB (H-12 FIX: Check flag and overrides first)
         enabled = default
@@ -227,7 +227,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             try:
                 await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
             except Exception as e:
-                logger.debug(f"Cache operation failed: {e}")
+                logger.debug("Cache operation failed:", error=e)
 
         return enabled
 
@@ -349,7 +349,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             if feature_name:
                 await redis_client.delete(f"tenant:{tenant_id}:feature:{feature_name}")
         except Exception as e:
-            logger.debug(f"Cache invalidation failed: {e}")
+            logger.debug("Cache invalidation failed:", error=e)
 
 
 # =============================================================================
@@ -447,9 +447,9 @@ async def warm_feature_flags(session: AsyncSession) -> int:
                 await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flag_data, as_str=True))
                 cached_count += 1
 
-            logger.info(f"Warmed cache for {cached_count} feature flags")
+            logger.info("Warmed cache for feature flags", cached_count=cached_count)
         except Exception as e:
-            logger.error(f"Failed to warm feature flags cache: {e}")
+            logger.error("Failed to warm feature flags cache:", error=e)
             return 0
 
     return cached_count

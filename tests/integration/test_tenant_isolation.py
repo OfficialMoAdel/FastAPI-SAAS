@@ -1,4 +1,3 @@
-
 import pytest
 from uuid6 import uuid7
 
@@ -12,6 +11,7 @@ from src.app.modules.users.models import User
 # Fixtures
 # -----------------------------------------------------------------------------
 
+
 @pytest.fixture
 def tenant_alpha(db):
     """Create Tenant Alpha."""
@@ -23,6 +23,7 @@ def tenant_alpha(db):
         db.refresh(tenant)
     return tenant
 
+
 @pytest.fixture
 def tenant_beta(db):
     """Create Tenant Beta."""
@@ -33,6 +34,7 @@ def tenant_beta(db):
         db.commit()
         db.refresh(tenant)
     return tenant
+
 
 @pytest.fixture
 def user_alpha(db, tenant_alpha):
@@ -46,12 +48,13 @@ def user_alpha(db, tenant_alpha):
             hashed_password="hashed_secret",
             tenant_id=tenant_alpha.id,
             uuid=uuid7(),
-            is_deleted=False
+            is_deleted=False,
         )
         db.add(user)
         db.commit()
         db.refresh(user)
     return user
+
 
 @pytest.fixture
 def user_beta(db, tenant_beta):
@@ -65,12 +68,13 @@ def user_beta(db, tenant_beta):
             hashed_password="hashed_secret",
             tenant_id=tenant_beta.id,
             uuid=uuid7(),
-            is_deleted=False
+            is_deleted=False,
         )
         db.add(user)
         db.commit()
         db.refresh(user)
     return user
+
 
 @pytest.fixture
 def post_alpha(db, user_alpha, tenant_alpha):
@@ -81,12 +85,13 @@ def post_alpha(db, user_alpha, tenant_alpha):
         tenant_id=tenant_alpha.id,
         created_by_user_id=user_alpha.id,
         uuid=uuid7(),
-        is_deleted=False
+        is_deleted=False,
     )
     db.add(post)
     db.commit()
     db.refresh(post)
     return post
+
 
 @pytest.fixture
 def post_beta(db, user_beta, tenant_beta):
@@ -97,18 +102,17 @@ def post_beta(db, user_beta, tenant_beta):
         tenant_id=tenant_beta.id,
         created_by_user_id=user_beta.id,
         uuid=uuid7(),
-        is_deleted=False
+        is_deleted=False,
     )
     db.add(post)
     db.commit()
     db.refresh(post)
     return post
 
+
 # -----------------------------------------------------------------------------
 # Tests
 # -----------------------------------------------------------------------------
-
-
 
 
 @pytest.mark.skip(reason="Test requires sync/async DB bridge - known architecture limitation")
@@ -122,14 +126,11 @@ def test_tenant_isolation_list_posts(client, user_alpha: User, tenant_alpha, pos
         "email": user_alpha.email,
         "is_superuser": False,
         "tenant_id": user_alpha.tenant_id,
-        "tier_id": None
+        "tier_id": None,
     }
 
     # Correct URL: /api/v1/{username}/posts
-    response = client.get(
-        f"/api/v1/{user_alpha.username}/posts",
-        headers={"X-Tenant-ID": tenant_alpha.slug}
-    )
+    response = client.get(f"/api/v1/{user_alpha.username}/posts", headers={"X-Tenant-ID": tenant_alpha.slug})
 
     assert response.status_code == 200, f"Response: {response.text}"
     data = response.json()["data"]
@@ -154,13 +155,10 @@ def test_cross_tenant_access_denied(client, user_alpha: User, user_beta: User, t
         "email": user_alpha.email,
         "is_superuser": False,
         "tenant_id": user_alpha.tenant_id,
-        "tier_id": None
+        "tier_id": None,
     }
 
-    response = client.get(
-        f"/api/v1/{user_beta.username}/posts",
-        headers={"X-Tenant-ID": tenant_alpha.slug}
-    )
+    response = client.get(f"/api/v1/{user_beta.username}/posts", headers={"X-Tenant-ID": tenant_alpha.slug})
 
     # Expectation: 403 Forbidden or 404 Not Found
     print(f"Cross-tenant request status: {response.status_code}")
@@ -171,4 +169,3 @@ def test_cross_tenant_access_denied(client, user_alpha: User, user_beta: User, t
     if response.status_code == 200:
         data = response.json().get("data", [])
         assert len(data) == 0, "Data Leakage! Alice saw Bob's posts."
-

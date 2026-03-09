@@ -27,10 +27,8 @@ See Also:
     - src/app/modules/auth/dependencies.py: Uses cached payload
 """
 
-
 from __future__ import annotations
 
-import logging
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union
 
@@ -43,6 +41,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from jwt.exceptions import PyJWTError
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 
 # Type alias for PyJWT-compatible public key types
 JWTPublicKey = Union[RSAPublicKey, EllipticCurvePublicKey, Ed25519PublicKey, Ed448PublicKey]
@@ -50,7 +49,7 @@ JWTPublicKey = Union[RSAPublicKey, EllipticCurvePublicKey, Ed25519PublicKey, Ed4
 if TYPE_CHECKING:
     from fastapi import Request
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants matching main security module - now uses settings for consistency
 JWT_AUDIENCE: str = settings.JWT_AUDIENCE or "fastapi-saas-api"

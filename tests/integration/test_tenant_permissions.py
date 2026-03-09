@@ -24,10 +24,7 @@ class TestTenantPermissions:
         """Test that regular users cannot create tenants."""
         async_client.headers.update(regular_user_token_headers)
         async_client.headers["User-Agent"] = "TestClient/1.0"
-        response = await async_client.post(
-            "/api/v1/tenants",
-            json={"name": "Hacker Tenant", "slug": "hacker-tenant"}
-        )
+        response = await async_client.post("/api/v1/tenants", json={"name": "Hacker Tenant", "slug": "hacker-tenant"})
 
         assert response.status_code == status.HTTP_403_FORBIDDEN
 

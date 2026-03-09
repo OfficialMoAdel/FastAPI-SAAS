@@ -182,7 +182,7 @@ class TestBanIP:
             result = await ban_ip(sample_ip)
 
         assert result is True
-        mock_redis.setex.assert_called_once()
+        mock_redis.set.assert_called_once()
         mock_redis.incr.assert_called_once()
 
     @pytest.mark.asyncio
@@ -225,8 +225,8 @@ class TestBanIP:
 
         assert result is True
         # Duration should be 3600 * 2^2 = 14400 (4 hours)
-        call_args = mock_redis.setex.call_args
-        assert call_args[0][1] == 14400
+        call_args = mock_redis.set.call_args
+        assert call_args.kwargs["ex"] == 14400
 
     @pytest.mark.asyncio
     async def test_ban_ip_custom_duration(self, mock_redis, sample_ip):
@@ -241,9 +241,9 @@ class TestBanIP:
             result = await ban_ip(sample_ip, duration=7200, reason="Custom reason")
 
         assert result is True
-        call_args = mock_redis.setex.call_args
-        assert call_args[0][1] == 7200
-        assert call_args[0][2] == "Custom reason"
+        call_args = mock_redis.set.call_args
+        assert call_args.kwargs["ex"] == 7200
+        assert call_args.args[1] == "Custom reason"
 
     @pytest.mark.asyncio
     async def test_ban_ip_escalation_disabled(self, mock_redis, sample_ip):
@@ -260,8 +260,8 @@ class TestBanIP:
 
         assert result is True
         # Duration should remain 3600 (no escalation)
-        call_args = mock_redis.setex.call_args
-        assert call_args[0][1] == 3600
+        call_args = mock_redis.set.call_args
+        assert call_args.kwargs["ex"] == 3600
 
 
 class TestUnbanIP:
@@ -522,19 +522,19 @@ class TestIntegrationScenarios:
         ):
             # First ban - no escalation (ban_count = 0)
             mock_redis.get.side_effect = [None, None]  # Not banned, no count
-            mock_redis.setex = AsyncMock(return_value=True)
+            mock_redis.set = AsyncMock(return_value=True)
             mock_redis.incr = AsyncMock(return_value=1)  # ban_count
             await ban_ip(sample_ip)
-            assert mock_redis.setex.call_args[0][1] == 3600
+            assert mock_redis.set.call_args.kwargs["ex"] == 3600
 
             # Second ban - 2x escalation (7200 seconds) - ban_count = 1
             mock_redis.get.side_effect = [None, b"1"]  # Not banned, count = 1
             mock_redis.incr = AsyncMock(return_value=2)
             await ban_ip(sample_ip)
-            assert mock_redis.setex.call_args[0][1] == 7200
+            assert mock_redis.set.call_args.kwargs["ex"] == 7200
 
             # Third ban - 4x escalation (14400 seconds) - ban_count = 2
             mock_redis.get.side_effect = [None, b"2"]  # Not banned, count = 2
             mock_redis.incr = AsyncMock(return_value=3)
             await ban_ip(sample_ip)
-            assert mock_redis.setex.call_args[0][1] == 14400
+            assert mock_redis.set.call_args.kwargs["ex"] == 14400

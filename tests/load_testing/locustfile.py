@@ -36,6 +36,7 @@ def get_cached_dummy_file(size_kb: int) -> tuple[str, BytesIO, str]:
     # Return a fresh IO object but reuse content
     return filename, BytesIO(content.getvalue()), mime
 
+
 class SaaSUser(HttpUser):
     wait_time = between(config.WAIT_TIME_MIN, config.WAIT_TIME_MAX)
 
@@ -60,6 +61,7 @@ class SaaSUser(HttpUser):
             if self.login():
                 break
             import time
+
             time.sleep(LOGIN_RETRY_DELAY_S)
 
         # If tenant ID isn't provided, try to fetch the first available tenant
@@ -76,7 +78,7 @@ class SaaSUser(HttpUser):
             response = self.client.post(
                 "/api/v1/account/login",
                 data={"username": self.email, "password": self.password},
-                name="/api/v1/account/login"
+                name="/api/v1/account/login",
             )
 
             if response.status_code == 200:
@@ -87,9 +89,7 @@ class SaaSUser(HttpUser):
                 self.refresh_token = response.cookies.get("refresh_token")
 
                 # Set default headers for subsequent requests
-                self.client.headers.update({
-                    "Authorization": f"Bearer {self.access_token}"
-                })
+                self.client.headers.update({"Authorization": f"Bearer {self.access_token}"})
                 # logger.info(f"User {self.email} logged in successfully")
                 return True
             else:
@@ -142,20 +142,16 @@ class SaaSUser(HttpUser):
         # though Requests/Locust usually handles cookies automatically
         cookies = None
         if self.refresh_token:
-             cookies = {"refresh_token": self.refresh_token}
+            cookies = {"refresh_token": self.refresh_token}
 
-        self.client.post(
-            "/api/v1/account/refresh",
-            name="/api/v1/account/refresh",
-            cookies=cookies
-        )
+        self.client.post("/api/v1/account/refresh", name="/api/v1/account/refresh", cookies=cookies)
 
     @task(WEIGHT_TENANT_INFO)
     def get_tenant_info(self):
         """Get tenant details."""
         if not self.tenant_id:
             return
-        self.client.get("/api/v1/tenants/1", name="/api/v1/tenants/{id}") # Use ID 1 assuming it matches test tenant
+        self.client.get("/api/v1/tenants/1", name="/api/v1/tenants/{id}")  # Use ID 1 assuming it matches test tenant
 
     @task(WEIGHT_FILE_OPS)
     def file_operations(self):
@@ -169,11 +165,7 @@ class SaaSUser(HttpUser):
 
         # Depending on API, we might need tenant_id in query or path
         # Assuming standard /files/upload
-        response = self.client.post(
-            "/api/v1/files/upload",
-            files=files,
-            name="/api/v1/files/upload"
-        )
+        response = self.client.post("/api/v1/files/upload", files=files, name="/api/v1/files/upload")
 
         if response.status_code == 200 or response.status_code == 201:
             file_data = response.json()

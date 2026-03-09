@@ -150,6 +150,7 @@ class TestAIRateLimiter:
         from src.app.modules.ai.rate_limiter import AIRateLimiter
 
         call_count = 0
+
         def evalsha_side_effect(*args):
             nonlocal call_count
             call_count += 1
@@ -244,11 +245,13 @@ class TestRateLimitMiddleware:
     @pytest.fixture
     def mock_call_next(self):
         """Create a mock call_next function."""
+
         async def call_next(request):
             response = MagicMock()
             response.status_code = 200
             response.headers = {}
             return response
+
         return call_next
 
     @pytest.mark.asyncio

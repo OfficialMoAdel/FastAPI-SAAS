@@ -561,9 +561,7 @@ return new_attempts
                     "entity_id": str(user_id),
                     "tenant_id": str(user.get("tenant_id", "0")),
                     "user_id": user_id,
-                    "details": {
-                        "message": "User password was changed"
-                    }
+                    "details": {"message": "User password was changed"},
                 },
                 priority=EventPriority.HIGH,
             )
@@ -674,11 +672,7 @@ return new_attempts
         # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
         # Without this lock, two concurrent requests with the same token could both
         # pass the is_valid check before either marks the token as used.
-        result = await db.execute(
-            select(PasswordResetToken)
-            .where(PasswordResetToken.token == token)
-            .with_for_update()
-        )
+        result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token).with_for_update())
         reset_token = result.scalar_one_or_none()
 
         if not reset_token:

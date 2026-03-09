@@ -1,4 +1,5 @@
 """Unit tests for P2-2: XFetch Lua Script Optimization."""
+
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,14 +13,17 @@ async def test_lua_script_reduces_roundtrips(mock_redis_client, mock_settings):
     # Mock Lua manager to return value and TTL in single call
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            b'{"data":"cached_value"}',  # value
-            3000  # TTL in seconds
-        ])
+        mock_manager.execute = AsyncMock(
+            return_value=[
+                b'{"data":"cached_value"}',  # value
+                3000,  # TTL in seconds
+            ]
+        )
         mock_lua_mgr.return_value = mock_manager
 
         with patch("src.app.core.utils.cache.client", mock_redis_client):
             with patch("src.app.core.utils.cache.settings", mock_settings):
+
                 async def fetch_func():
                     return {"data": "fresh_value"}
 
@@ -58,6 +62,7 @@ async def test_fallback_on_lua_failure(mock_redis_client, mock_settings):
 
         with patch("src.app.core.utils.cache.client", mock_redis_client):
             with patch("src.app.core.utils.cache.settings", mock_settings):
+
                 async def fetch_func():
                     return {"data": "fresh_value"}
 
@@ -81,10 +86,12 @@ async def test_cache_miss_fetches_fresh_data(mock_redis_client, mock_settings):
     # Mock Lua manager to return cache miss
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            None,  # value (cache miss)
-            -2  # TTL (-2 means key doesn't exist)
-        ])
+        mock_manager.execute = AsyncMock(
+            return_value=[
+                None,  # value (cache miss)
+                -2,  # TTL (-2 means key doesn't exist)
+            ]
+        )
         mock_lua_mgr.return_value = mock_manager
 
         # Mock setex for caching fresh data
@@ -119,14 +126,17 @@ async def test_bytes_to_string_conversion(mock_redis_client, mock_settings):
     # Mock Lua manager to return bytes value
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            b'{"data":"cached_value"}',  # bytes value
-            3000
-        ])
+        mock_manager.execute = AsyncMock(
+            return_value=[
+                b'{"data":"cached_value"}',  # bytes value
+                3000,
+            ]
+        )
         mock_lua_mgr.return_value = mock_manager
 
         with patch("src.app.core.utils.cache.client", mock_redis_client):
             with patch("src.app.core.utils.cache.settings", mock_settings):
+
                 async def fetch_func():
                     return {"data": "fresh_value"}
 
@@ -179,10 +189,12 @@ async def test_xfetch_probabilistic_refresh(mock_redis_client, mock_settings):
     # Mock Lua manager to return value with low TTL (near expiration)
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            b'{"data":"cached_value"}',
-            100  # Low TTL (100 seconds remaining out of 3600)
-        ])
+        mock_manager.execute = AsyncMock(
+            return_value=[
+                b'{"data":"cached_value"}',
+                100,  # Low TTL (100 seconds remaining out of 3600)
+            ]
+        )
         mock_lua_mgr.return_value = mock_manager
 
         # Mock setex for background refresh
@@ -219,15 +231,13 @@ async def test_latency_metrics_recorded(mock_redis_client, mock_settings):
     # Mock Lua manager to return cache hit
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            b'{"data":"cached_value"}',
-            3000
-        ])
+        mock_manager.execute = AsyncMock(return_value=[b'{"data":"cached_value"}', 3000])
         mock_lua_mgr.return_value = mock_manager
 
         with patch("src.app.core.utils.cache.client", mock_redis_client):
             with patch("src.app.core.utils.cache.settings", mock_settings):
                 with patch("src.app.core.utils.cache.record_xfetch_latency") as mock_record:
+
                     async def fetch_func():
                         return {"data": "fresh_value"}
 
@@ -257,10 +267,12 @@ async def test_cache_miss_metrics_recorded(mock_redis_client, mock_settings):
     # Mock Lua manager to return cache miss
     with patch("src.app.core.utils.cache.get_lua_manager") as mock_lua_mgr:
         mock_manager = MagicMock()
-        mock_manager.execute = AsyncMock(return_value=[
-            None,  # Cache miss
-            -2
-        ])
+        mock_manager.execute = AsyncMock(
+            return_value=[
+                None,  # Cache miss
+                -2,
+            ]
+        )
         mock_lua_mgr.return_value = mock_manager
 
         mock_redis_client.setex = AsyncMock()
@@ -268,6 +280,7 @@ async def test_cache_miss_metrics_recorded(mock_redis_client, mock_settings):
         with patch("src.app.core.utils.cache.client", mock_redis_client):
             with patch("src.app.core.utils.cache.settings", mock_settings):
                 with patch("src.app.core.utils.cache.record_xfetch_latency") as mock_record:
+
                     async def fetch_func():
                         return {"data": "fresh_value"}
 

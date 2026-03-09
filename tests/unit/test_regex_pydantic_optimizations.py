@@ -272,12 +272,12 @@ class TestCacheDecoratorRegex:
         result = _construct_data_dict(keys, kwargs)
         assert result == {"tenant_id": 1, "user_id": 42}
 
-    def test_construct_data_dict_missing_key_raises(self) -> None:
-        """Test that missing key raises KeyError."""
+    def test_construct_data_dict_missing_key_maps_to_none(self) -> None:
+        """Test that missing key maps to None."""
         keys = ["tenant_id", "missing"]
         kwargs = {"tenant_id": 1}
-        with pytest.raises(KeyError):
-            _construct_data_dict(keys, kwargs)
+        result = _construct_data_dict(keys, kwargs)
+        assert result == {"tenant_id": 1, "missing": "_missing_missing_"}
 
     def test_precompiled_regex_performance(self) -> None:
         """Test pre-compiled bracket pattern is faster than re.findall.

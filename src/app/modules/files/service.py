@@ -4,7 +4,6 @@ This module contains the business logic for file operations,
 including upload, download, deletion, and quota management.
 """
 
-
 from __future__ import annotations
 
 import uuid
@@ -455,7 +454,7 @@ class FileService:
         await self.db.commit()
 
         count = result.rowcount
-        logger.info(f"Transferred {count} files from {from_user_id} to {to_user_id}")
+        logger.info("Transferred files from to", count=count, from_user_id=from_user_id, to_user_id=to_user_id)
         return count
 
     async def _get_quota_stats(self, tenant_id: UUID) -> tuple[int, int]:

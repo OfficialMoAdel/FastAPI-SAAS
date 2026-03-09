@@ -13,7 +13,6 @@ Usage:
 """
 
 
-import logging
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import BinaryIO
@@ -22,9 +21,10 @@ from azure.core.exceptions import ResourceNotFoundError
 from azure.storage.blob import BlobSasPermissions, ContentSettings, generate_blob_sas
 from azure.storage.blob.aio import BlobServiceClient, ContainerClient
 
+from src.app.core.logger import get_logger
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class AzureBlobStorage(StorageProvider):
@@ -93,11 +93,11 @@ class AzureBlobStorage(StorageProvider):
                 content_settings=ContentSettings(content_type=mime_type),
             )
 
-            logger.info(f"Uploaded blob: {path}, size: {size} bytes")
+            logger.info("Uploaded blob: , size: bytes", path=path, size=size)
             return StorageResult(success=True, path=path, size=size)
 
         except Exception as e:
-            logger.error(f"Failed to upload blob {path}: {e}")
+            logger.error("Failed to upload blob :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def download(self, path: str) -> AsyncGenerator[bytes, None]:
@@ -130,15 +130,15 @@ class AzureBlobStorage(StorageProvider):
             blob_client = container.get_blob_client(path)
             await blob_client.delete_blob()
 
-            logger.info(f"Deleted blob: {path}")
+            logger.info("Deleted blob:", path=path)
             return StorageResult(success=True, path=path)
 
         except ResourceNotFoundError:
-            logger.warning(f"Blob not found for deletion: {path}")
+            logger.warning("Blob not found for deletion:", path=path)
             return StorageResult(success=True, path=path)  # Idempotent delete
 
         except Exception as e:
-            logger.error(f"Failed to delete blob {path}: {e}")
+            logger.error("Failed to delete blob :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def exists(self, path: str) -> bool:
@@ -231,7 +231,7 @@ class AzureBlobStorage(StorageProvider):
             await container.get_container_properties()
             return True
         except Exception as e:
-            logger.error(f"Azure connection validation failed: {e}")
+            logger.error("Azure connection validation failed:", error=e)
             return False
 
     async def close(self) -> None:

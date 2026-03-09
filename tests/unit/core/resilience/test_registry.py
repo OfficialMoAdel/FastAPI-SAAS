@@ -12,7 +12,7 @@ Tests cover:
 """
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -690,41 +690,44 @@ def test_get_by_tag_with_none_tags(registry, mock_circuit_breaker):
 # ============================================================================
 
 
-def test_register_logs_info(registry, mock_circuit_breaker, caplog):
+def test_register_logs_info(registry, mock_circuit_breaker):
     """Registration logs info message."""
     circuit = mock_circuit_breaker()
 
-    with caplog.at_level("INFO", logger="circuit_breaker.registry"):
+    with patch("src.app.core.resilience.registry.logger.info") as mock_info:
         registry.register(
             "test_circuit",
             circuit,
             service_type=ServiceType.DATABASE,
         )
-
-    assert "Registered circuit breaker: test_circuit (database)" in caplog.text
+        
+        args = " ".join(str(a) for a in mock_info.call_args[0])
+        assert "Registered circuit breaker:" in args
 
 
 @pytest.mark.asyncio
-async def test_reset_logs_info(registry, mock_circuit_breaker, caplog):
+async def test_reset_logs_info(registry, mock_circuit_breaker):
     """Reset operation logs info message."""
     circuit = mock_circuit_breaker()
     registry.register("test_circuit", circuit)
 
-    with caplog.at_level("INFO", logger="circuit_breaker.registry"):
+    with patch("src.app.core.resilience.registry.logger.info") as mock_info:
         await registry.reset("test_circuit")
-
-    assert "Reset circuit breaker: test_circuit" in caplog.text
+        
+        args = " ".join(str(a) for a in mock_info.call_args[0])
+        assert "Reset circuit breaker" in args
 
 
 @pytest.mark.asyncio
-async def test_reset_all_logs_info(registry_with_circuits, caplog):
+async def test_reset_all_logs_info(registry_with_circuits):
     """Reset all operation logs info message."""
     registry, _ = registry_with_circuits
 
-    with caplog.at_level("INFO", logger="circuit_breaker.registry"):
+    with patch("src.app.core.resilience.registry.logger.info") as mock_info:
         await registry.reset_all()
 
-    assert "Reset all circuit breakers: 3 total" in caplog.text
+        args = " ".join(str(a) for a in mock_info.call_args[0])
+        assert "Reset all circuit breakers:" in args
 
 
 # ============================================================================

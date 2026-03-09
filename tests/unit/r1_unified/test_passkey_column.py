@@ -1,4 +1,5 @@
 """Unit tests for P3-2: Passkey Column-Specific SELECT optimization."""
+
 import threading
 import time
 from unittest.mock import AsyncMock, MagicMock, patch

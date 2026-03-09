@@ -32,8 +32,6 @@ def get_violations_ttl() -> int:
     return getattr(settings, "AUTO_BAN_VIOLATION_WINDOW", 86400)
 
 
-
-
 @dataclass
 class BanInfo:
     """Information about an active ban."""
@@ -182,8 +180,11 @@ async def ban_ip(
     count_key = BAN_COUNT_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # Set ban with TTL
-        await redis_client.setex(ban_key, actual_duration, reason)
+        # Set ban with TTL (Use NX to prevent concurrent requests from incrementing ban_count multiple times)
+        is_new_ban = await redis_client.set(ban_key, reason, ex=actual_duration, nx=True)
+        if not is_new_ban:
+            logger.debug("IP %s already banned by concurrent request", client_ip)
+            return False
 
         # Increment historical ban count (no TTL - persistent)
         await redis_client.incr(count_key)

@@ -28,10 +28,7 @@ class LoadTestConfig(BaseSettings):
     # File Upload Testing
     UPLOAD_FILE_SIZE_KB: int = 100
 
-    model_config = SettingsConfigDict(
-        env_prefix="LOAD_TEST_",
-        env_file=".env.loadtest",
-        extra="ignore"
-    )
+    model_config = SettingsConfigDict(env_prefix="LOAD_TEST_", env_file=".env.loadtest", extra="ignore")
+
 
 config = LoadTestConfig()

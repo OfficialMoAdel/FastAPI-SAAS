@@ -32,6 +32,7 @@ async def write_post(
     """Create a new post."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
+
         raise ForbiddenException()
     return await service.create_post(post, current_user)
 
@@ -53,6 +54,7 @@ async def read_posts(
     """Get paginated list of posts for a user."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
+
         raise ForbiddenException()
     return await service.get_posts(current_user["id"], page, per_page)
 
@@ -69,6 +71,7 @@ async def read_post(
     """Get a single post by ID."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
+
         raise ForbiddenException()
     return await service.get_post(id, current_user["id"])
 
@@ -86,6 +89,7 @@ async def patch_post(
     """Update a post."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
+
         raise ForbiddenException()
     return await service.update_post(id, values, current_user)
 
@@ -102,6 +106,7 @@ async def erase_post(
     """Soft delete a post."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
+
         raise ForbiddenException()
     await service.delete_post(id, current_user)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

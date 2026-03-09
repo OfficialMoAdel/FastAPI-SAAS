@@ -134,7 +134,7 @@ class TestP15AIStreamingIsomorphism:
         test_cases = [
             '{"a": 1}',
             '{"nested": {"key": "value"}}',
-            '[1, 2, 3]',
+            "[1, 2, 3]",
             '"string"',
             "123",
             "true",
@@ -158,10 +158,7 @@ class TestP15PerformanceValidation:
         from src.app.core.json_utils import json_loads
 
         # Typical AI streaming chunk
-        chunk = (
-            '{"message":{"role":"assistant","content":"Hello, how can I help you?"},'
-            '"done":false,"eval_count":15}'
-        )
+        chunk = '{"message":{"role":"assistant","content":"Hello, how can I help you?"},"done":false,"eval_count":15}'
 
         iterations = 1000
 

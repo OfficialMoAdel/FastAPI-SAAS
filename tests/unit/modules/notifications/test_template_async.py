@@ -188,9 +188,7 @@ class TestRedisCacheCheckedFirst:
             mock_redis.get = AsyncMock(return_value='["Welcome", "<html>Cached content</html>"]')
 
             # Act
-            subject, content = await notification_service.get_template_content(
-                tenant_id, template_name
-            )
+            subject, content = await notification_service.get_template_content(tenant_id, template_name)
 
             # Assert
             assert subject == "Welcome"
@@ -227,9 +225,7 @@ class TestTemplateRendersCorrectly:
             mock_env.get_template.return_value = mock_template
 
             # Act
-            subject, content = await notification_service.get_template_content(
-                tenant_id, template_name
-            )
+            subject, content = await notification_service.get_template_content(tenant_id, template_name)
 
             # Assert
             assert subject == "Welcome Email", "Subject should be derived from template name"

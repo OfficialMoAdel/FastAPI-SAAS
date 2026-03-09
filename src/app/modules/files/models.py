@@ -4,7 +4,6 @@ This module defines the File model for storing file metadata,
 with tenant isolation and user ownership tracking.
 """
 
-
 from __future__ import annotations
 
 import uuid as uuid_pkg

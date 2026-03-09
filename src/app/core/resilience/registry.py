@@ -5,15 +5,15 @@ enabling centralized configuration, monitoring, and control.
 """
 
 import asyncio
-import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any
 
+from src.app.core.logger import get_logger
 from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
 
-logger = logging.getLogger("circuit_breaker.registry")
+logger = get_logger(__name__)
 
 
 class ServiceType(str, Enum):
@@ -116,7 +116,7 @@ class CircuitBreakerRegistry:
             tags=tags,
         )
 
-        logger.info(f"Registered circuit breaker: {name} ({service_type.value})")
+        logger.info("Registered circuit breaker: ()", name=name, value=service_type.value)
 
         return breaker
 
@@ -259,7 +259,7 @@ class CircuitBreakerRegistry:
         async with self._get_lock():
             spec.breaker.reset()
 
-        logger.info(f"Reset circuit breaker: {name}")
+        logger.info("Reset circuit breaker:", name=name)
         return True
 
     async def reset_all(self) -> int:
@@ -274,7 +274,7 @@ class CircuitBreakerRegistry:
                 spec.breaker.reset()
 
         count = len(self._breakers)
-        logger.info(f"Reset all circuit breakers: {count} total")
+        logger.info("Reset all circuit breakers: total", count=count)
         return count
 
     def get_stats(self) -> dict[str, Any]:

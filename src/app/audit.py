@@ -1,6 +1,5 @@
 """Email sending and logging utilities."""
 
-import logging
 from datetime import UTC, datetime
 from uuid import UUID
 
@@ -8,10 +7,11 @@ from pydantic import SecretStr
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
+from src.app.core.logger import get_logger
 from src.app.email_provider import EmailMessage, EmailProvider, SMTPProvider
 from src.app.modules.notifications.models import Notification, NotificationStatus
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class EmailService:
@@ -91,7 +91,7 @@ class EmailService:
             return success
 
         except Exception as e:
-            logger.error(f"Failed to send email: {e}")
+            logger.error("Failed to send email:", error=e)
 
             # Log failure
             await self._log_notification(

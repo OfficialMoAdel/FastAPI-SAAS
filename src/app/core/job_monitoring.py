@@ -1,11 +1,11 @@
-import logging
 import time
 from datetime import UTC, datetime
 from typing import Any, Optional
 
+from src.app.core.logger import get_logger
 from src.app.core.utils import cache
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Constants
 JOB_PREFIX = "arq:job:"
@@ -203,7 +203,7 @@ class JobMonitoringService:
                 else:
                     parsed_items.append({"raw": item_str, "error": "parse_error"})
             except Exception as e:
-                logger.error(f"Failed to parse DLQ item: {item_str}, error: {e}")
+                logger.error("Failed to parse DLQ item: , error:", item_str=item_str, error=e)
                 parsed_items.append({"raw": item_str, "error": str(e)})
 
         return parsed_items

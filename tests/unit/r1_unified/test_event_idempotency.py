@@ -1,4 +1,5 @@
 """Unit tests for P1-1: Event Bus Idempotency Race Condition Fix."""
+
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -64,10 +65,9 @@ async def test_concurrent_identical_events_processed_once(mock_redis_client, moc
             event_bus.subscribe("test.event")(handler)
 
             # Publish same event 10 times concurrently
-            await asyncio.gather(*[
-                event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id")
-                for _ in range(10)
-            ])
+            await asyncio.gather(
+                *[event_bus.publish("test.event", {"id": "same-id"}, event_id="same-event-id") for _ in range(10)]
+            )
 
     # Wait for background tasks to complete
     await asyncio.sleep(0.1)
@@ -98,10 +98,9 @@ async def test_different_events_processed_independently(mock_redis_client, mock_
             event_bus.subscribe("test.event")(handler)
 
             # Publish different events
-            await asyncio.gather(*[
-                event_bus.publish("test.event", {"id": f"event-{i}"}, event_id=f"event-{i}")
-                for i in range(5)
-            ])
+            await asyncio.gather(
+                *[event_bus.publish("test.event", {"id": f"event-{i}"}, event_id=f"event-{i}") for i in range(5)]
+            )
 
     # Wait for background tasks to complete
     await asyncio.sleep(0.1)
@@ -228,10 +227,9 @@ async def test_race_condition_prevented_under_load(mock_redis_client, mock_setti
             event_bus.subscribe("test.event")(handler)
 
             # Publish same event 100 times concurrently
-            await asyncio.gather(*[
-                event_bus.publish("test.event", {"id": "same-id"}, event_id="race-test")
-                for _ in range(100)
-            ])
+            await asyncio.gather(
+                *[event_bus.publish("test.event", {"id": "same-id"}, event_id="race-test") for _ in range(100)]
+            )
 
     # Wait for background tasks to complete
     await asyncio.sleep(0.1)

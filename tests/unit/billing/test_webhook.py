@@ -75,11 +75,11 @@ async def test_handle_webhook_event_checkout_completed():
                 "metadata": {
                     "tenant_id": str(tenant_id),
                     "user_id": str(user_id),  # Integer as string
-                    "plan_id": str(plan_id)   # Integer as string
+                    "plan_id": str(plan_id),  # Integer as string
                 },
-                "subscription": "sub_123"
+                "subscription": "sub_123",
             }
-        }
+        },
     }
 
     # Mock Stripe subscription
@@ -99,11 +99,14 @@ async def test_handle_webhook_event_checkout_completed():
     mock_item.price.recurring.interval = "month"
     mock_stripe_sub.items.data = [mock_item]
 
-    with patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.create", new_callable=AsyncMock) as mock_create, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False) as mock_exists, \
-         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:  # noqa: E501
-
+    with (
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_ctx,
+        patch("src.app.modules.billing.webhook.crud_user_subscriptions.create", new_callable=AsyncMock) as mock_create,
+        patch(
+            "src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False
+        ) as mock_exists,
+        patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+    ):  # noqa: E501
         mock_to_thread.return_value = mock_stripe_sub
 
         # Mock tenant db session
@@ -135,15 +138,16 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
                 "subscription": "sub_123",
                 "payment_intent": "pi_123",
                 "amount_paid": 1000,
-                "currency": "usd"
+                "currency": "usd",
             }
-        }
+        },
     }
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create:
-
+    with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
+    ):
         # Mock bypass db session and subscription finding
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -196,16 +200,17 @@ async def test_handle_webhook_event_invoice_payment_failed():
                 "payment_intent": "pi_fail",
                 "amount_due": 1000,
                 "currency": "usd",
-                "last_finalization_error": {"message": "Card declined"}
+                "last_finalization_error": {"message": "Card declined"},
             }
-        }
+        },
     }
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update:
-
+    with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
+        patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
+    ):
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -241,15 +246,16 @@ async def test_handle_webhook_event_subscription_updated():
                 "status": "past_due",
                 "current_period_start": 1600000000,
                 "current_period_end": 1600000000 + 3600,
-                "cancel_at_period_end": True
+                "cancel_at_period_end": True,
             }
-        }
+        },
     }
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update:
-
+    with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
+    ):
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -278,19 +284,15 @@ async def test_handle_webhook_event_subscription_deleted():
     event = {
         "id": "evt_delete",
         "type": "customer.subscription.deleted",
-        "data": {
-            "object": {
-                "id": "sub_123",
-                "status": "canceled"
-            }
-        }
+        "data": {"object": {"id": "sub_123", "status": "canceled"}},
     }
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update, \
-         patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock):  # noqa: E501
-
+    with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
+        patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock),
+    ):  # noqa: E501
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -325,24 +327,18 @@ async def test_handle_webhook_event_charge_refunded():
     event = {
         "id": "evt_refund",
         "type": "charge.refunded",
-        "data": {
-            "object": {
-                "id": "ch_123",
-                "invoice": "in_123",
-                "amount_refunded": 500,
-                "currency": "usd"
-            }
-        }
+        "data": {"object": {"id": "ch_123", "invoice": "in_123", "amount_refunded": 500, "currency": "usd"}},
     }
 
     # Mock invoice retrieval via asyncio.to_thread
     mock_invoice = {"id": "in_123", "subscription": "sub_123"}
 
-    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx, \
-         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx, \
-         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create, \
-         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread:
-
+    with (
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
+        patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
+        patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+    ):
         mock_to_thread.return_value = mock_invoice
 
         # Mock bypass db

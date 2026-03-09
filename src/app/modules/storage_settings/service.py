@@ -4,7 +4,6 @@ This module contains the business logic for storage settings management,
 including credential encryption, validation, and provider factory.
 """
 
-
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
@@ -348,7 +347,7 @@ class StorageSettingsService:
             # This will fail if credentials are invalid
             await storage.exists("__connection_test__")
         except Exception as e:
-            logger.error(f"Credential validation failed for {provider.value}: {e}")
+            logger.error("Credential validation failed for :", value=provider.value, error=e)
             raise InvalidCredentialsError(f"Failed to validate {provider.value} credentials: {e}")
         finally:
             # Cleanup connection

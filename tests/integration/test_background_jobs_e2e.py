@@ -17,8 +17,9 @@ async def test_flush_audit_logs_task_uses_rls_bypass():
     with patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_cm):
         # We mock flush_audit_log_buffer in the SERVICE module because it's imported locally
         # Use side_effect to return 10 once, then 0 to stop the loop
-        with patch("src.app.modules.audit_logs.service.flush_audit_log_buffer", new=AsyncMock(side_effect=[10, 0])) as mock_flush:  # noqa: E501
-
+        with patch(
+            "src.app.modules.audit_logs.service.flush_audit_log_buffer", new=AsyncMock(side_effect=[10, 0])
+        ) as mock_flush:  # noqa: E501
             result = await flush_audit_logs_task({})
 
             assert "Flushed 10 audit logs" in result

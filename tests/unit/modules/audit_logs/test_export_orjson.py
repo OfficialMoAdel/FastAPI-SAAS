@@ -48,6 +48,7 @@ class TestExportUsesOrjson:
 
         # Verify it can be parsed back
         import json
+
         parsed = json.loads(details_json)
         assert parsed["key"] == "value_0"
         assert parsed["nested"]["data"] == 0

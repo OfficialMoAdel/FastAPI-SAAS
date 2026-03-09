@@ -98,9 +98,7 @@ class TestEagerLoadingExists:
         source = inspect.getsource(crud_users.get_user_with_tier_eager)
 
         # Verify it uses joinedload
-        assert "joinedload" in source, (
-            "get_user_with_tier_eager should use joinedload for eager loading"
-        )
+        assert "joinedload" in source, "get_user_with_tier_eager should use joinedload for eager loading"
 
     @pytest.mark.asyncio
     async def test_user_service_get_with_rate_limits_uses_eager_loading(self) -> None:

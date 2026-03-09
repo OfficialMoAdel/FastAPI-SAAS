@@ -116,9 +116,7 @@ class MiddlewareProfiler:
         self.results.append(result)
         return result
 
-    async def _profile_async(
-        self, name: str, category: str, func: Any, *args: Any, **kwargs: Any
-    ) -> ProfileResult:
+    async def _profile_async(self, name: str, category: str, func: Any, *args: Any, **kwargs: Any) -> ProfileResult:
         """Profile an asynchronous operation."""
         result = ProfileResult(name=name, category=category, iterations=self.iterations)
 

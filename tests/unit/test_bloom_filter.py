@@ -2,7 +2,6 @@
 Unit tests for Bloom filter implementation.
 """
 
-
 from src.app.core.security.bloom_filter import (
     BloomFilter,
     blacklist_bloom_filter,

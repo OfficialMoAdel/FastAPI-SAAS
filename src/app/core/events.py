@@ -432,14 +432,32 @@ class EventBus:
         )
 
         # Handle any failures with sync fallback
-        for result in results:
+        for i, result in enumerate(results):
             if isinstance(result, Exception):
+                handler = handlers[i]
                 # asyncio.gather caught an unexpected exception
                 logger.error(
                     "Unexpected error during parallel enqueue",
                     event_name=event_name,
+                    handler=handler.__name__,
                     error=str(result),
                 )
+
+                # Graceful degradation: try sync execution
+                try:
+                    await handler(data)
+                    logger.info(
+                        "Handler executed synchronously after gather queue failure",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                    )
+                except Exception as handler_error:
+                    logger.error(
+                        "Sync fallback also failed",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        error=str(handler_error),
+                    )
                 continue
 
             # Unpack result tuple (narrowed to tuple by isinstance check above)

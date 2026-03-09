@@ -62,11 +62,9 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
         file_size = len(file_content.encode())
         total_size += file_size
 
-        file_data = {
-            "file": (f"test_file_{i}.txt", io.BytesIO(file_content.encode()), "text/plain")
-        }
+        file_data = {"file": (f"test_file_{i}.txt", io.BytesIO(file_content.encode()), "text/plain")}
 
-        log_step(f"Uploading file {i+1}/10", size_bytes=file_size)
+        log_step(f"Uploading file {i + 1}/10", size_bytes=file_size)
         start_time = time.perf_counter()
 
         response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
@@ -77,7 +75,7 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
         uploaded_files.append(result["id"])
 
         log_step(
-            f"File {i+1} uploaded",
+            f"File {i + 1} uploaded",
             file_id=result["id"],
             elapsed_ms=upload_time * 1000,
         )
@@ -123,13 +121,13 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
             log_step("Testing quota limit enforcement")
             # Try to exceed limit directly with a larger file
             larger_size = quota_limit - current_used + 100
-            file_data = {
-                "file": ("exceed_limit.txt", io.BytesIO(b"x" * larger_size), "text/plain")
-            }
+            file_data = {"file": ("exceed_limit.txt", io.BytesIO(b"x" * larger_size), "text/plain")}
             response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
 
             log_step("Upload attempt over limit", status_code=response.status_code)
-            assert response.status_code == 403 or response.status_code == 413, f"Expected 403 or 413, got {response.status_code}"  # noqa: E501
+            assert response.status_code == 403 or response.status_code == 413, (
+                f"Expected 403 or 413, got {response.status_code}"
+            )  # noqa: E501
 
             error_detail = response.json().get("detail", "")
             log_step("Quota limit enforced", error=error_detail)
@@ -143,7 +141,7 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
         deleted_size += len(file_content.encode())
         response = await client.delete(f"/api/v1/files/{file_id}", headers=headers)
         assert response.status_code == 204, f"Delete failed: {response.text}"
-        log_step(f"Deleted file {i+1}/5", file_id=file_id)
+        log_step(f"Deleted file {i + 1}/5", file_id=file_id)
 
     # Step 7: Verify quota decremented
     log_step("Verifying quota decremented after deletions")
@@ -179,9 +177,7 @@ async def test_quota_check_performance(premium_user: dict, client: AsyncClient, 
     # Step 1: Upload some files
     log_step("Uploading files for performance test")
     for i in range(5):
-        file_data = {
-            "file": (f"perf_test_{i}.txt", io.BytesIO(b"test content"), "text/plain")
-        }
+        file_data = {"file": (f"perf_test_{i}.txt", io.BytesIO(b"test content"), "text/plain")}
         response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
         assert response.status_code == 201
 
@@ -196,13 +192,13 @@ async def test_quota_check_performance(premium_user: dict, client: AsyncClient, 
 
         assert response.status_code == 200
         times.append(elapsed)
-        log_step(f"Quota check {i+1}/10", elapsed_ms=elapsed * 1000)
+        log_step(f"Quota check {i + 1}/10", elapsed_ms=elapsed * 1000)
 
     avg_time = sum(times) / len(times)
     log_step("Average quota check time", avg_ms=avg_time * 1000)
 
     # With O(1) counter, should be very fast (< 200ms including network for local testing)
-    assert avg_time < 1.00, f"Average time {avg_time*1000:.2f}ms, expected < 1000ms"
+    assert avg_time < 1.00, f"Average time {avg_time * 1000:.2f}ms, expected < 1000ms"
     log_step("Performance acceptable", threshold_ms=200, actual_ms=avg_time * 1000)
 
     log_step("Quota check performance E2E test completed successfully")
@@ -230,9 +226,7 @@ async def test_concurrent_uploads_quota_accuracy(premium_user: dict, client: Asy
     log_step("Uploading 5 files concurrently")
 
     async def upload_file(index):
-        file_data = {
-            "file": (f"concurrent_{index}.txt", io.BytesIO(b"test"), "text/plain")
-        }
+        file_data = {"file": (f"concurrent_{index}.txt", io.BytesIO(b"test"), "text/plain")}
         response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
         return response.status_code == 201
 
@@ -268,9 +262,7 @@ async def test_quota_counter_recovery(premium_user: dict, client: AsyncClient, l
     # Step 1: Upload files
     log_step("Uploading files")
     for i in range(3):
-        file_data = {
-            "file": (f"recovery_test_{i}.txt", io.BytesIO(b"test"), "text/plain")
-        }
+        file_data = {"file": (f"recovery_test_{i}.txt", io.BytesIO(b"test"), "text/plain")}
         response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
         assert response.status_code == 201
 

@@ -1,14 +1,14 @@
 """Feature flags service."""
 
-import logging
 from typing import Any
 
 from sqlalchemy import select
 
 from src.app.core.db.database import async_session_maker
+from src.app.core.logger import get_logger
 from src.app.modules.tenants.models import Tenant
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class FeatureFlagsService:

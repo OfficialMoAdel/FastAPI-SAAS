@@ -91,6 +91,7 @@ class SubscriptionPlan(Base, kw_only=True):
         back_populates="subscription_plan", init=False, lazy="selectin"
     )
 
+
 class Product(Base, kw_only=True):
     """Purchasable products for one-time or add-on purchases."""
 

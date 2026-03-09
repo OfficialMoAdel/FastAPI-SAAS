@@ -25,7 +25,7 @@ def mock_current_user():
         username="testuser",
         hashed_password="mock_password_hash",
         is_superuser=False,
-        tenant_id=1
+        tenant_id=1,
     )
     mock_user.id = 1
     mock_user.tenant_id = 1
@@ -153,10 +153,7 @@ class TestWebhookTestDelivery:
     def test_test_webhook_endpoint(self, client, auth_headers) -> None:
         """Test webhook sends test event to endpoint."""
         webhook_id = str(uuid4())
-        test_payload = {
-            "event_type": "user.created",
-            "payload": {"id": 1, "email": "test@example.com"}
-        }
+        test_payload = {"event_type": "user.created", "payload": {"id": 1, "email": "test@example.com"}}
         response = client.post(
             f"/api/v1/webhooks/{webhook_id}/test",
             headers=auth_headers,

@@ -70,9 +70,7 @@ class TestValidateWebhookUrl:
     async def test_rejects_private_ip_resolution(self) -> None:
         """URLs resolving to private IPs should be rejected."""
         # Mock DNS to return private IP
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("192.168.1.1", 0))]
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             with pytest.raises(SSRFProtectionError, match="blocked IP"):
                 await validate_webhook_url("https://internal.example.com/webhook")
@@ -81,9 +79,7 @@ class TestValidateWebhookUrl:
     async def test_accepts_valid_https_url(self) -> None:
         """Valid HTTPS URLs with public IPs should be accepted."""
         # Mock DNS to return public IP
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             # Should not raise
             await validate_webhook_url("https://example.com/webhook")
@@ -99,9 +95,7 @@ class TestValidateWebhookUrl:
     async def test_is_async_and_non_blocking(self) -> None:
         """Verify the function is async and uses asyncio.to_thread."""
         # This test verifies the function can be awaited and uses to_thread
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
 
         with patch("asyncio.to_thread", return_value=mock_addr_info) as mock_to_thread:
             await validate_webhook_url("https://example.com/webhook")
@@ -115,15 +109,10 @@ class TestValidateWebhookUrl:
     @pytest.mark.asyncio
     async def test_concurrent_validations(self) -> None:
         """Multiple concurrent validations should work correctly."""
-        mock_addr_info = [
-            (socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))
-        ]
+        mock_addr_info = [(socket.AF_INET, socket.SOCK_STREAM, 0, "", ("93.184.216.34", 0))]
 
         with patch("asyncio.to_thread", return_value=mock_addr_info):
             # Run 10 concurrent validations
-            tasks = [
-                validate_webhook_url(f"https://example{i}.com/webhook")
-                for i in range(10)
-            ]
+            tasks = [validate_webhook_url(f"https://example{i}.com/webhook") for i in range(10)]
             # All should complete without error
             await asyncio.gather(*tasks)

@@ -51,7 +51,7 @@ def test_passkey_login_flow(
             response = client.post(
                 "/api/v1/auth/passkey/register",
                 headers=regular_user_token_headers,
-                json={"device_type": "Login Test Device"}
+                json={"device_type": "Login Test Device"},
             )
             assert response.status_code == 200, f"Start registration failed: {response.text}"
 
@@ -59,11 +59,8 @@ def test_passkey_login_flow(
             credential_data = {
                 "id": "login-test-cred-id-b64",
                 "rawId": "login-test-cred-id-b64",
-                "response": {
-                    "clientDataJSON": "eyJjaGFsbGVuZ2UiOiAiLi4uIn0=",
-                    "attestationObject": "..."
-                },
-                "type": "public-key"
+                "response": {"clientDataJSON": "eyJjaGFsbGVuZ2UiOiAiLi4uIn0=", "attestationObject": "..."},
+                "type": "public-key",
             }
 
             response = client.post(
@@ -136,7 +133,7 @@ def test_passkey_login_flow(
                                 "authenticatorData": "...",
                                 "signature": "...",
                             },
-                            "type": "public-key"
+                            "type": "public-key",
                         }
 
                         response = client.post(
@@ -193,7 +190,7 @@ def test_passkey_login_expired_challenge(
                 "authenticatorData": "...",
                 "signature": "...",
             },
-            "type": "public-key"
+            "type": "public-key",
         }
 
         response = client.post(
@@ -236,7 +233,7 @@ def test_passkey_login_replay_attack_prevention(
                         "authenticatorData": "...",
                         "signature": "...",
                     },
-                    "type": "public-key"
+                    "type": "public-key",
                 }
 
                 response = client.post(

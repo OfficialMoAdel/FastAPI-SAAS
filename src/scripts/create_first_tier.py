@@ -4,11 +4,13 @@ import os
 
 from sqlalchemy import select
 
+from src.app.core.logger import get_logger
+
 from ..app.core.db.database import AsyncSession, local_session
 from ..app.modules.tiers.models import Tier
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 async def create_first_tier(session: AsyncSession) -> None:
@@ -22,13 +24,13 @@ async def create_first_tier(session: AsyncSession) -> None:
         if tier is None:
             session.add(Tier(name=tier_name))
             await session.commit()
-            logger.info(f"Tier '{tier_name}' created successfully.")
+            logger.info("Tier '' created successfully.", tier_name=tier_name)
 
         else:
-            logger.info(f"Tier '{tier_name}' already exists.")
+            logger.info("Tier '' already exists.", tier_name=tier_name)
 
     except Exception as e:
-        logger.error(f"Error creating tier: {e}")
+        logger.error("Error creating tier:", error=e)
 
 
 async def main():

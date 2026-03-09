@@ -160,7 +160,7 @@ class DashboardService:
                 BillingRecord.tenant_id == tenant_id,
                 BillingRecord.created_at >= start_date,
                 BillingRecord.created_at <= end_date,
-                BillingRecord.status == "succeeded"
+                BillingRecord.status == "succeeded",
             )
             .scalar_subquery()
         )
@@ -170,10 +170,7 @@ class DashboardService:
         # Since this is a dashboard simple value, we will query active subscriptions count
         subs_count_sub = (
             select(func.count(UserSubscription.id))
-            .where(
-                UserSubscription.tenant_id == tenant_id,
-                UserSubscription.status == "active"
-            )
+            .where(UserSubscription.tenant_id == tenant_id, UserSubscription.status == "active")
             .scalar_subquery()
         )
 
@@ -188,7 +185,7 @@ class DashboardService:
 
         return RevenueMetrics(
             total_revenue=total_revenue,
-            recurring_revenue=0.0, # Placeholder until MRR specific query is built
+            recurring_revenue=0.0,  # Placeholder until MRR specific query is built
             average_revenue_per_user=avg_revenue,
             total_subscriptions=total_subs,
         )
@@ -251,7 +248,7 @@ class DashboardService:
                 AuditLog.tenant_id == tenant_id,
                 AuditLog.created_at >= start_date,
                 AuditLog.created_at <= end_date,
-                AuditLog.action.like("%webhook%")
+                AuditLog.action.like("%webhook%"),
             )
             .scalar_subquery()
         )

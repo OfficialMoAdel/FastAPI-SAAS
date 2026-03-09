@@ -4,7 +4,6 @@ Tests T096: Token estimation (4 chars per token)
 Tests T097: Context window truncation (FIFO, preserve system prompt)
 """
 
-
 from src.app.modules.ai.service import (
     estimate_messages_tokens,
     estimate_tokens,

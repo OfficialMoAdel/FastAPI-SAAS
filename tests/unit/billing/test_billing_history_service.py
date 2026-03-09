@@ -63,11 +63,13 @@ class TestBillingHistoryService:
             "total_count": 2,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_records,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_records,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20)
 
@@ -86,12 +88,14 @@ class TestBillingHistoryService:
             "total_count": 5,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_page_1,
-        ) as mock_get_multi:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_page_1,
+            ) as mock_get_multi,
+        ):
             result = await service.get_user_records(user_id=1, page=1, limit=2)
 
             # Verify offset calculation: (page - 1) * limit = 0
@@ -105,11 +109,13 @@ class TestBillingHistoryService:
 
         mock_empty = {"data": [], "total_count": 0}
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_empty,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_empty,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20)
 
@@ -135,11 +141,13 @@ class TestBillingHistoryService:
             "total_count": 1,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_failed,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_failed,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20, status="failed")
 
@@ -203,11 +211,13 @@ class TestBillingHistoryService:
             "total_count": 3,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_records,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_records,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20)
 
@@ -230,11 +240,13 @@ class TestBillingRecordStatusFiltering:
             "total_count": 2,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_succeeded,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_succeeded,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20, status="succeeded")
 
@@ -250,11 +262,13 @@ class TestBillingRecordStatusFiltering:
             "total_count": 1,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_failed,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_failed,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20, status="failed")
 
@@ -270,11 +284,13 @@ class TestBillingRecordStatusFiltering:
             "total_count": 2,
         }
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant), \
-             patch(
-            "src.app.modules.billing.crud.crud_billing_records.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_refunded,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_refunded,
+            ),
         ):
             result = await service.get_user_records(user_id=1, page=1, limit=20, status="refunded")
 

@@ -212,6 +212,7 @@ class TestAuditActionDecorator:
 
             # Give the task a moment to be created (fire-and-forget)
             import asyncio
+
             await asyncio.sleep(0.01)
 
             # Decorator creates task but event_bus.publish should be called

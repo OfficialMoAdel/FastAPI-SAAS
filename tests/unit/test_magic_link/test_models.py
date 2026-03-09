@@ -5,7 +5,6 @@ TDD: These tests are written first and should FAIL until implementation is compl
 Task: T019 [US1] Write unit tests for MagicLink model
 """
 
-
 from sqlalchemy import inspect
 
 

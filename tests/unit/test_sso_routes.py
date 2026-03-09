@@ -1,6 +1,5 @@
 """Unit tests for SSO route changes to /account/sso prefix."""
 
-
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient

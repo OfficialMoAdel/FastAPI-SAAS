@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.logger import get_logger
 from src.app.core.schemas import TokenBlacklistCreate, TokenData
 from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
@@ -36,7 +37,7 @@ REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
 # SECURITY FIX: Made configurable via settings instead of hardcoded
 JWT_AUDIENCE: str = getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api")
 
-_jwt_logger = logging.getLogger(__name__)
+_jwt_logger = get_logger(__name__)
 
 # Lua script for atomic GETDEL (get and delete) to prevent race conditions.
 # Returns the value if key existed, None otherwise.
@@ -99,7 +100,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         return result
     except (ValueError, TypeError) as e:
         # Only catch specific bcrypt errors, not all exceptions
-        _jwt_logger.error(f"Password verification failed: {e}")
+        _jwt_logger.error("Password verification failed:", error=e)
         return False
 
 

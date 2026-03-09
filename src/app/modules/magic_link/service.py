@@ -4,16 +4,15 @@ Business logic for magic link passwordless authentication.
 Handles token generation, email queueing, and token verification.
 """
 
-
 from __future__ import annotations
 
-import logging
 from typing import Any
 
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.core.security import (
     ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
@@ -28,7 +27,7 @@ from src.app.modules.magic_link.exceptions import (
 from src.app.modules.magic_link.schemas import MagicLinkSendResponse
 from src.app.modules.users.crud import crud_users
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class MagicLinkService:
@@ -113,6 +112,7 @@ class MagicLinkService:
 
         # Store in database for audit trail with hashed token (H-14)
         from src.app.modules.magic_link.crud import create_magic_link
+
         try:
             await create_magic_link(
                 db=self.db,
@@ -188,6 +188,7 @@ class MagicLinkService:
 
         # Check MFA
         from src.app.modules.mfa.service import MFAService
+
         mfa_service = MFAService()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
 
@@ -213,6 +214,7 @@ class MagicLinkService:
 
         # Update audit trail in database
         from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
+
         try:
             db_link = await get_magic_link_by_token(db=self.db, token=token)
             if db_link:

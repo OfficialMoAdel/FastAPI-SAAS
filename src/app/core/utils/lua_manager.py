@@ -18,18 +18,18 @@ Usage:
     )
 """
 
-
 from __future__ import annotations
 
 import hashlib
-import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
+
+from src.app.core.logger import get_logger
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 class LuaScriptError(Exception):
@@ -155,7 +155,7 @@ class LuaScriptManager:
         normalized_source = "\n".join(line.strip() for line in source.strip().splitlines())
         script = LuaScript(name=name, source=normalized_source)
         self._scripts[name] = script
-        logger.debug(f"Registered Lua script '{name}' with SHA1: {script.sha1[:8]}...")
+        logger.debug("Registered Lua script", name=name, sha1=script.sha1[:8])
         return script
 
     def get_script(self, name: str) -> LuaScript:
@@ -195,21 +195,21 @@ class LuaScriptManager:
 
                 # Verify SHA1 matches
                 if loaded_sha != script.sha1:
-                    logger.warning(f"Script '{name}' SHA1 mismatch: expected {script.sha1[:8]}, got {loaded_sha[:8]}")
+                    logger.warning("Script SHA1 mismatch", name=name, expected=script.sha1[:8], got=loaded_sha[:8])
                     # Update to server's SHA1
                     script.sha1 = loaded_sha
 
                 script.loaded = True
                 results[name] = True
-                logger.debug(f"Preloaded script '{name}'")
+                logger.debug("Preloaded script ''", name=name)
 
             except Exception as e:
-                logger.error(f"Failed to preload script '{name}': {e}")
+                logger.error("Failed to preload script '':", name=name, error=e)
                 results[name] = False
 
         self._preloaded = True
         loaded_count = sum(results.values())
-        logger.info(f"Preloaded {loaded_count}/{len(self._scripts)} Lua scripts")
+        logger.info("Preloaded / Lua scripts", loaded_count=loaded_count, val=len(self._scripts))
 
         return results
 
@@ -256,7 +256,7 @@ class LuaScriptManager:
 
             # Handle NOSCRIPT error - script not in Redis cache
             if "NOSCRIPT" in error_str:
-                logger.debug(f"Script '{script_name}' not cached, falling back to EVAL")
+                logger.debug("Script '' not cached, falling back to EVAL", script_name=script_name)
                 try:
                     result = await redis.eval(  # type: ignore[misc]
                         script.source,
@@ -298,7 +298,7 @@ class LuaScriptManager:
             return await self.execute(redis, script_name, keys, args)
         except LuaScriptError as e:
             if fallback_fn is not None:
-                logger.warning(f"Script '{script_name}' failed, using fallback: {e}")
+                logger.warning("Script '' failed, using fallback:", script_name=script_name, error=e)
                 return await fallback_fn()
             raise
 

@@ -1,6 +1,5 @@
 """Billing & Payments router - HTTP handlers for billing operations."""
 
-import logging
 from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
@@ -10,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_user
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
+from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.billing.schemas import (
@@ -45,7 +45,7 @@ from src.app.modules.billing.service import (
 from src.app.modules.billing.webhook import handle_webhook_event, verify_webhook_signature
 
 router = APIRouter(prefix="/billing", tags=["billing"])
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 
 # =============================================================================

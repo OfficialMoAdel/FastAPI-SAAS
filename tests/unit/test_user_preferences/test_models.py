@@ -3,7 +3,6 @@
 Task: T083 [P] [US9] Write unit tests for UserPreferences model
 """
 
-
 import pytest
 
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES, UserPreferences
@@ -32,7 +31,8 @@ class TestUserPreferencesModel:
         user_id_col = UserPreferences.__table__.c.user_id
         # Check if unique constraint exists
         assert user_id_col.unique is True or any(
-            c.unique for c in UserPreferences.__table__.constraints
+            c.unique
+            for c in UserPreferences.__table__.constraints
             if hasattr(c, "columns") and "user_id" in [col.name for col in c.columns]
         )
 

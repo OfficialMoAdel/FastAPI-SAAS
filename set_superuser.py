@@ -34,17 +34,14 @@ async def main():
                 print(f"Setting is_superuser=True for {email} in tenant {tenant_slug}")
 
                 # Update user
-                await session.execute(
-                    update(User)
-                    .where(User.id == user.id)
-                    .values(is_superuser=True)
-                )
+                await session.execute(update(User).where(User.id == user.id).values(is_superuser=True))
                 await session.commit()
                 print("User updated successfully")
             else:
                 print(f"User {email} not found")
     except Exception as e:
         print(f"Error: {e}")
+
 
 if __name__ == "__main__":
     asyncio.run(main())

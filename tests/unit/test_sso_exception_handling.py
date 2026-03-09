@@ -82,9 +82,7 @@ class TestOrjsonExceptionHandling:
         except orjson.JSONDecodeError:
             pass  # Expected behavior
         except stdlib_json.JSONDecodeError:
-            pytest.fail(
-                "stdlib json.JSONDecodeError was raised - this should be orjson.JSONDecodeError"
-            )
+            pytest.fail("stdlib json.JSONDecodeError was raised - this should be orjson.JSONDecodeError")
 
 
 class TestSSOUserDataParsing:

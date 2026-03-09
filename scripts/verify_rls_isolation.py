@@ -168,9 +168,7 @@ async def test_tenant_isolation():
         if len(posts) == 1 and posts[0].id == post_a.id:
             test_pass("Tenant A can only see own posts")
         else:
-            test_fail(
-                f"Tenant A isolation failed: expected 1 post (ID {post_a.id}), got {len(posts)} posts"
-            )
+            test_fail(f"Tenant A isolation failed: expected 1 post (ID {post_a.id}), got {len(posts)} posts")
 
         # Reset and set context to tenant B
         await connection.execute(text("RESET app.current_tenant_id"))
@@ -186,9 +184,7 @@ async def test_tenant_isolation():
         if len(posts) == 1 and posts[0].id == post_b.id:
             test_pass("Tenant B can only see own posts")
         else:
-            test_fail(
-                f"Tenant B isolation failed: expected 1 post (ID {post_b.id}), got {len(posts)} posts"
-            )
+            test_fail(f"Tenant B isolation failed: expected 1 post (ID {post_b.id}), got {len(posts)} posts")
 
         # Test INSERT with wrong tenant_id (should fail)
         await connection.execute(
@@ -275,9 +271,7 @@ async def test_bypass_functionality():
         if len(tenants) == 0:
             test_pass("Without bypass and context, queries return nothing")
         else:
-            test_fail(
-                f"Expected 0 tenants without context, got {len(tenants)}"
-            )
+            test_fail(f"Expected 0 tenants without context, got {len(tenants)}")
 
         # With bypass, should see all tenants
         connection = await session.connection()
@@ -287,13 +281,9 @@ async def test_bypass_functionality():
         tenants = result.scalars().all()
 
         if len(tenants) >= 2:
-            test_pass(
-                f"With bypass, can see all tenants ({len(tenants)} total)"
-            )
+            test_pass(f"With bypass, can see all tenants ({len(tenants)} total)")
         else:
-            test_fail(
-                f"Bypass failed: expected at least 2 tenants, got {len(tenants)}"
-            )
+            test_fail(f"Bypass failed: expected at least 2 tenants, got {len(tenants)}")
 
         # Cleanup
         await session.delete(tenant_a)
@@ -313,9 +303,7 @@ async def test_no_context_behavior():
         if len(posts) == 0:
             test_pass("Without RLS context, queries return nothing (fail-closed)")
         else:
-            test_fail(
-                f"Fail-closed check failed: expected 0 posts without context, got {len(posts)}"
-            )
+            test_fail(f"Fail-closed check failed: expected 0 posts without context, got {len(posts)}")
 
 
 async def main():
@@ -349,9 +337,7 @@ async def main():
             print("\n✅ All tests passed! RLS isolation is working correctly.")
             sys.exit(0)
         else:
-            print(
-                f"\n❌ {failed_tests} test(s) failed. Please review RLS configuration."
-            )
+            print(f"\n❌ {failed_tests} test(s) failed. Please review RLS configuration.")
             sys.exit(1)
 
     except Exception as e:

@@ -4,14 +4,15 @@ Defines the abstract interface that all AI providers must implement,
 allowing easy swapping between OpenAI, Anthropic, Ollama, and other providers.
 """
 
-import logging
 from abc import ABC, abstractmethod
 from collections.abc import AsyncGenerator
 from typing import Any
 
 from pydantic import BaseModel
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class AIProviderError(Exception):

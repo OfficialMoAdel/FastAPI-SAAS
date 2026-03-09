@@ -5,15 +5,15 @@ with error handling and statistics tracking.
 """
 
 import asyncio
-import logging
 import time
 from collections.abc import Awaitable, Callable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.logger import get_logger
 from src.app.core.utils.cache_warming import CacheWarmingResult
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
 
@@ -47,9 +47,9 @@ class CacheWarmer:
 
         def decorator(func: Callable[[AsyncSession], Awaitable[int]]) -> Callable[[AsyncSession], Awaitable[int]]:
             if name in self._warmers:
-                logger.warning(f"Overwriting existing warmer: {name}")
+                logger.warning("Overwriting existing warmer:", name=name)
             self._warmers[name] = func
-            logger.debug(f"Registered cache warmer: {name}")
+            logger.debug("Registered cache warmer:", name=name)
             return func
 
         return decorator
@@ -72,7 +72,7 @@ class CacheWarmer:
         result = CacheWarmingResult()
         errors: list[str] = []
 
-        logger.info(f"[START] Cache warming started at {start_time:.2f} | warmers={len(self._warmers)}")
+        logger.info("[START] Cache warming started at | warmers=", start_time=start_time, val=len(self._warmers))
 
         for name, warmer in self._warmers.items():
             warmer_start = time.time()
@@ -147,7 +147,7 @@ class CacheWarmer:
 
         if name not in self._warmers:
             error_msg = f"Unknown cache warmer: {name}"
-            logger.error(f"[UNKNOWN] Warmer={name} | error={error_msg}")
+            logger.error("[UNKNOWN] Warmer= | error=", name=name, error_msg=error_msg)
             return CacheWarmingResult(errors=[error_msg])
 
         warmer = self._warmers[name]

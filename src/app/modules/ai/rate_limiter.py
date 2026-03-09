@@ -8,12 +8,12 @@ Default: 60 requests per user per minute.
 Optimized with Lua script for atomic single-call rate limit checks.
 """
 
-import logging
-
 from redis.asyncio import Redis
 from redis.exceptions import NoScriptError, ResponseError
 
-logger = logging.getLogger(__name__)
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 
 class RateLimitError(Exception):
@@ -121,7 +121,7 @@ class AIRateLimiter:
             current_count, ttl = await self._execute_rate_limit_script(key, self.window_seconds)
         except ResponseError as e:
             # Fallback to original multi-call approach on script failure
-            logger.warning(f"Lua script failed, using fallback: {e}")
+            logger.warning("Lua script failed, using fallback:", error=e)
             current_count, ttl = await self._fallback_check(key)
 
         # Calculate remaining requests

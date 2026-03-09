@@ -14,7 +14,6 @@ Usage:
 
 
 import asyncio
-import logging
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from typing import BinaryIO
@@ -23,9 +22,10 @@ from urllib.parse import quote
 import aiofiles
 import aiofiles.os
 
+from src.app.core.logger import get_logger
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult
 
-logger = logging.getLogger(__name__)
+logger = get_logger(__name__)
 
 # Chunk size for reading/writing files (64KB)
 CHUNK_SIZE = 64 * 1024
@@ -108,15 +108,15 @@ class LocalStorage(StorageProvider):
             async with aiofiles.open(meta_path, "w") as f:
                 await f.write(mime_type)
 
-            logger.info(f"Uploaded file: {path}, size: {size} bytes")
+            logger.info("Uploaded file: , size: bytes", path=path, size=size)
             return StorageResult(success=True, path=path, size=size)
 
         except ValueError as e:
-            logger.error(f"Path validation failed for {path}: {e}")
+            logger.error("Path validation failed for :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
         except Exception as e:
-            logger.error(f"Failed to upload file {path}: {e}")
+            logger.error("Failed to upload file :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def download(self, path: str) -> AsyncGenerator[bytes, None]:
@@ -158,15 +158,15 @@ class LocalStorage(StorageProvider):
             if await aiofiles.os.path.exists(meta_path):
                 await aiofiles.os.remove(meta_path)
 
-            logger.info(f"Deleted file: {path}")
+            logger.info("Deleted file:", path=path)
             return StorageResult(success=True, path=path)
 
         except ValueError as e:
-            logger.error(f"Path validation failed for {path}: {e}")
+            logger.error("Path validation failed for :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
         except Exception as e:
-            logger.error(f"Failed to delete file {path}: {e}")
+            logger.error("Failed to delete file :", path=path, error=e)
             return StorageResult(success=False, path=path, error=str(e))
 
     async def exists(self, path: str) -> bool:
@@ -220,7 +220,7 @@ class LocalStorage(StorageProvider):
 
             return True
         except Exception as e:
-            logger.error(f"Local storage validation failed: {e}")
+            logger.error("Local storage validation failed:", error=e)
             return False
 
     async def get_mime_type(self, path: str) -> str | None:

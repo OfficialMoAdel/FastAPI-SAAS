@@ -1,4 +1,5 @@
 """Unit tests for P3-1: DLQ Bounded Size Optimization."""
+
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -186,8 +187,7 @@ async def test_dlq_no_alert_below_threshold(mock_redis_client, mock_settings):
                 )
 
     # Verify no capacity warning (only the "moved to DLQ" warning)
-    warning_calls = [call for call in mock_logger.warning.call_args_list
-                     if "DLQ approaching capacity" in str(call)]
+    warning_calls = [call for call in mock_logger.warning.call_args_list if "DLQ approaching capacity" in str(call)]
     assert len(warning_calls) == 0
 
 
@@ -224,6 +224,7 @@ async def test_dlq_entry_format(mock_redis_client, mock_settings):
 
     # Parse the JSON entry
     import json
+
     entry = json.loads(lpush_call[1])
 
     # Verify all required fields

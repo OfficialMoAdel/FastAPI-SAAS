@@ -4,7 +4,6 @@ This module defines request/response DTOs for storage settings API,
 with proper validation and sensitive field masking.
 """
 
-
 from __future__ import annotations
 
 from datetime import datetime

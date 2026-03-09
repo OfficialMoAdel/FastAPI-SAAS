@@ -20,6 +20,7 @@ from src.app.modules.sso.service import SSOService, get_sso_service
 
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 
+
 def _validate_redirect_uri(uri: str | None) -> None:
     """Validate redirect URI to prevent open redirects."""
     if not uri:
@@ -32,7 +33,7 @@ def _validate_redirect_uri(uri: str | None) -> None:
 
     raise HTTPException(
         status_code=status.HTTP_400_BAD_REQUEST,
-        detail="Invalid redirect URI. Must be a relative path or match the permitted frontend domain."
+        detail="Invalid redirect URI. Must be a relative path or match the permitted frontend domain.",
     )
 
 

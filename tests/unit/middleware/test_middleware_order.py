@@ -23,7 +23,7 @@ class TestMiddlewareOrder:
         # Find the middleware registration section
         gzip_pos = source.find("app.add_middleware(GZipMiddleware")
         security_pos = source.find("app.add_middleware(SecurityHeadersMiddleware")
-        body_limit_pos = source.find("app.add_middleware(RequestBodyLimitMiddleware")
+        body_limit_pos = source.find("RequestBodyLimitMiddleware, max_body_size")
         tenant_pos = source.find("app.add_middleware(TenantMiddleware")
         rate_limit_pos = source.find("app.add_middleware(RateLimitMiddleware")
         request_id_pos = source.find("app.add_middleware(RequestIDMiddleware")

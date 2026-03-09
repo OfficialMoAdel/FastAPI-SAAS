@@ -184,7 +184,7 @@ class TestPerformanceCharacteristics:
         # Assert
         assert len(result) > 0, "Should produce result"
         # Should complete quickly (< 10ms even on slow systems)
-        assert elapsed < 0.01, f"Should complete in <10ms, took {elapsed*1000:.1f}ms"
+        assert elapsed < 0.01, f"Should complete in <10ms, took {elapsed * 1000:.1f}ms"
 
     def test_benchmark_10000_chunks(self):
         """Benchmark with 10000 chunks (very long AI response)."""
@@ -200,4 +200,4 @@ class TestPerformanceCharacteristics:
         # Assert
         assert len(result) == num_chunks, "Should have correct length"
         # Should still complete quickly (< 100ms)
-        assert elapsed < 0.1, f"Should complete in <100ms, took {elapsed*1000:.1f}ms"
+        assert elapsed < 0.1, f"Should complete in <100ms, took {elapsed * 1000:.1f}ms"
