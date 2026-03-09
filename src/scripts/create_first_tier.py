@@ -30,7 +30,7 @@ async def create_first_tier(session: AsyncSession) -> None:
             logger.info("Tier '' already exists.", tier_name=tier_name)
 
     except Exception as e:
-        logger.error("Error creating tier:", error=e)
+        logger.error("Error creating tier", error=e)
 
 
 async def main():

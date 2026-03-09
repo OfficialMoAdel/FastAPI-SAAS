@@ -7,6 +7,15 @@ import pytest
 
 from src.app.core.events import EventBus
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 
 @pytest.mark.asyncio
 async def test_bounded_dlq_uses_pipeline(mock_redis_client, mock_settings):
@@ -16,6 +25,7 @@ async def test_bounded_dlq_uses_pipeline(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -91,6 +101,7 @@ async def test_dlq_max_size_enforced(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -124,6 +135,7 @@ async def test_dlq_alert_threshold_warning(mock_redis_client, mock_settings):
 
     # Mock pipeline returning size above threshold (850 > 800)
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -169,6 +181,7 @@ async def test_dlq_no_alert_below_threshold(mock_redis_client, mock_settings):
 
     # Mock pipeline returning size below threshold (500 < 800)
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -199,6 +212,7 @@ async def test_dlq_entry_format(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -247,6 +261,7 @@ async def test_dlq_oldest_entries_discarded(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()
@@ -279,6 +294,7 @@ async def test_feature_flag_controls_optimization(mock_redis_client, mock_settin
     # Test with flag enabled (bounded)
     mock_settings.DLQ_USE_BOUNDED_SIZE = True
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.lpush = MagicMock()
     mock_pipeline.ltrim = MagicMock()
     mock_pipeline.llen = MagicMock()

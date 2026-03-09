@@ -123,7 +123,7 @@ class OllamaClient:
             }
 
         except httpx.TimeoutException as e:
-            logger.error("Ollama timeout:", error=e)
+            logger.error("Ollama timeout", error=e)
             raise OllamaError("Request timed out", "timeout") from e
         except httpx.HTTPStatusError as e:
             logger.error("Ollama HTTP error: -", status_code=e.response.status_code, text=e.response.text)
@@ -132,7 +132,7 @@ class OllamaClient:
                 "http_error",
             ) from e
         except Exception as e:
-            logger.error("Ollama error:", error=e)
+            logger.error("Ollama error", error=e)
             raise OllamaError(str(e), "unknown") from e
 
     async def chat_stream(
@@ -181,7 +181,7 @@ class OllamaClient:
                         }
 
         except httpx.TimeoutException as e:
-            logger.error("Ollama stream timeout:", error=e)
+            logger.error("Ollama stream timeout", error=e)
             raise OllamaError("Stream timed out", "timeout") from e
         except httpx.HTTPStatusError as e:
             logger.error("Ollama stream HTTP error:", status_code=e.response.status_code)
@@ -190,7 +190,7 @@ class OllamaClient:
                 "http_error",
             ) from e
         except Exception as e:
-            logger.error("Ollama stream error:", error=e)
+            logger.error("Ollama stream error", error=e)
             raise OllamaError(str(e), "unknown") from e
 
     async def list_models(self) -> list[str]:
@@ -203,7 +203,7 @@ class OllamaClient:
             data = response.json()
             return [m["name"] for m in data.get("models", [])]
         except Exception as e:
-            logger.error("Failed to list models:", error=e)
+            logger.error("Failed to list models", error=e)
             return []
 
     async def health_check(self) -> bool:

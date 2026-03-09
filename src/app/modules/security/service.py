@@ -218,11 +218,11 @@ class IPFilterService:
             # P3-1: Use pipeline for bulk GET+TTL operations
             entries = []
             if keys:
-                pipe = client.pipeline()
-                for key in keys:
-                    pipe.get(key)
-                    pipe.ttl(key)
-                results = await pipe.execute()
+                async with client.pipeline() as pipe:
+                    for key in keys:
+                        pipe.get(key)
+                        pipe.ttl(key)
+                    results = await pipe.execute()
 
                 # Process pairs of (data, ttl)
                 for i in range(0, len(results), 2):
@@ -259,11 +259,11 @@ class IPFilterService:
             # P3-1: Use pipeline for bulk GET+TTL operations
             entries = []
             if keys:
-                pipe = client.pipeline()
-                for key in keys:
-                    pipe.get(key)
-                    pipe.ttl(key)
-                results = await pipe.execute()
+                async with client.pipeline() as pipe:
+                    for key in keys:
+                        pipe.get(key)
+                        pipe.ttl(key)
+                    results = await pipe.execute()
 
                 # Process pairs of (data, ttl)
                 for i in range(0, len(results), 2):

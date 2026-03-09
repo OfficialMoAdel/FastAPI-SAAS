@@ -700,7 +700,7 @@ def test_register_logs_info(registry, mock_circuit_breaker):
             circuit,
             service_type=ServiceType.DATABASE,
         )
-        
+
         args = " ".join(str(a) for a in mock_info.call_args[0])
         assert "Registered circuit breaker:" in args
 
@@ -713,7 +713,7 @@ async def test_reset_logs_info(registry, mock_circuit_breaker):
 
     with patch("src.app.core.resilience.registry.logger.info") as mock_info:
         await registry.reset("test_circuit")
-        
+
         args = " ".join(str(a) for a in mock_info.call_args[0])
         assert "Reset circuit breaker" in args
 

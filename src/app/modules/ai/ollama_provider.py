@@ -123,14 +123,14 @@ class OllamaProvider(AIProvider):
             data = response.json()
             return self._parse_chat_response(data)
         except HTTPStatusError as e:
-            logger.error("Ollama API error:", error=e)
+            logger.error("Ollama API error", error=e)
             raise AIProviderError(
                 f"Ollama API error: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Ollama request error:", error=e)
+            logger.error("Ollama request error", error=e)
             raise AIProviderError(
                 f"Ollama request error: {e}",
                 error_code="request_error",
@@ -202,14 +202,14 @@ class OllamaProvider(AIProvider):
                     except json.JSONDecodeError:
                         continue
         except HTTPStatusError as e:
-            logger.error("Ollama streaming error:", error=e)
+            logger.error("Ollama streaming error", error=e)
             raise AIProviderError(
                 f"Ollama streaming error: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Ollama request error:", error=e)
+            logger.error("Ollama request error", error=e)
             raise AIProviderError(
                 f"Ollama request error: {e}",
                 error_code="request_error",
@@ -325,14 +325,14 @@ class OllamaProvider(AIProvider):
                 token_count=None,
             )
         except HTTPStatusError as e:
-            logger.error("Ollama embedding error:", error=e)
+            logger.error("Ollama embedding error", error=e)
             raise AIProviderError(
                 f"Ollama embedding error: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Ollama request error:", error=e)
+            logger.error("Ollama request error", error=e)
             raise AIProviderError(
                 f"Ollama request error: {e}",
                 error_code="request_error",
@@ -357,14 +357,14 @@ class OllamaProvider(AIProvider):
             models = [m.get("name") for m in data.get("models", [])]
             return models
         except HTTPStatusError as e:
-            logger.error("Ollama list models error:", error=e)
+            logger.error("Ollama list models error", error=e)
             raise AIProviderError(
                 f"Failed to list models: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Ollama request error:", error=e)
+            logger.error("Ollama request error", error=e)
             raise AIProviderError(
                 f"Ollama request error: {e}",
                 error_code="request_error",
@@ -382,7 +382,7 @@ class OllamaProvider(AIProvider):
             response = await client.get("/api/tags", timeout=5.0)
             return response.status_code == 200
         except Exception as e:
-            logger.error("Ollama health check failed:", error=e)
+            logger.error("Ollama health check failed", error=e)
             return False
 
     async def close(self) -> None:

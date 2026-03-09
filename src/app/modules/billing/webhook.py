@@ -52,7 +52,7 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
         result = await redis_client.set(key, "1", nx=True, ex=_WEBHOOK_EVENT_TTL_SECONDS)
         return result is not None  # True = lock acquired, False = already processed
     except Exception as e:
-        logger.error("Failed to acquire webhook event lock:", error=e)
+        logger.error("Failed to acquire webhook event lock", error=e)
         # Fail open - allow processing to avoid losing events
         return True
 
@@ -79,11 +79,11 @@ def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> st
         return cast(stripe.Event, event)
     except ValueError as e:
         # Invalid payload
-        logger.error("Invalid payload:", error=e)
+        logger.error("Invalid payload", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid payload")
     except stripe.error.SignatureVerificationError as e:
         # Invalid signature
-        logger.error("Invalid signature:", error=e)
+        logger.error("Invalid signature", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
 
@@ -302,7 +302,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             logger.info("Created subscription for user in tenant", user_id=user_id, tenant_id=tenant_id)
 
         except stripe.error.StripeError as e:
-            logger.error("Stripe API error retrieving subscription:", error=e)
+            logger.error("Stripe API error retrieving subscription", error=e)
             raise
     else:
         logger.warning("No subscription ID in checkout session:", val=session["id"])
@@ -627,7 +627,7 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id)
             stripe_subscription_id = invoice.get("subscription")
         except stripe.error.StripeError as e:
-            logger.error("Error retrieving invoice:", error=e)
+            logger.error("Error retrieving invoice", error=e)
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Failed to retrieve invoice {stripe_invoice_id} from Stripe",

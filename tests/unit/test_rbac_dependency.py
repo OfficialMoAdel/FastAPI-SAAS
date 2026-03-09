@@ -25,6 +25,15 @@ from src.app.core.rbac.dependencies import (
 from src.app.core.rbac.permissions import Permission
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 
 class TestGetUserPermissionsCacheKey:
     """Tests for cache key generation."""
@@ -113,6 +122,7 @@ class TestGetCachedPermissions:
         mock_redis.exists = AsyncMock(return_value=False)  # Cache miss
         # Pipeline returns a sync object with async execute
         mock_pipeline = MagicMock()
+        _acm(mock_pipeline)
         mock_pipeline.execute = AsyncMock()
         mock_redis.pipeline.return_value = mock_pipeline
 
@@ -187,6 +197,7 @@ class TestGetCachedPermissions:
         mock_redis = MagicMock()
         mock_redis.exists = AsyncMock(return_value=False)
         mock_pipeline = MagicMock()
+        _acm(mock_pipeline)
         mock_pipeline.execute = AsyncMock(side_effect=Exception("Redis write error"))
         mock_redis.pipeline.return_value = mock_pipeline
 
@@ -222,6 +233,7 @@ class TestInvalidateUserPermissionsCache:
         """Should delete both set and bitmask cache keys via pipeline."""
         mock_redis = MagicMock()
         mock_pipeline = MagicMock()
+        _acm(mock_pipeline)
         mock_pipeline.execute = AsyncMock()
         mock_redis.pipeline.return_value = mock_pipeline
 

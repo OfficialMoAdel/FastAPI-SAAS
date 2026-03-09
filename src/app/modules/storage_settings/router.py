@@ -47,14 +47,14 @@ async def get_storage_settings(
         404: If storage settings not configured.
         403: If user lacks MANAGE_STORAGE_SETTINGS permission.
     """
-    settings = await service.get_settings(tenant.id)
-    if not settings:
+    storage_settings = await service.get_settings(tenant.id)
+    if not storage_settings:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Storage settings not configured for this tenant",
         )
 
-    return service.to_read_schema(settings)
+    return service.to_read_schema(storage_settings)
 
 
 @router.post(
@@ -92,8 +92,8 @@ async def create_storage_settings(
         )
 
     try:
-        settings = await service.create_settings(tenant.id, data)
-        return service.to_read_schema(settings)
+        storage_settings = await service.create_settings(tenant.id, data)
+        return service.to_read_schema(storage_settings)
 
     except InvalidCredentialsError as e:
         raise HTTPException(
@@ -135,8 +135,8 @@ async def update_storage_settings(
         404: If storage settings not configured.
     """
     try:
-        settings = await service.update_settings(tenant.id, data)
-        return service.to_read_schema(settings)
+        storage_settings = await service.update_settings(tenant.id, data)
+        return service.to_read_schema(storage_settings)
 
     except StorageNotConfiguredError:
         raise HTTPException(

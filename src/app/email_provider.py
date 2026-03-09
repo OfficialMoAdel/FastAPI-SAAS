@@ -156,7 +156,7 @@ class SMTPProvider(EmailProvider):
         except Exception as e:
             # Record failure with circuit breaker
             await email_circuit.record_failure(e)
-            logger.error("Failed to send email:", error=e)
+            logger.error("Failed to send email", error=e)
             return False
 
     async def send_bulk_emails(self, messages: list[EmailMessage]) -> dict:

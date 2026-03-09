@@ -51,6 +51,21 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
     await engine.dispose()
 
 
+def make_pipeline_ctx(pipe: MagicMock) -> MagicMock:
+    """Wrap *pipe* in an async context manager so it works with ``async with``."""
+    ctx = MagicMock()
+
+    async def _aenter(*args):
+        return pipe
+
+    async def _aexit(*args):
+        return False
+
+    ctx.__aenter__ = _aenter
+    ctx.__aexit__ = _aexit
+    return ctx
+
+
 @pytest.fixture
 def mock_redis_client() -> AsyncMock:
     """Mock Redis client for unit tests without real Redis.
@@ -65,7 +80,13 @@ def mock_redis_client() -> AsyncMock:
     mock.exists = AsyncMock(return_value=0)
     mock.ttl = AsyncMock(return_value=-1)
     mock.incr = AsyncMock(return_value=1)  # For event sequence numbers
-    mock.pipeline = MagicMock()
+
+    # Default pipeline: returns an async context manager wrapping an AsyncMock pipe.
+    # Individual tests may override: mock_redis_client.pipeline = MagicMock(return_value=make_pipeline_ctx(my_pipe))
+    _default_pipe = MagicMock()
+    _default_pipe.execute = AsyncMock(return_value=[])
+    mock.pipeline = MagicMock(return_value=make_pipeline_ctx(_default_pipe))
+
     mock.evalsha = AsyncMock(return_value=None)
     mock.script_load = AsyncMock(return_value=b"mock_sha")
     return mock

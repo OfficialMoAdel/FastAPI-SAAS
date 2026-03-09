@@ -9,29 +9,23 @@ from src.app.core.events import EventBus, EventPriority
 from src.app.core.utils.cache import _refresh_cache_with_lock, get_with_stampede_protection
 
 
+def _acm(pipe):
+    """Make pipeline mock support 'async with' returning itself on __aenter__."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 @pytest.mark.asyncio
 async def test_batch_enqueue():
     # Setup
     bus = EventBus()
     mock_arq = AsyncMock()
-    # Mock pipeline to return a mock object, not a coroutine
+    # Mock pipeline to return a mock object that is also an async CM
     mock_pipe = AsyncMock()
-    mock_arq.pipeline = lambda: mock_pipe
-
-    # We need to ensure pipe is an async context manager if it's used with `async with`
-    # or just a regular object if used directly. In ArqRedis.pipeline(), it returns a Pipeline object.
-    # The real pipeline() method is not async, it returns a pipeline object.
-    # In src/app/core/events.py we use: pipe = self._arq_queue.pipeline() (not awaited)
-
-    # But wait, ArqRedis inherits from Redis[bytes], so pipeline() is synchronous and returns a Pipeline.
-    # However, Redis-py async pipeline IS async context manager usually?
-    # Let's check the code in events.py:
-    # pipe = self._arq_queue.pipeline()
-    # pipe.psetex(...)
-    # await pipe.execute()
-
-    # So pipeline() is NOT awaited. It returns a Pipeline object.
-
+    _acm(mock_pipe)
     mock_arq.pipeline = lambda: mock_pipe
     mock_pipe.execute = AsyncMock(return_value=[])
 

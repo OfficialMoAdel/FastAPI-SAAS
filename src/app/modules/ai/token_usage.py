@@ -163,7 +163,7 @@ class AITokenUsageService:
 
             logger.debug("Saved token usage record:", id=usage_record.id)
         except Exception as e:
-            logger.error("Failed to save token usage:", error=e)
+            logger.error("Failed to save token usage", error=e)
             await session.rollback()
 
 

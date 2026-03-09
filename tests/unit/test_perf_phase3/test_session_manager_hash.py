@@ -10,10 +10,20 @@ import pytest
 from src.app.core.security.session_manager import SessionManager
 
 
+def _acm(pipe):
+    """Make pipeline mock support 'async with' by returning itself on __aenter__."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 @pytest.fixture
 def mock_pipeline():
     """Create a mock pipeline with sync methods and async execute."""
     pipe = MagicMock()
+    _acm(pipe)
     pipe.hdel = MagicMock()
     pipe.hset = MagicMock()
     pipe.zadd = MagicMock()

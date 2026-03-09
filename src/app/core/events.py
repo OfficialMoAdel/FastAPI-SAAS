@@ -505,35 +505,35 @@ class EventBus:
 
         try:
             # Prepare all jobs
-            pipe = self._arq_queue.pipeline()
-            enqueue_time_ms = timestamp_ms()
+            async with self._arq_queue.pipeline() as pipe:
+                enqueue_time_ms = timestamp_ms()
 
-            # Constants from arq
-            from uuid import uuid4
+                # Constants from arq
+                from uuid import uuid4
 
-            for handler in handlers:
-                job_id = uuid4().hex
-                job_key = job_key_prefix + job_id
+                for handler in handlers:
+                    job_id = uuid4().hex
+                    job_key = job_key_prefix + job_id
 
-                # Serialize job
-                job_data = serialize_job(
-                    function_name="process_event_handler",
-                    args=(event_name, handler.__module__, handler.__name__, data),
-                    kwargs={},
-                    job_try=None,
-                    enqueue_time_ms=enqueue_time_ms,
-                    serializer=self._arq_queue.job_serializer,
-                )
+                    # Serialize job
+                    job_data = serialize_job(
+                        function_name="process_event_handler",
+                        args=(event_name, handler.__module__, handler.__name__, data),
+                        kwargs={},
+                        job_try=None,
+                        enqueue_time_ms=enqueue_time_ms,
+                        serializer=self._arq_queue.job_serializer,
+                    )
 
-                # Add to pipeline: SETEX job_def, ZADD queue
-                # 24h expiration + extra ms
-                expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 86400000)
+                    # Add to pipeline: SETEX job_def, ZADD queue
+                    # 24h expiration + extra ms
+                    expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 86400000)
 
-                pipe.psetex(job_key, expires_ms, job_data)
-                pipe.zadd(queue_prefix, {job_id: enqueue_time_ms})
+                    pipe.psetex(job_key, expires_ms, job_data)
+                    pipe.zadd(queue_prefix, {job_id: enqueue_time_ms})
 
-            # Execute batch
-            await pipe.execute()
+                # Execute batch
+                await pipe.execute()
             await arq_circuit.record_success()
 
             logger.debug("Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority)
@@ -607,11 +607,11 @@ class EventBus:
                     max_size = settings.DLQ_MAX_SIZE
                     alert_threshold = settings.DLQ_ALERT_THRESHOLD_PCT
 
-                    pipe = self._redis_client.pipeline()
-                    pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
-                    pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
-                    pipe.llen(self.DLQ_REDIS_KEY)
-                    results = await pipe.execute()
+                    async with self._redis_client.pipeline() as pipe:
+                        pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
+                        pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
+                        pipe.llen(self.DLQ_REDIS_KEY)
+                        results = await pipe.execute()
 
                     dlq_size = results[2]  # LLEN result
                     update_dlq_size(dlq_size, max_size)

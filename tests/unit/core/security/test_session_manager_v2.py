@@ -43,6 +43,15 @@ def mock_redis():
     pipe_mock.delete = MagicMock(return_value=pipe_mock)
     pipe_mock.expire = MagicMock(return_value=pipe_mock)
     pipe_mock.execute = AsyncMock(return_value=[1, 1, 1, 1])
+
+    async def aenter(*args):
+        return pipe_mock
+
+    async def aexit(*args):
+        pass
+
+    pipe_mock.__aenter__ = aenter
+    pipe_mock.__aexit__ = aexit
     redis.pipeline = MagicMock(return_value=pipe_mock)
 
     return redis
@@ -185,6 +194,15 @@ class TestSessionManagerRaceConditionFix:
         pipe_mock.hset = MagicMock(return_value=pipe_mock)
         pipe_mock.expire = MagicMock(return_value=pipe_mock)
         pipe_mock.execute = AsyncMock(return_value=[1, 1, 1, 1])
+
+        async def aenter(*args):
+            return pipe_mock
+
+        async def aexit(*args):
+            pass
+
+        pipe_mock.__aenter__ = aenter
+        pipe_mock.__aexit__ = aexit
         mock_redis.pipeline = MagicMock(return_value=pipe_mock)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=10)
@@ -439,6 +457,15 @@ class TestSessionManagerZSETMigration:
         pipe_mock.zadd = MagicMock(return_value=pipe_mock)
         pipe_mock.expire = MagicMock(return_value=pipe_mock)
         pipe_mock.execute = AsyncMock(return_value=[1, 1])
+
+        async def aenter(*args):
+            return pipe_mock
+
+        async def aexit(*args):
+            pass
+
+        pipe_mock.__aenter__ = aenter
+        pipe_mock.__aexit__ = aexit
         mock_redis.pipeline = MagicMock(return_value=pipe_mock)
 
         manager = SessionManager(redis_client=mock_redis)

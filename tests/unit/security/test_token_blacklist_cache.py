@@ -18,6 +18,15 @@ from src.app.core.security.token_blacklist_cache import (
 )
 
 
+def _acm(pipe):
+    """Make pipeline mock support 'async with' by returning itself on __aenter__."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 class TestIsTokenBlacklisted:
     """Tests for is_token_blacklisted function."""
 
@@ -98,6 +107,7 @@ class TestAddTokenToBlacklist:
     async def test_adds_token_with_expiry_score(self) -> None:
         """Should add token to sorted set with expiry as score using pipeline."""
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.zadd = MagicMock()
         mock_pipe.delete = MagicMock()
         mock_pipe.execute = AsyncMock(return_value=[1, 1])
@@ -131,6 +141,7 @@ class TestBulkOperations:
         """Should add multiple tokens in one operation."""
         # Mock pipeline for bulk add
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.zadd = MagicMock()  # zadd is sync in pipeline mode
         mock_pipe.delete = MagicMock()  # delete is sync in pipeline mode
         mock_pipe.execute = AsyncMock(return_value=[3, 1, 1, 1])  # [zadd_result, delete1, delete2, delete3]
@@ -170,6 +181,7 @@ class TestCacheWarming:
         """Should only add non-expired tokens to cache."""
         # Mock pipeline for warm_cache
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.zadd = MagicMock()
         mock_pipe.delete = MagicMock()
         mock_pipe.execute = AsyncMock(return_value=[1])  # Only 1 active token

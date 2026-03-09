@@ -148,75 +148,118 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # Check for missing header BEFORE acquiring a DB connection.
 
-        # Legacy path: Acquire a connection from the pool for this request
-        # Note: tenant_slug is already validated non-empty above (before connection acquisition).
-        async with async_engine.connect() as connection:
-            try:
-                # Normalize slug to ensure case-insensitive lookup
-                tenant_slug = tenant_slug.strip().lower()
+        # Normalize slug to ensure case-insensitive lookup
+        tenant_slug = tenant_slug.strip().lower()
 
-                tenant = await self._get_tenant_by_slug(tenant_slug)
+        if getattr(settings, "FEATURE_REMOVE_WASTED_CONNECTION", False):
+            # Optimized path: Don't hold a DB connection open during the entire request.
+            # Downstream database sessions (via async_get_db) will enforce RLS.
+            tenant = await self._get_tenant_by_slug(tenant_slug)
 
-                if tenant is None:
-                    logger.warning(
-                        "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
-                        tenant_slug,
-                        path,
-                        request.method,
-                        request.client.host if request.client else "unknown",
-                    )
-                    return JSONResponse(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        content={"detail": "Access denied"},
-                    )
+            if tenant is None:
+                logger.warning(
+                    "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
+                    tenant_slug,
+                    path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Access denied"},
+                )
 
-                if not tenant.is_active:
-                    logger.warning(
-                        "Tenant resolution failed: inactive_tenant | slug=%s | "
-                        "tenant_id=%s | path=%s | method=%s | client=%s",
-                        tenant_slug,
-                        tenant.id,
-                        path,
-                        request.method,
-                        request.client.host if request.client else "unknown",
-                    )
-                    return JSONResponse(
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        content={"detail": "Tenant inactive. Contact support."},
-                    )
-
-                # Set application-level tenant context
-                set_current_tenant(tenant)
-
-                # Set PostgreSQL RLS session variables on this connection
-                # Use set_config for parameterized query safety with asyncpg
-                if connection.dialect.name == "postgresql":
-                    await connection.execute(
-                        text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-                        {"tenant_id": str(tenant.id)},
-                    )
-                logger.debug(
-                    "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s | rls_context=set",
+            if not tenant.is_active:
+                logger.warning(
+                    "Tenant resolution failed: inactive_tenant | slug=%s | "
+                    "tenant_id=%s | path=%s | method=%s | client=%s",
                     tenant_slug,
                     tenant.id,
                     path,
+                    request.method,
+                    request.client.host if request.client else "unknown",
+                )
+                return JSONResponse(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    content={"detail": "Tenant inactive. Contact support."},
                 )
 
+            # Set application-level tenant context
+            set_current_tenant(tenant)
+
+            try:
                 response = await call_next(request)
                 return response
-
             finally:
-                # Clear RLS context before returning connection to pool
-                if connection.dialect.name == "postgresql":
-                    try:
-                        await connection.execute(text(f"SELECT set_config('{RLS_TENANT_VAR}', '', true)"))
-                        await connection.execute(text(f"SELECT set_config('{RLS_USER_VAR}', '', true)"))
-                        logger.debug("RLS context cleared")
-                    except Exception as e:
-                        logger.warning("Failed to clear RLS context: %s", e)
-
                 # Clear application-level tenant context
                 clear_tenant_context()
+        else:
+            # Legacy path: Acquire a connection from the pool for this request
+            # Note: tenant_slug is already validated non-empty above (before connection acquisition).
+            async with async_engine.connect() as connection:
+                try:
+                    tenant = await self._get_tenant_by_slug(tenant_slug)
+
+                    if tenant is None:
+                        logger.warning(
+                            "Tenant resolution failed: invalid_slug | slug=%s | path=%s | method=%s | client=%s",
+                            tenant_slug,
+                            path,
+                            request.method,
+                            request.client.host if request.client else "unknown",
+                        )
+                        return JSONResponse(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            content={"detail": "Access denied"},
+                        )
+
+                    if not tenant.is_active:
+                        logger.warning(
+                            "Tenant resolution failed: inactive_tenant | slug=%s | "
+                            "tenant_id=%s | path=%s | method=%s | client=%s",
+                            tenant_slug,
+                            tenant.id,
+                            path,
+                            request.method,
+                            request.client.host if request.client else "unknown",
+                        )
+                        return JSONResponse(
+                            status_code=status.HTTP_403_FORBIDDEN,
+                            content={"detail": "Tenant inactive. Contact support."},
+                        )
+
+                    # Set application-level tenant context
+                    set_current_tenant(tenant)
+
+                    # Set PostgreSQL RLS session variables on this connection
+                    # Use set_config for parameterized query safety with asyncpg
+                    if connection.dialect.name == "postgresql":
+                        await connection.execute(
+                            text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+                            {"tenant_id": str(tenant.id)},
+                        )
+                    logger.debug(
+                        "Tenant resolved successfully | slug=%s | tenant_id=%s | path=%s | rls_context=set",
+                        tenant_slug,
+                        tenant.id,
+                        path,
+                    )
+
+                    response = await call_next(request)
+                    return response
+
+                finally:
+                    # Clear RLS context before returning connection to pool
+                    if connection.dialect.name == "postgresql":
+                        try:
+                            await connection.execute(text(f"SELECT set_config('{RLS_TENANT_VAR}', '', true)"))
+                            await connection.execute(text(f"SELECT set_config('{RLS_USER_VAR}', '', true)"))
+                            logger.debug("RLS context cleared")
+                        except Exception as e:
+                            logger.warning("Failed to clear RLS context: %s", e)
+
+                    # Clear application-level tenant context
+                    clear_tenant_context()
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching.

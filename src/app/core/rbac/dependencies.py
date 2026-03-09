@@ -95,11 +95,11 @@ async def get_cached_permissions(
     if redis_client is not None and permissions:
         try:
             # Use pipeline for atomic set + expire
-            pipe = redis_client.pipeline()
-            pipe.delete(cache_key)  # Clear any existing data
-            pipe.sadd(cache_key, *permissions)
-            pipe.expire(cache_key, PERMISSIONS_CACHE_TTL)
-            await pipe.execute()  # type: ignore[union-attr]
+            async with redis_client.pipeline() as pipe:
+                pipe.delete(cache_key)  # Clear any existing data
+                pipe.sadd(cache_key, *permissions)
+                pipe.expire(cache_key, PERMISSIONS_CACHE_TTL)
+                await pipe.execute()  # type: ignore[union-attr]
         except Exception as e:
             # Log cache write failure but continue successfully (permissions already retrieved)
             logger.warning(
@@ -283,10 +283,10 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
 
     try:
         # Delete both cache types atomically
-        pipe = redis_client.pipeline()
-        pipe.delete(set_cache_key)
-        pipe.delete(bitmask_cache_key)
-        await pipe.execute()  # type: ignore[union-attr]
+        async with redis_client.pipeline() as pipe:
+            pipe.delete(set_cache_key)
+            pipe.delete(bitmask_cache_key)
+            await pipe.execute()  # type: ignore[union-attr]
     except Exception as e:
         # Log cache invalidation failure
         logger.warning(

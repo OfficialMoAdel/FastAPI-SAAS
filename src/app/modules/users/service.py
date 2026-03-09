@@ -176,6 +176,10 @@ class UserService(BaseService[User]):
                 email = user.email
                 username = user.username
 
+            # Normalize to match cache keys
+            email = email.lower().strip()
+            username = username.lower().strip()
+
             await cache.client.delete(
                 _user_cache_key(user_id),
                 _user_email_cache_key(email),
@@ -187,7 +191,7 @@ class UserService(BaseService[User]):
             )
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
-            logger.warning("Failed to invalidate cache for user :", user_id_log=user_id_log, error=e)
+            logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)
 
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
@@ -200,7 +204,7 @@ class UserService(BaseService[User]):
                 result: dict[str, Any] = json_loads(cached)
                 return result
         except Exception as e:
-            logger.warning("Failed to get cached user:", error=e)
+            logger.warning("Failed to get cached user", error=e)
         return None
 
     async def create(self, user: UserCreate) -> User:  # type: ignore[override]

@@ -140,7 +140,7 @@ class OpenAIProvider(AIProvider):
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("OpenAI request error:", error=e)
+            logger.error("OpenAI request error", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -215,7 +215,7 @@ class OpenAIProvider(AIProvider):
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("OpenAI request error:", error=e)
+            logger.error("OpenAI request error", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -341,7 +341,7 @@ class OpenAIProvider(AIProvider):
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("OpenAI request error:", error=e)
+            logger.error("OpenAI request error", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -366,14 +366,14 @@ class OpenAIProvider(AIProvider):
             models = [m.get("id") for m in data.get("data", [])]
             return models
         except HTTPStatusError as e:
-            logger.error("OpenAI list models error:", error=e)
+            logger.error("OpenAI list models error", error=e)
             raise AIProviderError(
                 f"Failed to list models: {e}",
                 error_code=str(e.response.status_code),
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("OpenAI request error:", error=e)
+            logger.error("OpenAI request error", error=e)
             raise AIProviderError(
                 f"OpenAI request error: {e}",
                 error_code="request_error",
@@ -391,7 +391,7 @@ class OpenAIProvider(AIProvider):
             response = await client.get("/models", timeout=5.0)
             return response.status_code == 200
         except Exception as e:
-            logger.error("OpenAI health check failed:", error=e)
+            logger.error("OpenAI health check failed", error=e)
             return False
 
     async def close(self) -> None:

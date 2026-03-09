@@ -303,10 +303,10 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
 
     # Atomically get and remove up to flush_limit logs
-    pipe = redis_cache.client.pipeline()
-    pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
-    pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
-    results = await pipe.execute()
+    async with redis_cache.client.pipeline() as pipe:
+        pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
+        pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
+        results = await pipe.execute()
 
     logs_data = results[0]
     if not logs_data:
@@ -361,10 +361,10 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     if not inserted:
         # Re-push failed entries back to Redis to prevent data loss
         try:
-            repush_pipe = redis_cache.client.pipeline()
-            for entry_data in logs_data:
-                repush_pipe.rpush(AUDIT_LOG_BUFFER_KEY, entry_data)
-            await repush_pipe.execute()
+            async with redis_cache.client.pipeline() as repush_pipe:
+                for entry_data in logs_data:
+                    repush_pipe.rpush(AUDIT_LOG_BUFFER_KEY, entry_data)
+                await repush_pipe.execute()
             logger.warning(
                 "audit_logs_repushed_after_failure",
                 count=len(logs_data),

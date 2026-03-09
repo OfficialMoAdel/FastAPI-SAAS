@@ -254,7 +254,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         # Scan raw bytes directly — no UTF-8 decode needed
                         self._check_for_patterns(body, "request_body", detected_attacks)
                 except Exception as e:
-                    logger.error("Error reading request body in AttackDetectionMiddleware:", error=e)
+                    logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error
                     detected_attacks.append(
                         {

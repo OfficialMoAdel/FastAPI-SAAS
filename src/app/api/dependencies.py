@@ -156,7 +156,7 @@ async def get_current_superuser(
 ) -> dict[str, Any]:
     if not current_user.get("is_active", True):
         raise ForbiddenException("User account is no longer active.")
-    if not current_user["is_superuser"]:
+    if not current_user.get("is_superuser", False):
         raise ForbiddenException("You do not have enough privileges.")
 
     return current_user

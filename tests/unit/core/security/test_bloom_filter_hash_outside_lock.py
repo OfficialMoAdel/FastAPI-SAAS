@@ -120,7 +120,7 @@ class TestStartupPerformance:
         sequential_time = time.perf_counter() - start
 
         # Assert - batch should not be significantly slower
-        # (In practice, batch is faster due to single lock acquisition, but test runs 
+        # (In practice, batch is faster due to single lock acquisition, but test runs
         # on CI can be incredibly fast [<1ms], amplifying minor overhead into large ratios)
         assert batch_time <= (sequential_time * 3.0) + 0.005, (
             f"Batch time {batch_time * 1000:.2f}ms should not be much slower than "

@@ -83,7 +83,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     "X-Ban-Reason": ban_info.reason or "Auto-ban",
                 }
                 if ban_info.expires_at:
-                    retry_after = int(ban_info.expires_at - time.time())
+                    retry_after = int(ban_info.expires_at - time.time()) + 1
                     if retry_after > 0:
                         headers["Retry-After"] = str(retry_after)
 

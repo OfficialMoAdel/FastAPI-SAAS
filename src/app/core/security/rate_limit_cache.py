@@ -38,7 +38,7 @@ async def cache_tier_policy(tier_id: int, policies: list[dict[str, Any]]) -> boo
         await redis_client.setex(key, ttl, json_dumps(policies, as_str=True))  # Configurable TTL
         return True
     except Exception as e:
-        logger.warning("Failed to cache tier policy:", error=e)
+        logger.warning("Failed to cache tier policy", error=e)
         return False
 
 
@@ -62,7 +62,7 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
             return result
         return None
     except Exception as e:
-        logger.warning("Failed to get tier policy from cache:", error=e)
+        logger.warning("Failed to get tier policy from cache", error=e)
         return None
 
 
@@ -94,7 +94,7 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
         logger.info("Warmed rate limit policy cache with tiers using pipeline", count=count)
         return count
     except Exception as e:
-        logger.warning("Failed to warm policy cache:", error=e)
+        logger.warning("Failed to warm policy cache", error=e)
         return 0
 
 
@@ -117,5 +117,5 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
         await redis_client.delete(key)
         return True
     except Exception as e:
-        logger.warning("Failed to invalidate tier policy:", error=e)
+        logger.warning("Failed to invalidate tier policy", error=e)
         return False

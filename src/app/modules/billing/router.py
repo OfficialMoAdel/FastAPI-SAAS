@@ -110,8 +110,8 @@ async def get_stripe_settings(
 ) -> dict:
     """Get Stripe settings for the current tenant (admin only)."""
     service = get_stripe_settings_service(db)
-    settings = await service.get_settings()
-    if settings is None:
+    stripe_settings = await service.get_settings()
+    if stripe_settings is None:
         return {
             "id": 0,
             "tenant_id": 0,
@@ -124,9 +124,9 @@ async def get_stripe_settings(
             "updated_at": None,
         }
     return {
-        **settings,
-        "has_secret_key": bool(settings.get("encrypted_secret_key")),
-        "has_webhook_secret": bool(settings.get("webhook_secret")),
+        **stripe_settings,
+        "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
+        "has_webhook_secret": bool(stripe_settings.get("webhook_secret")),
     }
 
 

@@ -91,7 +91,7 @@ class EmailService:
             return success
 
         except Exception as e:
-            logger.error("Failed to send email:", error=e)
+            logger.error("Failed to send email", error=e)
 
             # Log failure
             await self._log_notification(

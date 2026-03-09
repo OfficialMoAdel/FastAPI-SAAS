@@ -137,7 +137,7 @@ class GCRARateLimiter:
             # Clear cached SHA and reload
             error_msg = str(e).lower()
             if "script" in error_msg or "sha" in error_msg or "not found" in error_msg:
-                logger.warning("GCRA script SHA invalid, reloading:", error=e)
+                logger.warning("GCRA script SHA invalid, reloading", error=e)
                 self._script_sha = None
                 script_sha = await self._ensure_script_loaded()
 
@@ -207,7 +207,7 @@ class GCRARateLimiter:
             )
 
         except Exception as e:
-            logger.warning("GCRA rate limit check failed:", error=e)
+            logger.warning("GCRA rate limit check failed", error=e)
             # Fail open on error
             return GCRARateLimitResult(
                 is_limited=False,
@@ -232,7 +232,7 @@ class GCRARateLimiter:
             await self._redis.delete(f"gcra:{key}")
             return True
         except Exception as e:
-            logger.warning("GCRA reset failed:", error=e)
+            logger.warning("GCRA reset failed", error=e)
             return False
 
 

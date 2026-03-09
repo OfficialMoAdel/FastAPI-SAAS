@@ -45,7 +45,7 @@ async def job_tenant_context(
         try:
             # Set tenant context
             await connection.execute(
-                text(f"SET LOCAL {RLS_TENANT_VAR} = :tenant_id"),
+                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
                 {"tenant_id": str(tenant_id)},
             )
             logger.debug("Job RLS context set | tenant_id=%s", tenant_id)
@@ -53,7 +53,7 @@ async def job_tenant_context(
             # Set user context if provided
             if user_id:
                 await connection.execute(
-                    text(f"SET LOCAL {RLS_USER_VAR} = :user_id"),
+                    text(f"SELECT set_config('{RLS_USER_VAR}', :user_id, true)"),
                     {"user_id": str(user_id)},
                 )
                 logger.debug("Job RLS user context set | user_id=%s", user_id)
@@ -104,7 +104,7 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
         try:
             # Set bypass flag
             await connection.execute(
-                text(f"SET LOCAL {RLS_BYPASS_VAR} = 'true'"),
+                text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"),
             )
 
             # Log bypass event (CRITICAL for security audit)

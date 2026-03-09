@@ -531,7 +531,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                         "Stripe subscription marked for cancellation", stripe_subscription_id=stripe_subscription_id
                     )
                 except stripe.error.StripeError as e:
-                    logger.error("Failed to cancel Stripe subscription:", error=e)
+                    logger.error("Failed to cancel Stripe subscription", error=e)
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to cancel subscription in Stripe: {str(e)}",

@@ -12,6 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 
 class TestSessionPipelineOptimization:
     """Tests for session eviction pipeline optimization."""
@@ -32,6 +41,7 @@ class TestSessionPipelineOptimization:
 
         # Pipeline mock
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.execute = AsyncMock(
             return_value=[
                 b'{"session_id": "old_session_1", "device_info": "Chrome"}',
@@ -173,6 +183,7 @@ class TestSessionPipelineOptimization:
 
         # Pipeline returns None for orphaned, valid data for other
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.execute = AsyncMock(
             side_effect=[
                 [None, b'{"session_id": "valid_session"}'],  # First call: HGET batch
@@ -210,6 +221,7 @@ class TestSessionEvictionMetrics:
         redis.zrange = AsyncMock(return_value=[(b"old", 1000.0)])
 
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.execute = AsyncMock(return_value=[b'{"session_id": "old"}'])
         redis.pipeline = MagicMock(return_value=pipe)
 
@@ -253,6 +265,7 @@ class TestSessionFeatureFlagToggle:
         redis.hget = AsyncMock(return_value=b'{"session_id": "old"}')
 
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.execute = AsyncMock(return_value=[b'{"session_id": "old"}'])
         redis.pipeline = MagicMock(return_value=pipe)
 

@@ -220,7 +220,7 @@ class LocalStorage(StorageProvider):
 
             return True
         except Exception as e:
-            logger.error("Local storage validation failed:", error=e)
+            logger.error("Local storage validation failed", error=e)
             return False
 
     async def get_mime_type(self, path: str) -> str | None:

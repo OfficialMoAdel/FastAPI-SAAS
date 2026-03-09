@@ -239,7 +239,7 @@ async def warm_sso_settings(session: AsyncSession) -> int:
 
             logger.info("Warmed cache for SSO settings", cached_count=cached_count)
         except Exception as e:
-            logger.error("Failed to warm SSO settings cache:", error=e)
+            logger.error("Failed to warm SSO settings cache", error=e)
             return 0
 
     return cached_count

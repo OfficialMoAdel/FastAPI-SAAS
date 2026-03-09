@@ -151,7 +151,7 @@ class AnthropicProvider(AIProvider):
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Anthropic request error:", error=e)
+            logger.error("Anthropic request error", error=e)
             raise AIProviderError(
                 f"Anthropic request error: {e}",
                 error_code="request_error",
@@ -229,7 +229,7 @@ class AnthropicProvider(AIProvider):
                 provider=self.provider_name,
             ) from e
         except RequestError as e:
-            logger.error("Anthropic request error:", error=e)
+            logger.error("Anthropic request error", error=e)
             raise AIProviderError(
                 f"Anthropic request error: {e}",
                 error_code="request_error",
@@ -375,7 +375,7 @@ class AnthropicProvider(AIProvider):
             )
             return response.status_code == 200
         except Exception as e:
-            logger.error("Anthropic health check failed:", error=e)
+            logger.error("Anthropic health check failed", error=e)
             return False
 
     async def close(self) -> None:

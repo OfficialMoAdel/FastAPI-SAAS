@@ -248,7 +248,7 @@ async def warm_tiers(session: AsyncSession) -> int:
 
             logger.info("Warmed cache for tiers", cached_count=cached_count)
         except Exception as e:
-            logger.error("Failed to warm tiers cache:", error=e)
+            logger.error("Failed to warm tiers cache", error=e)
             return 0
 
     return cached_count

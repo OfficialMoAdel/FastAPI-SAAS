@@ -87,6 +87,12 @@ class MockPipeline:
         self.redis = redis
         self.commands = []
 
+    async def __aenter__(self, *args):
+        return self
+
+    async def __aexit__(self, *args):
+        return False
+
     def hincrby(self, key: str, field: str, amount: int):
         self.commands.append(("hincrby", key, field, amount))
         return self

@@ -10,8 +10,21 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from src.app.modules.billing.models import StripeSettings
-from src.app.modules.ai.models import AIChatSession
+
+# Import models needed to ensure SQLAlchemy mapper initialization completes.
+# Tenant model has a relationship to StripeSettings which must be imported
+# before any session triggers full mapper initialization.
+import src.app.modules.billing.models  # noqa: F401
+import src.app.modules.ai.models  # noqa: F401
+
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
 
 
 class TestFlushAuditLogBuffer:
@@ -36,6 +49,7 @@ class TestFlushAuditLogBuffer:
         mock_redis_cache = MagicMock()
         mock_redis_cache.client = MagicMock()
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.lrange.return_value = mock_pipe
         mock_pipe.ltrim.return_value = mock_pipe
         mock_pipe.execute = AsyncMock(return_value=[[]])
@@ -59,6 +73,7 @@ class TestFlushAuditLogBuffer:
             json.dumps({"tenant_id": "00000000-0000-0000-0000-000000000002", "action": "user.logout"}).encode(),
         ]
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.lrange.return_value = mock_pipe
         mock_pipe.ltrim.return_value = mock_pipe
         mock_pipe.execute = AsyncMock(return_value=[items])
@@ -94,6 +109,7 @@ class TestFlushAuditLogBuffer:
 
         items = [json.dumps({"tenant_id": "00000000-0000-0000-0000-000000000001", "action": "user.login"}).encode()]
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.lrange.return_value = mock_pipe
         mock_pipe.ltrim.return_value = mock_pipe
         mock_pipe.execute = AsyncMock(return_value=[items])
@@ -124,6 +140,7 @@ class TestFlushAuditLogBuffer:
         mock_redis_cache.client = MagicMock()
 
         mock_pipe = MagicMock()
+        _acm(mock_pipe)
         mock_pipe.lrange.return_value = mock_pipe
         mock_pipe.ltrim.return_value = mock_pipe
         mock_pipe.execute = AsyncMock(return_value=[[b"invalid json"]])

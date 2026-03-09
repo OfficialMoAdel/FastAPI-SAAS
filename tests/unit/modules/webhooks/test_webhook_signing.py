@@ -16,8 +16,6 @@ from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
-from src.app.modules.billing.models import StripeSettings
-from src.app.modules.ai.models import AIChatSession
 
 from src.app.modules.webhooks.models import WebhookEndpoint
 from src.app.modules.webhooks.service import WebhookService

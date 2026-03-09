@@ -257,6 +257,15 @@ class TestSessionManagerIntegration:
             pipe.delete = delete
             pipe.expire = expire
             pipe.execute = execute
+
+            async def aenter(*args):
+                return pipe
+
+            async def aexit(*args):
+                pass
+
+            pipe.__aenter__ = aenter
+            pipe.__aexit__ = aexit
             return pipe
 
         redis.pipeline = pipeline
@@ -627,6 +636,15 @@ class TestFullOptimizationFlow:
             pipe.delete = delete
             pipe.expire = expire
             pipe.execute = execute
+
+            async def aenter(*args):
+                return pipe
+
+            async def aexit(*args):
+                pass
+
+            pipe.__aenter__ = aenter
+            pipe.__aexit__ = aexit
             return pipe
 
         redis.pipeline = pipeline

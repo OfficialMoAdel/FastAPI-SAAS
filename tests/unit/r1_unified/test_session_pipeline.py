@@ -6,6 +6,15 @@ import pytest
 
 from src.app.core.security.session_manager import SessionManager
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 
 @pytest.mark.asyncio
 async def test_pipeline_eviction_reduces_roundtrips(mock_redis_client, mock_settings):
@@ -21,6 +30,7 @@ async def test_pipeline_eviction_reduces_roundtrips(mock_redis_client, mock_sett
 
     # Mock pipeline for HGET batch
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute = AsyncMock(
         return_value=[b'{"session_id":"old-session-1","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}']
@@ -55,6 +65,7 @@ async def test_legacy_eviction_uses_more_roundtrips(mock_redis_client, mock_sett
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hdel = MagicMock()
     mock_pipeline.zadd = MagicMock()
     mock_pipeline.hset = MagicMock()
@@ -95,6 +106,7 @@ async def test_batch_eviction_multiple_sessions(mock_redis_client, mock_settings
 
     # Mock pipeline for HGET batch
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute = AsyncMock(
         side_effect=[
@@ -136,6 +148,7 @@ async def test_batch_size_limit_enforced(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     session_data = [
         f'{{"session_id":"old-session-{i}","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}}'.encode()
@@ -185,6 +198,7 @@ async def test_orphaned_session_handling(mock_redis_client, mock_settings):
 
     # Mock pipeline for HGET batch (orphaned returns None)
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute = AsyncMock(
         side_effect=[
@@ -227,6 +241,7 @@ async def test_corrupted_session_data_handling(mock_redis_client, mock_settings)
 
     # Mock pipeline for HGET batch (corrupted returns invalid JSON)
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute = AsyncMock(
         side_effect=[
@@ -261,6 +276,7 @@ async def test_no_sessions_to_evict(mock_redis_client, mock_settings):
 
     # Mock pipeline for adding new session
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.zadd = MagicMock()
     mock_pipeline.hset = MagicMock()
     mock_pipeline.expire = MagicMock()
@@ -292,6 +308,7 @@ async def test_empty_zrange_result(mock_redis_client, mock_settings):
 
     # Mock pipeline for adding new session
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.zadd = MagicMock()
     mock_pipeline.hset = MagicMock()
     mock_pipeline.expire = MagicMock()
@@ -328,6 +345,7 @@ async def test_feature_flag_controls_optimization(mock_redis_client, mock_settin
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hdel = MagicMock()
     mock_pipeline.zadd = MagicMock()
     mock_pipeline.hset = MagicMock()
@@ -361,6 +379,7 @@ async def test_pipeline_atomic_operations(mock_redis_client, mock_settings):
 
     # Mock pipeline for HGET batch
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.hdel = MagicMock()
     mock_pipeline.zrem = MagicMock()
@@ -412,6 +431,7 @@ async def test_roundtrip_metrics_recorded(mock_redis_client, mock_settings):
 
     # Mock pipeline
     mock_pipeline = MagicMock()
+    _acm(mock_pipeline)
     mock_pipeline.hget = MagicMock()
     mock_pipeline.execute = AsyncMock(
         side_effect=[

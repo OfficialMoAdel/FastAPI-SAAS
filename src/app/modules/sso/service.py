@@ -419,14 +419,14 @@ class SSOService:
                 # Using crud directly might be faster/safer to avoid circular dep issues if service logic is complex
                 # But service is better for encapsulation.
                 # However, sso_settings_service.get_settings_by_provider raises NotFoundException if not found.
-                settings = await sso_settings_service.get_settings_by_provider(db, provider.value)
-                is_enabled = settings.is_enabled
+                sso_settings = await sso_settings_service.get_settings_by_provider(db, provider.value)
+                is_enabled = sso_settings.is_enabled
             except NotFoundException:
                 # Provider not configured -> disabled
                 pass
             except Exception as e:
                 # Any other error -> disabled safety fallback
-                logger.error("SSO provider status check failed:", error=e)
+                logger.error("SSO provider status check failed", error=e)
                 pass
 
             # If the endpoint is strictly for "enabled" providers as buttons, we might filter here.

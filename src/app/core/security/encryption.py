@@ -128,7 +128,7 @@ def _get_previous_key_from_settings() -> bytes | None:
             try:
                 return prev_key_value.encode() if isinstance(prev_key_value, str) else prev_key_value
             except Exception as e:
-                logger.warning("Invalid ENCRYPTION_KEY_PREVIOUS format:", error=e)
+                logger.warning("Invalid ENCRYPTION_KEY_PREVIOUS format", error=e)
     return None
 
 
@@ -176,7 +176,7 @@ class CredentialEncryption:
                 fernets.append(Fernet(previous_key))
                 logger.info("Key rotation active: using previous key as fallback for decryption")
             except Exception as e:
-                logger.warning("Failed to initialize previous key:", error=e)
+                logger.warning("Failed to initialize previous key", error=e)
 
         self._multi_fernet = MultiFernet(fernets)
 
@@ -207,7 +207,7 @@ class CredentialEncryption:
 
             return versioned
         except Exception as e:
-            logger.error("Encryption failed:", error=e)
+            logger.error("Encryption failed", error=e)
             raise EncryptionError("Failed to encrypt credential data", e) from e
 
     def decrypt_credential(self, encrypted_data: bytes) -> bytes:
@@ -260,7 +260,7 @@ class CredentialEncryption:
                 e,
             ) from e
         except Exception as e:
-            logger.error("Decryption failed:", error=e)
+            logger.error("Decryption failed", error=e)
             raise DecryptionError("Failed to decrypt credential data", e) from e
 
     def encrypt_column(self, value: str) -> str:
@@ -383,7 +383,7 @@ def _get_multi_fernet() -> MultiFernet:
             fernets.append(Fernet(prev_key))
             logger.info("Key rotation active: using previous key as fallback")
         except Exception as e:
-            logger.warning("Invalid ENCRYPTION_KEY_PREVIOUS format:", error=e)
+            logger.warning("Invalid ENCRYPTION_KEY_PREVIOUS format", error=e)
 
     return MultiFernet(fernets)
 

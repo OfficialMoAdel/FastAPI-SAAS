@@ -231,7 +231,7 @@ class AzureBlobStorage(StorageProvider):
             await container.get_container_properties()
             return True
         except Exception as e:
-            logger.error("Azure connection validation failed:", error=e)
+            logger.error("Azure connection validation failed", error=e)
             return False
 
     async def close(self) -> None:

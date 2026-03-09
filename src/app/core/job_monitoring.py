@@ -76,14 +76,14 @@ class JobMonitoringService:
         if not cache.client:
             return
 
-        pipe = cache.client.pipeline()
+        async with cache.client.pipeline() as pipe:
 
-        # Increment total jobs for function
-        pipe.hincrby(f"{JOB_STATS_PREFIX}{function_name}", "total", 1)
-        # Set start time in a temporary key or update the job key if we manage it
-        # For simplicity in this service, we update the global stats mostly.
+            # Increment total jobs for function
+            pipe.hincrby(f"{JOB_STATS_PREFIX}{function_name}", "total", 1)
+            # Set start time in a temporary key or update the job key if we manage it
+            # For simplicity in this service, we update the global stats mostly.
 
-        await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore
 
     async def record_job_success(self, job_id: str, function_name: str, duration: float) -> None:
         """
@@ -92,15 +92,15 @@ class JobMonitoringService:
         if not cache.client:
             return
 
-        pipe = cache.client.pipeline()
-        key = f"{JOB_STATS_PREFIX}{function_name}"
+        async with cache.client.pipeline() as pipe:
+            key = f"{JOB_STATS_PREFIX}{function_name}"
 
-        pipe.hincrby(key, "success", 1)
-        # Update average duration (approximate) - simplistic approach
-        # Better approach: store total duration and count, calculate avg on read
-        pipe.hincrbyfloat(key, "total_duration", duration)
+            pipe.hincrby(key, "success", 1)
+            # Update average duration (approximate) - simplistic approach
+            # Better approach: store total duration and count, calculate avg on read
+            pipe.hincrbyfloat(key, "total_duration", duration)
 
-        await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore
 
     async def record_job_failure(self, job_id: str, function_name: str, error: str) -> None:
         """
@@ -109,18 +109,18 @@ class JobMonitoringService:
         if not cache.client:
             return
 
-        pipe = cache.client.pipeline()
-        key = f"{JOB_STATS_PREFIX}{function_name}"
+        async with cache.client.pipeline() as pipe:
+            key = f"{JOB_STATS_PREFIX}{function_name}"
 
-        pipe.hincrby(key, "failed", 1)
+            pipe.hincrby(key, "failed", 1)
 
-        # Add to Dead Letter Queue
-        dlq_entry = f"{job_id}|{function_name}|{error}|{time.time()}"
-        pipe.lpush(DLQ_KEY, dlq_entry)
-        # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
-        pipe.ltrim(DLQ_KEY, 0, 999)
+            # Add to Dead Letter Queue
+            dlq_entry = f"{job_id}|{function_name}|{error}|{time.time()}"
+            pipe.lpush(DLQ_KEY, dlq_entry)
+            # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
+            pipe.ltrim(DLQ_KEY, 0, 999)
 
-        await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore
 
     async def get_job_metrics(self) -> dict[str, dict[str, Any]]:
         """

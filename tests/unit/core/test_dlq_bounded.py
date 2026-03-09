@@ -12,6 +12,15 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 
 class TestDLQBoundedSize:
     """Tests for DLQ bounded size optimization."""
@@ -23,6 +32,7 @@ class TestDLQBoundedSize:
 
         # Pipeline mock
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.lpush = AsyncMock()
         pipe.ltrim = AsyncMock()
         pipe.llen = AsyncMock()
@@ -129,6 +139,7 @@ class TestDLQBoundedSize:
         """Test that warning is logged when DLQ approaches capacity."""
         # Set DLQ size to 8500 (above 80% of 10000)
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.lpush = AsyncMock()
         pipe.ltrim = AsyncMock()
         pipe.llen = AsyncMock()
@@ -160,6 +171,7 @@ class TestDLQBoundedSize:
         """Test that no warning when DLQ is below threshold."""
         # Set DLQ size to 5000 (50% of 10000, below 80%)
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.lpush = AsyncMock()
         pipe.ltrim = AsyncMock()
         pipe.llen = AsyncMock()
@@ -218,6 +230,7 @@ class TestDLQFeatureFlagToggle:
         """Create mock Redis."""
         redis = AsyncMock()
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.lpush = AsyncMock()
         pipe.ltrim = AsyncMock()
         pipe.llen = AsyncMock()
@@ -274,6 +287,7 @@ class TestDLQErrorHandling:
         """Create mock Redis that fails."""
         redis = AsyncMock()
         pipe = AsyncMock()
+        _acm(pipe)
         pipe.lpush = AsyncMock()
         pipe.ltrim = AsyncMock()
         pipe.llen = AsyncMock()

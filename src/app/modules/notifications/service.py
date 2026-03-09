@@ -66,7 +66,7 @@ class NotificationService:
                 if cached:
                     return tuple(json_loads(cached))
             except Exception as e:
-                logger.debug("Cache get failed:", error=e)
+                logger.debug("Cache get failed", error=e)
 
         # Check for tenant override
         query = select(EmailTemplateOverride).where(
@@ -104,7 +104,7 @@ class NotificationService:
             try:
                 await redis_client.set(cache_key, json_dumps(data, as_str=True), ex=3600)
             except Exception as e:
-                logger.debug("Cache set failed:", error=e)
+                logger.debug("Cache set failed", error=e)
 
         return data
 

@@ -121,7 +121,7 @@ class AIRateLimiter:
             current_count, ttl = await self._execute_rate_limit_script(key, self.window_seconds)
         except ResponseError as e:
             # Fallback to original multi-call approach on script failure
-            logger.warning("Lua script failed, using fallback:", error=e)
+            logger.warning("Lua script failed, using fallback", error=e)
             current_count, ttl = await self._fallback_check(key)
 
         # Calculate remaining requests

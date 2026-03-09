@@ -15,6 +15,18 @@ from src.app.core.config import settings
 from src.app.core.events import EventBus
 from src.app.core.utils import cache
 
+# ==================== Async CM Helper ====================
+
+
+def _acm(pipe):
+    """Make pipeline mock support 'async with' returning itself on __aenter__."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 # ==================== Batch Enqueue ====================
 
 
@@ -27,6 +39,7 @@ async def test_batch_enqueue_pipeline():
     mock_queue = MagicMock()
     mock_pipeline = MagicMock()
     mock_pipeline.execute = AsyncMock()
+    _acm(mock_pipeline)
 
     # Pipeline context manager
     # _publish_async_batch calls pipe = self._arq_queue.pipeline() directly (not as CM)

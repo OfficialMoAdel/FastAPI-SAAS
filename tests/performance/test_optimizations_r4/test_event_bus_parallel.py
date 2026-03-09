@@ -134,17 +134,19 @@ class TestP14EventBusParallelEnqueue:
 
         # Mock circuit breaker
         with patch("src.app.core.events.arq_circuit") as mock_circuit:
-            mock_circuit.is_closed = True
-            mock_circuit.record_success = AsyncMock()
-            mock_circuit.record_failure = AsyncMock()
+            with patch("src.app.core.events.settings") as mock_settings:
+                mock_settings.EVENT_BUS_USE_BATCH_ENQUEUE = False
+                mock_circuit.is_closed = True
+                mock_circuit.record_success = AsyncMock()
+                mock_circuit.record_failure = AsyncMock()
 
-            # Should not raise - exceptions handled gracefully
-            await bus._publish_async(
-                "test.event",
-                {"key": "value"},
-                handlers,
-                EventPriority.NORMAL,
-            )
+                # Should not raise - exceptions handled gracefully
+                await bus._publish_async(
+                    "test.event",
+                    {"key": "value"},
+                    handlers,
+                    EventPriority.NORMAL,
+                )
 
         # All 3 were attempted (even though one failed)
         assert call_count == 3

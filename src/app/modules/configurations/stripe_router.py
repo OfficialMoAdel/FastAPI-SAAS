@@ -36,9 +36,9 @@ async def get_stripe_configuration(
     customer ID, account ID, and flags for secret key/webhook secret.
     """
     service = get_stripe_settings_service(db)
-    settings = await service.get_settings()
+    stripe_settings = await service.get_settings()
 
-    if settings is None:
+    if stripe_settings is None:
         return {
             "id": 0,
             "tenant_id": 0,
@@ -52,9 +52,9 @@ async def get_stripe_configuration(
         }
 
     return {
-        **settings,
-        "has_secret_key": bool(settings.get("encrypted_secret_key")),
-        "has_webhook_secret": bool(settings.get("webhook_secret")),
+        **stripe_settings,
+        "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
+        "has_webhook_secret": bool(stripe_settings.get("webhook_secret")),
     }
 
 
@@ -121,11 +121,11 @@ async def handle_stripe_webhooks(
         if stripe_account_id:
             logger.info("Looking up webhook secret for Stripe account:", stripe_account_id=stripe_account_id)
             async with local_session() as db:
-                settings = await crud_stripe_settings.get_by_account_id(db, stripe_account_id)
-                if settings and settings.webhook_secret:
-                    webhook_secret = settings.webhook_secret
+                stripe_settings = await crud_stripe_settings.get_by_account_id(db, stripe_account_id)
+                if stripe_settings and stripe_settings.webhook_secret:
+                    webhook_secret = stripe_settings.webhook_secret
     except Exception as e:
-        logger.warning("Failed to lookup tenant webhook secret:", error=e)
+        logger.warning("Failed to lookup tenant webhook secret", error=e)
 
     # Fallback to global secret
     if not webhook_secret:
@@ -141,7 +141,7 @@ async def handle_stripe_webhooks(
     try:
         event = verify_webhook_signature(payload, sig_header, webhook_secret)
     except Exception as e:
-        logger.error("Webhook signature verification failed:", error=e)
+        logger.error("Webhook signature verification failed", error=e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid signature")
 
     # Idempotency check

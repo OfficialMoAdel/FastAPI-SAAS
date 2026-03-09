@@ -168,8 +168,27 @@ async def _ensure_script_loaded() -> str | None:
             _release_script_lock(should_release)
         return _script_sha
     except Exception as e:
-        logger.warning("Failed to load Lua script:", error=e)
+        logger.warning("Failed to load Lua script", error=e)
         return None
+
+
+def _extract_blacklist_member(token: str) -> str:
+    """Extract the Redis sorted-set member key for a token.
+
+    ``blacklist_tokens`` stores ``jti:{jti}`` (not the raw token) when a JTI
+    claim is present.  This helper performs the same extraction so that lookup
+    and storage always use an identical key.
+    """
+    try:
+        import jwt as _jwt
+
+        payload = _jwt.decode(token, options={"verify_signature": False})
+        jti = payload.get("jti")
+        if jti:
+            return f"jti:{jti}"
+    except Exception:
+        pass  # Malformed token – fall back to raw token
+    return token
 
 
 async def is_token_blacklisted(token: str) -> bool | None:
@@ -192,6 +211,11 @@ async def is_token_blacklisted(token: str) -> bool | None:
         record_fail_open("token_blacklist")
         return None  # Redis not configured, fall back to DB
 
+    # Resolve the member key that blacklist_tokens used when storing this token.
+    # blacklist_tokens stores "jti:{jti}" when a JTI claim is present, so we
+    # must use the same key here to get a cache hit.
+    blacklist_member = _extract_blacklist_member(token)
+
     try:
         # P0-3: Use Lua script for atomic check (4 operations → 1 roundtrip)
         script_sha = await _ensure_script_loaded()
@@ -204,12 +228,13 @@ async def is_token_blacklisted(token: str) -> bool | None:
 
         try:
             # Execute Lua script with EVALSHA
+            # ARGV[1] must match the member stored by blacklist_tokens (jti:{jti})
             result = await redis_client.evalsha(  # type: ignore[misc]
                 script_sha,
                 2,  # number of keys
                 negative_key,
                 BLACKLIST_KEY,
-                token,
+                blacklist_member,
                 str(now),
                 str(NEGATIVE_CACHE_TTL),
             )
@@ -229,7 +254,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             2,
                             negative_key,
                             BLACKLIST_KEY,
-                            token,
+                            blacklist_member,
                             str(now),
                             str(NEGATIVE_CACHE_TTL),
                         )
@@ -244,7 +269,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             2,
                             negative_key,
                             BLACKLIST_KEY,
-                            token,
+                            blacklist_member,
                             str(now),
                             str(NEGATIVE_CACHE_TTL),
                         )
@@ -254,7 +279,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
             raise  # Re-raise if not a NOSCRIPT error
 
     except Exception as e:
-        logger.warning("Redis blacklist check failed, falling back to DB:", error=e)
+        logger.warning("Redis blacklist check failed, falling back to DB", error=e)
         return None  # Fail open - let DB check handle it
 
 
@@ -270,6 +295,9 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         record_fail_open("token_blacklist_fallback")
         return None
 
+    # Use the same member key that blacklist_tokens used during storage.
+    blacklist_member = _extract_blacklist_member(token)
+
     try:
         # Check negative cache first (token recently verified as not blacklisted)
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
@@ -277,7 +305,7 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
             return False
 
         # ZSCORE returns the score if member exists, None otherwise
-        score = await redis_client.zscore(BLACKLIST_KEY, token)
+        score = await redis_client.zscore(BLACKLIST_KEY, blacklist_member)
         if score is None:
             # Cache the negative result to avoid repeated lookups
             await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
@@ -287,12 +315,12 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         now = time.time()
         if score < now:
             # Token expired, remove from set
-            await redis_client.zrem(BLACKLIST_KEY, token)
+            await redis_client.zrem(BLACKLIST_KEY, blacklist_member)
             return False
 
         return True
     except Exception as e:
-        logger.warning("Redis blacklist fallback check failed:", error=e)
+        logger.warning("Redis blacklist fallback check failed", error=e)
         return None
 
 
@@ -316,13 +344,13 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
         # P2-4: Invalidate negative cache for this token
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
-        pipe = redis_client.pipeline()
-        pipe.zadd(BLACKLIST_KEY, {token: score})  # type: ignore[misc]
-        pipe.delete(negative_key)
-        await pipe.execute()
+        async with redis_client.pipeline() as pipe:
+            pipe.zadd(BLACKLIST_KEY, {token: score})  # type: ignore[misc]
+            pipe.delete(negative_key)
+            await pipe.execute()
         return True
     except Exception as e:
-        logger.warning("Failed to add token to Redis blacklist:", error=e)
+        logger.warning("Failed to add token to Redis blacklist", error=e)
         return False
 
 
@@ -344,20 +372,20 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
 
     try:
         # M1: Use pipeline for atomic multi-operation (add to blacklist + invalidate negative cache)
-        pipe = redis_client.pipeline()
-        # Build mapping of token -> expiry score
-        mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
-        pipe.zadd(BLACKLIST_KEY, mapping)  # type: ignore[misc]
-        # M1: Invalidate negative cache for all tokens being blacklisted
-        for token, _ in tokens:
-            negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
-            pipe.delete(negative_key)
-        results = await pipe.execute()
+        async with redis_client.pipeline() as pipe:
+            # Build mapping of token -> expiry score
+            mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
+            pipe.zadd(BLACKLIST_KEY, mapping)  # type: ignore[misc]
+            # M1: Invalidate negative cache for all tokens being blacklisted
+            for token, _ in tokens:
+                negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
+                pipe.delete(negative_key)
+            results = await pipe.execute()
         # ZADD returns count of new members added
         added = results[0] if results else 0
         return added if isinstance(added, int) else len(tokens)
     except Exception as e:
-        logger.warning("Failed to bulk add tokens to Redis blacklist:", error=e)
+        logger.warning("Failed to bulk add tokens to Redis blacklist", error=e)
         return 0
 
 
@@ -377,7 +405,7 @@ async def remove_expired_tokens() -> int:
         removed = await redis_client.zremrangebyscore(BLACKLIST_KEY, "-inf", now)
         return removed if isinstance(removed, int) else 0
     except Exception as e:
-        logger.warning("Failed to cleanup expired tokens:", error=e)
+        logger.warning("Failed to cleanup expired tokens", error=e)
         return 0
 
 
@@ -431,7 +459,7 @@ async def get_cache_stats() -> dict:
             "token_count": count,
         }
     except Exception as e:
-        logger.warning("Failed to get cache stats:", error=e)
+        logger.warning("Failed to get cache stats", error=e)
         return {"enabled": True, "error": str(e)}
 
 

@@ -996,10 +996,10 @@ def cache(
                         keys_to_delete.append(f"{prefix}:{id}")
 
                 if keys_to_delete:
-                    pipe = client.pipeline()
-                    for key in keys_to_delete:
-                        pipe.delete(key)
-                    await pipe.execute()
+                    async with client.pipeline() as pipe:
+                        for key in keys_to_delete:
+                            pipe.delete(key)
+                        await pipe.execute()
 
                 if pattern_to_invalidate_extra is not None:
                     for pattern in pattern_to_invalidate_extra:

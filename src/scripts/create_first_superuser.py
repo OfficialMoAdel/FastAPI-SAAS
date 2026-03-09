@@ -67,7 +67,7 @@ async def create_first_user(session: AsyncSession) -> None:
             logger.info("Admin user already exists.", username=username)
 
     except Exception as e:
-        logger.error("Error creating admin user:", error=e)
+        logger.error("Error creating admin user", error=e)
 
 
 async def main():

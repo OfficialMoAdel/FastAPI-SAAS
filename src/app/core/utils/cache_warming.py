@@ -70,7 +70,7 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
         cached_count = len(tenants)
         logger.info("Cache warming completed: tenants", cached_count=cached_count)
     except Exception as e:
-        logger.error("Cache warming failed:", error=e)
+        logger.error("Cache warming failed", error=e)
         return 0
 
     return cached_count
@@ -103,7 +103,7 @@ async def warm_tier_cache(session: AsyncSession) -> int:
         cached_count = len(tiers)
         logger.info("Tier cache warming completed: tiers", cached_count=cached_count)
     except Exception as e:
-        logger.error("Tier cache warming failed:", error=e)
+        logger.error("Tier cache warming failed", error=e)
         return 0
 
     return cached_count

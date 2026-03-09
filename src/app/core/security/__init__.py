@@ -100,7 +100,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
         return result
     except (ValueError, TypeError) as e:
         # Only catch specific bcrypt errors, not all exceptions
-        _jwt_logger.error("Password verification failed:", error=e)
+        _jwt_logger.error("Password verification failed", error=e)
         return False
 
 

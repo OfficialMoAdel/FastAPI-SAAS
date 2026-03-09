@@ -313,7 +313,7 @@ class PasskeyService:
                 db_credential=db_credential,
             )
         except Exception as e:
-            logger.warning("Passkey authentication failed:", error=e)
+            logger.warning("Passkey authentication failed", error=e)
             raise BadRequestException(detail="Passkey authentication failed.")
 
         # 4. Check counter for replay prevention

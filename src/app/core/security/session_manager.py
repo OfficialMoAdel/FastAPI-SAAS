@@ -161,12 +161,12 @@ class SessionManager:
                 record_session_eviction(roundtrips)
         else:
             # Under limit, just add new session to both structures
-            pipe = self._redis_client.pipeline()
-            pipe.zadd(zset_key, {session_id: timestamp})
-            pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
-            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-            await pipe.execute()
+            async with self._redis_client.pipeline() as pipe:
+                pipe.zadd(zset_key, {session_id: timestamp})
+                pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
+                pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+                pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+                await pipe.execute()
 
         # Get final count from ZSET
         final_count = await self._redis_client.zcard(zset_key)
@@ -222,12 +222,12 @@ class SessionManager:
 
         if not oldest_sessions:
             # No sessions to evict, just add new session
-            pipe = self._redis_client.pipeline()
-            pipe.zadd(zset_key, {new_session_id: timestamp})
-            pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
-            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-            await pipe.execute()
+            async with self._redis_client.pipeline() as pipe:
+                pipe.zadd(zset_key, {new_session_id: timestamp})
+                pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
+                pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+                pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+                await pipe.execute()
             roundtrips += 1
             return roundtrips
 
@@ -235,10 +235,10 @@ class SessionManager:
         session_ids = [s[0].decode("utf-8") if isinstance(s[0], bytes) else s[0] for s in oldest_sessions]
 
         # Step 2: Batch HGET for session data - 1 roundtrip
-        pipe = self._redis_client.pipeline()
-        for sid in session_ids:
-            pipe.hget(hash_key, sid)
-        session_data_list = await pipe.execute()
+        async with self._redis_client.pipeline() as pipe:
+            for sid in session_ids:
+                pipe.hget(hash_key, sid)
+            session_data_list = await pipe.execute()
         roundtrips += 1
 
         # Step 3: Collect invalidated sessions (with error handling)
@@ -262,26 +262,26 @@ class SessionManager:
                 )
 
         # Step 4: Atomic delete from BOTH hash and sorted set + add new - 1 roundtrip
-        pipe = self._redis_client.pipeline()
-        for sid in session_ids:
-            pipe.hdel(hash_key, sid)
-            pipe.zrem(zset_key, sid)  # Critical: remove from sorted set too!
+        async with self._redis_client.pipeline() as pipe:
+            for sid in session_ids:
+                pipe.hdel(hash_key, sid)
+                pipe.zrem(zset_key, sid)  # Critical: remove from sorted set too!
 
-            logger.info(
-                "Session invalidated due to limit",
-                user_id=user_id,
-                invalidated_session=sid,
-            )
+                logger.info(
+                    "Session invalidated due to limit",
+                    user_id=user_id,
+                    invalidated_session=sid,
+                )
 
-        # Add new session
-        pipe.zadd(zset_key, {new_session_id: timestamp})
-        pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
+            # Add new session
+            pipe.zadd(zset_key, {new_session_id: timestamp})
+            pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
 
-        # Set expiry on both keys
-        pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-        pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+            # Set expiry on both keys
+            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
 
-        await pipe.execute()
+            await pipe.execute()
         roundtrips += 1
 
         return roundtrips
@@ -306,43 +306,43 @@ class SessionManager:
         """
         roundtrips = 0
 
-        pipe = self._redis_client.pipeline()
+        async with self._redis_client.pipeline() as pipe:
 
-        for _ in range(sessions_to_remove):
-            # ZPOPMIN returns [(member, score)] - O(log n)
-            oldest = await self._redis_client.zpopmin(zset_key, count=1)
-            roundtrips += 1
-
-            if oldest:
-                oldest_session_id = oldest[0][0]
-                if isinstance(oldest_session_id, bytes):
-                    oldest_session_id = oldest_session_id.decode("utf-8")
-
-                # Get session data before deletion for return value
-                session_data = await self._redis_client.hget(hash_key, oldest_session_id)
+            for _ in range(sessions_to_remove):
+                # ZPOPMIN returns [(member, score)] - O(log n)
+                oldest = await self._redis_client.zpopmin(zset_key, count=1)
                 roundtrips += 1
 
-                if session_data:
-                    invalidated_sessions.append(json_loads(session_data))
+                if oldest:
+                    oldest_session_id = oldest[0][0]
+                    if isinstance(oldest_session_id, bytes):
+                        oldest_session_id = oldest_session_id.decode("utf-8")
 
-                # Delete from hash - O(1)
-                pipe.hdel(hash_key, oldest_session_id)
+                    # Get session data before deletion for return value
+                    session_data = await self._redis_client.hget(hash_key, oldest_session_id)
+                    roundtrips += 1
 
-                logger.info(
-                    "Session invalidated due to limit",
-                    user_id=user_id,
-                    invalidated_session=oldest_session_id,
-                )
+                    if session_data:
+                        invalidated_sessions.append(json_loads(session_data))
 
-        # Add new session to both ZSET and Hash atomically
-        pipe.zadd(zset_key, {new_session_id: timestamp})
-        pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
+                    # Delete from hash - O(1)
+                    pipe.hdel(hash_key, oldest_session_id)
 
-        # Set expiry on both keys
-        pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-        pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+                    logger.info(
+                        "Session invalidated due to limit",
+                        user_id=user_id,
+                        invalidated_session=oldest_session_id,
+                    )
 
-        await pipe.execute()
+            # Add new session to both ZSET and Hash atomically
+            pipe.zadd(zset_key, {new_session_id: timestamp})
+            pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
+
+            # Set expiry on both keys
+            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
+
+            await pipe.execute()
         roundtrips += 1
 
         return roundtrips
@@ -404,10 +404,10 @@ class SessionManager:
             return False
 
         # Delete from both Hash and ZSET atomically - O(1) + O(log n)
-        pipe = self._redis_client.pipeline()
-        pipe.hdel(hash_key, session_id)
-        pipe.zrem(zset_key, session_id)
-        await pipe.execute()
+        async with self._redis_client.pipeline() as pipe:
+            pipe.hdel(hash_key, session_id)
+            pipe.zrem(zset_key, session_id)
+            await pipe.execute()
 
         logger.info("Session invalidated", user_id=user_id, session_id=session_id)
         return True
@@ -435,10 +435,10 @@ class SessionManager:
             return 0
 
         # Delete both Hash and ZSET - O(1) with DEL
-        pipe = self._redis_client.pipeline()
-        pipe.delete(hash_key)
-        pipe.delete(zset_key)
-        await pipe.execute()
+        async with self._redis_client.pipeline() as pipe:
+            pipe.delete(hash_key)
+            pipe.delete(zset_key)
+            await pipe.execute()
 
         logger.info(
             "All sessions invalidated",
@@ -566,10 +566,10 @@ class SessionManager:
 
                     if zset_entries:
                         # Atomically add to ZSET with TTL
-                        pipe = self._redis_client.pipeline()
-                        pipe.zadd(zset_key, zset_entries)
-                        pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-                        await pipe.execute()
+                        async with self._redis_client.pipeline() as pipe:
+                            pipe.zadd(zset_key, zset_entries)
+                            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
+                            await pipe.execute()
 
                         migrated += 1
 

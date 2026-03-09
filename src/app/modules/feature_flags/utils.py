@@ -47,7 +47,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
                 val_str: str = cached_value.decode().lower()
                 return val_str == "true"
         except Exception as e:
-            logger.debug("Cache get failed:", error=e)
+            logger.debug("Cache get failed", error=e)
 
     # Fallback to DB
     result = await db.get(Tenant, tenant_id)
@@ -61,7 +61,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
         try:
             await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
         except Exception as e:
-            logger.debug("Cache operation failed:", error=e)
+            logger.debug("Cache operation failed", error=e)
 
     return enabled
 
@@ -93,7 +93,7 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
                 result_data: dict[str, Any] = json_loads(cached_value)
                 return result_data
         except Exception as e:
-            logger.debug("Cache get failed:", error=e)
+            logger.debug("Cache get failed", error=e)
 
     # Fallback to DB
     result = await db.get(Tenant, tenant_id)
@@ -107,7 +107,7 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         try:
             await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
         except Exception as e:
-            logger.debug("Cache operation failed:", error=e)
+            logger.debug("Cache operation failed", error=e)
 
     return flags
 
@@ -165,7 +165,7 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
             # Delete all features key
             await redis_client.delete(f"tenant:{tenant_id}:features")
         except Exception as e:
-            logger.debug("Cache invalidation failed:", error=e)
+            logger.debug("Cache invalidation failed", error=e)
 
     return tenant
 
@@ -224,6 +224,6 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
             if keys_to_delete:
                 await redis_client.delete(*keys_to_delete)
         except Exception as e:
-            logger.debug("Cache invalidation failed:", error=e)
+            logger.debug("Cache invalidation failed", error=e)
 
     return tenant

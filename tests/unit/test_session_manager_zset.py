@@ -11,6 +11,15 @@ import pytest
 
 from src.app.core.security.session_manager import SessionManager
 
+def _acm(pipe):
+    """Make a pipeline mock support 'async with' returning itself."""
+    async def __aenter__(*a): return pipe
+    async def __aexit__(*a): return False
+    pipe.__aenter__ = __aenter__
+    pipe.__aexit__ = __aexit__
+    return pipe
+
+
 logger = logging.getLogger(__name__)
 
 
@@ -37,6 +46,7 @@ class TestZSETEvictionOrder:
         )
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.zadd = MagicMock(return_value=pipe)
         pipe.hset = MagicMock(return_value=pipe)
         pipe.hdel = MagicMock(return_value=pipe)
@@ -68,6 +78,7 @@ class TestZSETEvictionOrder:
         mock_redis.hlen = AsyncMock(return_value=2)
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.zadd = MagicMock(return_value=pipe)
         pipe.hset = MagicMock(return_value=pipe)
         pipe.expire = MagicMock(return_value=pipe)
@@ -101,6 +112,7 @@ class TestZSETHashConsistency:
         mock_redis.hlen = AsyncMock(return_value=0)
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.zadd = MagicMock(return_value=pipe)
         pipe.hset = MagicMock(return_value=pipe)
         pipe.expire = MagicMock(return_value=pipe)
@@ -132,6 +144,7 @@ class TestZSETHashConsistency:
         mock_redis.hexists = AsyncMock(return_value=True)
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.hdel = MagicMock(return_value=pipe)
         pipe.zrem = MagicMock(return_value=pipe)
         pipe.execute = AsyncMock()
@@ -156,6 +169,7 @@ class TestZSETHashConsistency:
         mock_redis.hlen = AsyncMock(return_value=5)
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.delete = MagicMock(return_value=pipe)
         pipe.execute = AsyncMock()
         mock_redis.pipeline = MagicMock(return_value=pipe)
@@ -185,6 +199,7 @@ class TestZSETTTLPropagation:
         mock_redis.hlen = AsyncMock(return_value=0)
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.zadd = MagicMock(return_value=pipe)
         pipe.hset = MagicMock(return_value=pipe)
         pipe.expire = MagicMock(return_value=pipe)
@@ -263,6 +278,7 @@ class TestZSETMigration:
         )
 
         pipe = MagicMock()
+        _acm(pipe)
         pipe.zadd = MagicMock(return_value=pipe)
         pipe.expire = MagicMock(return_value=pipe)
         pipe.execute = AsyncMock()
