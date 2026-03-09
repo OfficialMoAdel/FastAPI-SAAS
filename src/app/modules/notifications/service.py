@@ -492,9 +492,11 @@ async def send_email_task(
             if tenant_id:
                 async with rls_context(db, tenant_id):
                     service = NotificationService(db)
+            else:
+                service = NotificationService(db)
 
-                    # Create SMTP message
-                    msg = MIMEMultipart("alternative")
+            # Create SMTP message
+            msg = MIMEMultipart("alternative")
             msg["Subject"] = subject
             msg["From"] = settings.EMAIL_FROM_ADDRESS
             msg["To"] = to_email

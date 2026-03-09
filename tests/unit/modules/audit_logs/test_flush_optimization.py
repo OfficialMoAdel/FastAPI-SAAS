@@ -10,6 +10,8 @@ Tests cover:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from src.app.modules.billing.models import StripeSettings
+from src.app.modules.ai.models import AIChatSession
 
 
 class TestFlushAuditLogBuffer:

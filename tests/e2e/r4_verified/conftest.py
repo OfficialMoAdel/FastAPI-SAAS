@@ -290,8 +290,8 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
 
         # Clean up existing user if any
         await session.execute(
-            text('DELETE FROM "user" WHERE email = :email'),
-            {"email": user_data["email"]},
+            text('DELETE FROM "user" WHERE email = :email OR username = :username'),
+            {"email": user_data["email"], "username": user_data["username"]},
         )
         await session.commit()
 
@@ -407,8 +407,8 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
 
         # Clean up existing user if any
         await session.execute(
-            text('DELETE FROM "user" WHERE email = :email'),
-            {"email": user_data["email"]},
+            text('DELETE FROM "user" WHERE email = :email OR username = :username'),
+            {"email": user_data["email"], "username": user_data["username"]},
         )
         await session.commit()
 

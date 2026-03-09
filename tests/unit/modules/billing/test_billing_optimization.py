@@ -11,6 +11,7 @@ import pytest
 from src.app.modules.billing.models import Pricing, Product
 from src.app.modules.billing.schemas import PricingRead, ProductRead
 from src.app.modules.billing.service import _pricing_tier_to_dict, _product_to_dict
+from src.app.modules.ai.models import AIChatSession
 
 
 @pytest.fixture
