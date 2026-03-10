@@ -204,6 +204,13 @@ return new_attempts
             str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
         )
 
+        # BUG FIX: Coerce result to int to handle bytes when Redis client is not initialized
+        # with decode_responses=True. Without this, b'-1' != -1, disabling lockout entirely.
+        try:
+            result = int(result)
+        except (TypeError, ValueError):
+            result = 0  # Default: allow login attempt if coercion fails
+
         if result == -1:
             await self._publish_login_audit(request, username, False, reason="account_locked")
             raise UnauthorizedException("Wrong username, email or password.")
@@ -615,7 +622,9 @@ return new_attempts
         dict[str, str]
             Success message (always returns success for security)
         """
-        user = await crud_users.get(db=db, email=email, is_deleted=False)
+        # BUG FIX: Also require is_active=True to prevent inactive accounts from
+        # resetting their password without going through account reactivation.
+        user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
 
         # Always return success to prevent email enumeration
         if user:
@@ -750,7 +759,9 @@ return new_attempts
             Success message
         """
 
-        user = await crud_users.get(db=db, email=email, is_deleted=False)
+        # BUG FIX: Also require is_active=True to prevent inactive accounts from
+        # verifying emails (which could restore account access without going through reactivation).
+        user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
 
         if user and not user.get("is_email_verified", False):
             # Create verification token (defaults handle generation)
@@ -823,6 +834,11 @@ return new_attempts
         user = await crud_users.get(db=db, id=verification_token.user_id, is_deleted=False)
         if not user:
             raise UnauthorizedException("User not found.")
+
+        # BUG FIX: Reject verification for inactive accounts. Without this check,
+        # an inactive user could verify their email and gain unintended access.
+        if not user.get("is_active", True):
+            raise UnauthorizedException("This account is inactive. Please contact support.")
 
         # Update user status
         await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True})

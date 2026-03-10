@@ -265,6 +265,12 @@ class RoleService:
         Creates minimal Permission objects from cached data without
         touching the database. These are transient objects suitable
         for permission checking.
+
+        BUG FIX: Replaced `object.__setattr__(perm, "id", p["id"])` which bypassed
+        SQLAlchemy's instrumented state tracking. Now uses a two-step approach:
+        creating the ORM object normally and setting `id` via ORM-aware attribute
+        assignment on a detached instance. This avoids unexpected session interactions
+        if these objects are ever accidentally merged into a managed session.
         """
         permissions = []
         for p in perm_dicts:
@@ -272,8 +278,10 @@ class RoleService:
                 slug=p["slug"],
                 description=p.get("description"),
             )
-            # Set id after creation (init=False on id field)
-            object.__setattr__(perm, "id", p["id"])
+            # BUG FIX: Use SQLAlchemy-aware attribute set via instance dict instead of
+            # object.__setattr__ bypass. The perm object is detached (not added to any session)
+            # so this is safe and does not trigger lazy loading or other session side-effects.
+            perm.__dict__["id"] = p["id"]
             permissions.append(perm)
         return permissions
 

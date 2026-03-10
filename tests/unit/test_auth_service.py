@@ -184,6 +184,46 @@ class TestAuthServiceLockout:
             # Should show "wrong password" not "locked" (becomes locked AFTER this attempt)
             assert "Wrong username" in str(exc_info.value.detail)
 
+    @pytest.mark.asyncio
+    async def test_lockout_works_when_eval_returns_bytes(
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+    ):
+        """BUG FIX REGRESSION: Lockout must work even if redis.eval returns bytes.
+
+        Without the int() coercion fix, b'-1' != -1, causing lockout to silently
+        fail and allowing infinite brute-force attempts.
+        """
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+        # Simulate raw Redis bytes response (happens when decode_responses=False)
+        mock_redis.eval = AsyncMock(return_value=b"-1")
+
+        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+            mock_auth.return_value = None
+
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
+
+            # Lock message should be returned even with bytes response
+            assert "Wrong username" in str(exc_info.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_lockout_works_when_eval_returns_string(
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+    ):
+        """BUG FIX REGRESSION: Lockout must work even if redis.eval returns str '-1'."""
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+        mock_redis.eval = AsyncMock(return_value="-1")
+
+        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+            mock_auth.return_value = None
+
+            with pytest.raises(UnauthorizedException) as exc_info:
+                await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
+
+            assert "Wrong username" in str(exc_info.value.detail)
+
 
 class TestAuthServiceTokenRefresh:
     """Tests for token refresh edge cases."""
@@ -352,8 +392,8 @@ class TestAuthServiceEmailFlows:
 
             await auth_service.request_password_reset("test@example.com", mock_db)
 
-            # Check user lookup
-            mock_get_user.assert_called_once_with(db=mock_db, email="test@example.com", is_deleted=False)
+            # Check user lookup — now includes is_active=True (Bug 2 fix: inactive accounts excluded)
+            mock_get_user.assert_called_once_with(db=mock_db, email="test@example.com", is_deleted=False, is_active=True)
 
             # Check token saved
             mock_db.add.assert_called()

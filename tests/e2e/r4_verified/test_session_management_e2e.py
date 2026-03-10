@@ -34,7 +34,13 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     log_step("Starting session lifecycle E2E test", user=authenticated_user["email"])
 
     user_id = authenticated_user["user_id"]
-    token1 = authenticated_user["access_token"]
+    # The fixture gives an access token, but might not create a Redis session
+    # Log in explicitly to ensure a session is created and tracked
+    login_data = {"username": authenticated_user["email"], "password": "TestPassword123!"}
+    response = await client.post("/api/v1/account/login", data=login_data)
+    assert response.status_code == 200, f"First login failed: {response.text}"
+    token1 = response.json()["access_token"]
+    refresh_token1 = response.cookies.get("refresh_token")
 
     # Step 1: Verify initial session created
     log_step("Verifying initial session created")
@@ -43,8 +49,9 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     assert response.status_code == 200, f"Failed to get sessions: {response.text}"
 
     sessions = response.json().get("sessions", [])
-    log_step("Initial sessions retrieved", count=len(sessions), sessions=sessions)
-    assert len(sessions) >= 1, "Should have at least one session"
+    initial_count = len(sessions)
+    log_step("Initial sessions retrieved", count=initial_count, sessions=sessions)
+    assert initial_count >= 1, "Should have at least one session"
 
     session1_id = sessions[0]["id"]
     log_step("First session ID", session_id=session1_id)
@@ -66,7 +73,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
     sessions = response.json().get("sessions", [])
     log_step("Sessions after second login", count=len(sessions), sessions=sessions)
-    assert len(sessions) == 2, f"Expected 2 sessions, got {len(sessions)}"
+    assert len(sessions) == initial_count + 1, f"Expected {initial_count + 1} sessions, got {len(sessions)}"
 
     session2_id = [s["id"] for s in sessions if s["id"] != session1_id][0]
     log_step("Second session ID", session_id=session2_id)
@@ -84,7 +91,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
         # Get all sessions from hash
         all_sessions = await redis_client.hgetall(session_key)
         log_step("Redis Hash contents", session_count=len(all_sessions))
-        assert len(all_sessions) == 2, f"Expected 2 sessions in Redis, got {len(all_sessions)}"
+        assert len(all_sessions) == initial_count + 1, f"Expected {initial_count + 1} sessions in Redis, got {len(all_sessions)}"
 
         # Verify both session IDs present
         session_ids = list(all_sessions.keys())
@@ -92,16 +99,20 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
     # Step 5: Logout from first device
     log_step("Logging out from first device", session_id=session1_id)
-    # Note: Logout requires refresh_token cookie. The login response sets this cookie.
-    # Since we don't have the refresh_token from the fixture, we skip this check
-    # and verify the session was removed via the sessions endpoint instead.
-    # For full logout test, we'd need to capture cookies from login response.
+    logout_headers = {"Authorization": f"Bearer {token1}"}
+    logout_cookies = {"refresh_token": refresh_token1} if refresh_token1 else {}
+    response = await client.post("/api/v1/account/logout", headers=logout_headers, cookies=logout_cookies)
+    assert response.status_code == 200, f"Logout failed: {response.text}"
 
-    # Alternative: Just verify session count changes correctly
+    # Verify session count changes correctly
     response = await client.get("/api/v1/account/sessions", headers=headers1)
-    assert response.status_code == 200
-    sessions = response.json().get("sessions", [])
-    log_step("Sessions for first device", count=len(sessions))
+    # The token itself might be blacklisted now or session empty
+    if response.status_code == 200:
+        sessions = response.json().get("sessions", [])
+        log_step("Sessions for first device", count=len(sessions))
+        assert len(sessions) == initial_count, f"Expected {initial_count} sessions, got {len(sessions)}"
+    else:
+        log_step("First device access denied after logout (expected)")
 
     # Step 6: Verify sessions are tracked correctly
     log_step("Verifying session tracking")
@@ -132,7 +143,15 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
     log_step("Starting session count accuracy E2E test", user=authenticated_user["email"])
 
     user_id = authenticated_user["user_id"]
-    headers = {"Authorization": f"Bearer {authenticated_user['access_token']}"}
+    # The fixture gives an access token, but might not create a Redis session
+    # Log in explicitly to ensure a session is created and tracked
+    login_data = {"username": authenticated_user["email"], "password": "TestPassword123!"}
+    response = await client.post("/api/v1/account/login", data=login_data)
+    assert response.status_code == 200
+    
+    token1 = response.json()["access_token"]
+    refresh_token1 = response.cookies.get("refresh_token")
+    headers = {"Authorization": f"Bearer {token1}"}
 
     # Step 1: Get initial count
     log_step("Getting initial session count")
@@ -144,8 +163,8 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
 
     # Step 2: Create multiple sessions
     log_step("Creating multiple sessions")
-    tokens = [authenticated_user["access_token"]]
-    refresh_tokens = []
+    tokens = [token1]
+    refresh_tokens = [refresh_token1]
     login_data = {"username": authenticated_user["email"], "password": "TestPassword123!"}
 
     for i in range(3):
