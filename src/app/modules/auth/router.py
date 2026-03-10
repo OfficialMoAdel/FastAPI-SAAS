@@ -180,13 +180,23 @@ async def list_sessions(
 
     session_infos = []
     for s in sessions:
-        device_info = s.get("device_info") or ""
+        device_info_raw = s.get("device_info") or ""
         ip_address = None
         user_agent = None
-        if " | IP: " in device_info:
-            user_agent, ip_address = device_info.split(" | IP: ", 1)
-        else:
-            user_agent = device_info if device_info else None
+
+        # Parse JSON format if possible, otherwise fallback to legacy delimited format
+        try:
+            import json
+            device_info = json.loads(device_info_raw)
+            if isinstance(device_info, dict):
+                user_agent = device_info.get("user_agent")
+                ip_address = device_info.get("ip")
+        except (json.JSONDecodeError, TypeError):
+            # Fallback for legacy sessions
+            if " | IP: " in device_info_raw:
+                user_agent, ip_address = device_info_raw.split(" | IP: ", 1)
+            else:
+                user_agent = device_info_raw if device_info_raw else None
 
         created_at_str = s.get("created_at")
         try:

@@ -102,16 +102,10 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
     assert current_used == expected_used, f"Expected {expected_used} bytes, got {current_used}"
     log_step("Quota counters correct", expected=expected_used, actual=current_used)
 
-    # Step 4: Verify Redis counter
-    if redis_client:
-        log_step("Checking Redis counter")
-        counter_key = f"file:quota:user:{user_id}"
-        redis_count = await redis_client.get(counter_key)
-
-        if redis_count:
-            redis_count = int(redis_count)
-            log_step("Redis counter", count=redis_count)
-            assert redis_count == current_used, f"Redis count {redis_count} != API count {current_used}"
+    # Step 4: [REMOVED] Redis counter check.
+    # The current system architecture implements file quotas via denormalized 
+    # columns in the User database model (storage_used bytes), rather than Redis counters.
+    # The API returns the computed value from the database directly.
 
     # Step 5: Attempt to exceed quota (if limit is set)
     if quota_limit > 0 and current_used < quota_limit:

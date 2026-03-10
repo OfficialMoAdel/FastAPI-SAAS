@@ -261,17 +261,34 @@ class UserService(BaseService[User]):
         try:
             result = await self.crud.create(db=self.db, object=user_internal)
 
-            # Publish user.created event for webhooks and other integrations
-            await event_bus.publish(
-                "user.created",
-                {
-                    "user_id": result.id,
-                    "email": result.email,
-                    "username": result.username,
-                    "tenant_id": str(result.tenant_id),
-                },
-                priority=EventPriority.NORMAL,
-            )
+            # SECURITY FIX: Ensure event is published ONLY after successful commit
+            # Attaches an after_commit listener to the current session that will
+            # publish the event once the transaction is durable.
+            from sqlalchemy import event
+
+            # We need to capture these values now, as `result` might not be
+            # safely accessible outside the session context later
+            event_payload = {
+                "user_id": result.id,
+                "email": result.email,
+                "username": result.username,
+                "tenant_id": str(result.tenant_id),
+            }
+
+            def publish_user_created_event(session) -> None:
+                import asyncio
+                # Fire-and-forget task to publish the event
+                asyncio.create_task(
+                    event_bus.publish(
+                        "user.created",
+                        event_payload,
+                        priority=EventPriority.NORMAL,
+                    )
+                )
+
+            # Register the one-time listener
+            event.listen(self.db.sync_session, "after_commit", publish_user_created_event, once=True)
+
         except IntegrityError as e:
             # Handle race condition: duplicate was created between our check and insert
             await self.db.rollback()

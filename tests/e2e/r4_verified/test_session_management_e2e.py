@@ -74,7 +74,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
     # Step 4: Verify Redis Hash structure
     if redis_client:
         log_step("Checking Redis Hash structure")
-        session_key = f"session:user:{user_id}"
+        session_key = f"user_sessions_v2:{user_id}"
 
         # Check if key exists
         exists = await redis_client.exists(session_key)
@@ -164,10 +164,9 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
     log_step("New session count", count=new_count)
     assert new_count == initial_count + 3, f"Expected {initial_count + 3}, got {new_count}"
 
-    # Step 4: Verify Redis HLEN matches
     if redis_client:
         log_step("Verifying Redis HLEN matches")
-        session_key = f"session:user:{user_id}"
+        session_key = f"user_sessions_v2:{user_id}"
         redis_count = await redis_client.hlen(session_key)
         log_step("Redis HLEN result", count=redis_count)
         assert redis_count == new_count, f"Redis count {redis_count} != API count {new_count}"

@@ -228,6 +228,10 @@ class AuthSettings(BaseSettings):
         default="fail_open",
         description="How to handle audit log failures: 'fail_open' (allow) or 'fail_closed' (block)",
     )
+    # Configurable MFA pending token expiry (was previously a hardcoded magic number)
+    MFA_PENDING_EXPIRY_SECONDS: int = Field(
+        default=300, ge=60, le=3600, description="MFA pending token TTL in seconds (default: 5 minutes)"
+    )
 
 
 class TestSettings(BaseSettings): ...

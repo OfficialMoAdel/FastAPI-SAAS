@@ -292,6 +292,8 @@ return new_attempts
         # Register session for tracking using the singleton session_manager
         try:
             # Extract jti from access token for session ID
+            import json
+
             import jwt
 
             from src.app.core.security.session_manager import session_manager as global_session_manager
@@ -299,7 +301,14 @@ return new_attempts
             decoded_token = jwt.decode(access_token, options={"verify_signature": False})
             session_id = decoded_token.get("jti", access_token[:32])
             client_ip = request.client.host if request.client else "Unknown"
-            device_info_str = f"{request.headers.get('user-agent', 'Unknown')} | IP: {client_ip}"
+
+            # Store session info as structured JSON instead of fragile delimited string
+            device_info_data = {
+                "user_agent": request.headers.get("user-agent", "Unknown"),
+                "ip": client_ip,
+            }
+            device_info_str = json.dumps(device_info_data)
+
             await global_session_manager.register_session(
                 user_id=user["id"],
                 session_id=session_id,
@@ -636,6 +645,10 @@ return new_attempts
                 },
                 priority=EventPriority.NORMAL,
             )
+        else:
+            # SECURITY FIX: Equalize timing for enumeration prevention
+            # Simulate DB and event bus operations to match the "user exists" path timing
+            await asyncio.sleep(0.15)  # Simulate DB write and event publish latency
 
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
@@ -765,6 +778,10 @@ return new_attempts
                 },
                 priority=EventPriority.NORMAL,
             )
+        else:
+            # SECURITY FIX: Equalize timing for enumeration prevention
+            # Simulate DB writes and event bus publishing latency
+            await asyncio.sleep(0.15)
 
         return {"message": "If the email is registered and unverified, a verification link has been sent."}
 

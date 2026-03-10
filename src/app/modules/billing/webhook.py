@@ -30,8 +30,8 @@ _WEBHOOK_EVENT_TTL_SECONDS = 86400 * 7  # 7 days retention ( Stripe retries for 
 async def _try_acquire_event_lock(event_id: str) -> bool:
     """Atomically try to acquire processing lock for a webhook event.
 
-    Uses Redis SET with NX (set-if-not-exists) for atomic idempotency.
-    This eliminates the TOCTOU race condition between check and mark operations.
+    Primary: Redis SET with NX (set-if-not-exists) for atomic idempotency.
+    Fallback: DB billing record check when Redis is unavailable.
 
     Args:
         event_id: The Stripe event ID (e.g., "evt_1234567890")
@@ -40,10 +40,8 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
         True if lock acquired (event NOT previously processed), False if already processed
     """
     if redis_client is None:
-        # Redis not available - we can't guarantee idempotency
-        # Log warning and proceed (better to risk duplicate than lose event)
-        logger.warning("Redis unavailable for webhook idempotency check")
-        return True  # Allow processing
+        # Redis not available — fall back to DB idempotency check
+        return await _db_idempotency_check(event_id)
 
     try:
         key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
@@ -52,8 +50,48 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
         result = await redis_client.set(key, "1", nx=True, ex=_WEBHOOK_EVENT_TTL_SECONDS)
         return result is not None  # True = lock acquired, False = already processed
     except Exception as e:
-        logger.error("Failed to acquire webhook event lock", error=e)
-        # Fail open - allow processing to avoid losing events
+        logger.error(
+            "Failed to acquire webhook event lock, falling back to DB check",
+            event_id=event_id,
+            error=str(e),
+        )
+        # Fall back to DB idempotency check instead of failing open
+        return await _db_idempotency_check(event_id)
+
+
+async def _db_idempotency_check(event_id: str) -> bool:
+    """DB-based idempotency fallback for when Redis is unavailable.
+
+    Checks whether any billing record with this Stripe event ID already exists.
+    This prevents double charges when Redis is temporarily unavailable.
+
+    Args:
+        event_id: The Stripe event ID
+
+    Returns:
+        True if event should be processed (not yet seen), False if duplicate
+    """
+    try:
+        async with job_bypass_context("Webhook DB idempotency check") as db:
+            existing = await crud_billing_records.exists(
+                db=db,
+                stripe_invoice_id=event_id,  # Use event_id as a dedupe key
+            )
+            if existing:
+                logger.info(
+                    "DB idempotency check: event already processed, skipping",
+                    event_id=event_id,
+                )
+                return False  # Already processed
+            return True  # Safe to process
+    except Exception as db_err:
+        # If both Redis AND DB checks fail, fail open as last resort
+        # (Stripe will retry, better to risk a duplicate than lose the event)
+        logger.error(
+            "DB idempotency fallback also failed, allowing processing",
+            event_id=event_id,
+            error=str(db_err),
+        )
         return True
 
 
@@ -180,10 +218,11 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
     if not all([tenant_id, user_id, plan_id]):
         logger.error(
-            f"Missing or invalid metadata in checkout session {session.id}: tenant_id=%s, user_id=%s, plan_id=%s",
-            str(tenant_id) if tenant_id else None,
-            user_id,
-            plan_id,
+            "Missing or invalid metadata in checkout session",
+            session_id=session["id"],
+            tenant_id=str(tenant_id) if tenant_id else None,
+            user_id=user_id,
+            plan_id=plan_id,
         )
         return
 

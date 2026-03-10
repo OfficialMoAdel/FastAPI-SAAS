@@ -384,8 +384,8 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
 
 
-# MFA pending token constants
-MFA_PENDING_EXPIRY_SECONDS = 300  # 5 minutes
+# MFA pending token constants (configured via environment)
+MFA_PENDING_EXPIRY_SECONDS = settings.MFA_PENDING_EXPIRY_SECONDS
 
 
 class MFAPendingTokenManager:

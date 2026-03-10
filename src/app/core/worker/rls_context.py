@@ -113,16 +113,38 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                 reason,
             )
 
-            # SECURITY TODO: Implement audit logging for job RLS bypass
-            # Background jobs that bypass RLS must be logged for security and compliance.
-            # This is especially important because:
-            # 1. Jobs run with elevated privileges
-            # 2. Jobs may access multiple tenants' data
-            # 3. Failed jobs should still leave an audit trail
-            #
-            # Log details should include: job_id, function_name, reason, timestamp
-            # TODO: Write to audit_logs table in separate transaction
-            # This should be done to ensure bypass is logged even if job fails
+            # SECURITY: Implement audit logging for job RLS bypass
+            # This is done in a separate asynchronous task to not block the job and
+            # to ensure the audit log is stored even if the main transaction rolls back.
+            try:
+                from src.app.core.events.models import AuditLog
+
+                async def _log_rls_bypass() -> None:
+                    # `local_session` is imported at the top of the file
+                    async with local_session() as audit_db:
+                        # RLS bypasses are typically system-level actions
+                        # so they are logged against the system tenant (00000000-0000-0000-0000-000000000000)
+                        from uuid import UUID
+                        audit_record = AuditLog(
+                            tenant_id=UUID("00000000-0000-0000-0000-000000000000"),
+                            user_id=None,
+                            action="security.rls_bypass",
+                            entity_type="system",
+                            entity_id="job",
+                            details={"reason": reason},
+                            ip_address="127.0.0.1",
+                            user_agent="system_worker"
+                        )
+                        audit_db.add(audit_record)
+                        await audit_db.commit()
+
+                # Schedule the audit log write
+                import asyncio
+                asyncio.create_task(_log_rls_bypass())
+            except Exception as audit_e:
+                # We log the failure but do not prevent the job from running
+                # since the structured log at line 111 already recorded it.
+                logger.error("Failed to write RLS bypass to audit_logs table: %s", audit_e)
 
             yield session
 

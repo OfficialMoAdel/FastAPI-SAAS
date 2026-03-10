@@ -3,7 +3,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import stripe
+from pydantic import ValidationError
 from fastapi import HTTPException
+
+import src.app.modules.billing.webhook as webhook_module
+
+# Global mock for redis_client, as it might be uninitialized (None) in isolated unit tests
+webhook_module.redis_client = AsyncMock()
+webhook_module.redis_client.get.return_value = None
 
 from src.app.modules.billing.webhook import (
     handle_webhook_event,
@@ -147,6 +154,7 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
+        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         # Mock bypass db session and subscription finding
         mock_bypass_db = AsyncMock()
@@ -210,6 +218,7 @@ async def test_handle_webhook_event_invoice_payment_failed():
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
+        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         # Mock bypass db
         mock_bypass_db = AsyncMock()
@@ -255,6 +264,7 @@ async def test_handle_webhook_event_subscription_updated():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
+        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         # Mock bypass db
         mock_bypass_db = AsyncMock()
@@ -292,6 +302,7 @@ async def test_handle_webhook_event_subscription_deleted():
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
         patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock),
+        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):  # noqa: E501
         # Mock bypass db
         mock_bypass_db = AsyncMock()
@@ -338,6 +349,7 @@ async def test_handle_webhook_event_charge_refunded():
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+        patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
         mock_to_thread.return_value = mock_invoice
 

@@ -152,8 +152,14 @@ class TenantMiddleware(BaseHTTPMiddleware):
         tenant_slug = tenant_slug.strip().lower()
 
         if getattr(settings, "FEATURE_REMOVE_WASTED_CONNECTION", False):
+            # SECURITY WARNING (RLS BYPASS):
             # Optimized path: Don't hold a DB connection open during the entire request.
-            # Downstream database sessions (via async_get_db) will enforce RLS.
+            # Downstream database sessions (via async_get_db) will NOT have PostgreSQL RLS
+            # variables (current_tenant_id) set at the connection level.
+            #
+            # When this feature is active, ALL queries MUST explicitly filter by
+            # tenant_id at the application layer (e.g., .filter(Model.tenant_id == ...)).
+            # This sacrifices defense-in-depth (DB-level RLS) for performance.
             tenant = await self._get_tenant_by_slug(tenant_slug)
 
             if tenant is None:

@@ -168,14 +168,26 @@ class EmailService:
             )
             email_messages.append(email_message)
 
-        # Send emails
+        # Send emails - request per-message results when supported
         results = await provider.send_bulk_emails(email_messages)
 
+        # Per-message results list: True = sent, False = failed.
+        # Providers that support per-message status return a "results" list;
+        # older providers return only aggregate counts (success/failed).
+        per_message_results: list[bool] | None = results.get("results")
+
+        total_success_remaining: int = results.get("success", 0)
+
         # Log all notifications
-        for msg_data, email_message in zip(messages, email_messages, strict=False):
-            # Determine success
-            success = results["success"] > 0
-            results["success"] -= 1 if success else 0
+        for i, (msg_data, email_message) in enumerate(zip(messages, email_messages, strict=False)):
+            if per_message_results is not None:
+                # Preferred path: provider returned per-message status
+                success = bool(per_message_results[i]) if i < len(per_message_results) else False
+            else:
+                # Fallback: distribute aggregate count across messages in order
+                # (first N=success_count messages are considered successful)
+                success = total_success_remaining > 0
+                total_success_remaining -= 1 if success else 0
 
             await self._log_notification(
                 tenant_id=msg_data["tenant_id"],

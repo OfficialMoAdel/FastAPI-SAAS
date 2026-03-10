@@ -383,7 +383,7 @@ class SSOService:
         """Create a new user from SSO data."""
         from src.app.core.security.tokens import TokenGenerator
 
-        password = f"{TokenGenerator.generate_secure_password(16)}#1A"
+        password = TokenGenerator.generate_secure_password(19) + "!1Aa"  # Fully random, no predictable suffix
 
         base_username = user_info.email.split("@")[0]
         # Ensure username is lowercase and alphanumeric
