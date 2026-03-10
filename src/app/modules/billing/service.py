@@ -275,6 +275,14 @@ class ProductService(BaseService[Product]):
         product = await crud_products.get(db=self.db, id=product_id)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
+
+        # SECURITY FIX: Enforce tenant isolation (same pattern as get_plan).
+        # Without this check, any authenticated user can read any tenant's product
+        # by brute-forcing product IDs (IDOR vulnerability).
+        tenant = get_current_tenant()
+        if tenant and product.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("Product", product_id)
+
         return product
 
     async def get_products(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
@@ -471,6 +479,12 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant data leakage.
+        tenant = get_current_tenant()
+        if tenant and subscription.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
         return subscription
 
     async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:

@@ -8,7 +8,7 @@ Provides business logic for multi-factor authentication including:
 
 import base64
 import secrets
-from datetime import datetime
+from datetime import UTC, datetime
 from typing import Any
 
 import pyotp
@@ -264,15 +264,21 @@ class MFAService:
         # SECURITY FIX: Check MFA lockout before verification to prevent brute force
         # Skip lockout check if Redis is unavailable (fail open for availability)
         mfa_attempts_key = f"mfa_attempts:{user_id}"
-        result: int | str = 0  # Initialize to prevent UnboundLocalError when Redis unavailable
+        result: int = 0  # Initialize to prevent UnboundLocalError when Redis unavailable
         if redis is not None:
-            result = await redis.eval(  # type: ignore[misc]
+            raw_result = await redis.eval(  # type: ignore[misc]
                 _MFA_CHECK_LUA,
                 1,
                 mfa_attempts_key,
                 str(MFA_MAX_ATTEMPTS),
                 str(MFA_LOCKOUT_DURATION_SECONDS),
             )
+            # BUG FIX: Coerce to int — redis.eval may return bytes (b'-1') when
+            # the client is not configured with decode_responses=True.
+            try:
+                result = int(raw_result)
+            except (TypeError, ValueError):
+                result = 0
 
             if result == -1:
                 raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
@@ -307,7 +313,8 @@ class MFAService:
                 # Update last_used_at - fetch model instance
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
                 if mfa_method:
-                    mfa_method.last_used_at = datetime.now()
+                    # BUG FIX: Use UTC-aware datetime (was naive, inconsistent with the rest of codebase)
+                    mfa_method.last_used_at = datetime.now(UTC)
                     await db.commit()
 
                 # Audit log: MFA verification success
@@ -382,7 +389,11 @@ class MFAService:
 
         # Normalize code format
         normalized_code = code.upper().replace("-", "")
-        if normalized_code.startswith("BC"):
+        # BUG FIX: Only strip the "BC" prefix when it was part of "BC-" (with dash).
+        # Checking startswith("BC-") on the original (pre-strip) code prevents false
+        # stripping when a generated hex code_part legitimately starts with "BC"
+        # (e.g., 'BC8AF21234' → stripping 'BC' would give wrong verification target).
+        if code.upper().startswith("BC-"):
             normalized_code = normalized_code[2:]
 
         # SECURITY FIX: Use row-level locking to prevent race conditions (double spending)
@@ -419,7 +430,8 @@ class MFAService:
             new_backup_codes.remove(matched_hash)
             mfa_method.backup_codes = new_backup_codes
 
-            mfa_method.last_used_at = datetime.now()
+            # BUG FIX: Use UTC-aware datetime (was naive)
+            mfa_method.last_used_at = datetime.now(UTC)
             await db.commit()
 
             remaining = len(mfa_method.backup_codes)
@@ -501,7 +513,13 @@ class MFAService:
 
                 if not totp.verify(totp_token, valid_window=TOTP_SKEW):
                     raise UnauthorizedException("Invalid MFA token")
+            except UnauthorizedException:
+                # BUG FIX: Re-raise auth exceptions explicitly so they aren't swallowed.
+                # The broad `except Exception` below would re-wrap them with a different
+                # message, losing the original context. Always re-raise first.
+                raise
             except Exception:
+                # Only catch unexpected decryption or pyotp errors here.
                 raise UnauthorizedException("Invalid MFA token")
 
         # Delete MFA method
@@ -627,6 +645,9 @@ class MFAService:
 
                 if not totp.verify(totp_token, valid_window=TOTP_SKEW):
                     raise UnauthorizedException("Invalid MFA token")
+            except UnauthorizedException:
+                # BUG FIX: Re-raise auth exceptions before the broad except catches them.
+                raise
             except Exception:
                 raise UnauthorizedException("Invalid MFA token")
 

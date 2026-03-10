@@ -84,13 +84,24 @@ class NotificationService:
             )
             data = (override.subject_override or template_name, override.content)
         else:
-            # Use default file template
+            # Use default file template - return the RAW TEMPLATE SOURCE, not rendered output.
+            # BUG FIX: Previously called template.render() here without any context, which
+            # pre-renders the template with empty variables and destroys the Jinja2 syntax
+            # (e.g., {{ user.name }} becomes empty string). The raw source must be stored
+            # so that render_template() can fill variables later.
             try:
-                # Non-blocking template loading with thread pool
-                template = await asyncio.to_thread(jinja_env.get_template, f"{template_name}.html.jinja2")
-                # Default subject from template metadata or template name
+                # Non-blocking template loading with thread pool (validates the template exists)
+                await asyncio.to_thread(jinja_env.get_template, f"{template_name}.html.jinja2")
+                # Default subject from template name
                 subject = template_name.replace("_", " ").title()
-                data = (subject, template.render())
+                # Return the raw Jinja2 source via the loader.
+                # get_source() returns (source_str, filename, uptodate_fn) — we take [0].
+                # jinja_env.loader is always a FileSystemLoader (set at module init), never None.
+                assert jinja_env.loader is not None
+                raw_source, _, _ = await asyncio.to_thread(
+                    jinja_env.loader.get_source, jinja_env, f"{template_name}.html.jinja2"
+                )
+                data = (subject, raw_source)
             except Exception as e:
                 logger.error(
                     "template_load_failed",
@@ -166,16 +177,18 @@ class NotificationService:
                     user_id=user_id,
                     template_name=template_name,
                 )
-                # Create notification record with skipped status
+                # BUG FIX: Skipped notifications should NOT be stored as FAILED.
+                # FAILED implies an error occurred; PENDING is a safer neutral status
+                # that makes the intent clear via the error_message field.
                 notification = Notification(
                     tenant_id=tenant_id,
                     user_id=user_id,
                     template_name=template_name,
                     to_email=to_email,
                     subject="",
-                    status=NotificationStatus.FAILED,
+                    status=NotificationStatus.PENDING,
                 )
-                notification.error_message = "Skipped by user preferences"
+                notification.error_message = "Skipped: user preference opt-out"
                 self.db.add(notification)
                 await self.db.commit()
                 await self.db.refresh(notification)
@@ -487,13 +500,13 @@ async def send_email_task(
     from src.app.core.db.rls import rls_context
 
     async with async_session_maker() as db:
-        try:
-            # Reconstruct the tenant context for RLS checks if tenant is present
-            if tenant_id:
-                async with rls_context(db, tenant_id):
-                    service = NotificationService(db)
-            else:
-                service = NotificationService(db)
+        # BUG FIX: Previously, the rls_context was exited immediately after creating
+        # the service object (the entire context block contained only `service = ...`).
+        # This meant mark_sent() and mark_failed() DB writes happened WITHOUT tenant
+        # isolation, which violates RLS and could cause cross-tenant data leakage.
+        # Fix: wrap ALL DB operations (create, SMTP send, mark) inside the context.
+        async def _run_with_context() -> None:
+            service = NotificationService(db)
 
             # Create SMTP message
             msg = MIMEMultipart("alternative")
@@ -505,37 +518,41 @@ async def send_email_task(
             html_part = MIMEText(html_content, "html")
             msg.attach(html_part)
 
-            # Send via async SMTP (non-blocking)
-            await aiosmtplib.send(
-                msg,
-                hostname=settings.SMTP_HOST,
-                port=settings.SMTP_PORT,
-                username=settings.SMTP_USER if settings.SMTP_USER else None,
-                password=settings.SMTP_PASSWORD if settings.SMTP_PASSWORD else None,
-                start_tls=settings.SMTP_USE_TLS,
-            )
+            try:
+                # Send via async SMTP (non-blocking)
+                await aiosmtplib.send(
+                    msg,
+                    hostname=settings.SMTP_HOST,
+                    port=settings.SMTP_PORT,
+                    username=settings.SMTP_USER if settings.SMTP_USER else None,
+                    password=settings.SMTP_PASSWORD if settings.SMTP_PASSWORD else None,
+                    start_tls=settings.SMTP_USE_TLS,
+                )
 
-            # Mark as sent
-            await service.mark_sent(UUID(notification_id))
+                # Mark as sent (inside context = RLS enforced)
+                await service.mark_sent(UUID(notification_id))
+                logger.info("email_sent_success", notification_id=notification_id, to_email=to_email)
 
-            logger.info("email_sent_success", notification_id=notification_id, to_email=to_email)
+            except Exception as e:
+                logger.error(
+                    "email_send_failed",
+                    notification_id=notification_id,
+                    to_email=to_email,
+                    error=str(e),
+                    exc_info=True,
+                )
+                # Mark as failed (inside context = RLS enforced)
+                await service.mark_failed(UUID(notification_id), str(e))
+                raise  # Re-raise for ARQ retry
 
-        except Exception as e:
-            logger.error(
-                "email_send_failed",
-                notification_id=notification_id,
-                to_email=to_email,
-                error=str(e),
-                exc_info=True,
-            )
-
-            # Mark as failed
+        try:
             if tenant_id:
                 async with rls_context(db, tenant_id):
-                    await service.mark_failed(UUID(notification_id), str(e))
+                    await _run_with_context()
             else:
-                await service.mark_failed(UUID(notification_id), str(e))
-            raise  # Re-raise for ARQ retry
+                await _run_with_context()
+        except Exception:
+            raise  # Already logged inside _run_with_context
 
 
 # Event handler for notification.send events

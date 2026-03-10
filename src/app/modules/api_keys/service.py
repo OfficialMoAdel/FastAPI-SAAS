@@ -229,8 +229,15 @@ class APIKeyService(BaseService[APIKey]):
 
         api_key = key
 
-        if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
-            raise ForbiddenException("You don't have permission to revoke this key")
+        # BUG FIX: When the CRUD fallback ran (line above), `key` is a dict
+        # not an ORM object. Use .get() for dict access; attribute access would
+        # raise AttributeError on dict instances.
+        if isinstance(api_key, dict):
+            if api_key.get("user_id") != user_id or api_key.get("tenant_id") != tenant_id:
+                raise ForbiddenException("You don't have permission to revoke this key")
+        else:
+            if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
+                raise ForbiddenException("You don't have permission to revoke this key")
 
         # Invalidate cache before revoking (using hashed_key from DB record)
         if redis_client is not None and api_key.hashed_key:
@@ -306,6 +313,12 @@ class APIKeyService(BaseService[APIKey]):
                         # Expired - delete from cache and return None
                         await redis_client.delete(cache_key)
                         return None
+                # BUG FIX: Also check valid_from. Without this, a rotated key that was
+                # cached before its valid_from time could be used prematurely (up to 5 min).
+                if result.get("valid_from"):
+                    valid_from = datetime.fromisoformat(result["valid_from"])
+                    if valid_from > datetime.now(UTC):
+                        return None
                 return {
                     "user_id": result["user_id"],
                     "tenant_id": result["tenant_id"],
@@ -326,6 +339,8 @@ class APIKeyService(BaseService[APIKey]):
                 "scopes": result["scopes"],
                 "key_id": result["key_id"],
                 "expires_at": result["expires_at"].isoformat() if result["expires_at"] else None,
+                # BUG FIX: Cache valid_from so it can be enforced on cache hits too.
+                "valid_from": result["valid_from"].isoformat() if result.get("valid_from") else None,
             }
             await redis_client.setex(cache_key, API_KEY_CACHE_TTL, json_dumps(cache_data))
 
@@ -394,6 +409,8 @@ class APIKeyService(BaseService[APIKey]):
             "scopes": json_loads(key.scopes) if key.scopes else [],
             "key_id": key.id,
             "expires_at": key.expires_at,
+            # Include valid_from so cache can enforce it on hits
+            "valid_from": key.valid_from if hasattr(key, "valid_from") else None,
         }
 
     async def rotate_api_key(
@@ -467,11 +484,18 @@ class APIKeyService(BaseService[APIKey]):
 
         api_key = old_key
 
-        if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
-            raise ForbiddenException("You don't have permission to rotate this key")
-
-        if not api_key.is_active:
-            raise ForbiddenException("Cannot rotate a revoked key")
+        # BUG FIX: When the CRUD fallback ran, `old_key` is a dict not an ORM object.
+        # Use dict-aware access to prevent AttributeError.
+        if isinstance(api_key, dict):
+            if api_key.get("user_id") != user_id or api_key.get("tenant_id") != tenant_id:
+                raise ForbiddenException("You don't have permission to rotate this key")
+            if not api_key.get("is_active"):
+                raise ForbiddenException("Cannot rotate a revoked key")
+        else:
+            if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
+                raise ForbiddenException("You don't have permission to rotate this key")
+            if not api_key.is_active:
+                raise ForbiddenException("Cannot rotate a revoked key")
 
         # Calculate valid_from timestamp (now + grace period)
         valid_from = datetime.now(UTC) + timedelta(days=grace_period_days)

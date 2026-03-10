@@ -73,3 +73,32 @@ class Tenant(Base):
     products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False)
     ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False)
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="tenant", init=False)
+
+
+# Ensure all related models are imported so SQLAlchemy's mapper can resolve
+# forward-reference strings in relationship() declarations like relationship("StripeSettings").
+# All imports in the TYPE_CHECKING block above are type-hint-only; SQLAlchemy needs the
+# actual classes loaded at configure time. This block must be at module bottom to
+# avoid circular imports since these modules import from tenants.models.
+def _ensure_related_models_registered() -> None:
+    """Import all models referenced in Tenant relationships."""
+    import importlib
+    for module_path in [
+        "src.app.modules.ai.models",
+        "src.app.modules.api_keys.models",
+        "src.app.modules.audit_logs.models",
+        "src.app.modules.billing.models",
+        "src.app.modules.feature_flags.models",
+        "src.app.modules.files.models",
+        "src.app.modules.notifications.models",
+        "src.app.modules.storage_settings.models",
+        "src.app.modules.users.models",
+        "src.app.modules.webhooks.models",
+    ]:
+        try:
+            importlib.import_module(module_path)
+        except ImportError:
+            pass  # Optional modules may not be installed in all environments
+
+
+_ensure_related_models_registered()

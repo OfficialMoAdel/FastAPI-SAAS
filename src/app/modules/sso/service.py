@@ -277,9 +277,15 @@ class SSOService:
                         await self._link_account(db, user_id, provider, user_info)
 
             is_disabled = False
+            # BUG FIX: Previously only checked is_deleted, not is_active.
+            # A deactivated (suspended) user could still log in via SSO.
             if hasattr(found_user_data, "is_deleted") and found_user_data.is_deleted:
                 is_disabled = True
+            elif hasattr(found_user_data, "is_active") and not found_user_data.is_active:
+                is_disabled = True
             elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
+                is_disabled = True
+            elif isinstance(found_user_data, dict) and not found_user_data.get("is_active", True):
                 is_disabled = True
             if is_disabled:
                 raise UnauthorizedException("Account is disabled")
@@ -318,11 +324,9 @@ class SSOService:
 
             # Audit log SSO login success
             try:
-                from structlog import get_logger
-
                 from src.app.core.events import EventPriority, event_bus
-
-                logger = get_logger(__name__)
+                # BUG FIX: Removed redundant `logger = get_logger(__name__)` that
+                # shadowed the module-level logger within this try block.
 
                 await event_bus.publish(
                     "audit.log",

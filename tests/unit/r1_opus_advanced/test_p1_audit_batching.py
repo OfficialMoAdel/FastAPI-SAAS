@@ -21,7 +21,8 @@ class TestAuditLogBatching:
         )
 
         mock_redis = MagicMock()
-        mock_redis.lpush = MagicMock(return_value=AsyncMock(return_value=1))
+        # BUG FIX: service now directly awaits lpush(), so mock must be AsyncMock
+        mock_redis.lpush = AsyncMock(return_value=1)
 
         with patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache:
             mock_cache.client = mock_redis

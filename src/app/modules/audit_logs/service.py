@@ -225,9 +225,10 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
         return
 
     try:
-        lpush_result = redis_cache.client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))
-        if hasattr(lpush_result, "__await__"):
-            await lpush_result
+        # BUG FIX: redis.asyncio always returns a coroutine from lpush().
+        # The previous hasattr(__await__) conditional was fragile and could silently
+        # drop the lpush if the check returned False (e.g., unexpected return type).
+        await redis_cache.client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
         await _direct_insert_log(log_data, db)
@@ -377,8 +378,11 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
             )
         return 0
 
-    # Log if we hit the flush limit
-    if len(log_entries) >= max_flush_per_run:
+    # Log if we hit the flush limit (compare against flush_limit, not max_flush_per_run;
+    # log_entries.len can never exceed flush_limit = min(BATCH_SIZE, max_flush_per_run))
+    # BUG FIX: Previously compared against max_flush_per_run, so the warning would never
+    # fire when AUDIT_LOG_BATCH_SIZE < max_flush_per_run.
+    if len(log_entries) >= flush_limit:
         remaining: int = int(await redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY))  # type: ignore[misc]
         logger.warning(
             "audit_log_flush_limit_reached",

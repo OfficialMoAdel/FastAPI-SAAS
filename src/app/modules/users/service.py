@@ -714,8 +714,11 @@ class UserService(BaseService[User]):
         if not user_with_tier:
             raise ModelNotFoundError("User", username)
 
+        # BUG FIX: Previously returned None if user has no tier, which is misleading
+        # because the user DOES exist. Callers would confuse None with "user not found".
+        # Now returns the user dict without tier_* keys when no tier is assigned.
         if not user_with_tier.get("tier"):
-            return None
+            return user_with_tier
 
         # Flatten structure to match expected output format
         user_dict = user_with_tier.copy()

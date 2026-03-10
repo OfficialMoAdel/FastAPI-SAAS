@@ -56,17 +56,22 @@ class TestTemplateLoadingUsesToThread:
         tenant_id = uuid4()
         template_name = "welcome_email"
 
-        # Mock database query to return no override
+        # Mock result
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_db.execute.return_value = mock_result
 
-        # Mock to_thread to return a template
+        # Mock template
         mock_template = MagicMock()
         mock_template.render.return_value = "<html>Welcome</html>"
 
+        # Mock to_thread to handle multiple calls (get_template and get_source)
         async def mock_to_thread_impl(func, *args):
-            return mock_template
+            if "get_template" in str(func):
+                return mock_template
+            if "get_source" in str(func):
+                return ("<html>Welcome</html>", "file.html", lambda: True)
+            return None
 
         mock_to_thread.side_effect = mock_to_thread_impl
 
@@ -75,9 +80,12 @@ class TestTemplateLoadingUsesToThread:
 
         # Assert
         assert mock_to_thread.called, "asyncio.to_thread should be called"
-        call_args = mock_to_thread.call_args[0]
-        assert callable(call_args[0]), "First arg should be callable (get_template)"
-        assert call_args[1] == f"{template_name}.html.jinja2", "Template name should match"
+        calls = mock_to_thread.call_args_list
+        assert len(calls) == 2, "asyncio.to_thread should be called twice"
+        assert callable(calls[0][0][0]), "First arg of first call should be callable (get_template)"
+        assert calls[0][0][1] == f"{template_name}.html.jinja2", "get_template should receive template name"
+        assert callable(calls[1][0][0]), "First arg of second call should be callable (get_source)"
+        assert calls[1][0][2] == f"{template_name}.html.jinja2", "get_source should receive template name"
 
 
 class TestTemplateLoadingNonBlocking:
@@ -111,6 +119,7 @@ class TestTemplateLoadingNonBlocking:
             return mock_template
 
         mock_jinja_env.get_template = slow_get_template
+        mock_jinja_env.loader.get_source.return_value = ("<html>Welcome</html>", "file.html", lambda: True)
 
         # Create a concurrent task that should complete during template load
         concurrent_task_completed = False
@@ -157,6 +166,7 @@ class TestTemplateCachingStillWorks:
         mock_template = MagicMock()
         mock_template.render.return_value = "<html>Welcome</html>"
         mock_jinja_env.get_template.return_value = mock_template
+        mock_jinja_env.loader.get_source.return_value = ("<html>Welcome</html>", "file.html", lambda: True)
 
         # Act - load template twice
         await notification_service.get_template_content(tenant_id, template_name)
@@ -219,10 +229,14 @@ class TestTemplateRendersCorrectly:
 
         # Use real Jinja2 environment with test template
         with patch("src.app.modules.notifications.service.jinja_env") as mock_env:
-            # Mock get_template to return a simple template
+            # BUG FIX: service now uses loader.get_source() to get raw Jinja2 source
             mock_template = MagicMock()
-            mock_template.render.return_value = "<html><body>Welcome Email</body></html>"
             mock_env.get_template.return_value = mock_template
+            mock_env.loader.get_source.return_value = (
+                "<html><body>Welcome Email</body></html>",
+                "welcome_email.html.jinja2",
+                lambda: True,
+            )
 
             # Act
             subject, content = await notification_service.get_template_content(tenant_id, template_name)
@@ -259,6 +273,7 @@ class TestTemplateLoadingPerformance:
         mock_template = MagicMock()
         mock_template.render.return_value = "<html>Welcome</html>"
         mock_jinja_env.get_template.return_value = mock_template
+        mock_jinja_env.loader.get_source.return_value = ("<html>Welcome</html>", "file.html", lambda: True)
 
         # Act - measure time
         start = time.perf_counter()

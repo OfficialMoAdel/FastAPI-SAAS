@@ -318,7 +318,11 @@ class PasskeyService:
 
         # 4. Check counter for replay prevention
         new_count = verification.new_sign_count
-        if new_count <= db_credential.counter:
+        # BUG FIX: Per WebAuthn spec §6.1, a new_count of 0 means the authenticator
+        # does not support counters at all (it always returns 0). In that case we must
+        # NOT treat it as a replay attack, even if stored counter is also 0.
+        # Only flag replays when both old AND new counts are non-zero.
+        if new_count != 0 and new_count <= db_credential.counter:
             logger.warning(
                 f"Possible replay attack for credential {db_credential.id}: "
                 f"stored counter={db_credential.counter}, received={new_count}"
@@ -669,6 +673,10 @@ class PasskeyService:
             "is_superuser": user.is_superuser,
             "is_deleted": user.is_deleted,
             "is_email_verified": user.is_email_verified,
+            # BUG FIX: token_version was missing. Without it, _generate_auth_tokens
+            # defaults to 0, meaning revoked sessions (via token_version increment)
+            # could still be accepted if the user re-authenticates via passkey.
+            "token_version": user.token_version,
         }
 
         if user.tier:

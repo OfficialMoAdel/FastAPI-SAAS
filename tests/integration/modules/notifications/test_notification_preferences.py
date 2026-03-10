@@ -51,10 +51,10 @@ async def test_notification_skipped_when_email_disabled(async_db: AsyncSession):
         user_id=user_id,
     )
 
-    # Verify notification was created but marked as failed
+    # Verify notification was created but skipped by preferences
     await async_db.refresh(notification)
-    assert notification.status == NotificationStatus.FAILED
-    assert "Skipped by user preferences" in notification.error_message
+    assert notification.status == NotificationStatus.PENDING
+    assert "Skipped" in notification.error_message
 
 
 @pytest.mark.asyncio
@@ -119,8 +119,8 @@ async def test_notification_skipped_when_type_disabled(async_db: AsyncSession):
 
     # Verify notification was skipped
     await async_db.refresh(notification)
-    assert notification.status == NotificationStatus.FAILED
-    assert "Skipped by user preferences" in notification.error_message
+    assert notification.status == NotificationStatus.PENDING
+    assert "Skipped" in notification.error_message
 
 
 @pytest.mark.asyncio

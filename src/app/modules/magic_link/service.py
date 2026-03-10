@@ -87,10 +87,13 @@ class MagicLinkService:
                 may_be_delayed=False,
             )
 
-        # Check if user is active
-        if user.get("is_deleted", False):
+        # Check if user is active (check both deleted AND active status)
+        # BUG FIX: Previously only checked `is_deleted`. This inconsistency with
+        # verify_magic_link (which checks both) caused tokens to be created and emails
+        # sent for inactive users, which would then be rejected on verification.
+        if user.get("is_deleted", False) or not user.get("is_active", True):
             logger.debug(
-                "Magic link requested for deleted user",
+                "Magic link requested for deleted/inactive user",
                 extra={"operation": "send_magic_link", "user_id": user["id"]},
             )
             return MagicLinkSendResponse(

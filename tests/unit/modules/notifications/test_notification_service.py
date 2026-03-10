@@ -86,8 +86,10 @@ async def test_get_template_content_fallback(mock_jinja, mock_redis, service, mo
     mock_db.execute = AsyncMock(return_value=mock_result)
 
     mock_template = MagicMock()
-    mock_template.render.return_value = "<p>File Template</p>"
+    mock_template.source = "<p>File Template</p>"
     mock_jinja.get_template = MagicMock(return_value=mock_template)
+    # Mock loader.get_source which is now used by get_template_content
+    mock_jinja.loader.get_source = MagicMock(return_value=("<p>File Template</p>", "welcome.html", lambda: True))
 
     subj, content = await service.get_template_content(t_id, "welcome")
 
@@ -147,8 +149,9 @@ async def test_send_email_skipped_by_prefs(service, mock_db):
 
         notification = await service.send_email(t_id, "user@test.com", "welcome", {}, user_id=u_id)
 
-        assert notification.status == NotificationStatus.FAILED
-        assert notification.error_message == "Skipped by user preferences"
+        # BUG FIX: Skipped notifications now use PENDING (not FAILED) and a corrected message.
+        assert notification.status == NotificationStatus.PENDING
+        assert notification.error_message == "Skipped: user preference opt-out"
 
 
 @pytest.mark.asyncio

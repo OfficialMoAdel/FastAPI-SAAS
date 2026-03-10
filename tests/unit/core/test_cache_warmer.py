@@ -1,7 +1,7 @@
 """Unit tests for Cache Warmer."""
 
 import asyncio
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from src.app.core.cache.warmer import CacheWarmer
 
@@ -107,7 +107,9 @@ class TestWarmAllExecution:
         assert "slow_warmer" in result.errors[0]
         assert "Timeout" in result.errors[0]
 
-    async def test_warm_all_logs_start_and_end(self, caplog):
+    from unittest.mock import patch
+
+    async def test_warm_all_logs_start_and_end(self):
         """Test that warm_all logs start and end messages."""
         test_warmer = CacheWarmer()
         mock_session = MagicMock()
@@ -116,11 +118,12 @@ class TestWarmAllExecution:
         async def dummy_warm(session):
             return 1
 
-        with caplog.at_level("INFO"):
+        with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[START]" in record.message for record in caplog.records)
-        assert any("[COMPLETE]" in record.message for record in caplog.records)
+        # Log calls: call_args_list is a list of calls. Each call is (args, kwargs). args[0] is the log message template.
+        assert any("[START]" in call[0][0] for call in mock_logger.info.call_args_list)
+        assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
 
     async def test_warm_all_returns_empty_result_when_no_warmers(self):
         """Test that warm_all returns empty result when no warmers registered."""
@@ -225,7 +228,9 @@ class TestHasWarmer:
 class TestWarmingObservability:
     """Test cache warming observability."""
 
-    async def test_warm_all_logs_item_count(self, caplog):
+    from unittest.mock import patch
+
+    async def test_warm_all_logs_item_count(self):
         """Test that warm_all logs item count for each warmer."""
         test_warmer = CacheWarmer()
         mock_session = MagicMock()
@@ -234,12 +239,15 @@ class TestWarmingObservability:
         async def warm_tenants(session):
             return 15
 
-        with caplog.at_level("INFO"):
+        with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("items=15" in record.message for record in caplog.records)
+        assert any(
+            "[SUCCESS]" in call[0][0] and call[0][2] == 15
+            for call in mock_logger.info.call_args_list
+        )
 
-    async def test_warm_all_logs_error_count(self, caplog):
+    async def test_warm_all_logs_error_count(self):
         """Test that warm_all logs error count when errors occur."""
         test_warmer = CacheWarmer()
         mock_session = MagicMock()
@@ -248,12 +256,15 @@ class TestWarmingObservability:
         async def failing_warm(session):
             raise ValueError("Test error")
 
-        with caplog.at_level("INFO"):
+        with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("errors=1" in record.message for record in caplog.records)
+        assert any(
+            "[COMPLETE]" in call[0][0] and call[0][4] == 1
+            for call in mock_logger.info.call_args_list
+        )
 
-    async def test_warm_all_logs_start_time(self, caplog):
+    async def test_warm_all_logs_start_time(self):
         """Test that warm_all logs start time."""
         test_warmer = CacheWarmer()
         mock_session = MagicMock()
@@ -262,12 +273,12 @@ class TestWarmingObservability:
         async def dummy_warm(session):
             return 1
 
-        with caplog.at_level("INFO"):
+        with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[START]" in record.message for record in caplog.records)
+        assert any("[START]" in call[0][0] for call in mock_logger.info.call_args_list)
 
-    async def test_warm_all_logs_end_time(self, caplog):
+    async def test_warm_all_logs_end_time(self):
         """Test that warm_all logs end time."""
         test_warmer = CacheWarmer()
         mock_session = MagicMock()
@@ -276,7 +287,7 @@ class TestWarmingObservability:
         async def dummy_warm(session):
             return 1
 
-        with caplog.at_level("INFO"):
+        with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any("[COMPLETE]" in record.message for record in caplog.records)
+        assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
