@@ -4,6 +4,7 @@ Tests the O(log n) eviction using Redis ZSET + Hash hybrid structure.
 Tests verify the legacy ZPOPMIN path when SESSION_USE_PIPELINE_EVICTION=False.
 """
 
+import json
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,8 +15,13 @@ from src.app.core.security.session_manager import SessionManager
 
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
-    async def __aenter__(*a): return pipe
-    async def __aexit__(*a): return False
+
+    async def __aenter__(*a):
+        return pipe
+
+    async def __aexit__(*a):
+        return False
+
     pipe.__aenter__ = __aenter__
     pipe.__aexit__ = __aexit__
     return pipe
@@ -312,3 +318,79 @@ class TestZSETMigration:
         # Assert
         logger.info(f"Migration result (empty): {result}")
         assert result["migrated"] == 0
+
+
+# === PHASE 3 MIGRATION: Tests from test_session_manager_migration.py ===
+# Tests for legacy migration from JSON to Hash format
+
+
+class TestLegacyHashMigration:
+    """Test migration from legacy JSON format to Hash format."""
+
+    @pytest.mark.asyncio
+    async def test_migrate_to_hash(self):
+        """Verify migration of legacy sessions to hash format."""
+        # Setup legacy data
+        mock_redis = AsyncMock()
+        user_id_1 = "123"
+        user_id_2 = "456"
+
+        sessions_1 = [
+            {"session_id": "s1", "device_info": "d1", "created_at": "2024-01-01"},
+            {"session_id": "s2", "device_info": "d2", "created_at": "2024-01-02"},
+        ]
+        sessions_2 = [{"session_id": "s3", "device_info": "d3", "created_at": "2024-01-03"}]
+
+        # Mock SCAN to return keys - scan_iter is an async generator
+        async def mock_scan_iter(match):
+            yield f"user_sessions:{user_id_1}"
+            yield f"user_sessions:{user_id_2}"
+
+        mock_redis.scan_iter = mock_scan_iter
+
+        # Mock GET to return session data
+        async def mock_get(key):
+            if key == f"user_sessions:{user_id_1}":
+                return json.dumps(sessions_1)
+            if key == f"user_sessions:{user_id_2}":
+                return json.dumps(sessions_2)
+            return None
+
+        mock_redis.get = AsyncMock(side_effect=mock_get)
+
+        # Mock pipeline - redis.pipeline() returns an async context manager
+        mock_pipeline = MagicMock()
+        mock_pipeline.execute = AsyncMock()
+        mock_pipeline.hset = MagicMock()
+        mock_pipeline.expire = MagicMock()
+
+        # Create an async context manager for the pipeline
+        async_cm = AsyncMock()
+        async_cm.__aenter__.return_value = mock_pipeline
+        async_cm.__aexit__.return_value = None
+
+        # redis.pipeline() should return the async context manager
+        mock_redis.pipeline = MagicMock(return_value=async_cm)
+
+        session_manager = SessionManager(redis_client=mock_redis)
+
+        # Execute migration
+        count = await session_manager.migrate_to_hash()
+
+        # Verify results
+        assert count == 2  # 2 users migrated
+
+        # Verify pipeline execution
+        assert mock_pipeline.execute.called
+
+        # Check that HSET was called for user 1
+        # Note: The implementation uses json_dumps which produces compact JSON (no spaces)
+        hash_key_1 = f"user_sessions_v2:{user_id_1}"
+        mock_pipeline.hset.assert_any_call(hash_key_1, "s1", json.dumps(sessions_1[0], separators=(",", ":")))
+        mock_pipeline.hset.assert_any_call(hash_key_1, "s2", json.dumps(sessions_1[1], separators=(",", ":")))
+        mock_pipeline.expire.assert_any_call(hash_key_1, session_manager.SESSION_TTL_SECONDS)
+
+        # user 2
+        hash_key_2 = f"user_sessions_v2:{user_id_2}"
+        mock_pipeline.hset.assert_any_call(hash_key_2, "s3", json.dumps(sessions_2[0], separators=(",", ":")))
+        mock_pipeline.expire.assert_any_call(hash_key_2, session_manager.SESSION_TTL_SECONDS)

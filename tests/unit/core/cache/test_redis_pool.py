@@ -26,7 +26,7 @@ class TestRedisPoolSingleton:
         # Read the setup.py source file directly to verify pattern
         from pathlib import Path
 
-        setup_path = Path(__file__).parents[3] / "src" / "app" / "core" / "setup.py"
+        setup_path = Path(__file__).parents[4] / "src" / "app" / "core" / "setup.py"
         source = setup_path.read_text()
 
         # Verify connection_pool pattern is used (not from_pool)
@@ -112,7 +112,7 @@ class TestPoolLifecycle:
         """Verify lifespan context manager handles pool lifecycle."""
         from pathlib import Path
 
-        setup_path = Path(__file__).parents[3] / "src" / "app" / "core" / "setup.py"
+        setup_path = Path(__file__).parents[4] / "src" / "app" / "core" / "setup.py"
         source = setup_path.read_text()
 
         # Pool created on startup

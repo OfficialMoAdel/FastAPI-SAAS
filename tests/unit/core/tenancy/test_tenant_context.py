@@ -12,10 +12,12 @@ from unittest.mock import MagicMock
 import pytest
 
 from src.app.core.tenancy.context import (
+    TenantContext,
     clear_tenant_context,
     get_current_tenant,
     set_current_tenant,
 )
+from src.app.modules.tenants.models import Tenant
 
 
 def create_mock_tenant(name: str, slug: str, is_active: bool = True) -> MagicMock:
@@ -141,3 +143,80 @@ class TestTenantContext:
         assert results["task_b"] == "tenant-b"
 
         clear_tenant_context()
+
+
+# === MEMORY OPTIMIZATION TESTS (from tests/unit/tenancy/) ===
+# Tests for TenantContext memory optimization - __slots__, immutability
+
+import sys
+
+
+@pytest.fixture
+def sample_tenant_for_memory() -> Tenant:
+    """Create a sample Tenant model for testing."""
+    tenant = Tenant(
+        name="Test Tenant",
+        slug="test-tenant",
+        is_active=True,
+    )
+    tenant.id = 1
+    return tenant
+
+
+def test_tenant_context_from_tenant(sample_tenant_for_memory: Tenant) -> None:
+    """Verify all fields correctly extracted from Tenant model."""
+    context = TenantContext.from_model(sample_tenant_for_memory)
+
+    assert context.tenant_id == sample_tenant_for_memory.id
+    assert context.tenant_slug == sample_tenant_for_memory.slug
+    assert context.tenant_name == sample_tenant_for_memory.name
+    assert context.is_active == sample_tenant_for_memory.is_active
+
+
+def test_tenant_context_immutable(sample_tenant_for_memory: Tenant) -> None:
+    """Verify frozen=True prevents modification."""
+    context = TenantContext.from_model(sample_tenant_for_memory)
+
+    with pytest.raises(AttributeError):
+        context.tenant_id = 999
+
+    with pytest.raises(AttributeError):
+        context.tenant_slug = "new-slug"
+
+    with pytest.raises(AttributeError):
+        context.tenant_name = "New Name"
+
+
+def test_tenant_context_slots(sample_tenant_for_memory: Tenant) -> None:
+    """Verify __slots__ reduces memory usage."""
+    context = TenantContext.from_model(sample_tenant_for_memory)
+
+    assert hasattr(TenantContext, "__slots__")
+    assert not hasattr(context, "__dict__")
+
+    expected_slots = {"tenant_id", "tenant_slug", "tenant_name", "is_active", "extra"}
+    assert set(TenantContext.__slots__) == expected_slots
+
+
+def test_backwards_compatibility(sample_tenant_for_memory: Tenant) -> None:
+    """Verify backward compatibility properties work correctly."""
+    context = TenantContext.from_model(sample_tenant_for_memory)
+
+    assert context.id == sample_tenant_for_memory.id
+    assert context.slug == sample_tenant_for_memory.slug
+    assert context.name == sample_tenant_for_memory.name
+
+    assert context.tenant_id == sample_tenant_for_memory.id
+    assert context.tenant_slug == sample_tenant_for_memory.slug
+    assert context.tenant_name == sample_tenant_for_memory.name
+
+
+def test_tenant_context_memory_size(sample_tenant_for_memory: Tenant) -> None:
+    """Verify TenantContext uses __slots__ for memory efficiency."""
+    context = TenantContext.from_model(sample_tenant_for_memory)
+
+    sys.getsizeof(context)
+    sys.getsizeof(sample_tenant_for_memory)
+
+    assert hasattr(TenantContext, "__slots__")
+    assert not hasattr(context, "__dict__")
