@@ -14,6 +14,7 @@ import structlog
 from cachetools import TTLCache
 from fastapi import Depends
 from sqlalchemy import and_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
@@ -88,8 +89,12 @@ class RoleService:
             is_system=False,  # Custom roles are never system roles
         )
         self.db.add(role)
-        await self.db.commit()
-        await self.db.refresh(role)
+        try:
+            await self.db.commit()
+            await self.db.refresh(role)
+        except IntegrityError:
+            await self.db.rollback()
+            raise DuplicateError("name", role_in.name)
         return role
 
     async def update_role(self, role_id: int, role_in: RoleUpdate) -> Role:
@@ -108,8 +113,12 @@ class RoleService:
         if role_in.description is not None:
             role.description = role_in.description
 
-        await self.db.commit()
-        await self.db.refresh(role)
+        try:
+            await self.db.commit()
+            await self.db.refresh(role)
+        except IntegrityError:
+            await self.db.rollback()
+            raise DuplicateError("name", role.name)
         return role
 
     async def delete_role(self, role_id: int) -> None:
@@ -229,33 +238,34 @@ class RoleService:
         ]
 
         # Populate L1 cache (always, even without Redis)
-        try:
-            _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
-        except Exception as e:
-            logger.warning("RBAC L1 cache write error: %s", e)
-
-        # Populate L2 Redis cache (if enabled)
-        if settings.RBAC_USE_REDIS_CACHE and self._redis_client and permissions:
-            cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
+        if perm_dicts:
             try:
-                await self._redis_client.setex(
-                    cache_key,
-                    settings.RBAC_CACHE_TTL_SECONDS,
-                    json_dumps(perm_dicts, as_str=True),
-                )
-                logger.debug(
-                    "RBAC L2 cache SET",
-                    role_id=role_id,
-                    tenant_id=self.tenant_id,
-                    permission_count=len(permissions),
-                    ttl=settings.RBAC_CACHE_TTL_SECONDS,
-                )
+                _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
             except Exception as e:
-                logger.warning(
-                    "RBAC L2 cache write error",
-                    error=str(e),
-                    role_id=role_id,
-                )
+                logger.warning("RBAC L1 cache write error: %s", e)
+
+            # Populate L2 Redis cache (if enabled)
+            if settings.RBAC_USE_REDIS_CACHE and self._redis_client:
+                cache_key = f"{self._cache_prefix}:{self.tenant_id}:{role_id}"
+                try:
+                    await self._redis_client.setex(
+                        cache_key,
+                        settings.RBAC_CACHE_TTL_SECONDS,
+                        json_dumps(perm_dicts, as_str=True),
+                    )
+                    logger.debug(
+                        "RBAC L2 cache SET",
+                        role_id=role_id,
+                        tenant_id=self.tenant_id,
+                        permission_count=len(permissions),
+                        ttl=settings.RBAC_CACHE_TTL_SECONDS,
+                    )
+                except Exception as e:
+                    logger.warning(
+                        "RBAC L2 cache write error",
+                        error=str(e),
+                        role_id=role_id,
+                    )
 
         return permissions
 
@@ -403,7 +413,12 @@ class RoleService:
             permission_id=permission.id,
         )
         self.db.add(role_permission)
-        await self.db.commit()
+
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            return  # Already assigned concurrently, idempotent
 
         # Invalidate cache for this role
         await self._invalidate_role_cache(role_id)
@@ -471,7 +486,12 @@ class RoleService:
             role_id=role_id,
         )
         self.db.add(user_role)
-        await self.db.commit()
+
+        try:
+            await self.db.commit()
+        except IntegrityError:
+            await self.db.rollback()
+            return  # Already assigned concurrently, idempotent
 
         # Invalidate user permissions cache
         await invalidate_user_permissions_cache(user_id, self.tenant_id)

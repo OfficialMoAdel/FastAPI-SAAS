@@ -13,6 +13,7 @@ from datetime import UTC
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+import sqlalchemy.event
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
@@ -20,21 +21,18 @@ from src.app.modules.users.schemas import UserCreate, UserTierUpdate, UserUpdate
 from src.app.modules.users.service import UserService
 
 
-import sqlalchemy.event
-import src.app.main  # Trigger all model imports to avoid SQLAlchemy InvalidRequestError
-
 @pytest.fixture(autouse=True)
 def mock_sqlalchemy_event_listen():
     """Mock sqlalchemy.event.listen to execute immediately for mocked test sessions."""
     original_listen = sqlalchemy.event.listen
-    
+
     def side_effect(target, identifier, fn, *args, **kwargs):
         from unittest.mock import AsyncMock, MagicMock
         if hasattr(target, '_mock_name') or isinstance(target, (AsyncMock, MagicMock)):
             fn(target)
         else:
             original_listen(target, identifier, fn, *args, **kwargs)
-            
+
     with patch("sqlalchemy.event.listen", side_effect=side_effect):
         yield
 

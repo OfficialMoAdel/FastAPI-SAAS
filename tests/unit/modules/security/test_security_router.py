@@ -32,11 +32,11 @@ from src.app.modules.security.schemas import (
 async def test_add_ip_to_whitelist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ip_filter_service.add_to_whitelist", new_callable=AsyncMock) as mock_add:
         mock_add.return_value = True
         response = await add_ip_to_whitelist(request, current_user)  # type: ignore[arg-type]
-        
+
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
         assert response.list_type == "whitelist"
@@ -52,11 +52,11 @@ async def test_add_ip_to_whitelist() -> None:
 @pytest.mark.asyncio
 async def test_remove_ip_from_whitelist() -> None:
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ip_filter_service.remove_from_whitelist", new_callable=AsyncMock) as mock_remove:
         mock_remove.return_value = True
         response = await remove_ip_from_whitelist("1.2.3.4", current_user)  # type: ignore[arg-type]
-        
+
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
         assert response.action == "removed"
@@ -67,11 +67,11 @@ async def test_remove_ip_from_whitelist() -> None:
 async def test_add_ip_to_blacklist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ip_filter_service.add_to_blacklist", new_callable=AsyncMock) as mock_add:
         mock_add.return_value = True
         response = await add_ip_to_blacklist(request, current_user)  # type: ignore[arg-type]
-        
+
         assert response.success is True
         assert response.ip_address == "1.2.3.4"
         assert response.list_type == "blacklist"
@@ -81,11 +81,11 @@ async def test_add_ip_to_blacklist() -> None:
 @pytest.mark.asyncio
 async def test_remove_ip_from_blacklist() -> None:
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ip_filter_service.remove_from_blacklist", new_callable=AsyncMock) as mock_remove:
         mock_remove.return_value = True
         response = await remove_ip_from_blacklist("1.2.3.4", current_user)  # type: ignore[arg-type]
-        
+
         assert response.success is True
         assert response.action == "removed"
 
@@ -93,15 +93,15 @@ async def test_remove_ip_from_blacklist() -> None:
 @pytest.mark.asyncio
 async def test_get_ip_lists() -> None:
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ip_filter_service.get_whitelist", new_callable=AsyncMock) as mock_white, \
          patch("src.app.modules.security.router.ip_filter_service.get_blacklist", new_callable=AsyncMock) as mock_black:
-         
+
         mock_white.return_value = [{"ip_address": "1.1.1.1", "added_at": "2023-01-01T00:00:00Z"}]
         mock_black.return_value = [{"ip_address": "2.2.2.2", "added_at": "2023-01-01T00:00:00Z"}]
-        
+
         response = await get_ip_lists(current_user)  # type: ignore[arg-type]
-        
+
         assert len(response.whitelist) == 1
         assert response.whitelist[0].ip_address == "1.1.1.1"
         assert len(response.blacklist) == 1
@@ -119,7 +119,7 @@ async def test_get_ip_filter_config() -> None:
 async def test_update_ip_filter_config() -> None:
     current_user = {"id": 1}
     update = IPFilterConfigUpdate(whitelist_enabled=False)
-    
+
     # Store old setting
     old_setting = settings.IP_WHITELIST_ENABLED
     try:
@@ -142,7 +142,7 @@ async def test_get_auto_ban_config() -> None:
 async def test_update_auto_ban_config() -> None:
     current_user = {"id": 1}
     update = AutoBanConfigUpdate(enabled=not settings.AUTO_BAN_ENABLED)
-    
+
     old_setting = settings.AUTO_BAN_ENABLED
     try:
         response = await update_auto_ban_config(update, current_user)  # type: ignore[arg-type]
@@ -156,7 +156,7 @@ async def test_list_banned_ips() -> None:
     current_user = {"id": 1}
     with patch("src.app.modules.security.router.get_all_banned_ips", new_callable=AsyncMock) as mock_get:
         mock_get.return_value = [{"ip": "1.2.3.4", "reason": "test", "ttl_seconds": 60, "ban_count": 1}]
-        
+
         response = await list_banned_ips(current_user)  # type: ignore[arg-type]
         assert response.total_count == 1
         assert response.banned_ips[0].ip == "1.2.3.4"
@@ -166,7 +166,7 @@ async def test_list_banned_ips() -> None:
 async def test_manually_ban_ip() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4")
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.ban_ip", new_callable=AsyncMock) as mock_ban:
         mock_ban.return_value = True
         response = await manually_ban_ip(request, current_user)  # type: ignore[arg-type]
@@ -177,7 +177,7 @@ async def test_manually_ban_ip() -> None:
 @pytest.mark.asyncio
 async def test_unban_ip_address() -> None:
     current_user = {"id": 1}
-    
+
     with patch("src.app.modules.security.router.unban_ip", new_callable=AsyncMock) as mock_unban:
         mock_unban.return_value = True
         response = await unban_ip_address("1.2.3.4", current_user)  # type: ignore[arg-type]
@@ -245,10 +245,10 @@ async def test_passkey_routes() -> None:
     mock_db = AsyncMock()
     with patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list, \
          patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock) as mock_del:
-         
+
         mock_list.return_value = []
         res = await list_passkeys(current_user, mock_db)
         assert res == []
-        
+
         res_del = await delete_passkey(123, current_user, mock_db)
         assert res_del.message == "Passkey deleted successfully"

@@ -7,6 +7,7 @@ import pytest
 
 from src.app.core.events import EventBus
 
+
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
     async def __aenter__(*a): return pipe

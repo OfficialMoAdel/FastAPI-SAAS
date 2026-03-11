@@ -259,7 +259,7 @@ class UserService(BaseService[User]):
         user_internal = UserCreateInternal(**user_dict)
 
         try:
-            result = await self.crud.create(db=self.db, object=user_internal)
+            result = await self.crud.create(db=self.db, object=user_internal, commit=False)
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
             # Attaches an after_commit listener to the current session that will
@@ -286,8 +286,11 @@ class UserService(BaseService[User]):
                     )
                 )
 
-            # Register the one-time listener
+            # Register the one-time listener BEFORE the commit happens
             event.listen(self.db.sync_session, "after_commit", publish_user_created_event, once=True)
+
+            # Now explicitly commit the transaction so the event fires
+            await self.db.commit()
 
         except IntegrityError as e:
             # Handle race condition: duplicate was created between our check and insert

@@ -225,10 +225,10 @@ async def buffer_audit_log(log_data: dict[str, Any], db: AsyncSession | None = N
         return
 
     try:
-        # BUG FIX: redis.asyncio always returns a coroutine from lpush().
-        # The previous hasattr(__await__) conditional was fragile and could silently
-        # drop the lpush if the check returned False (e.g., unexpected return type).
-        await redis_cache.client.lpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
+        # BUG FIX: Push new items to the right side (tail) of the buffer list.
+        # This converts the batch processor's execution behavior to strict FIFO, securely
+        # preventing older events from starving endlessly natively under LPUSH + LTRIM bounds.
+        await redis_cache.client.rpush(AUDIT_LOG_BUFFER_KEY, orjson.dumps(log_data))  # type: ignore[misc]
     except RedisError as e:
         logger.warning("audit_log_buffer_failed", error=str(e), action="fallback_direct")
         await _direct_insert_log(log_data, db)

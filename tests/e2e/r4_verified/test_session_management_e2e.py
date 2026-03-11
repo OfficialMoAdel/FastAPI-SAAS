@@ -91,7 +91,9 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
         # Get all sessions from hash
         all_sessions = await redis_client.hgetall(session_key)
         log_step("Redis Hash contents", session_count=len(all_sessions))
-        assert len(all_sessions) == initial_count + 1, f"Expected {initial_count + 1} sessions in Redis, got {len(all_sessions)}"
+        assert len(all_sessions) == initial_count + 1, (
+            f"Expected {initial_count + 1} sessions in Redis, got {len(all_sessions)}"
+        )
 
         # Verify both session IDs present
         session_ids = list(all_sessions.keys())
@@ -148,7 +150,7 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
     login_data = {"username": authenticated_user["email"], "password": "TestPassword123!"}
     response = await client.post("/api/v1/account/login", data=login_data)
     assert response.status_code == 200
-    
+
     token1 = response.json()["access_token"]
     refresh_token1 = response.cookies.get("refresh_token")
     headers = {"Authorization": f"Bearer {token1}"}

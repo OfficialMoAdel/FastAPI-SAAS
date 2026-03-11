@@ -23,7 +23,7 @@ async def test_check_database_healthy() -> None:
     mock_ctx.__aenter__.return_value = mock_conn
     mock_engine = MagicMock()
     mock_engine.connect.return_value = mock_ctx
-    
+
     with patch("src.app.api.monitoring.async_engine", mock_engine):
         res = await check_database()
         assert res["status"] == "healthy"
@@ -37,7 +37,7 @@ async def test_check_database_unhealthy() -> None:
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__.side_effect = Exception("DB down")
     mock_engine.connect.return_value = mock_ctx
-    
+
     with patch("src.app.api.monitoring.async_engine", mock_engine):
         res = await check_database()
         assert res["status"] == "unhealthy"
@@ -96,7 +96,7 @@ async def test_check_cache_metrics_healthy() -> None:
         "r1_rbac_cache_hits_total": 20,
         "r1_rbac_cache_misses_total": 5,
     }.get(name, 0)
-    
+
     with patch("src.app.api.monitoring.get_r1_metrics", return_value=mock_metrics):
         res = await check_cache_metrics()
         assert res["status"] == "healthy"
@@ -135,36 +135,53 @@ async def test_check_dlq_size_unhealthy() -> None:
 
 @pytest.mark.asyncio
 async def test_health_check_all_healthy() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_cache_metrics", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, return_value={"status": "healthy"}):
-         
+    with (
+        patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch("src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch(
+            "src.app.api.monitoring.check_cache_metrics",
+            new_callable=AsyncMock,
+            return_value={"status": "healthy"},
+        ),
+        patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, return_value={"status": "healthy"}),
+    ):
         res = await health_check()
         assert res.status == "ok"
 
 
 @pytest.mark.asyncio
 async def test_health_check_one_unhealthy() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "unhealthy"}), \
-         patch("src.app.api.monitoring.check_cache_metrics", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, side_effect=Exception("Fail")):
-         
+    with (
+        patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch(
+            "src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "unhealthy"}
+        ),
+        patch(
+            "src.app.api.monitoring.check_cache_metrics",
+            new_callable=AsyncMock,
+            return_value={"status": "healthy"},
+        ),
+        patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, side_effect=Exception("Fail")),
+    ):
         res = await health_check()
         assert res.status == "error"
 
 
 @pytest.mark.asyncio
 async def test_health_check_degraded() -> None:
-    with patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "disabled"}), \
-         patch("src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_cache_metrics", new_callable=AsyncMock, return_value={"status": "healthy"}), \
-         patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, return_value={"status": "healthy"}):
-         
+    with (
+        patch("src.app.api.monitoring.check_database", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch("src.app.api.monitoring.check_redis", new_callable=AsyncMock, return_value={"status": "disabled"}),
+        patch("src.app.api.monitoring.check_worker_queue", new_callable=AsyncMock, return_value={"status": "healthy"}),
+        patch(
+            "src.app.api.monitoring.check_cache_metrics",
+            new_callable=AsyncMock,
+            return_value={"status": "healthy"},
+        ),
+        patch("src.app.api.monitoring.check_dlq_size", new_callable=AsyncMock, return_value={"status": "healthy"}),
+    ):
         res = await health_check()
         assert res.status == "degraded"
 

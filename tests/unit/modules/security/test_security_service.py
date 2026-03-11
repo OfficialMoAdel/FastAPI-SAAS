@@ -130,10 +130,10 @@ async def test_is_blacklisted_enabled_true(service, mock_redis, monkeypatch) -> 
 @pytest.mark.asyncio
 async def test_get_whitelist(service, mock_redis) -> None:
     mock_redis.scan.side_effect = [(0, ["key1", "key2"])]
-    
+
     mock_data = json.dumps({"ip_address": "1.2.3.4", "added_at": "2023-01-01T00:00:00Z"}).encode()
     mock_redis.pipeline.return_value.execute.return_value = [mock_data, 3600, mock_data, -1]
-    
+
     result = await service.get_whitelist()
     assert len(result) == 2
     assert "expires_at" in result[0]
@@ -143,10 +143,10 @@ async def test_get_whitelist(service, mock_redis) -> None:
 @pytest.mark.asyncio
 async def test_get_blacklist(service, mock_redis) -> None:
     mock_redis.scan.side_effect = [(0, ["key1", "key2"])]
-    
+
     mock_data = json.dumps({"ip_address": "1.2.3.4", "added_at": "2023-01-01T00:00:00Z"}).encode()
     mock_redis.pipeline.return_value.execute.return_value = [mock_data, 3600, mock_data, -1]
-    
+
     result = await service.get_blacklist()
     assert len(result) == 2
 

@@ -13,7 +13,7 @@ from uuid import UUID
 
 import structlog
 from fastapi import Depends
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
@@ -370,7 +370,17 @@ class FileService:
         storage_path = file.storage_path
 
         # BUG FIX: Delete metadata and decrement counters first
-        await self.db.delete(file)
+        # Execute an explicit targeted DELETE statement and check the rowcount.
+        # This crucially prevents concurrent delete requests from exploiting a race
+        # condition that double-decrements the tenant's exact storage quota capacity.
+        stmt = delete(File).where(File.id == file_id, File.tenant_id == tenant_id)
+        result = await self.db.execute(stmt)
+
+        if result.rowcount == 0:
+            # Short-circuit if another concurrent request just successfully deleted this file
+            logger.warning("file_already_deleted_concurrently", file_id=file_id, tenant_id=str(tenant_id))
+            return
+
         await self._decrement_quota_counters(tenant_id, file_size)
         await self.db.commit()
 

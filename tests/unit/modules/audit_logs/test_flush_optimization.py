@@ -11,11 +11,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import src.app.modules.ai.models  # noqa: F401
+
 # Import models needed to ensure SQLAlchemy mapper initialization completes.
 # Tenant model has a relationship to StripeSettings which must be imported
 # before any session triggers full mapper initialization.
 import src.app.modules.billing.models  # noqa: F401
-import src.app.modules.ai.models  # noqa: F401
+
 
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""

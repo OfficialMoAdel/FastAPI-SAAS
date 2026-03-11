@@ -821,7 +821,8 @@ return new_attempts
             If token is invalid or expired
         """
         # Find token in database
-        result = await db.execute(select(EmailVerificationToken).where(EmailVerificationToken.token == token))
+        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == token).with_for_update()
+        result = await db.execute(stmt)
         verification_token = result.scalar_one_or_none()
 
         if not verification_token:

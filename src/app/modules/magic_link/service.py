@@ -195,6 +195,16 @@ class MagicLinkService:
         mfa_service = MFAService()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
 
+        # Update audit trail in database before returning (handles MFA drops)
+        from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
+
+        try:
+            db_link = await get_magic_link_by_token(db=self.db, token=token)
+            if db_link:
+                await mark_magic_link_used(db=self.db, magic_link=db_link)
+        except Exception:
+            logger.error("Failed to mark magic link used in DB", exc_info=True)
+
         if mfa_enabled:
             from src.app.core.security import MFA_PENDING_EXPIRY_SECONDS, MFAPendingTokenManager
 
@@ -203,6 +213,14 @@ class MagicLinkService:
             mfa_token = await mfa_token_manager.create_token(
                 user_id=user["id"],
                 username=str(user.get("username") or user.get("email") or ""),
+            )
+
+            logger.info(
+                "Magic link verified, MFA required",
+                extra={
+                    "operation": "verify_magic_link",
+                    "user_id": user["id"],
+                },
             )
 
             return LoginMFAResponse(
@@ -214,16 +232,6 @@ class MagicLinkService:
 
         # Create auth tokens
         tokens = await self._create_auth_tokens(user)
-
-        # Update audit trail in database
-        from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
-
-        try:
-            db_link = await get_magic_link_by_token(db=self.db, token=token)
-            if db_link:
-                await mark_magic_link_used(db=self.db, magic_link=db_link)
-        except Exception:
-            logger.error("Failed to mark magic link used in DB", exc_info=True)
 
         logger.info(
             "Magic link verified successfully",

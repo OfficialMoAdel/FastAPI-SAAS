@@ -218,3 +218,4 @@ file1.txt
 small_tests_to_merge.txt
 test_small.py
 VERIFICATION_REPORT_RESULT.md
+reorganize_tests.py

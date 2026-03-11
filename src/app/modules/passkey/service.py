@@ -322,7 +322,7 @@ class PasskeyService:
         # does not support counters at all (it always returns 0). In that case we must
         # NOT treat it as a replay attack, even if stored counter is also 0.
         # Only flag replays when both old AND new counts are non-zero.
-        if new_count != 0 and new_count <= db_credential.counter:
+        if (new_count != 0 or db_credential.counter != 0) and new_count <= db_credential.counter:
             logger.warning(
                 f"Possible replay attack for credential {db_credential.id}: "
                 f"stored counter={db_credential.counter}, received={new_count}"

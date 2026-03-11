@@ -25,6 +25,7 @@ from src.app.core.rbac.dependencies import (
 from src.app.core.rbac.permissions import Permission
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
 
+
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
     async def __aenter__(*a): return pipe

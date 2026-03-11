@@ -261,6 +261,10 @@ class SSOService:
                     if not user_info.email:
                         raise BadRequestException("Email required from provider")
 
+                    is_verified = getattr(user_info, "email_verified", False)
+                    if str(is_verified).lower() not in ("true", "1", "yes"):
+                        raise BadRequestException("Unverified provider emails are not permitted for security reasons")
+
                     user_by_email = await get_service("user", db).get_by_email(user_info.email)
 
                     if user_by_email:

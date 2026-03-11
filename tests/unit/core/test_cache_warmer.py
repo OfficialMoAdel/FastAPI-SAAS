@@ -121,7 +121,8 @@ class TestWarmAllExecution:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        # Log calls: call_args_list is a list of calls. Each call is (args, kwargs). args[0] is the log message template.
+        # Log calls: call_args_list is a list of calls. Each call is (args, kwargs).
+        # args[0] is the log message template.
         assert any("[START]" in call[0][0] for call in mock_logger.info.call_args_list)
         assert any("[COMPLETE]" in call[0][0] for call in mock_logger.info.call_args_list)
 

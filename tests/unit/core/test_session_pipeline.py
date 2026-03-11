@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
     async def __aenter__(*a): return pipe

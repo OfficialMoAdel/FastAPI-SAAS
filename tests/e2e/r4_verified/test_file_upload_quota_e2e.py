@@ -32,7 +32,6 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
     """
     log_step("Starting file upload quota E2E test", user=premium_user["email"])
 
-    user_id = premium_user["user_id"]
     headers = {"Authorization": f"Bearer {premium_user['access_token']}"}
 
     # Step 1: Get initial quota state
@@ -103,7 +102,7 @@ async def test_file_upload_quota_full_flow(premium_user: dict, client: AsyncClie
     log_step("Quota counters correct", expected=expected_used, actual=current_used)
 
     # Step 4: [REMOVED] Redis counter check.
-    # The current system architecture implements file quotas via denormalized 
+    # The current system architecture implements file quotas via denormalized
     # columns in the User database model (storage_used bytes), rather than Redis counters.
     # The API returns the computed value from the database directly.
 

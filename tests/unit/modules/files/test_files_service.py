@@ -261,9 +261,14 @@ async def test_delete_file(file_service, mock_db, mock_storage_service):
     mock_settings.provider = "local"
     mock_storage_service.get_settings_or_raise.return_value = mock_settings
 
+    mock_result = MagicMock()
+    mock_result.rowcount = 1
+    mock_db.execute.return_value = mock_result
+
     await file_service.delete_file(tenant_id, file_id)
 
-    mock_db.delete.assert_called_once_with(mock_file)
+    # We now assert that execute was called (for the explicit delete statement)
+    mock_db.execute.assert_called_once()
     file_service._decrement_quota_counters.assert_called_once_with(tenant_id, 100)
     mock_db.commit.assert_called_once()
     mock_provider.delete.assert_called_once_with("path/to/file")

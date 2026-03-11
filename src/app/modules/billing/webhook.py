@@ -216,7 +216,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     user_id = int(user_id_str) if user_id_str and user_id_str.isdigit() else None
     plan_id = int(plan_id_str) if plan_id_str and plan_id_str.isdigit() else None
 
-    if not all([tenant_id, user_id, plan_id]):
+    if tenant_id is None or user_id is None or plan_id is None:
         logger.error(
             "Missing or invalid metadata in checkout session",
             session_id=session["id"],
@@ -225,10 +225,6 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             plan_id=plan_id,
         )
         return
-
-    # Narrow types: all([]) guard above means these are not None here
-    assert user_id is not None  # narrowed from int | None
-    assert plan_id is not None  # narrowed from int | None
 
     stripe_subscription_id = session.get("subscription")
     # stripe_customer_id = session.get("customer")  # Unused
@@ -251,7 +247,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
             # Create user subscription with tenant_id in the object
             subscription_data = UserSubscriptionCreateInternal(
-                tenant_id=tenant_id,  # type: ignore[arg-type]
+                tenant_id=tenant_id,
                 user_id=user_id,
                 subscription_plan_id=plan_id,
                 stripe_subscription_id=stripe_subscription_id,
@@ -262,7 +258,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                 cancel_at_period_end=False,
             )
 
-            async with job_tenant_context(tenant_id) as db:  # type: ignore[arg-type]
+            async with job_tenant_context(tenant_id) as db:
                 # ATOMIC UPSERT: Check exists first, then create or update
                 # Race condition handled: IntegrityError on create triggers fallback update
                 existing = await crud_user_subscriptions.exists(

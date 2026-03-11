@@ -59,7 +59,20 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         return flag
 
     async def get_flag_by_key_or_none(self, key: str) -> FeatureFlag | None:
-        """Get a feature flag by key, returns None if not found."""
+        """Get a feature flag by key, returns None if not found.
+        First checks the global feature flag cache warmed by the application.
+        """
+        if redis_client:
+            try:
+                cache_key = f"feature_flag:{key}"
+                cached = await redis_client.get(cache_key)
+                if cached:
+                    data = json_loads(cached)
+                    # Convert cached dict back to a simple FeatureFlag-like object
+                    return FeatureFlag(**data)
+            except Exception as e:
+                logger.debug("Feature flag cache get failed", error=str(e))
+
         result = await self.crud.get(db=self.db, key=key)
         if result is None:
             return None

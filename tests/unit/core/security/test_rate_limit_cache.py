@@ -24,14 +24,14 @@ def mock_redis():
 @pytest.mark.asyncio
 async def test_cache_tier_policy_success(mock_redis) -> None:
     policies = [{"limit": 100, "window": 60}]
-    
+
     result = await cache_tier_policy(1, policies)
-    
+
     assert result is True
     mock_redis.setex.assert_called_once()
     args, kwargs = mock_redis.setex.call_args
     assert args[0] == f"{POLICY_KEY_PREFIX}1"
-    assert type(args[1]) == int  # ttl
+    assert isinstance(args[1], int)  # ttl
     assert '"limit"' in args[2]
 
 
@@ -52,9 +52,9 @@ async def test_cache_tier_policy_exception(mock_redis) -> None:
 @pytest.mark.asyncio
 async def test_get_tier_policy_success(mock_redis) -> None:
     mock_redis.get.return_value = '[{"limit": 100, "window": 60}]'
-    
+
     result = await get_tier_policy(1)
-    
+
     assert result == [{"limit": 100, "window": 60}]
     mock_redis.get.assert_called_once_with(f"{POLICY_KEY_PREFIX}1")
 
@@ -62,9 +62,9 @@ async def test_get_tier_policy_success(mock_redis) -> None:
 @pytest.mark.asyncio
 async def test_get_tier_policy_not_found(mock_redis) -> None:
     mock_redis.get.return_value = None
-    
+
     result = await get_tier_policy(1)
-    
+
     assert result is None
 
 
@@ -88,9 +88,9 @@ async def test_warm_policy_cache_success(mock_redis) -> None:
         1: [{"limit": 100, "window": 60}],
         2: [{"limit": 1000, "window": 3600}],
     }
-    
+
     result = await warm_policy_cache(tier_policies)
-    
+
     assert result == 2
     assert mock_redis.pipeline.return_value.setex.call_count == 2
     assert mock_redis.pipeline.return_value.execute.call_count == 1
@@ -114,9 +114,9 @@ async def test_warm_policy_cache_no_redis() -> None:
 async def test_warm_policy_cache_exception(mock_redis) -> None:
     mock_redis.pipeline.return_value.execute.side_effect = Exception("Pipeline error")
     tier_policies = {1: []}
-    
+
     result = await warm_policy_cache(tier_policies)
-    
+
     assert result == 0
 
 

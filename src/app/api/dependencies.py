@@ -50,7 +50,11 @@ async def get_current_user(
             raise UnauthorizedException("User not authenticated.")
         elif cache_result is None:
             # Redis unavailable, fall back to DB check
-            is_blacklisted = await crud_token_blacklist.exists(db, token=token)
+            is_blacklisted = False
+            if jti_in_payload:
+                is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti_in_payload}")
+            if not is_blacklisted:
+                is_blacklisted = await crud_token_blacklist.exists(db, token=token)
             if is_blacklisted:
                 raise UnauthorizedException("User not authenticated.")
 

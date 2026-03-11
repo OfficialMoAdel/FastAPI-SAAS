@@ -18,14 +18,14 @@ def test_modules_init_getattr() -> None:
         if ispkg:
             full_modname = f"src.app.modules.{modname}"
             module = importlib.import_module(full_modname)
-            
+
             # If module uses lazy loading via __all__
             if hasattr(module, "__all__"):
                 for attr_name in getattr(module, "__all__"):
                     # This triggers __getattr__
                     attr = getattr(module, attr_name)
                     assert attr is not None
-                    
+
                 # Test invalid attribute raises AttributeError
                 with pytest.raises(AttributeError):
                     getattr(module, "NonExistentAttributeForTesting123")
@@ -38,6 +38,6 @@ def test_core_tenancy_init() -> None:
         for attr_name in getattr(module, "__all__"):
             attr = getattr(module, attr_name)
             assert attr is not None
-            
+
         with pytest.raises(AttributeError):
             getattr(module, "NonExistentAttributeForTesting123")

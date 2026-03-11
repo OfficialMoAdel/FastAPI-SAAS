@@ -13,16 +13,16 @@ class TestAuditLogBatching:
     """Tests for audit log Redis buffering and batch flush."""
 
     @pytest.mark.asyncio
-    async def test_buffer_uses_lpush(self) -> None:
-        """Verify audit log buffering uses Redis LPUSH."""
+    async def test_buffer_uses_rpush(self) -> None:
+        """Verify audit log buffering uses Redis RPUSH."""
         from src.app.modules.audit_logs.service import (
             AUDIT_LOG_BUFFER_KEY,
             buffer_audit_log,
         )
 
         mock_redis = MagicMock()
-        # BUG FIX: service now directly awaits lpush(), so mock must be AsyncMock
-        mock_redis.lpush = AsyncMock(return_value=1)
+        # BUG FIX: service now directly awaits rpush(), so mock must be AsyncMock
+        mock_redis.rpush = AsyncMock(return_value=1)
 
         with patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache:
             mock_cache.client = mock_redis
@@ -35,9 +35,9 @@ class TestAuditLogBatching:
 
             await buffer_audit_log(log_data)
 
-            # Verify LPUSH was called with buffer key
-            mock_redis.lpush.assert_called_once()
-            call_args = mock_redis.lpush.call_args
+            # Verify RPUSH was called with buffer key
+            mock_redis.rpush.assert_called_once()
+            call_args = mock_redis.rpush.call_args
             assert call_args[0][0] == AUDIT_LOG_BUFFER_KEY
 
     @pytest.mark.asyncio
@@ -48,7 +48,7 @@ class TestAuditLogBatching:
         from src.app.modules.audit_logs.service import buffer_audit_log
 
         mock_redis = MagicMock()
-        mock_redis.lpush = MagicMock(side_effect=RedisError("Connection failed"))
+        mock_redis.rpush = AsyncMock(side_effect=RedisError("Connection failed"))
 
         with (
             patch("src.app.modules.audit_logs.service.redis_cache") as mock_cache,

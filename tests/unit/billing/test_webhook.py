@@ -3,7 +3,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import stripe
-from pydantic import ValidationError
 from fastapi import HTTPException
 
 import src.app.modules.billing.webhook as webhook_module

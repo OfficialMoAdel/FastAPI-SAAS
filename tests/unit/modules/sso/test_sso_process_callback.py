@@ -113,6 +113,7 @@ async def test_process_callback_success(
     mock_user_info = MagicMock()
     mock_user_info.email = "test@example.com"
     mock_user_info.provider_user_id = "gov_123"
+    mock_user_info.email_verified = True
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance
 
@@ -187,6 +188,7 @@ async def test_process_callback_connect_mode(
     mock_user_info = MagicMock()
     mock_user_info.email = "github@example.com"
     mock_user_info.provider_user_id = "gh_123"
+    mock_user_info.email_verified = True
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance
 
@@ -268,6 +270,7 @@ async def test_process_callback_apple_custom_flow(
     mock_user_info = MagicMock()
     mock_user_info.email = "apple@example.com"
     mock_user_info.provider_user_id = "apple_123"
+    mock_user_info.email_verified = True
     mock_user_info.name = "Apple User"
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance

@@ -235,13 +235,21 @@ class APIKeyService(BaseService[APIKey]):
         if isinstance(api_key, dict):
             if api_key.get("user_id") != user_id or api_key.get("tenant_id") != tenant_id:
                 raise ForbiddenException("You don't have permission to revoke this key")
+            api_key_hashed = api_key.get("hashed_key")
+            api_key_name = api_key.get("name")
+            api_key_prefix = api_key.get("key_prefix")
+            api_key_is_active = api_key.get("is_active")
         else:
             if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
                 raise ForbiddenException("You don't have permission to revoke this key")
+            api_key_hashed = api_key.hashed_key
+            api_key_name = api_key.name
+            api_key_prefix = api_key.key_prefix
+            api_key_is_active = api_key.is_active
 
         # Invalidate cache before revoking (using hashed_key from DB record)
-        if redis_client is not None and api_key.hashed_key:
-            cache_key = self._get_cache_key(api_key.hashed_key)
+        if redis_client is not None and api_key_hashed:
+            cache_key = self._get_cache_key(api_key_hashed)
             await redis_client.delete(cache_key)
 
         await crud_api_keys.update(
@@ -259,14 +267,14 @@ class APIKeyService(BaseService[APIKey]):
             entity_id=str(key_id),
             user_id=user_id,
             details={
-                "key_name": api_key.name,
-                "key_prefix": api_key.key_prefix,
-                "was_active": api_key.is_active,
+                "key_name": api_key_name,
+                "key_prefix": api_key_prefix,
+                "was_active": api_key_is_active,
             },
         )
 
         logger.info(
-            f"API key revoked | user={user_id} | tenant={tenant_id} | key_id={key_id} | key_name={api_key.name}"
+            f"API key revoked | user={user_id} | tenant={tenant_id} | key_id={key_id} | key_name={api_key_name}"
         )
 
         return {"message": "API key revoked successfully"}
@@ -491,11 +499,21 @@ class APIKeyService(BaseService[APIKey]):
                 raise ForbiddenException("You don't have permission to rotate this key")
             if not api_key.get("is_active"):
                 raise ForbiddenException("Cannot rotate a revoked key")
+            api_key_name = api_key.get("name")
+            api_key_scopes = api_key.get("scopes")
+            api_key_expires_at = api_key.get("expires_at")
+            api_key_id = api_key.get("id")
+            api_key_prefix = api_key.get("key_prefix")
         else:
             if api_key.user_id != user_id or api_key.tenant_id != tenant_id:
                 raise ForbiddenException("You don't have permission to rotate this key")
             if not api_key.is_active:
                 raise ForbiddenException("Cannot rotate a revoked key")
+            api_key_name = api_key.name
+            api_key_scopes = api_key.scopes
+            api_key_expires_at = api_key.expires_at
+            api_key_id = api_key.id
+            api_key_prefix = api_key.key_prefix
 
         # Calculate valid_from timestamp (now + grace period)
         valid_from = datetime.now(UTC) + timedelta(days=grace_period_days)
@@ -505,13 +523,13 @@ class APIKeyService(BaseService[APIKey]):
 
         # Create new key record with valid_from in the future
         new_key_record = APIKey(
-            name=f"{api_key.name} (Rotated)",
+            name=f"{api_key_name} (Rotated)",
             key_prefix=prefix,
             hashed_key=hashed_key,
             user_id=user_id,
             tenant_id=tenant_id,
-            scopes=api_key.scopes,  # Copy scopes as JSON string
-            expires_at=api_key.expires_at,  # Copy expiration
+            scopes=api_key_scopes,  # Copy scopes as JSON string
+            expires_at=api_key_expires_at,  # Copy expiration
             is_active=True,
             valid_from=valid_from,
         )
@@ -528,9 +546,9 @@ class APIKeyService(BaseService[APIKey]):
             entity_id=str(new_key_record.id),
             user_id=user_id,
             details={
-                "old_key_id": api_key.id,
-                "old_key_name": api_key.name,
-                "old_key_prefix": api_key.key_prefix,
+                "old_key_id": api_key_id,
+                "old_key_name": api_key_name,
+                "old_key_prefix": api_key_prefix,
                 "new_key_id": new_key_record.id,
                 "new_key_name": new_key_record.name,
                 "new_key_prefix": new_key_record.key_prefix,
@@ -541,7 +559,7 @@ class APIKeyService(BaseService[APIKey]):
 
         logger.info(
             f"API key rotated | user={user_id} | tenant={tenant_id} | "
-            f"old_key_id={api_key.id} | new_key_id={new_key_record.id} | "
+            f"old_key_id={api_key_id} | new_key_id={new_key_record.id} | "
             f"grace_period={grace_period_days}d | valid_from={valid_from.isoformat()}"
         )
 

@@ -423,8 +423,18 @@ class WebhookService:
             delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
             delivery.status = WebhookDeliveryStatus.PENDING
 
-            # Enqueue retry task with delay
-            await self._enqueue_delivery(delivery.id, defer_by=retry_delay)
+            # Enqueue retry task with delay ONLY after successful commit
+            from sqlalchemy import event
+
+            delivery_id = delivery.id
+
+            def enqueue_retry(session) -> None:
+                import asyncio
+
+                # Background task to enqueue to avoid blocking the commit thread
+                asyncio.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+
+            event.listen(self.db.sync_session, "after_commit", enqueue_retry, once=True)
 
             logger.warning(
                 f"Webhook delivery failed, will retry in {retry_delay}s: "
