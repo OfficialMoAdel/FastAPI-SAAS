@@ -17,7 +17,7 @@ class TestSetexUsage:
         """Verify cache.set_with_ttl uses SETEX."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[3] / "src" / "app" / "core" / "utils" / "cache.py"
+        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
         source = cache_path.read_text()
 
         # Verify setex is used for cache writes with TTL
@@ -29,7 +29,7 @@ class TestSetexUsage:
         """Verify user cache pipeline uses SETEX."""
         from pathlib import Path
 
-        service_path = Path(__file__).parents[3] / "src" / "app" / "modules" / "users" / "service.py"
+        service_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "users" / "service.py"
         source = service_path.read_text()
 
         # Pipeline should use setex for user caching
@@ -41,7 +41,7 @@ class TestSetexUsage:
         """Verify tenant middleware uses SETEX."""
         from pathlib import Path
 
-        tenant_path = Path(__file__).parents[3] / "src" / "app" / "middleware" / "tenant.py"
+        tenant_path = Path(__file__).parents[4] / "src" / "app" / "middleware" / "tenant.py"
         source = tenant_path.read_text()
 
         # Tenant caching should use setex
@@ -51,7 +51,7 @@ class TestSetexUsage:
         """Verify rate limit caching uses SETEX."""
         from pathlib import Path
 
-        rl_path = Path(__file__).parents[3] / "src" / "app" / "modules" / "rate_limits" / "service.py"
+        rl_path = Path(__file__).parents[4] / "src" / "app" / "modules" / "rate_limits" / "service.py"
         source = rl_path.read_text()
 
         assert "setex" in source
@@ -204,7 +204,7 @@ class TestNoSeparateExpireCalls:
         """Verify cache.py doesn't use SET followed by EXPIRE."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[3] / "src" / "app" / "core" / "utils" / "cache.py"
+        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
         source = cache_path.read_text()
         lines = source.split("\n")
 
@@ -222,7 +222,7 @@ class TestNoSeparateExpireCalls:
         """Verify SET with ex= parameter is also acceptable (equivalent to SETEX)."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[3] / "src" / "app" / "core" / "utils" / "cache.py"
+        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
         source = cache_path.read_text()
 
         # SET with ex= is fine (atomic like SETEX)
