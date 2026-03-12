@@ -67,7 +67,8 @@ class OpenAIProvider(AIProvider):
 
     def _parse_chat_response(self, data: dict[str, Any]) -> ChatCompletionResponse:
         """Parse OpenAI chat completion response."""
-        choice = data.get("choices", [{}])[0]
+        choices = data.get("choices", [])
+        choice = choices[0] if choices else {}
         message = choice.get("message", {})
         usage = data.get("usage", {})
 
@@ -200,7 +201,9 @@ class OpenAIProvider(AIProvider):
                             break
                         try:
                             data = json.loads(data_str)
-                            delta = data.get("choices", [{}])[0].get("delta", {})
+                            choices = data.get("choices", [])
+                            choice = choices[0] if choices else {}
+                            delta = choice.get("delta", {})
                             content = delta.get("content", "")
                             if content:
                                 yield content

@@ -222,7 +222,7 @@ return new_attempts
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")
             raise UnauthorizedException("Wrong username, email or password.")
 
-        if not user.get("is_active", True):
+        if not user.get("is_active", False):
             await self._publish_login_audit(request, username, False, reason="account_inactive")
             raise UnauthorizedException("User account is no longer active.")
 
@@ -368,7 +368,7 @@ return new_attempts
             db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
         # A1 SECURITY FIX: Block token refresh for deleted, non-existent, or inactive users
-        if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", True):
+        if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", False):
             raise UnauthorizedException("User account is no longer active.")
 
         # Include tier info in JWT claims for Zero-DB rate limiting
@@ -541,8 +541,9 @@ return new_attempts
             If current password is incorrect
         """
         # SECURITY FIX: Only active users can change their password
+        # Ensure we properly fallback to False when checking active status in cached payload manually
         user = await crud_users.get(db=db, id=user_id, is_deleted=False, is_active=True)
-        if not user:
+        if not user or (isinstance(user, dict) and not user.get("is_active", False)):
             raise UnauthorizedException("User not found.")
 
         # Verify current password
@@ -724,7 +725,7 @@ return new_attempts
 
         # SECURITY FIX: Use generic message for deleted/inactive accounts
         # Prevents account enumeration attacks - attackers cannot determine account status
-        if user.get("is_deleted", False) or not user.get("is_active", True):
+        if user.get("is_deleted", False) or not user.get("is_active", False):
             raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
 
         # Mark token as used FIRST (before password change)

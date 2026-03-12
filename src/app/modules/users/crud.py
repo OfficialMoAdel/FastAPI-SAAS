@@ -44,7 +44,9 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         # Add tenant filter only if tenant context exists
         if tenant is not None:
+            # SECURITY FIX: Ensure exact tenant mapping even through joins/eager loading.
             stmt = stmt.where(User.tenant_id == tenant.id)
+            
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()
 

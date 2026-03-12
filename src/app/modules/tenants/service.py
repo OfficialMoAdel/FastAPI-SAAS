@@ -75,11 +75,11 @@ class TenantService(BaseService[Tenant]):
         try:
             tenant_data = _tenant_to_dict(tenant)
             cache_key = _get_cache_key(tenant.id)
-            await redis_client.setex(cache_key, TENANT_CACHE_TTL, json_dumps(tenant_data, as_str=True))
+            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL, nx=True)
 
             # Also cache by slug for slug-based lookups
             slug_key = _get_slug_cache_key(tenant.slug)
-            await redis_client.setex(slug_key, TENANT_CACHE_TTL, str(tenant.id))
+            await redis_client.set(slug_key, str(tenant.id), ex=TENANT_CACHE_TTL, nx=True)
         except Exception as e:
             logger.debug("Failed to cache tenant", error=str(e))
 
@@ -94,13 +94,13 @@ class TenantService(BaseService[Tenant]):
 
         try:
             cache_key = _get_cache_key(tenant_id)
-            await redis_client.setex(cache_key, TENANT_CACHE_TTL, json_dumps(tenant_data, as_str=True))
+            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL, nx=True)
 
             # Also cache by slug for slug-based lookups
             slug = tenant_data.get("slug")
             if slug:
                 slug_key = _get_slug_cache_key(slug)
-                await redis_client.setex(slug_key, TENANT_CACHE_TTL, str(tenant_id))
+                await redis_client.set(slug_key, str(tenant_id), ex=TENANT_CACHE_TTL, nx=True)
         except Exception as e:
             logger.debug("Failed to cache tenant dict", error=str(e))
 
@@ -170,7 +170,7 @@ class TenantService(BaseService[Tenant]):
         DuplicateError
             If slug already exists
         """
-        # Normalize slug (defense in depth, even if schema handles it)
+        # Normalize slug to ensure strict database integrity
         if tenant.slug:
             tenant.slug = tenant.slug.lower().strip()
 

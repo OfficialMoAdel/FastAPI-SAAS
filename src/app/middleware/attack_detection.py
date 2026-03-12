@@ -376,7 +376,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             )
 
             logger.warning(
-                "IP auto-banned | ip= | attack= | mode=ban", client_ip=client_ip, val=detected_attacks[0]["attack_type"]
+                "IP auto-banned | ip={} | attack={} | mode=ban", client_ip, detected_attacks[0]["attack_type"]
             )
 
             return Response(
@@ -410,7 +410,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         # Skip if IP is whitelisted (set by IPFilterMiddleware)
         is_whitelisted = getattr(request.state, "ip_whitelisted", False)
         if is_whitelisted:
-            logger.debug("Attack detection skipped for whitelisted IP | path=", path=path)
+            logger.debug("Attack detection skipped for whitelisted IP | path={}", path)
             response = await call_next(request)
             return cast(Response, response)
 

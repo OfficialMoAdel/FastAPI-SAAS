@@ -6,6 +6,7 @@ Provides business logic for multi-factor authentication including:
 - MFA enable/disable workflows
 """
 
+import asyncio
 import base64
 import secrets
 from datetime import UTC, datetime
@@ -198,8 +199,8 @@ class MFAService:
         # Encrypt secret before storing
         encrypted_secret = await self._encrypt_secret(totp_secret)
 
-        # Hash backup codes for storage
-        backup_codes_hashed = [await self._hash_backup_code(code) for code in backup_codes]
+        # Hash backup codes for storage concurrently
+        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
 
         # Create MFA method record
         mfa_method = MFAMethod(
@@ -650,9 +651,9 @@ class MFAService:
             except Exception:
                 raise UnauthorizedException("Invalid MFA token")
 
-        # Generate new backup codes
+        # Generate new backup codes and hash them concurrently
         backup_codes = await self._generate_backup_codes()
-        backup_codes_hashed = [await self._hash_backup_code(code) for code in backup_codes]
+        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
 
         # Fetch model instance to update
         mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])

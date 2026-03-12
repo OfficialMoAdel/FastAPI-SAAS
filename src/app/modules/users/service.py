@@ -496,12 +496,14 @@ class UserService(BaseService[User]):
 
         # Check for duplicate email if changing
         if values.email is not None and values.email != db_email:
-            if await self.crud.exists(db=self.db, email=values.email):
+            tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
+            if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing
         if values.username is not None and values.username != db_username:
-            if await self.crud.exists(db=self.db, username=values.username):
+            tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
+            if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val):
                 raise DuplicateError("username", values.username)
 
         await self.crud.update(db=self.db, object=values, username=username)

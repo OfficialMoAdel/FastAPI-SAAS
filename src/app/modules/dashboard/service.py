@@ -84,7 +84,7 @@ class DashboardService:
             select(func.count(User.id))
             .where(
                 User.tenant_id == tenant_id,
-                User.deleted_at.is_(None),
+                User.is_deleted.is_(False),
             )
             .scalar_subquery()
         )
@@ -96,7 +96,7 @@ class DashboardService:
                 User.tenant_id == tenant_id,
                 User.created_at >= start_date,
                 User.created_at <= end_date,
-                User.deleted_at.is_(None),
+                User.is_deleted.is_(False),
             )
             .scalar_subquery()
         )
