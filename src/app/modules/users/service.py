@@ -547,15 +547,28 @@ class UserService(BaseService[User]):
         if username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException()
 
-        # SECURITY FIX: Delete user BEFORE invalidating cache
-        # Prevents stale cache if DB operation fails
+        # BUG FIX: Previously used two separate auto-committing calls:
+        #   1. crud.update(token_version + 1)  <- auto-commit
+        #   2. crud.delete(username)            <- auto-commit (soft delete)
+        # A crash between them left token_version incremented but is_deleted=False:
+        # old sessions were invalidated but the user could still log in.
+        # Fix: combine both into a single atomic UPDATE, commit once.
+        from datetime import UTC, datetime
 
-        # Increment token_version to globally invalidate all existing JWTs immediately
-        # ORM object needs to be updated before soft delete
-        token_version = db_user["token_version"] if isinstance(db_user, dict) else db_user.token_version
-        await self.crud.update(db=self.db, object={"token_version": token_version + 1}, username=username)
+        from sqlalchemy import update as sa_update
 
-        await self.crud.delete(db=self.db, username=username)
+        user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+        await self.db.execute(
+            sa_update(User)
+            .where(User.id == user_id_val)
+            .values(
+                token_version=User.token_version + 1,
+                is_deleted=True,
+                updated_at=datetime.now(UTC),
+            )
+        )
+        await self.db.commit()
+
         await self._invalidate_user_cache(db_user)
 
         await blacklist_token(token=token, db=self.db)

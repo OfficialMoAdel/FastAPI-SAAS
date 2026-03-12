@@ -52,8 +52,16 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
         self._filter_service = IPFilterService()
 
     def _is_exempt_path(self, path: str) -> bool:
-        """Check if path is exempt from IP filtering."""
-        return any(path.startswith(exempt) for exempt in EXEMPT_PATHS)
+        """Check if path is exempt from IP filtering.
+
+        BUG FIX: The original `startswith` check matched paths that merely *begin*
+        with an exempt string (e.g. /health-probe matched /health, bypassing the
+        IP filter). Now we require either an exact match or a true sub-path
+        (path starts with exempt + "/").
+        """
+        if path in EXEMPT_PATHS:
+            return True
+        return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request through IP filter."""

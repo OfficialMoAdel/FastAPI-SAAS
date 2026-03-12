@@ -70,7 +70,7 @@ def is_ip_blocked(ip: str) -> bool:
         return True
 
 
-async def validate_webhook_url(url: str) -> None:
+async def validate_webhook_url(url: str) -> str:
     """Validate a URL is safe for outbound webhook requests.
 
     Performs the following checks:
@@ -80,6 +80,10 @@ async def validate_webhook_url(url: str) -> None:
 
     Args:
         url: The URL to validate
+
+    Returns
+    -------
+        str: The safe resolved IP address to use for connection
 
     Raises
     ------
@@ -114,7 +118,8 @@ async def validate_webhook_url(url: str) -> None:
     except socket.gaierror as e:
         raise SSRFProtectionError(f"Could not resolve hostname '{hostname}': {e}")
 
-    # Check all resolved IPs
+    # Check all resolved IPs and return the first valid one
+    safe_ip = None
     for ip in resolved_ips:
         if is_ip_blocked(str(ip)):
             logger.warning(
@@ -124,10 +129,21 @@ async def validate_webhook_url(url: str) -> None:
                 blocked_ip=ip,
             )
             raise SSRFProtectionError(f"URL resolves to blocked IP address: {ip}")
+        # Note: We keep checking all IPs to ensure none of them are blocked
+        # (DNS rebinding can sometimes return multiple IPs where one is safe and one is an internal target).
+        # We'll use the first one that passes validation.
+        if safe_ip is None:
+            safe_ip = str(ip)
+
+    if not safe_ip:
+        raise SSRFProtectionError(f"Could not resolve safe IP for '{hostname}'")
 
     logger.debug(
         "ssrf_url_validated",
         url=url,
         hostname=hostname,
+        safe_ip=safe_ip,
         resolved_ips=list(resolved_ips),
     )
+
+    return safe_ip

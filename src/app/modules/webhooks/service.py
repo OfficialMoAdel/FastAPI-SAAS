@@ -333,7 +333,7 @@ class WebhookService:
 
         # Validate URL for SSRF protection before making request
         try:
-            await validate_webhook_url(endpoint.url)
+            validated_ip = await validate_webhook_url(endpoint.url)
         except SSRFProtectionError as e:
             logger.error(
                 "webhook_ssrf_blocked",
@@ -363,7 +363,12 @@ class WebhookService:
             client = get_webhook_http_client()
             # CRIT-2 FIX: Use content= with pre-serialized bytes instead of json=
             # This ensures the transmitted bytes match what was signed in _generate_signature
-            response = await client.post(endpoint_url, content=payload_bytes, headers=headers)
+            response = await client.post(
+                endpoint_url,
+                content=payload_bytes,
+                headers=headers,
+                extensions={"resolved_ip": validated_ip},
+            )
         except CircuitBreakerOpen as e:
             circuit_error = e
         except Exception as e:

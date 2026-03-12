@@ -274,7 +274,31 @@ class SSOService:
                     else:
                         current_tenant = get_tenant_context()
                         if not current_tenant:
-                            raise BadRequestException("Cannot register new user without tenant context")
+                            # Auto-create a personal tenant for organic SSO signups
+                            import uuid
+
+                            from src.app.modules.tenants.models import Tenant as TenantModel
+                            from src.app.modules.tenants.schemas import TenantCreate
+                            from src.app.modules.tenants.service import get_tenant_service
+
+                            tenant_svc = get_tenant_service(db)
+
+                            base_slug = "".join(c for c in user_info.email.split("@")[0] if c.isalnum()).lower()
+                            if not base_slug:
+                                base_slug = "workspace"
+
+                            slug = f"{base_slug}-{str(uuid.uuid4())[:8]}"
+                            tenant_name = f"{user_info.name or base_slug}'s Workspace"
+
+                            tenant_in = TenantCreate(name=tenant_name, slug=slug)
+                            new_tenant_dict = await tenant_svc.create_tenant(tenant_in)
+
+                            # Retrieve ORM object to set in context
+                            tenant_orm = await db.get(TenantModel, new_tenant_dict["id"])
+                            if not tenant_orm:
+                                raise BadRequestException("Failed to create personal tenant")
+
+                            set_tenant_context(tenant_orm)
 
                         found_user_data = await self._create_sso_user(db, user_info)
                         user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]

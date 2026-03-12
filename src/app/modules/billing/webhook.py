@@ -62,8 +62,8 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
 async def _db_idempotency_check(event_id: str) -> bool:
     """DB-based idempotency fallback for when Redis is unavailable.
 
-    Checks whether any billing record with this Stripe event ID already exists.
-    This prevents double charges when Redis is temporarily unavailable.
+    Checks whether any webhook event with this Stripe event ID already exists.
+    This prevents double processing when Redis is temporarily unavailable.
 
     Args:
         event_id: The Stripe event ID
@@ -71,19 +71,24 @@ async def _db_idempotency_check(event_id: str) -> bool:
     Returns:
         True if event should be processed (not yet seen), False if duplicate
     """
+    from sqlalchemy.exc import IntegrityError
+
+    from src.app.modules.billing.models import WebhookEvent
+
     try:
         async with job_bypass_context("Webhook DB idempotency check") as db:
-            existing = await crud_billing_records.exists(
-                db=db,
-                stripe_invoice_id=event_id,  # Use event_id as a dedupe key
-            )
-            if existing:
+            event = WebhookEvent(event_id=event_id)
+            db.add(event)
+            try:
+                await db.commit()
+                return True  # Successfully inserted, safe to process
+            except IntegrityError:
+                await db.rollback()
                 logger.info(
                     "DB idempotency check: event already processed, skipping",
                     event_id=event_id,
                 )
                 return False  # Already processed
-            return True  # Safe to process
     except Exception as db_err:
         # If both Redis AND DB checks fail, fail open as last resort
         # (Stripe will retry, better to risk a duplicate than lose the event)
@@ -386,8 +391,12 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         "incomplete": "past_due",
         "incomplete_expired": "expired",
         "trialing": "trialing",
+        # Added: Stripe "paused" (billing cycle retry disabled by merchant)
+        "paused": "past_due",
     }
-    new_status: SubscriptionStatus = status_map.get(subscription["status"], "active")
+    # BUG FIX: Default was "active" which granted access for any unseen Stripe status.
+    # Now defaults to "past_due" (conservative/fail-closed).
+    new_status: SubscriptionStatus = status_map.get(subscription["status"], "past_due")
 
     # Update subscription
     update_data = UserSubscriptionUpdate(
@@ -413,8 +422,12 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             from src.app.modules.tenants.crud import crud_tenants
 
             # Find the free plan
+            # BUG FIX: Use exact match instead of ilike("%free%") which would match
+            # unintended plans like "Freedom Plan" or "Carefree Plan".
             free_plan_stmt = (
-                select(crud_subscription_plans.model).where(crud_subscription_plans.model.name.ilike("%free%")).limit(1)
+                select(crud_subscription_plans.model)
+                .where(crud_subscription_plans.model.name.ilike("free"))
+                .limit(1)
             )
             free_plan_result = await db.execute(free_plan_stmt)
             free_plan = free_plan_result.scalar_one_or_none()
@@ -480,8 +493,12 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         from src.app.modules.tenants.crud import crud_tenants
 
         # Find the free plan
+        # BUG FIX: Use exact match instead of ilike("%free%") which would match
+        # unintended plans like "Freedom Plan" or "Carefree Plan".
         free_plan_stmt = (
-            select(crud_subscription_plans.model).where(crud_subscription_plans.model.name.ilike("%free%")).limit(1)
+            select(crud_subscription_plans.model)
+            .where(crud_subscription_plans.model.name.ilike("free"))
+            .limit(1)
         )
         free_plan_result = await db.execute(free_plan_stmt)
         free_plan = free_plan_result.scalar_one_or_none()

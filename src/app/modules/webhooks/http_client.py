@@ -36,6 +36,39 @@ WEBHOOK_LIMITS = httpx.Limits(
 )
 
 
+class SSRFSafePoolTransport(httpx.AsyncHTTPTransport):
+    """Transport that allows pinning a request to a pre-resolved IP address.
+
+    Looks for 'resolved_ip' in request.extensions. If found, directs the connection
+    to that IP while preserving the original Host header and SNI hostname.
+    This prevents DNS rebinding TOCTOU attacks.
+    """
+
+    async def handle_async_request(self, request: httpx.Request) -> httpx.Response:
+        resolved_ip = request.extensions.get("resolved_ip") if request.extensions else None
+
+        if resolved_ip:
+            original_host = request.url.host
+
+            # Rewrite URL to use the resolved IP to avoid a second DNS resolution
+            request.url = request.url.copy_with(host=resolved_ip)
+
+            # Ensure the Host header remains the original hostname
+            if "host" not in request.headers:
+                request.headers["host"] = original_host
+            else:
+                # Some versions might normalize to lower-case 'host'
+                pass # Already set by the user/client
+
+            # Set SNI hostname in extensions so TLS handshake uses the correct name
+            # instead of the IP address, preventing SSL validation failures.
+            if "sni_hostname" not in request.extensions:
+                request.extensions["sni_hostname"] = original_host
+
+        return await super().handle_async_request(request)
+
+
+
 def get_webhook_http_client() -> httpx.AsyncClient:
     """Get or create the shared webhook HTTP client.
 
@@ -45,9 +78,13 @@ def get_webhook_http_client() -> httpx.AsyncClient:
     global _webhook_http_client
 
     if _webhook_http_client is None or _webhook_http_client.is_closed:
-        _webhook_http_client = httpx.AsyncClient(
-            timeout=WEBHOOK_TIMEOUT,
+        transport = SSRFSafePoolTransport(
             limits=WEBHOOK_LIMITS,
+            retries=0,
+        )
+        _webhook_http_client = httpx.AsyncClient(
+            transport=transport,
+            timeout=WEBHOOK_TIMEOUT,
             follow_redirects=False,  # Don't follow redirects for security
         )
         logger.debug("Created shared webhook HTTP client")

@@ -197,7 +197,12 @@ class PreferencesService:
                 f"File too large ({size / 1024 / 1024:.1f} MB). Max size: {MAX_IMAGE_SIZE_BYTES / 1024 / 1024:.0f} MB"
             )
 
-        # 3. Upload to storage
+        # 3. Get User record first
+        user = await crud_users.get(db=db, id=user_id)
+        if not user:
+            raise ModelNotFoundError("User", user_id)
+
+        # 4. Prepare storage
         storage = get_storage(
             provider=settings.STORAGE_PROVIDER,
             bucket=settings.STORAGE_BUCKET,
@@ -211,24 +216,40 @@ class PreferencesService:
 
         filename = file.filename or "image.png"
         file_ext = filename.split(".")[-1] if "." in filename else "png"
-        path = f"users/{user_id}/profile.{file_ext}"
+        new_path = f"users/{user_id}/profile.{file_ext}"
+
+        # 5. Check for old image and delete if extension changed
+        old_url = user.profile_image_url
+        if old_url:
+            base_url = old_url.split("?")[0]
+            marker = f"users/{user_id}/profile."
+            if marker in base_url:
+                old_path = base_url[base_url.find(marker):]
+                # If the new path has a different extension, the old image would be orphaned
+                if old_path and old_path != new_path:
+                    try:
+                        if await storage.exists(old_path):
+                            await storage.delete(old_path)
+                    except Exception as e:
+                        logger.warning(
+                            "Failed to delete old profile image during upload",
+                            user_id=user_id,
+                            error=str(e),
+                            path=old_path,
+                        )
 
         # UploadFile.file IS a binary file-like object
-        result = await storage.upload(file.file, path, file.content_type)
+        result = await storage.upload(file.file, new_path, file.content_type)
 
         if not result.success:
             logger.error("Failed to upload image for user :", user_id=user_id, error=result.error)
             raise StorageError("upload", result.error or "Unknown error")
 
-        # 4. Get URL
+        # 6. Get URL
         # For this purpose, we assume get_url gives us a usable URL.
-        image_url = await storage.get_url(path)
+        image_url = await storage.get_url(new_path)
 
-        # 5. Update User record
-        user = await crud_users.get(db=db, id=user_id)
-        if not user:
-            raise ModelNotFoundError("User", user_id)
-
+        # 7. Update User record
         # Update user.profile_image_url
         await crud_users.update(db=db, object={"profile_image_url": image_url}, id=user_id)
 
@@ -273,17 +294,23 @@ class PreferencesService:
         if not user or not user.profile_image_url:
             return  # Nothing to delete
 
-        # Very rough extraction of key from URL if it's a full URL
-        # If it's just a path, we are good.
-        # But `storage.get_url` returns full URL.
-        # If we can't easily parse it, we might just try deleting all allowed extensions for this user.
+        # Extract precise path from URL to accurately find it (avoid guessing extensions)
+        old_url = user.profile_image_url
+        base_url = old_url.split("?")[0]
+        marker = f"users/{user_id}/profile."
 
-        for ext in ["png", "jpg", "jpeg", "gif", "webp"]:
-            path = f"users/{user_id}/profile.{ext}"
-            if await storage.exists(path):
-                await storage.delete(path)
-                # We assume one image per user usually
-                break
+        if marker in base_url:
+            old_path = base_url[base_url.find(marker):]
+            try:
+                if await storage.exists(old_path):
+                    await storage.delete(old_path)
+            except Exception as e:
+                logger.warning(
+                    "Failed to delete profile image",
+                    user_id=user_id,
+                    error=str(e),
+                    path=old_path,
+                )
 
         # Update User record to nullify image_url
         await crud_users.update(

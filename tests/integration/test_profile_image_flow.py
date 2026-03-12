@@ -40,13 +40,17 @@ def test_delete_profile_image_flow(client, regular_user_token_headers):
         mock_storage = AsyncMock()
         mock_get_storage.return_value = mock_storage
         mock_storage.delete.return_value = StorageResult(success=True, path="users/1/profile.png")
-        # We also need to mock crud_users.get inside service to return a user with image_url
+        # exists() must return True so that the delete code path is triggered
+        mock_storage.exists.return_value = True
 
+        # We also need to mock crud_users.get inside service to return a user with image_url
         with patch("src.app.modules.user_preferences.service.crud_users") as mock_crud_users:
             from unittest.mock import Mock
 
             mock_user = Mock()
-            mock_user.profile_image_url = "https://example.com/profile.png"
+            # URL must contain 'users/{user_id}/profile.' for the marker check in service.
+            # regular_user_token_headers fixture creates MockUser(id=2), so use id=2 here.
+            mock_user.profile_image_url = "https://example.com/users/2/profile.png"
             mock_crud_users.get = AsyncMock(return_value=mock_user)
             mock_crud_users.update = AsyncMock(return_value=None)
 

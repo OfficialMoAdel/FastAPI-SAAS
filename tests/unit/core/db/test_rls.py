@@ -159,6 +159,9 @@ async def test_list_rls_policies_error(mock_connection):
 
 def test_restore_rls_context():
     mock_session = MagicMock()
+    # Use a real dict so that session.info.get("rls_bypass") returns None (falsy)
+    # Without this, Mock().info.get() returns a truthy Mock object and bypass SQL fires.
+    mock_session.info = {}
     mock_txn = MagicMock()
     mock_conn = MagicMock()
     mock_conn.dialect.name = "postgresql"

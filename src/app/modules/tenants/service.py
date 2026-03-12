@@ -356,6 +356,8 @@ class TenantService(BaseService[Tenant]):
         update_data = values.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 
+        old_slug = tenant.slug
+
         # Apply updates to ORM object
         for key, value in update_data.items():
             setattr(tenant, key, value)
@@ -365,6 +367,8 @@ class TenantService(BaseService[Tenant]):
 
         # FIXED: Invalidate tenant cache after update to prevent stale data
         await self._invalidate_tenant_cache(tenant_id, tenant.slug)
+        if old_slug and old_slug != tenant.slug:
+            await self._invalidate_tenant_cache(tenant_id, old_slug)
 
         logger.info(
             "Tenant updated | id=%s | fields=%s",

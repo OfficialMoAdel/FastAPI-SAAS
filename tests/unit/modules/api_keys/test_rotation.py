@@ -164,8 +164,11 @@ class TestAPIKeyRotation:
             setattr(mock_key, key, value)
 
         # Mock crud_api_keys.get
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
+             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
+             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
             mock_get.return_value = mock_key
+            mock_update.return_value = None
 
             # Mock _generate_key
             with patch.object(api_key_service, "_generate_key") as mock_gen:
@@ -194,7 +197,8 @@ class TestAPIKeyRotation:
     async def test_rotate_key_valid_from_set_correctly(
         self, api_key_service: APIKeyService, mock_db_session: AsyncMock, existing_key_data: dict
     ) -> None:
-        """Test that valid_from is set correctly based on grace period."""
+        """Test that the new key is immediately valid (valid_from=None) and the old key
+        gets its expiry set to now + grace_period via crud_api_keys.update."""
         from datetime import timedelta
 
         # Mock the existing key
@@ -204,8 +208,11 @@ class TestAPIKeyRotation:
 
         before_rotation = datetime.now(UTC)
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
+             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
+             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
             mock_get.return_value = mock_key
+            mock_update.return_value = None
 
             with patch.object(api_key_service, "_generate_key") as mock_gen:
                 mock_gen.return_value = ("test_key", "prefix", "hashed")
@@ -217,15 +224,24 @@ class TestAPIKeyRotation:
                     grace_period_days=7,
                 )
 
-                # Verify valid_from is approximately 7 days in the future
                 after_rotation = datetime.now(UTC)
+
+                # BUG FIX VERIFICATION: New key should be immediately valid (valid_from=None)
+                new_key_record = mock_db_session.add.call_args_list[0][0][0]
+                assert new_key_record.valid_from is None, (
+                    "New key must be immediately valid (valid_from=None). "
+                    "Grace period applies to the OLD key's expires_at, not the new key's valid_from."
+                )
+
+                # Verify the OLD key was updated with expires_at = now + grace_period
+                mock_update.assert_called_once()
+                update_kwargs = mock_update.call_args[1]
+                old_key_expires_at = update_kwargs["object"]["expires_at"]
                 expected_min = before_rotation + timedelta(days=6, hours=23, minutes=59)
                 expected_max = after_rotation + timedelta(days=7, hours=0, minutes=1)
-
-                # Get the added key's valid_from
-                # The first add call should be the APIKey (second might be audit log)
-                call_args = mock_db_session.add.call_args_list[0][0][0]
-                assert expected_min <= call_args.valid_from <= expected_max
+                assert expected_min <= old_key_expires_at <= expected_max, (
+                    f"Old key expires_at={old_key_expires_at} should be ~7 days from now"
+                )
 
     @pytest.mark.asyncio
     async def test_rotate_key_scopes_copied(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
@@ -241,8 +257,11 @@ class TestAPIKeyRotation:
         mock_key.scopes = scopes
         mock_key.expires_at = None
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
+             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
+             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
             mock_get.return_value = mock_key
+            mock_update.return_value = None
 
             with patch.object(api_key_service, "_generate_key") as mock_gen:
                 mock_gen.return_value = ("test_key", "prefix", "hashed")
@@ -273,8 +292,11 @@ class TestAPIKeyRotation:
         mock_key.scopes = None
         mock_key.expires_at = expires
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
+             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
+             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
             mock_get.return_value = mock_key
+            mock_update.return_value = None
 
             with patch.object(api_key_service, "_generate_key") as mock_gen:
                 mock_gen.return_value = ("test_key", "prefix", "hashed")
@@ -406,26 +428,34 @@ class TestAPIKeyRotationGracePeriod:
 
         before = datetime.now(UTC)
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log") as mock_audit,
+            patch.object(api_key_service, "_generate_key") as mock_gen,
+        ):
             mock_get.return_value = mock_key
+            mock_gen.return_value = ("test", "prefix", "hashed")
 
-            with patch.object(api_key_service, "_generate_key") as mock_gen:
-                mock_gen.return_value = ("test", "prefix", "hashed")
+            await api_key_service.rotate_api_key(
+                key_id=1,
+                user_id=1,
+                tenant_id=1,
+            )
 
-                await api_key_service.rotate_api_key(
-                    key_id=1,
-                    user_id=1,
-                    tenant_id=1,
-                )
+            after = datetime.now(UTC)
 
-                after = datetime.now(UTC)
+            # 1. New key should be immediately valid
+            call_args = mock_db_session.add.call_args_list[0][0][0]
+            assert call_args.valid_from is None
 
-                # Get the added key and check valid_from
-                call_args = mock_db_session.add.call_args_list[0][0][0]
-                expected_min = before + timedelta(days=6, hours=23)
-                expected_max = after + timedelta(days=7, hours=1)
-
-                assert expected_min <= call_args.valid_from <= expected_max
+            # 2. Old key should expire after 7 days (default grace period)
+            update_call_args = mock_update.call_args[1]["object"]
+            expected_min = before + timedelta(days=6, hours=23)
+            expected_max = after + timedelta(days=7, hours=1)
+            
+            assert "expires_at" in update_call_args
+            assert expected_min <= update_call_args["expires_at"] <= expected_max
 
     @pytest.mark.asyncio
     async def test_custom_grace_period(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
@@ -444,24 +474,32 @@ class TestAPIKeyRotationGracePeriod:
         custom_days = 14
         before = datetime.now(UTC)
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log") as mock_audit,
+            patch.object(api_key_service, "_generate_key") as mock_gen,
+        ):
             mock_get.return_value = mock_key
+            mock_gen.return_value = ("test_key", "prefix", "hashed")
 
-            with patch.object(api_key_service, "_generate_key") as mock_gen:
-                mock_gen.return_value = ("test_key", "prefix", "hashed")
+            await api_key_service.rotate_api_key(
+                key_id=1,
+                user_id=1,
+                tenant_id=1,
+                grace_period_days=custom_days,
+            )
 
-                await api_key_service.rotate_api_key(
-                    key_id=1,
-                    user_id=1,
-                    tenant_id=1,
-                    grace_period_days=custom_days,
-                )
+            after = datetime.now(UTC)
 
-                after = datetime.now(UTC)
+            # 1. New key should be immediately valid
+            call_args = mock_db_session.add.call_args_list[0][0][0]
+            assert call_args.valid_from is None
 
-                # Get the added key and check valid_from
-                call_args = mock_db_session.add.call_args_list[0][0][0]
-                expected_min = before + timedelta(days=custom_days - 1, hours=23)
-                expected_max = after + timedelta(days=custom_days + 1)
-
-                assert expected_min <= call_args.valid_from <= expected_max
+            # 2. Old key should expire after custom_days
+            update_call_args = mock_update.call_args[1]["object"]
+            expected_min = before + timedelta(days=custom_days - 1, hours=23)
+            expected_max = after + timedelta(days=custom_days, hours=1)
+            
+            assert "expires_at" in update_call_args
+            assert expected_min <= update_call_args["expires_at"] <= expected_max

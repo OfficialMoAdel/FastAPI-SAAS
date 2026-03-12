@@ -181,8 +181,18 @@ def upgrade() -> None:
     op.create_index("idx_billing_records_user", "billing_records", ["user_id"])
     op.create_index("idx_billing_records_created", "billing_records", ["created_at"], postgresql_using="brin")
 
+    # ===== WEBHOOK_EVENTS =====
+    op.create_table(
+        "webhook_events",
+        sa.Column("event_id", sa.String(length=255), nullable=False),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.PrimaryKeyConstraint("event_id", name=op.f("pk_webhook_events")),
+    )
+    op.create_index("idx_webhook_events_event", "webhook_events", ["event_id"])
+
 
 def downgrade() -> None:
+    op.drop_table("webhook_events")
     op.drop_table("billing_records")
     op.drop_table("user_subscriptions")
     op.drop_table("pricing")

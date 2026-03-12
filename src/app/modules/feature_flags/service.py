@@ -135,6 +135,16 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         """Create a feature flag override."""
         result = await self.override_crud.create(db=self.db, object=data.model_dump())
         override: FeatureFlagOverride = result  # type: ignore[assignment]
+
+        # Invalidate cache
+        ff_id = override.get("feature_flag_id") if isinstance(override, dict) else override.feature_flag_id
+        t_id = override.get("tenant_id") if isinstance(override, dict) else override.tenant_id
+
+        if ff_id and t_id:
+            flag = await self.db.get(FeatureFlag, ff_id)
+            if flag:
+                await self._invalidate_cache(t_id, flag.key)
+
         return override
 
     async def update_override(self, override_id: int, data: FeatureFlagOverrideUpdate) -> FeatureFlagOverride | None:
@@ -143,10 +153,31 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         if result is None:
             return None
         override: FeatureFlagOverride = result  # type: ignore[assignment]
+
+        # Invalidate cache
+        ff_id = override.get("feature_flag_id") if isinstance(override, dict) else override.feature_flag_id
+        t_id = override.get("tenant_id") if isinstance(override, dict) else override.tenant_id
+
+        if ff_id and t_id:
+            flag = await self.db.get(FeatureFlag, ff_id)
+            if flag:
+                await self._invalidate_cache(t_id, flag.key)
+
         return override
 
     async def delete_override(self, override_id: int) -> None:
         """Delete a feature flag override."""
+        # Need to fetch the override to get its tenant_id and feature_flag_id before deletion
+        override = await self.override_crud.get(db=self.db, id=override_id)
+        if override:
+            ff_id = override.get("feature_flag_id") if isinstance(override, dict) else override.feature_flag_id
+            t_id = override.get("tenant_id") if isinstance(override, dict) else override.tenant_id
+
+            if ff_id and t_id:
+                flag = await self.db.get(FeatureFlag, ff_id)
+                if flag:
+                    await self._invalidate_cache(t_id, flag.key)
+
         await self.override_crud.delete(db=self.db, id=override_id)
 
     # =========================================================================

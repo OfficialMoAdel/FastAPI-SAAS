@@ -26,7 +26,6 @@ from webauthn import (
 from webauthn.helpers import base64url_to_bytes, bytes_to_base64url
 from webauthn.helpers.structs import (
     AttestationConveyancePreference,
-    AuthenticatorAttachment,
     AuthenticatorSelectionCriteria,
     PublicKeyCredentialCreationOptions,
     PublicKeyCredentialDescriptor,
@@ -117,7 +116,10 @@ class PasskeyService:
             user_display_name=user.get("name") or user["username"],
             attestation=AttestationConveyancePreference.NONE,
             authenticator_selection=AuthenticatorSelectionCriteria(
-                authenticator_attachment=AuthenticatorAttachment.CROSS_PLATFORM,
+                # BUG FIX: CROSS_PLATFORM was hardcoded, locking out platform authenticators
+                # (Touch ID, Face ID, Windows Hello). Removing the constraint allows users
+                # to register any authenticator — platform or cross-platform.
+                authenticator_attachment=None,
                 user_verification=UserVerificationRequirement.PREFERRED,
                 resident_key=ResidentKeyRequirement.PREFERRED,
             ),
@@ -671,6 +673,7 @@ class PasskeyService:
             "tier_id": user.tier_id,
             "tenant_id": user.tenant_id,
             "is_superuser": user.is_superuser,
+            "is_active": user.is_active,  # BUG FIX: was missing, causing user.get("is_active") to return None
             "is_deleted": user.is_deleted,
             "is_email_verified": user.is_email_verified,
             # BUG FIX: token_version was missing. Without it, _generate_auth_tokens

@@ -100,36 +100,46 @@ async def test_override_crud_operations(service, mock_db):
     t_id = uuid4()
     mock_override = make_mock_override(custom_value={"enabled": True})
 
-    with patch.object(service.override_crud, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = mock_override
+    original_crud = service.override_crud
+    
+    mock_crud = MagicMock()
+    mock_crud.get = AsyncMock(side_effect=[mock_override, None, mock_override])
+    mock_crud.create = AsyncMock(return_value=mock_override)
+    mock_crud.update = AsyncMock(side_effect=[mock_override, None])
+    mock_crud.delete = AsyncMock()
+    
+    try:
+        service.override_crud = mock_crud
+
+        # Test get_override (returns mock first, then None)
         result = await service.get_override(1, t_id)
         assert result.id == 1
 
-    with patch.object(service.override_crud, "get", new_callable=AsyncMock) as mock_get:
-        mock_get.return_value = None
         result = await service.get_override(1, t_id)
         assert result is None
 
-    create_data = FeatureFlagOverrideCreate(feature_flag_id=1, tenant_id=t_id, custom_value={"enabled": True})
-    with patch.object(service.override_crud, "create", new_callable=AsyncMock) as mock_create:
-        mock_create.return_value = mock_override
+        # Test create_override
+        create_data = FeatureFlagOverrideCreate(feature_flag_id=1, tenant_id=t_id, custom_value={"enabled": True})
         result = await service.create_override(create_data)
         assert result.id == 1
 
-    update_data = FeatureFlagOverrideUpdate(custom_value={"enabled": False})
-    with patch.object(service.override_crud, "update", new_callable=AsyncMock) as mock_update:
-        mock_update.return_value = mock_override
+        # Test update_override (returns mock first, then None)
+        update_data = FeatureFlagOverrideUpdate(custom_value={"enabled": False})
+        
         result = await service.update_override(1, update_data)
         assert result.id == 1
 
-    with patch.object(service.override_crud, "update", new_callable=AsyncMock) as mock_update:
-        mock_update.return_value = None
         result = await service.update_override(1, update_data)
         assert result is None
 
-    with patch.object(service.override_crud, "delete", new_callable=AsyncMock) as mock_delete:
+        # Test delete_override
         await service.delete_override(1)
-        mock_delete.assert_awaited_once_with(db=mock_db, id=1)
+        mock_crud.delete.assert_awaited_once_with(db=mock_db, id=1)
+        
+    finally:
+        service.override_crud = original_crud
+
+
 
 
 @pytest.mark.asyncio

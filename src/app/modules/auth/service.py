@@ -384,9 +384,13 @@ return new_attempts
             "token_version": db_user.get("token_version", 0) if db_user else 0,
         }
 
+        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+
         # Create new tokens
-        new_access_token = await create_access_token(data=token_data)
-        new_refresh_token = await create_refresh_token(data=token_data)
+        new_access_token, new_refresh_token = await asyncio.gather(
+            create_access_token(data=token_data, expires_delta=access_token_expires),
+            create_refresh_token(data=token_data),
+        )
 
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
@@ -636,23 +640,29 @@ return new_attempts
 
             logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
 
-            # Send email via event bus
             reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
 
-            await event_bus.publish(
-                "notification.send",
-                {
-                    "to_email": email,
-                    "template_name": "password_reset",
-                    "context": {
-                        "username": user["username"],
-                        "reset_link": reset_link,
-                        "valid_minutes": 60,
-                    },
-                    "tenant_id": str(user["tenant_id"]),
-                    "user_id": str(user["id"]),
+            # BUG FIX: Previously published directly to "notification.send" with keys
+            # `template_name` and `context`. The only subscriber requires `notification_id`,
+            # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the
+            # event to be silently dropped → password reset emails were NEVER sent.
+            # Fix: delegate to NotificationService.send_email() which handles template
+            # rendering, creates a Notification DB record, and emits the correctly-shaped event.
+            from uuid import UUID as _UUID
+
+            from src.app.modules.notifications.service import NotificationService
+
+            notification_service = NotificationService(db)
+            await notification_service.send_email(
+                tenant_id=_UUID(str(user["tenant_id"])),
+                to_email=email,
+                template_name="password_reset",
+                context={
+                    "username": user["username"],
+                    "reset_link": reset_link,
+                    "valid_minutes": 60,
                 },
-                priority=EventPriority.NORMAL,
+                user_id=user["id"],
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention

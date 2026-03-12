@@ -107,98 +107,103 @@ class FileService:
         base_path = f"tenants/{tenant_id}/files/{file_uuid}"
         storage_path = f"{base_path}.{extension}" if extension else base_path
 
-        # Use a distributed lock on the tenant ID to prevent TOCTOU quota bypass
-        lock_key = f"lock:quota:{tenant_id}"
-        lock_acquired = False
+        # Check quotas (count and size) in one query
+        current_count, current_size = await self._get_quota_stats(tenant_id)
+
+        if current_count >= settings.max_file_count:
+            raise QuotaExceededError(f"File count limit reached ({settings.max_file_count} files)")
+
+        if current_size + size_bytes > settings.storage_quota_bytes:
+            raise QuotaExceededError(
+                f"Storage quota exceeded. Used: {current_size}, Limit: {settings.storage_quota_bytes}"
+            )
+
+        # Get storage provider
+        provider = await self._storage_service.get_provider(tenant_id)
+
+        # Acquire a distributed per-tenant upload lock to prevent concurrent
+        # quota races. Uses Redis SET NX (atomic compare-and-set).
+        lock_key = f"upload_lock:{tenant_id}"
         if cache.client:
-            lock_acquired = await cache.client.set(lock_key, "1", nx=True, ex=60)
-            if not lock_acquired:
-                raise QuotaExceededError("Another upload is currently in progress. Please try again.")
+            acquired = await cache.client.set(lock_key, "1", nx=True, ex=30)
+            if not acquired:
+                raise QuotaExceededError("Another upload is currently in progress")
 
+        # Upload to storage
+        result = await provider.upload(file, storage_path, mime_type)
+
+        if not result.success:
+            raise Exception(f"Storage upload failed: {result.error}")
+
+        # ... remaining logic ...
+        # File model: tenant_id is UUID, user_id is int (FK to user.id)
+        # tenant_id is already UUID from API, user_id is already int from User model
         try:
-            # Check quotas (count and size) in one query
-            current_count, current_size = await self._get_quota_stats(tenant_id)
+            file_record = File(
+                tenant_id=tenant_id,  # UUID - no cast needed
+                user_id=user_id,  # int - already correct type
+                original_name=filename,
+                storage_path=storage_path,
+                mime_type=mime_type,
+                size_bytes=size_bytes,
+                is_public=False,
+            )
 
-            if current_count >= settings.max_file_count:
-                raise QuotaExceededError(f"File count limit reached ({settings.max_file_count} files)")
+            self.db.add(file_record)
 
-            if current_size + size_bytes > settings.storage_quota_bytes:
-                raise QuotaExceededError(
-                    f"Storage quota exceeded. Used: {current_size}, Limit: {settings.storage_quota_bytes}"
-                )
+            # Atomically increment quota counters and strictly enforce hard limit (P0 optimization)
+            await self._increment_quota_counters(
+                tenant_id,
+                size_bytes,
+                settings.max_file_count,
+                settings.storage_quota_bytes
+            )
 
-            # Get storage provider
-            provider = await self._storage_service.get_provider(tenant_id)
+            await self.db.commit()
+            await self.db.refresh(file_record)
 
-            # Upload to storage
-            result = await provider.upload(file, storage_path, mime_type)
+            # Log success with structured context
+            logger.info(
+                "file_uploaded",
+                file_id=file_record.id,
+                tenant_id=str(tenant_id),
+                user_id=str(user_id),
+                filename=filename,
+                storage_path=storage_path,
+                size_bytes=size_bytes,
+                mime_type=mime_type,
+            )
 
-            if not result.success:
-                raise Exception(f"Storage upload failed: {result.error}")
+            # Record metrics
+            storage_metrics.record_upload(
+                tenant_id=str(tenant_id),
+                provider=settings.provider,
+                size_bytes=size_bytes,
+                mime_type=mime_type,
+                success=True,
+            )
 
-            # ... remaining logic ...
-            # File model: tenant_id is UUID, user_id is int (FK to user.id)
-            # tenant_id is already UUID from API, user_id is already int from User model
-            try:
-                file_record = File(
-                    tenant_id=tenant_id,  # UUID - no cast needed
-                    user_id=user_id,  # int - already correct type
-                    original_name=filename,
-                    storage_path=storage_path,
-                    mime_type=mime_type,
-                    size_bytes=size_bytes,
-                    is_public=False,
-                )
+            return file_record
 
-                self.db.add(file_record)
-
-                # Atomically increment quota counters (P0 optimization)
-                await self._increment_quota_counters(tenant_id, size_bytes)
-
-                await self.db.commit()
-                await self.db.refresh(file_record)
-
-                # Log success with structured context
-                logger.info(
-                    "file_uploaded",
-                    file_id=file_record.id,
-                    tenant_id=str(tenant_id),
-                    user_id=str(user_id),
-                    filename=filename,
-                    storage_path=storage_path,
-                    size_bytes=size_bytes,
-                    mime_type=mime_type,
-                )
-
-                # Record metrics
-                storage_metrics.record_upload(
-                    tenant_id=str(tenant_id),
-                    provider=settings.provider,
-                    size_bytes=size_bytes,
-                    mime_type=mime_type,
-                    success=True,
-                )
-
-                return file_record
-
-            except Exception as e:
-                # Cleanup on failure (per clarification Q4)
-                logger.error(
-                    "file_upload_failed",
-                    tenant_id=str(tenant_id),
-                    filename=filename,
-                    error=str(e),
-                )
-                storage_metrics.record_upload(
-                    tenant_id=str(tenant_id),
-                    provider=settings.provider,
-                    size_bytes=size_bytes,
-                    success=False,
-                )
-                await provider.delete(storage_path)
-                raise
+        except Exception as e:
+            # Cleanup on failure (per clarification Q4)
+            logger.error(
+                "file_upload_failed",
+                tenant_id=str(tenant_id),
+                filename=filename,
+                error=str(e),
+            )
+            storage_metrics.record_upload(
+                tenant_id=str(tenant_id),
+                provider=settings.provider,
+                size_bytes=size_bytes,
+                success=False,
+            )
+            await provider.delete(storage_path)
+            raise
         finally:
-            if cache.client and lock_acquired:
+            # Always release the lock regardless of success or failure
+            if cache.client:
                 await cache.client.delete(lock_key)
 
     async def get_file(self, tenant_id: UUID, file_id: int) -> File | None:
@@ -369,10 +374,15 @@ class FileService:
         file_size = file.size_bytes
         storage_path = file.storage_path
 
-        # BUG FIX: Delete metadata and decrement counters first
+        # BUG FIX: Delete from storage FIRST to prevent orphaned physical files.
+        # Storage deletion (S3) is idempotent, so if DB commit fails, retrying is safe.
+        try:
+            await provider.delete(storage_path)
+        except Exception as e:
+            logger.error("storage_delete_failed", storage_path=storage_path, error=str(e))
+            raise Exception(f"Failed to delete file from storage: {e}")
+
         # Execute an explicit targeted DELETE statement and check the rowcount.
-        # This crucially prevents concurrent delete requests from exploiting a race
-        # condition that double-decrements the tenant's exact storage quota capacity.
         stmt = delete(File).where(File.id == file_id, File.tenant_id == tenant_id)
         result = await self.db.execute(stmt)
 
@@ -383,13 +393,6 @@ class FileService:
 
         await self._decrement_quota_counters(tenant_id, file_size)
         await self.db.commit()
-
-        # Delete from storage after DB commit
-        try:
-            await provider.delete(file.storage_path)
-        except Exception as e:
-            logger.error("storage_delete_failed", storage_path=file.storage_path, error=str(e))
-            # Optional: push to a cleanup queue if it failed
 
         logger.info(
             "file_deleted",
@@ -487,24 +490,55 @@ class FileService:
             return 0, 0
         return row.file_count, row.storage_usage_bytes
 
-    async def _increment_quota_counters(self, tenant_id: UUID, size_bytes: int) -> None:
+    async def _increment_quota_counters(
+        self,
+        tenant_id: UUID,
+        size_bytes: int,
+        max_file_count: int | None = None,
+        max_storage_bytes: int | None = None,
+    ) -> None:
         """Atomically increment tenant storage counters after file upload.
 
-        Uses UPDATE with arithmetic operations for atomic increment without race conditions.
+        Uses UPDATE with arithmetic operations. When max limits are provided,
+        applies strict WHERE clauses to enforce quotas atomically.
 
         Args:
             tenant_id: Tenant UUID
             size_bytes: File size to add to storage usage
+            max_file_count: Optional maximum allowed files (enforces atomically if provided)
+            max_storage_bytes: Optional maximum allowed storage bytes (enforces atomically if provided)
+
+        Raises:
+            QuotaExceededError: If the atomic update violates storage quotas
         """
-        stmt = (
-            update(Tenant)
-            .where(Tenant.id == tenant_id)
-            .values(
-                file_count=Tenant.file_count + 1,
-                storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+        if max_file_count is not None and max_storage_bytes is not None:
+            # Strict atomic enforcement with WHERE-clause guards
+            stmt = (
+                update(Tenant)
+                .where(
+                    Tenant.id == tenant_id,
+                    Tenant.file_count + 1 <= max_file_count,
+                    Tenant.storage_usage_bytes + size_bytes <= max_storage_bytes
+                )
+                .values(
+                    file_count=Tenant.file_count + 1,
+                    storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+                )
             )
-        )
-        await self.db.execute(stmt)
+            result = await self.db.execute(stmt)
+            if result.rowcount == 0:
+                raise QuotaExceededError("Upload failed: strict quota limits exceeded.")
+        else:
+            # Simple increment without strict enforcement
+            stmt = (
+                update(Tenant)
+                .where(Tenant.id == tenant_id)
+                .values(
+                    file_count=Tenant.file_count + 1,
+                    storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+                )
+            )
+            await self.db.execute(stmt)
         # Note: Commit happens in upload_file after file record is created
 
     async def _decrement_quota_counters(self, tenant_id: UUID, size_bytes: int) -> None:

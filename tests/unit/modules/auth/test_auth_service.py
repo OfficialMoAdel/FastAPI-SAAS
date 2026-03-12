@@ -372,12 +372,16 @@ class TestAuthServiceEmailFlows:
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
-            patch("src.app.modules.auth.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.notifications.service.NotificationService") as mock_notification_service_cls,
             patch("src.app.modules.auth.service.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.service.settings") as mock_settings,
         ):
             mock_get_user.return_value = mock_user
             mock_settings.FRONTEND_URL = "http://test-frontend"
+
+            mock_notification_service = MagicMock()
+            mock_notification_service.send_email = AsyncMock()
+            mock_notification_service_cls.return_value = mock_notification_service
 
             # Mock the session.add and commit behavior
             mock_db.add = MagicMock()
@@ -392,21 +396,20 @@ class TestAuthServiceEmailFlows:
 
             await auth_service.request_password_reset("test@example.com", mock_db)
 
-            # Check user lookup — now includes is_active=True (Bug 2 fix: inactive accounts excluded)
+            # Check user lookup
             mock_get_user.assert_called_once_with(db=mock_db, email="test@example.com", is_deleted=False, is_active=True)
 
             # Check token saved
             mock_db.add.assert_called()
             mock_db.commit.assert_called()
 
-            # Check event published
-            mock_publish.assert_called_once()
-            call_args = mock_publish.call_args
-            assert call_args[0][0] == "notification.send"
-            assert call_args[0][1]["template_name"] == "password_reset"
-            assert call_args[0][1]["to_email"] == "test@example.com"
-            assert "reset_link" in call_args[0][1]["context"]
-            assert "http://test-frontend" in call_args[0][1]["context"]["reset_link"]
+            # Check email notification sent
+            mock_notification_service.send_email.assert_awaited_once()
+            call_kwargs = mock_notification_service.send_email.call_args[1]
+            assert call_kwargs["template_name"] == "password_reset"
+            assert call_kwargs["to_email"] == "test@example.com"
+            assert "reset_link" in call_kwargs["context"]
+            assert "http://test-frontend" in call_kwargs["context"]["reset_link"]
 
     @pytest.mark.asyncio
     async def test_send_verification_email_creates_token_and_event(self, auth_service, mock_db):

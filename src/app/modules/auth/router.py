@@ -207,12 +207,24 @@ async def list_sessions(
         except (ValueError, TypeError):
             created_at_ts = 0
 
+        # BUG FIX: last_accessed_at was always set equal to created_at because the
+        # session dict had no "last_accessed" key. Now we read it when present and
+        # fall back to created_at for sessions that pre-date this fix.
+        last_accessed_str = s.get("last_accessed", created_at_str)
+        try:
+            if isinstance(last_accessed_str, str):
+                last_accessed_ts = int(datetime.fromisoformat(last_accessed_str).timestamp())
+            else:
+                last_accessed_ts = created_at_ts
+        except (ValueError, TypeError):
+            last_accessed_ts = created_at_ts
+
         session_infos.append(
             SessionInfo(
                 id=s.get("session_id", ""),
                 user_id=current_user["id"],
                 created_at=created_at_ts,
-                last_accessed_at=created_at_ts,
+                last_accessed_at=last_accessed_ts,
                 ip_address=ip_address,
                 user_agent=user_agent,
             )

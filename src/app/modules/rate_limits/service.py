@@ -215,6 +215,12 @@ class RateLimitService(BaseService[RateLimit]):
         if db_rate_limit is None:
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
+        if values.name and values.name != db_rate_limit.get("name"):
+            name_exists = await crud_rate_limits.exists(db=self.db, name=values.name)
+            if name_exists:
+                from src.app.modules._base.exceptions import DuplicateError
+                raise DuplicateError("name", values.name)
+
         await crud_rate_limits.update(db=self.db, object=values, id=rate_limit_id)
         await self._invalidate_tier_rate_limits_cache(db_tier["id"])
         return {"message": "Rate Limit updated"}

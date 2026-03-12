@@ -6,6 +6,9 @@ from src.app.core.db.rls import RLS_TENANT_VAR, restore_rls_context
 def test_restore_rls_context_with_tenant():
     """Test that restore_rls_context executes SQL when tenant is set."""
     mock_session = Mock()
+    # Use a real dict so session.info.get("rls_bypass") returns None (falsy).
+    # Mock().info.get() returns a truthy Mock, causing bypass SQL to also fire.
+    mock_session.info = {}
     mock_transaction = Mock()
     mock_connection = Mock()
     # Must mock dialect.name since restore_rls_context checks for "postgresql"
@@ -35,6 +38,8 @@ def test_restore_rls_context_with_tenant():
 def test_restore_rls_context_without_tenant():
     """Test that restore_rls_context does nothing when no tenant is set."""
     mock_session = Mock()
+    # Use a real dict so session.info.get("rls_bypass") returns None (falsy)
+    mock_session.info = {}
     mock_transaction = Mock()
     mock_connection = Mock()
     mock_connection.dialect = Mock()

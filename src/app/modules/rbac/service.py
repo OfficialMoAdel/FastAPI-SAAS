@@ -237,7 +237,9 @@ class RoleService:
             for p in permissions
         ]
 
-        # Populate L1 cache (always, even without Redis)
+        # Only cache non-empty permission sets.
+        # Empty lists may indicate a role has no permissions yet; caching them
+        # risks propagating a stale empty list if permissions are added shortly after.
         if perm_dicts:
             try:
                 _L1_RBAC_CACHE[l1_cache_key] = perm_dicts

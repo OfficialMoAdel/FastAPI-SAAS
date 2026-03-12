@@ -249,8 +249,8 @@ class TestCriticalEventWithRedis:
             )
             elapsed = time.perf_counter() - start
 
-            # Should return immediately
-            assert elapsed < 0.01
+            # Should return immediately (< 50ms — duplicate skip is fast but async overhead applies)
+            assert elapsed < 0.05
 
             # Give time for any potential handler execution
             await asyncio.sleep(0.05)

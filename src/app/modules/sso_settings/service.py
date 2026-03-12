@@ -70,10 +70,25 @@ class SSOSettingsService:
         await db.commit()
         await db.refresh(db_obj)
 
+        # Invalidate cache so subsequent reads use the fresh record
+        await self._invalidate_provider_cache(settings.provider)
+
         return SSOSettingsRead.model_validate(db_obj)
 
     async def get_settings_by_provider(self, db: AsyncSession, provider: str) -> SSOSettingsRead:
         """Get public settings for a provider (no secrets)."""
+        # Check Redis cache first (populated by warm_sso_settings on startup)
+        if redis_client is not None:
+            cache_key = f"sso_settings:{provider}"
+            try:
+                cached = await redis_client.get(cache_key)
+                if cached is not None:
+                    from src.app.core.json_utils import json_loads
+                    data = json_loads(cached)
+                    return SSOSettingsRead.model_validate(data)
+            except Exception as e:
+                logger.warning("SSO settings cache read failed, falling back to DB", provider=provider, error=str(e))
+
         settings = await crud_sso_settings.get(db=db, provider=provider)
         if not settings:
             raise NotFoundException(f"Settings for provider '{provider}' not found")
@@ -158,6 +173,10 @@ class SSOSettingsService:
 
         await crud_sso_settings.update(db=db, object=update_data, provider=provider)
         updated = await crud_sso_settings.get(db=db, provider=provider)
+
+        # Invalidate cache so subsequent reads pick up the change
+        await self._invalidate_provider_cache(provider)
+
         return SSOSettingsRead.model_validate(updated)
 
     @audit_action("sso_settings.delete", "sso_settings")
@@ -175,6 +194,18 @@ class SSOSettingsService:
             raise NotFoundException(f"Settings for provider '{provider}' not found")
 
         await crud_sso_settings.delete(db=db, provider=provider)
+
+        # Invalidate cache so stale data is immediately evicted
+        await self._invalidate_provider_cache(provider)
+
+    @staticmethod
+    async def _invalidate_provider_cache(provider: str) -> None:
+        """Delete the Redis cache entry for a single SSO provider."""
+        if redis_client is not None:
+            try:
+                await redis_client.delete(f"sso_settings:{provider}")
+            except Exception as e:
+                logger.warning("Failed to invalidate SSO settings cache", provider=provider, error=str(e))
 
 
 def get_sso_settings_service(db: AsyncSession = Depends(async_get_db)) -> "SSOSettingsService":

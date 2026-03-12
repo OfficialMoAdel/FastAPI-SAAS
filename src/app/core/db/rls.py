@@ -40,22 +40,42 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
         return
 
     # M3: Add error handling to prevent failures from propagating through SQLAlchemy event system
-    tenant = None
     try:
-        tenant = get_current_tenant()
-        if tenant:
-            # We are in a synchronous event listener, so we use the sync connection directly.
-            # This connection is the underlying driver connection or SQLAlchemy wrapper.
+        # 1. Restore bypass if applicable
+        if session.info.get("rls_bypass"):
+            connection.execute(text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"))
+
+        # 2. Restore tenant and user from session.info
+        tenant_id = session.info.get("rls_tenant_id")
+        user_id = session.info.get("rls_user_id")
+
+        # 3. Fallback to thread-local tenant if not in session.info
+        if not tenant_id:
+            tenant = get_current_tenant()
+            if tenant:
+                tenant_id = str(tenant.id)
+
+        if tenant_id and user_id:
+            connection.execute(
+                text(f"""
+                    SELECT
+                        set_config('{RLS_TENANT_VAR}', :tenant_id, true),
+                        set_config('{RLS_USER_VAR}', :user_id, true)
+                """),
+                {"tenant_id": tenant_id, "user_id": user_id},
+            )
+        elif tenant_id:
             connection.execute(
                 text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-                {"tenant_id": str(tenant.id)},
+                {"tenant_id": tenant_id},
             )
+
     except Exception as e:
         # M3: Log error but don't propagate - RLS context is best-effort in event listeners
         logger.warning(
             "Failed to restore RLS context in event listener",
             error=str(e),
-            tenant_id=getattr(tenant, "id", None) if tenant else None,
+            tenant_id=tenant_id if "tenant_id" in locals() else None,
         )
 
 
@@ -160,6 +180,14 @@ async def rls_context(
     connection = await session.connection()
 
     try:
+        # Store in session info for restoration upon new transactions
+        if hasattr(session, "info"):
+            session.info["rls_tenant_id"] = tenant_id
+            session.info["rls_user_id"] = user_id
+        else:
+            session.sync_session.info["rls_tenant_id"] = tenant_id
+            session.sync_session.info["rls_user_id"] = user_id
+
         # Set RLS context
         await set_rls_context(connection, tenant_id, user_id)
         yield session
@@ -172,6 +200,13 @@ async def rls_context(
 
     finally:
         # Always clear context, even on exception
+        if hasattr(session, "info"):
+            session.info.pop("rls_tenant_id", None)
+            session.info.pop("rls_user_id", None)
+        else:
+            session.sync_session.info.pop("rls_tenant_id", None)
+            session.sync_session.info.pop("rls_user_id", None)
+
         await clear_rls_context(connection)
 
 
@@ -205,6 +240,14 @@ async def bypass_rls(
     connection = await session.connection()
 
     try:
+        # Store in session info for restoration upon new transactions
+        if hasattr(session, "info"):
+            session.info["rls_bypass"] = True
+            session.info["rls_user_id"] = user_id
+        else:
+            session.sync_session.info["rls_bypass"] = True
+            session.sync_session.info["rls_user_id"] = user_id
+
         # Set bypass flag
         await connection.execute(
             text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"),
@@ -246,7 +289,14 @@ async def bypass_rls(
         yield session
 
     finally:
-        # Clear bypass flag
+        # Clear bypass flag from stored info
+        if hasattr(session, "info"):
+            session.info.pop("rls_bypass", None)
+            session.info.pop("rls_user_id", None)
+        else:
+            session.sync_session.info.pop("rls_bypass", None)
+            session.sync_session.info.pop("rls_user_id", None)
+
         try:
             await connection.execute(text(f"RESET {RLS_BYPASS_VAR}"))
             logger.debug("RLS bypass cleared")

@@ -515,13 +515,17 @@ class APIKeyService(BaseService[APIKey]):
             api_key_id = api_key.id
             api_key_prefix = api_key.key_prefix
 
-        # Calculate valid_from timestamp (now + grace period)
-        valid_from = datetime.now(UTC) + timedelta(days=grace_period_days)
+        # BUG FIX: The old logic set valid_from=now+grace on the NEW key, making it unusable
+        # during the grace period and never expired the OLD key, leaving it valid indefinitely.
+        # Correct behaviour:
+        #   - New key: valid immediately (valid_from=None)
+        #   - Old key: expires_at = now + grace_period  (auto-expires after grace window)
+        grace_expires_at = datetime.now(UTC) + timedelta(days=grace_period_days)
 
-        # Generate new key with grace period
+        # Generate the new key
         full_key, prefix, hashed_key = self._generate_key()
 
-        # Create new key record with valid_from in the future
+        # Create new key record — valid immediately (no valid_from restriction)
         new_key_record = APIKey(
             name=f"{api_key_name} (Rotated)",
             key_prefix=prefix,
@@ -529,13 +533,28 @@ class APIKeyService(BaseService[APIKey]):
             user_id=user_id,
             tenant_id=tenant_id,
             scopes=api_key_scopes,  # Copy scopes as JSON string
-            expires_at=api_key_expires_at,  # Copy expiration
+            expires_at=api_key_expires_at,  # Copy original expiration
             is_active=True,
-            valid_from=valid_from,
+            valid_from=None,  # Active immediately
         )
         self.db.add(new_key_record)
+
+        # Mark old key to expire after the grace period (atomic update in same transaction)
+        await crud_api_keys.update(
+            db=self.db,
+            id=api_key_id,
+            object={"expires_at": grace_expires_at},
+        )
+
         await self.db.commit()
         await self.db.refresh(new_key_record)
+
+        # Invalidate old key's cache entry so the new expiry takes effect immediately
+        old_key_hashed = (
+            api_key.get("hashed_key") if isinstance(api_key, dict) else getattr(api_key, "hashed_key", None)
+        )
+        if redis_client is not None and old_key_hashed:
+            await redis_client.delete(self._get_cache_key(old_key_hashed))
 
         # Audit log the rotation
         audit_service = AuditLogService(self.db)
@@ -553,14 +572,14 @@ class APIKeyService(BaseService[APIKey]):
                 "new_key_name": new_key_record.name,
                 "new_key_prefix": new_key_record.key_prefix,
                 "grace_period_days": grace_period_days,
-                "valid_from": valid_from.isoformat(),
+                "old_key_expires_at": grace_expires_at.isoformat(),
             },
         )
 
         logger.info(
             f"API key rotated | user={user_id} | tenant={tenant_id} | "
             f"old_key_id={api_key_id} | new_key_id={new_key_record.id} | "
-            f"grace_period={grace_period_days}d | valid_from={valid_from.isoformat()}"
+            f"grace_period={grace_period_days}d | old_key_expires_at={grace_expires_at.isoformat()}"
         )
 
         return APIKeyResponse(

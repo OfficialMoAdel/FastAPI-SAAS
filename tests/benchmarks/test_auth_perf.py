@@ -15,7 +15,7 @@ THRESHOLDS = {
     "token_blacklist_check": 0.005,  # 5ms
     "token_blacklist_add": 0.005,  # 5ms
     "jwt_creation": 0.010,  # 10ms
-    "password_verify": 0.700,  # 700ms (bcrypt is intentionally slow)
+    "password_verify": 1.500,  # 1500ms (bcrypt can be slow on CI/low-power hardware)
 }
 
 

@@ -389,11 +389,10 @@ class MFAService:
 
         # Normalize code format
         normalized_code = code.upper().replace("-", "")
-        # BUG FIX: Only strip the "BC" prefix when it was part of "BC-" (with dash).
-        # Checking startswith("BC-") on the original (pre-strip) code prevents false
-        # stripping when a generated hex code_part legitimately starts with "BC"
-        # (e.g., 'BC8AF21234' → stripping 'BC' would give wrong verification target).
-        if code.upper().startswith("BC-"):
+
+        # Strip the "BC" prefix if present. We check len > 10 to ensure we don't
+        # falsely strip a generated 10-char hex code that legitimately starts with "BC".
+        if normalized_code.startswith("BC") and len(normalized_code) > 10:
             normalized_code = normalized_code[2:]
 
         # SECURITY FIX: Use row-level locking to prevent race conditions (double spending)

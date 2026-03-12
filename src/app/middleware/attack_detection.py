@@ -190,8 +190,16 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
 
     def _is_exempt_path(self, path: str) -> bool:
-        """Check if path is exempt from attack detection."""
-        return any(path.startswith(exempt) for exempt in EXEMPT_PATHS)
+        """Check if path is exempt from attack detection.
+
+        BUG FIX: The original `startswith` check matched any path that merely
+        *begins* with an exempt string (e.g. /docs-attack matched /docs, bypassing
+        attack scanning). Now we require either an exact match or a true sub-path
+        (path starts with exempt + "/").
+        """
+        if path in EXEMPT_PATHS:
+            return True
+        return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
 
     async def _detect_attack_patterns(self, request: Request) -> list[dict]:
         """Scan request for attack patterns using zero-copy bytes scanning.
@@ -230,40 +238,47 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             content_type = request.headers.get("content-type", "")
             text_content_types = ["application/json", "application/x-www-form-urlencoded", "text/"]
             if any(ct in content_type.lower() for ct in text_content_types):
-                # Pre-check Content-Length before reading body
+                # BUG FIX: Content-Length pre-check previously used `pass` in the oversized
+                # branch, letting execution fall through to `await request.body()` regardless.
+                # Now we set a flag so extremely large payloads are genuinely skipped.
+                # (They should already be blocked by BodyLimitMiddleware, but defense-in-depth.)
+                skip_body = False
                 content_length_str = request.headers.get("content-length")
                 if content_length_str:
                     try:
-                        content_length = int(content_length_str)
-                        if content_length > 10 * 1024 * 1024:
-                            # Skip extremely large payloads (should be blocked by body limit middleware anyway)
-                            pass
+                        if int(content_length_str) > 10 * 1024 * 1024:
+                            skip_body = True
+                            logger.debug(
+                                "Skipping attack scan of oversized body | content-length=%s",
+                                content_length_str,
+                            )
                     except ValueError:
-                        pass
+                        pass  # Malformed Content-Length; proceed with body read
 
-                try:
-                    body = await request.body()
-                    if body:
-                        # Re-inject body into a new receive channel so downstream handlers can read it.
-                        # This is necessary because await request.body() consumes the stream.
-                        async def receive():
-                            return {"type": "http.request", "body": body, "more_body": False}
+                if not skip_body:
+                    try:
+                        body = await request.body()
+                        if body:
+                            # Re-inject body into a new receive channel so downstream handlers can read it.
+                            # This is necessary because await request.body() consumes the stream.
+                            async def receive():
+                                return {"type": "http.request", "body": body, "more_body": False}
 
-                        request._receive = receive
+                            request._receive = receive
 
-                        # Scan raw bytes directly — no UTF-8 decode needed
-                        self._check_for_patterns(body, "request_body", detected_attacks)
-                except Exception as e:
-                    logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
-                    # Fail closed on body read error
-                    detected_attacks.append(
-                        {
-                            "attack_type": "invalid_body",
-                            "pattern_name": "body_read_error",
-                            "location": "request_body",
-                            "matched_content": "Error reading body",
-                        }
-                    )
+                            # Scan raw bytes directly — no UTF-8 decode needed
+                            self._check_for_patterns(body, "request_body", detected_attacks)
+                    except Exception as e:
+                        logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
+                        # Fail closed on body read error
+                        detected_attacks.append(
+                            {
+                                "attack_type": "invalid_body",
+                                "pattern_name": "body_read_error",
+                                "location": "request_body",
+                                "matched_content": "Error reading body",
+                            }
+                        )
 
         return detected_attacks
 

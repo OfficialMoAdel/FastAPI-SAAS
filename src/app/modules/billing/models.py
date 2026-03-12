@@ -242,3 +242,20 @@ class BillingRecord(Base, kw_only=True):
     tenant: Mapped["Tenant"] = relationship(init=False)
     user: Mapped["User"] = relationship(back_populates="billing_records", init=False)
     user_subscription: Mapped["UserSubscription | None"] = relationship(back_populates="billing_records", init=False)
+
+
+class WebhookEvent(Base, kw_only=True):
+    """Processed webhook events for idempotency.
+
+    Stores the Stripe event IDs that have already been processed to prevent
+    duplicate handling of webhook events when Redis is unavailable.
+    """
+
+    __tablename__ = "webhook_events"
+
+    event_id: Mapped[str] = mapped_column(String(255), primary_key=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default_factory=lambda: datetime.now(UTC),
+        nullable=False,
+    )
