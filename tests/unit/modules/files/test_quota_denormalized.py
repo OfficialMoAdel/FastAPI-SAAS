@@ -195,8 +195,7 @@ class TestMigrationBackfill:
 # === PHASE 2 MIGRATION: Tests from test_files_quota.py ===
 # Tests verifying quota query fusion (single query for quota stats)
 
-from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from unittest.mock import patch
 
 
 @pytest.fixture

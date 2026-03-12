@@ -101,13 +101,13 @@ async def test_override_crud_operations(service, mock_db):
     mock_override = make_mock_override(custom_value={"enabled": True})
 
     original_crud = service.override_crud
-    
+
     mock_crud = MagicMock()
     mock_crud.get = AsyncMock(side_effect=[mock_override, None, mock_override])
     mock_crud.create = AsyncMock(return_value=mock_override)
     mock_crud.update = AsyncMock(side_effect=[mock_override, None])
     mock_crud.delete = AsyncMock()
-    
+
     try:
         service.override_crud = mock_crud
 
@@ -125,7 +125,7 @@ async def test_override_crud_operations(service, mock_db):
 
         # Test update_override (returns mock first, then None)
         update_data = FeatureFlagOverrideUpdate(custom_value={"enabled": False})
-        
+
         result = await service.update_override(1, update_data)
         assert result.id == 1
 
@@ -135,7 +135,7 @@ async def test_override_crud_operations(service, mock_db):
         # Test delete_override
         await service.delete_override(1)
         mock_crud.delete.assert_awaited_once_with(db=mock_db, id=1)
-        
+
     finally:
         service.override_crud = original_crud
 

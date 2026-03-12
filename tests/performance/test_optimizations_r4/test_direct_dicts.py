@@ -91,6 +91,9 @@ class TestP21DirectDictOptimization:
         mock_tenant.name = "Test Tenant"
         mock_tenant.slug = "test-tenant"
         mock_tenant.is_active = True
+        mock_tenant.feature_flags = {}
+        mock_tenant.storage_usage_bytes = 0
+        mock_tenant.file_count = 0
 
         result = _tenant_to_dict(mock_tenant)
 
@@ -112,6 +115,9 @@ class TestP21DirectDictOptimization:
         mock_tenant.name = "Test Tenant"
         mock_tenant.slug = "test-tenant"
         mock_tenant.is_active = True
+        mock_tenant.feature_flags = {}
+        mock_tenant.storage_usage_bytes = 0
+        mock_tenant.file_count = 0
 
         result = _tenant_to_dict(mock_tenant)
 
@@ -134,6 +140,9 @@ class TestP21DirectDictIsomorphism:
         mock_tenant.name = "Acme Corporation"
         mock_tenant.slug = "acme-corp"
         mock_tenant.is_active = True
+        mock_tenant.feature_flags = {}
+        mock_tenant.storage_usage_bytes = 0
+        mock_tenant.file_count = 0
 
         # Get output from direct dict
         direct_result = _tenant_to_dict(mock_tenant)
@@ -156,6 +165,9 @@ class TestP21DirectDictIsomorphism:
         mock_tenant.name = "Deactivated Org"
         mock_tenant.slug = "deactivated-org"
         mock_tenant.is_active = False
+        mock_tenant.feature_flags = {}
+        mock_tenant.storage_usage_bytes = 0
+        mock_tenant.file_count = 0
 
         direct_result = _tenant_to_dict(mock_tenant)
         pydantic_result = TenantResponse.model_validate(mock_tenant).model_dump()
@@ -179,6 +191,9 @@ class TestP21PerformanceValidation:
         mock_tenant.name = "Performance Test Tenant"
         mock_tenant.slug = "perf-test"
         mock_tenant.is_active = True
+        mock_tenant.feature_flags = {}
+        mock_tenant.storage_usage_bytes = 0
+        mock_tenant.file_count = 0
 
         iterations = 1000
 

@@ -64,6 +64,7 @@ def mock_user():
         "username": "testuser",
         "email": "test@example.com",
         "is_superuser": False,
+        "is_active": True,
         "tenant_id": uuid4(),
     }
 
@@ -296,6 +297,7 @@ class TestAuthServiceTokenRefresh:
                     "tier_id": 1,
                     "tier": {"name": "basic"},
                     "is_deleted": False,
+                    "is_active": True,
                 }
             )
             mock_get_user_service.return_value = mock_user_service
@@ -368,7 +370,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_request_password_reset_sends_email(self, auth_service, mock_db):
         """Test that requesting password reset triggers email event."""
-        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": uuid4()}
+        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": uuid4(), "is_active": True}
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
@@ -419,6 +421,7 @@ class TestAuthServiceEmailFlows:
             "email": "test@example.com",
             "username": "testuser",
             "is_email_verified": False,
+            "is_active": True,
             "tenant_id": uuid4(),
         }
 
@@ -456,7 +459,7 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_verify_email_validates_and_updates_user(self, auth_service, mock_db):
         """Test verification logic updates user and deletes token."""
-        mock_user = {"id": 99, "is_email_verified": False}
+        mock_user = {"id": 99, "is_email_verified": False, "is_active": True}
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
@@ -533,6 +536,7 @@ class TestAuthServiceSecurityBugFixes:
                     "id": 1,
                     "username": "deleteduser",
                     "is_deleted": True,  # User was deleted
+                    "is_active": False,
                     "tier_id": 1,
                     "tier": {"name": "basic"},
                 }
@@ -603,6 +607,7 @@ class TestAuthServiceSecurityBugFixes:
                     "username": "activeuser",
                     "is_deleted": False,
                     "is_email_verified": True,
+                    "is_active": True,
                     "tier_id": 1,
                     "tier": {"name": "premium"},
                 }
@@ -648,6 +653,7 @@ class TestA2CachedAuthInfoFields:
         mock_user.tier_id = 1
         mock_user.tenant_id = 1
         mock_user.is_superuser = False
+        mock_user.is_active = True
         mock_user.is_deleted = False  # A2: Must be in result
         mock_user.is_email_verified = True  # A2: Must be in result
         mock_user.tier = MagicMock()
@@ -692,6 +698,7 @@ class TestA2CachedAuthInfoFields:
         mock_user.tier_id = 1
         mock_user.tenant_id = 1
         mock_user.is_superuser = False
+        mock_user.is_active = False
         mock_user.is_deleted = True  # User is deleted
         mock_user.is_email_verified = False
         mock_user.tier = MagicMock()

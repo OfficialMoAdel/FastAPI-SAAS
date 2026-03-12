@@ -453,7 +453,7 @@ class TestAPIKeyRotationGracePeriod:
             update_call_args = mock_update.call_args[1]["object"]
             expected_min = before + timedelta(days=6, hours=23)
             expected_max = after + timedelta(days=7, hours=1)
-            
+
             assert "expires_at" in update_call_args
             assert expected_min <= update_call_args["expires_at"] <= expected_max
 
@@ -500,6 +500,6 @@ class TestAPIKeyRotationGracePeriod:
             update_call_args = mock_update.call_args[1]["object"]
             expected_min = before + timedelta(days=custom_days - 1, hours=23)
             expected_max = after + timedelta(days=custom_days, hours=1)
-            
+
             assert "expires_at" in update_call_args
             assert expected_min <= update_call_args["expires_at"] <= expected_max

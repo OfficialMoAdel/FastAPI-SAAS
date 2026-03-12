@@ -36,6 +36,9 @@ def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
         "name": tenant.name,
         "slug": tenant.slug,
         "is_active": tenant.is_active,
+        "feature_flags": tenant.feature_flags if hasattr(tenant, "feature_flags") and tenant.feature_flags else {},
+        "storage_usage_bytes": getattr(tenant, "storage_usage_bytes", 0),
+        "file_count": getattr(tenant, "file_count", 0),
     }
 
 

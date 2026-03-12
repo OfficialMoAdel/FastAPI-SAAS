@@ -34,7 +34,8 @@ class TenantCreate(TenantBase, BaseCreate):
     @field_validator("slug", mode="before")
     @classmethod
     def normalize_slug(cls, v: Any) -> Any:
-        # Schema no longer mutates slug. Service layer will handle lowercase/strip.
+        if isinstance(v, str):
+            return v.lower().strip()
         return v
 
     @field_validator("slug")

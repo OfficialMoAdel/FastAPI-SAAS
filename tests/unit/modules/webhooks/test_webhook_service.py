@@ -378,7 +378,7 @@ class TestWebhookServiceDelivery:
                     mock_circuit.record_failure = AsyncMock()
 
                     mock_webhook_delivery.attempt_count = 0
-                    
+
                     with patch("sqlalchemy.event.listen") as mock_listen:
                         result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
