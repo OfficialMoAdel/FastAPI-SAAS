@@ -137,10 +137,8 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                         )
                         audit_db.add(audit_record)
                         await audit_db.commit()
-
                 # Schedule the audit log write
-                import asyncio
-                asyncio.create_task(_log_rls_bypass())
+                await _log_rls_bypass()
             except Exception as audit_e:
                 # We log the failure but do not prevent the job from running
                 # since the structured log at line 111 already recorded it.

@@ -114,10 +114,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         if use_gcra:
             gcra = get_gcra_rate_limiter()
             if gcra:
-                result = await gcra.check_rate_limit(key, limit, period)
-                is_limited = result.is_limited
-                remaining = result.remaining
-                retry_after = int(result.retry_after)
+                try:
+                    result = await gcra.check_rate_limit(key, limit, period)
+                    is_limited = result.is_limited
+                    remaining = result.remaining
+                    retry_after = int(result.retry_after)
+                except Exception as e:
+                    logger.warning("GCRA rate limit check failed: %s", e)
+                    # Fallback to fixed window
+                    is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
+                    remaining = max(0, limit - current_count)
+                    retry_after = 0
             else:
                 # GCRA not initialized, fall back to fixed window
                 is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
@@ -194,19 +201,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # 2. If no user in state, use jwt_utils to extract/cache JWT claims
         # This eliminates double JWT decode when auth dependency runs later
-        token = None
+
+        # Always extract token from Authorization header for blacklist check
+        auth_header = request.headers.get("Authorization", "")
+        token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+
+        cached_payload = get_cached_jwt_payload(request)
+        if cached_payload is None and token:
+            # Not cached yet - extract and cache for later use
+            cached_payload = await extract_jwt_claims_to_state(request)
+
         if not user_id:
-            # Extract token from Authorization header for blacklist check
-            auth_header = request.headers.get("Authorization", "")
-            if auth_header.startswith("Bearer "):
-                token = auth_header[7:]  # Remove "Bearer " prefix
-
-            # Use centralized JWT utilities for extraction and caching
-            cached_payload = get_cached_jwt_payload(request)
-            if cached_payload is None:
-                # Not cached yet - extract and cache for later use
-                cached_payload = await extract_jwt_claims_to_state(request)
-
             if cached_payload:
                 user_id = cached_payload.get("sub")
                 tier_name = cached_payload.get("tier_name")

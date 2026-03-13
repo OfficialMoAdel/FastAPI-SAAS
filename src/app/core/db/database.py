@@ -96,13 +96,6 @@ try:
         event.listen(Session, "after_begin", restore_rls_context)
 except Exception as e:
     logger.warning("Failed to check or register RLS event listener", error=e)
-    # BUG FIX: Only register as fallback if an contains() check raises; re-check to guard against
-    # duplicate registration which causes double RLS restoration calls in test environments.
-    try:
-        if not event.contains(Session, "after_begin", restore_rls_context):
-            event.listen(Session, "after_begin", restore_rls_context)
-    except Exception:
-        pass  # Skip registration if we can't determine current state
 
 # Alias for compatibility with code expecting async_session_maker
 async_session_maker = local_session

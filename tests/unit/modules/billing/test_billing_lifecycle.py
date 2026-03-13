@@ -135,9 +135,10 @@ class TestMapStripeStatus:
     def test_maps_incomplete_expired_to_expired(self):
         assert map_stripe_status("incomplete_expired") == "expired"
 
-    def test_unknown_status_defaults_to_active(self):
-        assert map_stripe_status("unknown_stripe_status") == "active"
-        assert map_stripe_status("") == "active"
+    def test_unknown_status_defaults_to_past_due(self):
+        """Unknown Stripe statuses default to past_due (security fix - denies access by default)."""
+        assert map_stripe_status("unknown_stripe_status") == "past_due"
+        assert map_stripe_status("") == "past_due"
 
 
 class TestCanCancel:

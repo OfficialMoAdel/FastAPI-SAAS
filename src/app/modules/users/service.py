@@ -262,12 +262,7 @@ class UserService(BaseService[User]):
             result = await self.crud.create(db=self.db, object=user_internal, commit=False)
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
-            # Attaches an after_commit listener to the current session that will
-            # publish the event once the transaction is durable.
-            from sqlalchemy import event
-
-            # We need to capture these values now, as `result` might not be
-            # safely accessible outside the session context later
+            # Capture result data before commit since it may expire after session flush
             event_payload = {
                 "user_id": result.id,
                 "email": result.email,
@@ -275,22 +270,18 @@ class UserService(BaseService[User]):
                 "tenant_id": str(result.tenant_id),
             }
 
-            def publish_user_created_event(session) -> None:
-                import asyncio
-                # Fire-and-forget task to publish the event
-                asyncio.create_task(
-                    event_bus.publish(
-                        "user.created",
-                        event_payload,
-                        priority=EventPriority.NORMAL,
-                    )
-                )
-
-            # Register the one-time listener BEFORE the commit happens
-            event.listen(self.db.sync_session, "after_commit", publish_user_created_event, once=True)
-
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
+
+            import asyncio
+            # Fire-and-forget task to publish the event safely from async context
+            asyncio.create_task(
+                event_bus.publish(
+                    "user.created",
+                    event_payload,
+                    priority=EventPriority.NORMAL,
+                )
+            )
 
         except IntegrityError as e:
             # Handle race condition: duplicate was created between our check and insert

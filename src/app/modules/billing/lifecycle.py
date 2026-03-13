@@ -125,8 +125,14 @@ def map_stripe_status(stripe_status: str) -> str:
     mapped = STRIPE_STATUS_MAP.get(stripe_status)
     if mapped:
         return mapped.value
-    # Default to active for unknown statuses
-    return SubscriptionStatus.ACTIVE.value
+    # BUG FIX: Unknown Stripe statuses should not silently default to ACTIVE.
+    # Log a warning and treat unknown status as PAST_DUE (safe, conservative default)
+    import structlog as _slog
+    _slog.get_logger(__name__).warning(
+        "Unknown Stripe status encountered, treating as past_due",
+        stripe_status=stripe_status,
+    )
+    return SubscriptionStatus.PAST_DUE.value
 
 
 def can_cancel(status: str) -> bool:

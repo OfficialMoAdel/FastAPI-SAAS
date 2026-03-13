@@ -610,9 +610,35 @@ async def handle_notification_send_event(data: dict[str, Any]) -> None:
                 notification_id=notification_id,
                 error=str(e),
             )
+            # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
+            await _mark_notification_failed(notification_id, tenant_id, f"Enqueue error: {e}")
     else:
         logger.warning(
             "arq_queue_not_available",
             notification_id=notification_id,
             to_email=to_email,
         )
+        # BUG FIX: Mark notification as FAILED so it doesn't stay stuck in PENDING
+        await _mark_notification_failed(notification_id, tenant_id, "ARQ queue not available")
+
+
+async def _mark_notification_failed(notification_id: str | None, tenant_id: str | None, reason: str) -> None:
+    """Mark a notification as failed in the database."""
+    if not notification_id:
+        return
+    try:
+        from uuid import UUID
+
+        from src.app.core.db.database import local_session
+        from src.app.core.db.rls import rls_context
+        async with local_session() as db:
+            ctx = rls_context(db, tenant_id) if tenant_id else None
+            if ctx:
+                async with ctx:
+                    service = NotificationService(db)
+                    await service.mark_failed(UUID(notification_id), reason)
+            else:
+                service = NotificationService(db)
+                await service.mark_failed(UUID(notification_id), reason)
+    except Exception as e:
+        logger.error("failed_to_mark_notification_failed", notification_id=notification_id, error=str(e))

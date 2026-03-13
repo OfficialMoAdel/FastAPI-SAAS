@@ -550,6 +550,14 @@ return new_attempts
         if not await verify_password(current_password, user["hashed_password"]):
             raise UnauthorizedException("Current password is incorrect.")
 
+        # SECURITY FIX: Enforce password complexity
+        try:
+            from src.app.modules.users.schemas import UserCreate
+            UserCreate.validate_password_complexity(new_password)
+        except ValueError as e:
+            from src.app.core.exceptions.http_exceptions import BadRequestException
+            raise BadRequestException(str(e))
+
         # Hash and update new password
         new_hashed = await get_password_hash(new_password)
         await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed})
@@ -733,6 +741,14 @@ return new_attempts
         reset_token.used = True
         await db.flush()  # Ensure token is marked as used before proceeding
 
+        # SECURITY FIX: Enforce password complexity
+        try:
+            from src.app.modules.users.schemas import UserCreate
+            UserCreate.validate_password_complexity(new_password)
+        except ValueError as e:
+            from src.app.core.exceptions.http_exceptions import BadRequestException
+            raise BadRequestException(str(e))
+
         # Update password
         new_hashed = await get_password_hash(new_password)
         await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed})
@@ -783,22 +799,23 @@ return new_attempts
 
             verification_token = token_model.token
 
-            # Send email via event bus
             verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
 
-            await event_bus.publish(
-                "notification.send",
-                {
-                    "to_email": email,
-                    "template_name": "email_verification",
-                    "context": {
-                        "username": user["username"],
-                        "verification_link": verification_link,
-                    },
-                    "tenant_id": str(user["tenant_id"]),
-                    "user_id": str(user["id"]),
+            # BUG FIX: Use NotificationService for correctly shaped events
+            from uuid import UUID as _UUID
+
+            from src.app.modules.notifications.service import NotificationService
+
+            notification_service = NotificationService(db)
+            await notification_service.send_email(
+                tenant_id=_UUID(str(user["tenant_id"])),
+                to_email=email,
+                template_name="email_verification",
+                context={
+                    "username": user["username"],
+                    "verification_link": verification_link,
                 },
-                priority=EventPriority.NORMAL,
+                user_id=user["id"],
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention

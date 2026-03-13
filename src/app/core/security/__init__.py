@@ -272,9 +272,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 cached_value = await redis_client.get(cache_key)
                 if cached_value is not None:
                     cached_version = int(cached_value)
-            except Exception:
+            except Exception as e:
                 # Cache miss or error - fall back to DB
-                pass
+                _jwt_logger.warning("token_version_cache_read_error", error=str(e), user=username_or_email)
 
         if cached_version is not None:
             # Use cached version for O(1) validation
@@ -296,10 +296,11 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             # Multiple concurrent requests may fetch from DB, but only first wins cache write
             if redis_client:
                 try:
-                    # SET with nx=True only sets if key doesn't exist (atomic with EX)
-                    await redis_client.set(cache_key, str(user.get("token_version")), nx=True, ex=300)
-                except Exception:
-                    pass  # Don't fail on cache error
+                    # SET without nx=True ensures we always write the latest version from DB
+                    # (overwriting any stale cached version). Atomic with EX.
+                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300)
+                except Exception as e:
+                    _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
 
     # Extract absolute expiration for session lifetime enforcement
     absolute_exp: float | None = payload.get("absolute_exp")

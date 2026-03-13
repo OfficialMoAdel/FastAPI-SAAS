@@ -128,11 +128,26 @@ class RoleService:
         if role.is_system:
             raise ForbiddenError("System roles cannot be deleted", reason="system_role")
 
+        # BUG FIX: Find all users that have this role BEFORE deleting,
+        # so we can invalidate their permission caches after deletion.
+        affected_users_stmt = select(UserRole.user_id).where(
+            and_(
+                UserRole.role_id == role_id,
+                UserRole.tenant_id == self.tenant_id,
+            )
+        )
+        affected_users_result = await self.db.execute(affected_users_stmt)
+        affected_user_ids = list(affected_users_result.scalars().all())
+
         await self.db.delete(role)
         await self.db.commit()
 
         # Invalidate cache for the deleted role
         await self._invalidate_role_cache(role_id)
+
+        # BUG FIX: Also invalidate permission caches for all affected users
+        for user_id in affected_user_ids:
+            await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def get_all_permissions(self) -> Sequence[Permission]:
         """Get all available permissions in the system.

@@ -426,7 +426,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             # unintended plans like "Freedom Plan" or "Carefree Plan".
             free_plan_stmt = (
                 select(crud_subscription_plans.model)
-                .where(crud_subscription_plans.model.name.ilike("free"))
+                .where(crud_subscription_plans.model.name == "free")
                 .limit(1)
             )
             free_plan_result = await db.execute(free_plan_stmt)
