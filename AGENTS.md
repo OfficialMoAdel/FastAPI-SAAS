@@ -322,6 +322,7 @@ All 21 modules have dedicated AGENTS.md files:
 
 ## Available Skills
 
+<skills_system priority="1">
 <!-- SKILLS_TABLE_START -->
 <usage>
 When users ask you to perform tasks, check if any of the available skills below can help complete the task more effectively. Skills provide specialized capabilities and domain knowledge.
