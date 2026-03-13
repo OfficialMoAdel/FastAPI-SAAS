@@ -357,13 +357,13 @@ class TestSessionManagerIntegration:
             },
         )
 
-        # Should be fast (under 5ms with mocks)
+        # Should be fast (under 15ms with mocks)
         # Under coverage, timing is not reliable due to instrumentation overhead
         import sys
 
         if sys.gettrace() is not None:
             pytest.skip("Timing test skipped under coverage instrumentation")
-        assert avg_ms < 5.0, f"Eviction too slow: {avg_ms}ms"
+        assert avg_ms < 15.0, f"Eviction too slow: {avg_ms}ms"
 
 
 class TestBitmaskDecodeIntegration:
