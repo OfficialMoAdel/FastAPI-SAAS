@@ -39,6 +39,7 @@ def mock_user_dict():
         "is_superuser": False,
         "tenant_id": MockUser.DEFAULT_TENANT_ID,  # Use UUID
         "tier_id": 2,  # Premium tier
+        "token_version": 1,
     }
 
 
@@ -58,7 +59,7 @@ class TestGetOptionalUserWithValidToken:
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
             with patch("src.app.api.dependencies.UserService") as MockUserService:
                 with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="test@example.com")
+                    mock_verify.return_value = MagicMock(username_or_email="test@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()
@@ -84,7 +85,7 @@ class TestGetOptionalUserWithValidToken:
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
             with patch("src.app.api.dependencies.UserService") as MockUserService:
                 with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="user@test.com")
+                    mock_verify.return_value = MagicMock(username_or_email="user@test.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()
@@ -149,7 +150,7 @@ class TestGetOptionalUserRateLimitIntegration:
         with patch("src.app.api.dependencies.verify_token") as mock_verify:
             with patch("src.app.api.dependencies.UserService") as MockUserService:
                 with patch("src.app.api.dependencies.get_tenant_context") as mock_get_tenant:
-                    mock_verify.return_value = MagicMock(username_or_email="premium@example.com")
+                    mock_verify.return_value = MagicMock(username_or_email="premium@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
                     mock_user_service = AsyncMock()

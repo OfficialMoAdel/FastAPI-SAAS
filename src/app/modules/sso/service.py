@@ -313,7 +313,7 @@ class SSOService:
                 is_disabled = True
             elif isinstance(found_user_data, dict) and found_user_data.get("is_deleted"):
                 is_disabled = True
-            elif isinstance(found_user_data, dict) and not found_user_data.get("is_active", True):
+            elif isinstance(found_user_data, dict) and not found_user_data.get("is_active", False):
                 is_disabled = True
             if is_disabled:
                 raise UnauthorizedException("Account is disabled")

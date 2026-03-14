@@ -127,6 +127,7 @@ async def test_process_callback_success(
             "email": "test@example.com",
             "username": "testuser",
             "is_deleted": False,
+            "is_active": True,
             "tenant_id": uuid4(),
         }
     )
@@ -139,6 +140,7 @@ async def test_process_callback_success(
             "tier": {"name": "free"},
             "tier_id": 1,
             "token_version": 1,
+            "is_active": True,
         }
     )
     mock_get_service.return_value = mock_user_svc
@@ -202,6 +204,7 @@ async def test_process_callback_connect_mode(
             "email": "github@example.com",
             "username": "ghuser",
             "is_deleted": False,
+            "is_active": True,
             "tenant_id": uuid4(),
         }
     )
@@ -214,6 +217,7 @@ async def test_process_callback_connect_mode(
             "tier": {"name": "free"},
             "tier_id": 1,
             "token_version": 1,
+            "is_active": True,
         }
     )
     mock_get_service.return_value = mock_user_svc
@@ -287,6 +291,7 @@ async def test_process_callback_apple_custom_flow(
     mock_new_user.username = "appleuser"
     mock_new_user.tenant_id = uuid4()
     mock_new_user.is_deleted = False
+    mock_new_user.is_active = True
     mock_user_svc.create = AsyncMock(return_value=mock_new_user)
 
     mock_user_svc.get_user_auth_info = AsyncMock(
@@ -298,6 +303,7 @@ async def test_process_callback_apple_custom_flow(
             "tier": {"name": "pro"},
             "tier_id": 2,
             "token_version": 1,
+            "is_active": True,
         }
     )
     mock_get_service.return_value = mock_user_svc

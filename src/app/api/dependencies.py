@@ -99,7 +99,7 @@ async def get_current_user(
                 )
                 raise ForbiddenException("User does not belong to the current tenant.")
 
-        if not user.get("is_active", True):
+        if not user.get("is_active", False):
             raise UnauthorizedException("User account is no longer active.")
 
         return user
@@ -132,6 +132,20 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         if not user:
             return None
 
+        # SECURITY FIX: Check is_active — suspended users must not access optional-auth routes.
+        # Use False as the secure default so a missing field denies access.
+        if not user.get("is_active", False):
+            return None
+
+        # SECURITY FIX: Validate token_version to reject revoked sessions.
+        # Mirrors the check performed by get_current_user so that a password change
+        # or forced logout also invalidates tokens on optional-auth routes.
+        payload_version = token_data.token_version if hasattr(token_data, "token_version") else None
+        if payload_version is not None:
+            user_version = user.get("token_version", 0)
+            if payload_version != user_version:
+                return None
+
         # Verify tenant context
         current_tenant = get_tenant_context()
         if current_tenant and not user.get("is_superuser"):
@@ -158,7 +172,7 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 async def get_current_superuser(
     current_user: Annotated[dict[str, Any], Depends(get_current_user)],
 ) -> dict[str, Any]:
-    if not current_user.get("is_active", True):
+    if not current_user.get("is_active", False):
         raise ForbiddenException("User account is no longer active.")
     if not current_user.get("is_superuser", False):
         raise ForbiddenException("You do not have enough privileges.")

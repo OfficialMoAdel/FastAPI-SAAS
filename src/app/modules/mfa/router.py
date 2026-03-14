@@ -319,16 +319,16 @@ async def complete_mfa_login(
     user_service = get_user_service(db)
     user = await user_service.get_user_auth_info(username=username)
 
-    if not user or user.get("is_deleted") or not user.get("is_active", True):
+    if not user or user.get("is_deleted") or not user.get("is_active", False):
         raise UnauthorizedException("User account is no longer active")
 
-    # Include tier info in JWT claims for Zero-DB rate limiting
     tier = user.get("tier")
     tier_name = tier.get("name") if tier else None
     token_data_payload = {
         "sub": user["username"],
         "tier_id": user.get("tier_id"),
         "tier_name": tier_name,
+        "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,  # SECURITY FIX: include tenant_id
         "token_version": user.get("token_version", 0),  # M-06: Include for session invalidation
     }
 

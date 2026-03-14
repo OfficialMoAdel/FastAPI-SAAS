@@ -216,7 +216,9 @@ return new_attempts
             raise UnauthorizedException("Wrong username, email or password.")
 
         # Authenticate (this takes time due to bcrypt)
-        user = await self.authenticate_user(username_or_email=username, password=password, db=db)
+        # SECURITY FIX: Use normalized_username (already computed for lockout key)
+        # to ensure the credential lookup and lockout tracking operate on the same form.
+        user = await self.authenticate_user(username_or_email=normalized_username, password=password, db=db)
 
         if not user:
             await self._publish_login_audit(request, username, False, reason="invalid_credentials")

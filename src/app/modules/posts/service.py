@@ -96,13 +96,22 @@ class PostService(BaseService[Post]):
         dict[str, Any]
             Paginated posts response
         """
+        # SECURITY FIX: Include tenant_id in the filter to prevent cross-tenant
+        # leakage when post IDs are guessable and user IDs are global integers.
+        tenant = get_tenant_context()
+        filters: dict[str, Any] = {
+            "created_by_user_id": user_id,
+            "is_deleted": False,
+        }
+        if tenant is not None:
+            filters["tenant_id"] = tenant.id
+
         posts_data = await crud_posts.get_multi(
             db=self.db,
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
-            created_by_user_id=user_id,
-            is_deleted=False,
             schema_to_select=PostRead,
+            **filters,
         )
 
         response: dict[str, Any] = paginated_response(crud_data=posts_data, page=page, items_per_page=items_per_page)
@@ -128,8 +137,18 @@ class PostService(BaseService[Post]):
         ModelNotFoundError
             If post not found
         """
+        # SECURITY FIX: Include tenant_id in lookup to prevent cross-tenant IDOR.
+        tenant = get_tenant_context()
+        filters: dict[str, Any] = {
+            "id": post_id,
+            "created_by_user_id": user_id,
+            "is_deleted": False,
+        }
+        if tenant is not None:
+            filters["tenant_id"] = tenant.id
+
         db_post = await crud_posts.get(
-            db=self.db, id=post_id, created_by_user_id=user_id, is_deleted=False, schema_to_select=PostRead
+            db=self.db, schema_to_select=PostRead, **filters
         )
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
@@ -173,6 +192,11 @@ class PostService(BaseService[Post]):
         if db_post["created_by_user_id"] != current_user["id"]:
             raise ForbiddenException()
 
+        # SECURITY FIX: Verify tenant ownership to prevent cross-tenant mutation via known post ID.
+        tenant = get_tenant_context()
+        if tenant is not None and db_post.get("tenant_id") != tenant.id:
+            raise ForbiddenException()
+
         await crud_posts.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
 
@@ -208,6 +232,11 @@ class PostService(BaseService[Post]):
 
         # Ownership check
         if db_post["created_by_user_id"] != current_user["id"]:
+            raise ForbiddenException()
+
+        # SECURITY FIX: Verify tenant ownership to prevent cross-tenant deletion via known post ID.
+        tenant = get_tenant_context()
+        if tenant is not None and db_post.get("tenant_id") != tenant.id:
             raise ForbiddenException()
 
         await crud_posts.delete(db=self.db, id=post_id)

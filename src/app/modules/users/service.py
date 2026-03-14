@@ -86,9 +86,15 @@ def _user_username_cache_key(username: str) -> str:
 
 
 def _user_auth_cache_key(identifier: str) -> str:
-    """Generate cache key for user auth info (tenant-scoped, no collision risk)."""
+    """Generate cache key for user auth info (tenant-scoped, no collision risk).
+
+    SECURITY FIX: Normalizes identifier to lowercase to prevent cache misses
+    when the same email/username is provided with different casing, consistent
+    with _user_email_cache_key and _user_username_cache_key.
+    """
     t_id = _require_tenant_id()
-    return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{identifier}"
+    normalized = identifier.lower().strip()
+    return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
 
 
 class UserService(BaseService[User]):

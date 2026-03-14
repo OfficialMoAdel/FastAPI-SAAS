@@ -301,6 +301,12 @@ class ProductService(BaseService[Product]):
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
+        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
+        # Mirrors the check already present in get_product().
+        tenant = get_current_tenant()
+        if tenant and product.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("Product", product_id)
+
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_products.update(db=self.db, object=update_data, id=product_id)
@@ -311,6 +317,11 @@ class ProductService(BaseService[Product]):
         """Deactivate a product."""
         product = await crud_products.get(db=self.db, id=product_id)
         if product is None:
+            raise ModelNotFoundError("Product", product_id)
+
+        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
+        tenant = get_current_tenant()
+        if tenant and product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
@@ -372,6 +383,11 @@ class ProductService(BaseService[Product]):
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
+        # SECURITY FIX: Verify product belongs to current tenant before adding pricing.
+        tenant = get_current_tenant()
+        if tenant and product.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("Product", product_id)
+
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
@@ -390,6 +406,11 @@ class PricingService(BaseService[Pricing]):
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
+        # SECURITY FIX: Verify product belongs to current tenant before creating pricing.
+        tenant = get_current_tenant()
+        if tenant and product.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("Product", product_id)
+
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
@@ -400,6 +421,14 @@ class PricingService(BaseService[Pricing]):
         pricing = await crud_pricing.get(db=self.db, id=pricing_id)
         if pricing is None:
             raise ModelNotFoundError("Pricing", pricing_id)
+
+        # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
+        if pricing is not None:
+            product = await crud_products.get(db=self.db, id=pricing["product_id"])
+            tenant = get_current_tenant()
+            if tenant and (product is None or product.get("tenant_id") != tenant.id):
+                raise ModelNotFoundError("Pricing", pricing_id)
+
         return pricing
 
     async def get_product_pricing(self, product_id: int) -> dict[str, Any]:
@@ -436,6 +465,12 @@ class PricingService(BaseService[Pricing]):
         """
         pricing = await self.db.get(Pricing, pricing_id)
         if pricing is None:
+            raise ModelNotFoundError("Pricing", pricing_id)
+
+        # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
+        product = await crud_products.get(db=self.db, id=pricing.product_id)
+        tenant = get_current_tenant()
+        if tenant and (product is None or product.get("tenant_id") != tenant.id):
             raise ModelNotFoundError("Pricing", pricing_id)
 
         update_data = data.model_dump(exclude_unset=True)
