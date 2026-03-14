@@ -611,6 +611,7 @@ def mock_db_session():
 async def test_decrypt_credentials_parallel():
     """Verify parallel decryption helper."""
     from src.app.modules.passkey.service import PasskeyService
+
     service = PasskeyService()
 
     # Mock encryption
@@ -643,6 +644,7 @@ async def test_decrypt_credentials_parallel():
 async def test_get_existing_credentials_optimized(mock_db_session, override_settings):
     """Test _get_existing_credentials with optimized column select."""
     from src.app.modules.passkey.service import PasskeyService
+
     service = PasskeyService()
 
     # Mock execute result
@@ -671,6 +673,7 @@ async def test_get_existing_credentials_optimized(mock_db_session, override_sett
 async def test_get_existing_credentials_fallback(mock_db_session, override_settings):
     """Test _get_existing_credentials with fallback CRUD."""
     from src.app.modules.passkey.service import PasskeyService
+
     service = PasskeyService()
 
     # Mock CRUD return
@@ -689,3 +692,359 @@ async def test_get_existing_credentials_fallback(mock_db_session, override_setti
                 creds_list, _ = args
 
                 assert creds_list[0] == ("enc1", "usb")
+
+
+# === COVERAGE TESTS: Additional helper methods and error handling ===
+
+
+@pytest.mark.asyncio
+async def test_store_challenge():
+    """Test _store_challenge stores challenge in Redis."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+
+    await service._store_challenge(mock_redis, user_id=1, challenge=b"test-challenge", device_type="Test Device")
+
+    # Verify redis.setex was called
+    mock_redis.setex.assert_called_once()
+    call_args = mock_redis.setex.call_args
+    assert "passkey:challenge:1" in str(call_args)
+
+
+@pytest.mark.asyncio
+async def test_get_stored_challenge():
+    """Test _get_stored_challenge retrieves and converts challenge."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+    # Mock the Lua script returning a JSON string
+    mock_redis.eval = AsyncMock(return_value='{"challenge": "test", "device_type": "Test"}')
+
+    result = await service._get_stored_challenge(mock_redis, user_id=1)
+
+    assert result is not None
+    assert "challenge" in result
+
+
+@pytest.mark.asyncio
+async def test_get_stored_challenge_not_found():
+    """Test _get_stored_challenge returns None when not found."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value=None)
+
+    result = await service._get_stored_challenge(mock_redis, user_id=1)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_delete_challenge():
+    """Test _delete_challenge removes challenge from Redis."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+
+    await service._delete_challenge(mock_redis, user_id=1)
+
+    mock_redis.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_store_auth_challenge():
+    """Test _store_auth_challenge stores auth challenge in Redis."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+
+    await service._store_auth_challenge(mock_redis, challenge_id="challenge-123", challenge=b"test")
+
+    mock_redis.setex.assert_called_once()
+    call_args = mock_redis.setex.call_args
+    assert "passkey:auth_challenge:challenge-123" in str(call_args)
+
+
+@pytest.mark.asyncio
+async def test_get_stored_auth_challenge():
+    """Test _get_stored_auth_challenge retrieves auth challenge."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value="dGVzdA==")  # base64 encoded "test"
+
+    result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
+
+    assert result is not None
+
+
+@pytest.mark.asyncio
+async def test_get_stored_auth_challenge_not_found():
+    """Test _get_stored_auth_challenge returns None when not found."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value=None)
+
+    result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_delete_auth_challenge():
+    """Test _delete_auth_challenge removes auth challenge from Redis."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+
+    await service._delete_auth_challenge(mock_redis, challenge_id="challenge-123")
+
+    mock_redis.delete.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_count_user_passkeys():
+    """Test _count_user_passkeys returns count."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_db = AsyncMock()
+
+    with patch("src.app.modules.passkey.service.crud_passkey_credentials") as mock_crud:
+        mock_crud.count_by_user = AsyncMock(return_value=5)
+
+        result = await service._count_user_passkeys(mock_db, user_id=1)
+
+        assert result == 5
+
+
+@pytest.mark.asyncio
+async def test_verify_with_webauthn():
+    """Test _verify_with_webauthn wraps webauthn call."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    with patch("src.app.modules.passkey.service.verify_registration_response") as mock_verify:
+        mock_verify.return_value = MagicMock(credential_id=b"test")
+
+        result = service._verify_with_webauthn(test="arg")
+
+        mock_verify.assert_called_once_with(test="arg")
+
+
+@pytest.mark.asyncio
+async def test_find_credential_by_id_fallback_decryption():
+    """Test _find_credential_by_id fallback decryption path."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_db = AsyncMock()
+    mock_cred = MagicMock()
+    mock_cred.credential_id = "enc_id"
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_cred
+    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    with patch("src.app.modules.passkey.service.get_encryption") as mock_get_enc:
+        mock_enc = MagicMock()
+        mock_enc.decrypt_credential.return_value = b"different-id"
+        mock_get_enc.return_value = mock_enc
+
+        # Use a valid base64url encoded string
+        result = await service._find_credential_by_id(mock_db, raw_id="dGVzdA==")
+
+        # Hash doesn't match, so returns None
+        assert result is None
+
+
+@pytest.mark.asyncio
+async def test_find_credential_by_id_fallback_decryption():
+    """Test _find_credential_by_id fallback decryption path."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_db = AsyncMock()
+    mock_cred = MagicMock()
+    mock_cred.credential_id = "enc_id"
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = mock_cred
+    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    # get_encryption is imported inside the function
+    with patch("src.app.core.security.encryption.get_encryption") as mock_get_enc:
+        mock_enc = MagicMock()
+        mock_enc.decrypt_credential.return_value = b"different-id"
+        mock_get_enc.return_value = mock_enc
+
+        # Use a valid base64url encoded string
+        result = await service._find_credential_by_id(mock_db, raw_id="dGVzdA==")
+
+        # Hash doesn't match, so returns None
+        assert result is None
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_response():
+    """Test _verify_authentication_response verifies WebAuthn assertion."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_cred = MagicMock()
+    mock_cred.public_key = b"enc_pubkey"
+    mock_cred.counter = 0
+
+    with patch("src.app.modules.passkey.service.verify_authentication_response") as mock_verify:
+        # get_encryption is imported inside the method
+        with patch("src.app.core.security.encryption.get_encryption") as mock_get_enc:
+            mock_enc = MagicMock()
+            mock_enc.decrypt_credential.return_value = b"pubkey"
+            mock_get_enc.return_value = mock_enc
+
+            mock_verify.return_value = MagicMock(new_sign_count=1)
+
+            # parse_authentication_credential_json is imported inside the method
+            with patch("webauthn.helpers.parse_authentication_credential_json") as mock_parse:
+                mock_parse.return_value = MagicMock()
+
+                result = service._verify_authentication_response(
+                    credential={"id": "test"},
+                    expected_challenge=b"challenge",
+                    expected_origin="http://localhost:3000",
+                    expected_rp_id="localhost",
+                    db_credential=mock_cred,
+                )
+
+                assert result.new_sign_count == 1
+
+
+@pytest.mark.asyncio
+async def test_update_credential_counter():
+    """Test _update_credential_counter updates counter and timestamp."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_db = AsyncMock()
+    mock_cred = MagicMock()
+    mock_cred.counter = 0
+    mock_cred.last_used_at = None
+
+    await service._update_credential_counter(mock_db, mock_cred, new_counter=5)
+
+    assert mock_cred.counter == 5
+    assert mock_cred.last_used_at is not None
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_get_user_for_credential():
+    """Test _get_user_for_credential returns user dict."""
+    from src.app.modules.passkey.service import PasskeyService
+    from src.app.modules.users.models import User
+
+    service = PasskeyService()
+    mock_db = AsyncMock()
+
+    mock_user = MagicMock(spec=User)
+    mock_user.id = 1
+    mock_user.name = "Test User"
+    mock_user.username = "testuser"
+    mock_user.email = "test@example.com"
+    mock_user.hashed_password = "hash"
+    mock_user.profile_image_url = None
+    mock_user.tier_id = 1
+    mock_user.tenant_id = 1
+    mock_user.is_superuser = False
+    mock_user.is_active = True
+    mock_user.is_deleted = False
+    mock_user.is_email_verified = True
+    mock_user.token_version = 1
+    mock_user.created_at = datetime.now(UTC)
+    mock_user.updated_at = datetime.now(UTC)
+    mock_user.tier = None
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = mock_user
+    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    mock_cred = MagicMock()
+    mock_cred.user_id = 1
+
+    result = await service._get_user_for_credential(mock_db, mock_cred)
+
+    assert result is not None
+    assert result["id"] == 1
+    assert result["email"] == "test@example.com"
+
+
+@pytest.mark.asyncio
+async def test_get_user_for_credential_not_found():
+    """Test _get_user_for_credential returns None when user not found."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+    mock_db = AsyncMock()
+
+    mock_result = MagicMock()
+    mock_result.unique.return_value.scalar_one_or_none.return_value = None
+    mock_db.execute = AsyncMock(return_value=mock_result)
+
+    mock_cred = MagicMock()
+    mock_cred.user_id = 999
+
+    result = await service._get_user_for_credential(mock_db, mock_cred)
+
+    assert result is None
+
+
+@pytest.mark.asyncio
+async def test_generate_auth_tokens():
+    """Test _generate_auth_tokens creates JWT tokens."""
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_user = {
+        "id": 1,
+        "username": "testuser",
+        "email": "test@example.com",
+        "tenant_id": 1,
+        "token_version": 1,
+        "tier_id": 1,
+        "tier": {"name": "Basic"},
+    }
+
+    # These are imported inside the function, so patch at the source
+    with patch("src.app.core.security.create_access_token") as mock_access:
+        with patch("src.app.core.security.create_refresh_token") as mock_refresh:
+            mock_access.return_value = "access_token_value"
+            mock_refresh.return_value = "refresh_token_value"
+
+            result = await service._generate_auth_tokens(mock_user)
+
+            assert "access_token" in result
+            assert "refresh_token" in result
+            assert result["token_type"] == "bearer"

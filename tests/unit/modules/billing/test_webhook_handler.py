@@ -4,6 +4,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.modules.billing.webhook import (
+    _db_idempotency_check,
     _try_acquire_event_lock,
     handle_checkout_session_completed,
     handle_invoice_payment_succeeded,
@@ -177,3 +178,142 @@ async def test_handle_invoice_payment_succeeded(
     assert created_record.status == "succeeded"
     assert created_record.amount_cents == 1000
     assert created_record.stripe_invoice_id == "in_123"
+
+
+# ============================================================================
+# MISSING COVERAGE TESTS - Lines 44, 52-59, 74-100, 189-190
+# ============================================================================
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.redis_client", None)
+async def test_try_acquire_event_lock_redis_unavailable(mock_db):
+    """Test fallback to DB idempotency check when Redis is unavailable (line 44)."""
+    # When redis_client is None, should fall back to DB check
+    with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
+        mock_db_check.return_value = True
+        result = await _try_acquire_event_lock("evt_fallback")
+        assert result is True
+        mock_db_check.assert_called_once_with("evt_fallback")
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.redis_client")
+async def test_try_acquire_event_lock_redis_error(mock_redis):
+    """Test Redis error triggers fallback to DB idempotency check (lines 52-59)."""
+    mock_redis.set = AsyncMock(side_effect=Exception("Redis connection failed"))
+
+    with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
+        mock_db_check.return_value = False  # DB says already processed
+        result = await _try_acquire_event_lock("evt_error")
+
+        assert result is False
+        mock_db_check.assert_called_once_with("evt_error")
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.redis_client")
+async def test_try_acquire_event_lock_redis_exception(mock_redis):
+    """Test Redis exception logs error and falls back to DB (lines 52-59)."""
+    mock_redis.set = AsyncMock(side_effect=Exception("Network error"))
+
+    with patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock) as mock_db_check:
+        mock_db_check.return_value = True
+        result = await _try_acquire_event_lock("evt_exception")
+
+        # Should fall back to DB and return True (process the event)
+        assert result is True
+
+
+@pytest.mark.asyncio
+async def test_db_idempotency_check_success():
+    """Test DB idempotency check returns True when event is new (lines 74-91)."""
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock()
+
+    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_ctx:
+        mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("src.app.modules.billing.models.WebhookEvent") as mock_event_class:
+            mock_event_instance = MagicMock()
+            mock_event_class.return_value = mock_event_instance
+            mock_db.add = AsyncMock()
+
+            result = await _db_idempotency_check("evt_new")
+
+            assert result is True
+            mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_db_idempotency_check_duplicate():
+    """Test DB idempotency check returns False when event is duplicate (lines 85-90)."""
+    from sqlalchemy.exc import IntegrityError
+
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock(side_effect=IntegrityError("duplicate", "duplicate", "duplicate"))
+    mock_db.rollback = AsyncMock()
+
+    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_ctx:
+        mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("src.app.modules.billing.models.WebhookEvent") as mock_event_class:
+            mock_event_instance = MagicMock()
+            mock_event_class.return_value = mock_event_instance
+            mock_db.add = AsyncMock()
+
+            result = await _db_idempotency_check("evt_duplicate")
+
+            assert result is False
+            mock_db.rollback.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_db_idempotency_check_failure_fails_open():
+    """Test DB idempotency check fails open when DB also fails (lines 92-100)."""
+    mock_db = AsyncMock()
+    mock_db.commit = AsyncMock(side_effect=Exception("DB connection failed"))
+
+    with patch("src.app.modules.billing.webhook.job_bypass_context") as mock_ctx:
+        mock_ctx.return_value.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_ctx.return_value.__aexit__ = AsyncMock(return_value=None)
+
+        with patch("src.app.modules.billing.models.WebhookEvent") as mock_event_class:
+            mock_event_instance = MagicMock()
+            mock_event_class.return_value = mock_event_instance
+            mock_db.add = AsyncMock()
+
+            # Should fail open - return True to allow processing
+            result = await _db_idempotency_check("evt_error")
+
+            assert result is True
+
+
+@pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.redis_client")
+async def test_handle_webhook_event_error_releases_lock(mock_redis):
+    """Test that failed webhook processing releases the lock (lines 189-190)."""
+    mock_redis.delete = AsyncMock()
+
+    mock_stripe_event = {
+        "id": "evt_error_test",
+        "type": "checkout.session.completed",
+        "data": {"object": {"id": "cs_test", "metadata": {"tenant_id": str(uuid4()), "user_id": "1", "plan_id": "1"}}},
+    }
+
+    # First call to check lock returns True (we acquired it)
+    with patch("src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock) as mock_lock:
+        mock_lock.return_value = True
+
+        # Handler raises an error
+        with patch(
+            "src.app.modules.billing.webhook.handle_checkout_session_completed",
+            side_effect=Exception("Processing failed"),
+        ):
+            with pytest.raises(Exception, match="Processing failed"):
+                await handle_webhook_event(mock_stripe_event)
+
+            # Verify lock was released on error
+            mock_redis.delete.assert_called_once()

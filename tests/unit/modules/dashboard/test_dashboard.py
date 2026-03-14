@@ -4,6 +4,9 @@ Dashboard Tests
 Unit tests for the dashboard module.
 """
 
+from datetime import UTC, datetime, timedelta
+from unittest.mock import AsyncMock, MagicMock, patch
+
 import pytest
 from fastapi import status
 
@@ -165,6 +168,371 @@ class TestDashboardService:
         assert start_date.hour == 0
         assert start_date.minute == 0
         assert start_date.second == 0
+
+
+class TestDashboardServiceDateRange:
+    """Test all date range calculations."""
+
+    @pytest.mark.asyncio
+    async def test_date_range_today(self):
+        """Test TODAY range returns start of today."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.TODAY, "tenant")
+
+        assert start.hour == 0
+        assert start.minute == 0
+        assert start.second == 0
+        assert start.microsecond == 0
+
+    @pytest.mark.asyncio
+    async def test_date_range_week(self):
+        """Test WEEK range returns 7 days."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.WEEK, "tenant")
+
+        delta = end - start
+        assert delta.days == 7
+
+    @pytest.mark.asyncio
+    async def test_date_range_month(self):
+        """Test MONTH range returns ~30 days."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.MONTH, "tenant")
+
+        delta = end - start
+        assert 29 <= delta.days <= 31
+
+    @pytest.mark.asyncio
+    async def test_date_range_quarter(self):
+        """Test QUARTER range returns ~90 days."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.QUARTER, "tenant")
+
+        delta = end - start
+        assert 89 <= delta.days <= 92
+
+    @pytest.mark.asyncio
+    async def test_date_range_year(self):
+        """Test YEAR range returns ~365 days."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.YEAR, "tenant")
+
+        delta = end - start
+        assert 364 <= delta.days <= 366
+
+    @pytest.mark.asyncio
+    async def test_date_range_all_with_min_date(self):
+        """Test ALL range uses database min date when available."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+        from sqlalchemy import func, select
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = datetime(2023, 1, 1, tzinfo=UTC)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.ALL, "tenant")
+
+        # Should use the min date from DB
+        assert start.year == 2023
+        assert start.month == 1
+        assert start.day == 1
+
+    @pytest.mark.asyncio
+    async def test_date_range_all_fallback(self):
+        """Test ALL range falls back to 365 days when no min date."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.scalar.return_value = None  # No min date
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start, end = await dashboard_service._get_date_range(db_mock, TimeRange.ALL, "tenant")
+
+        delta = end - start
+        assert delta.days == 365
+
+
+class TestUserMetrics:
+    """Test user metrics calculation."""
+
+    @pytest.mark.asyncio
+    async def test_get_user_metrics_returns_correct_structure(self):
+        """Test user metrics returns proper UserMetrics object."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        # Return tuple: (total, new, active, deleted)
+        mock_result.one.return_value = (100, 10, 50, 5)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_users == 100
+        assert result.new_users == 10
+        assert result.active_users == 50
+        assert result.deleted_users == 5
+
+    @pytest.mark.asyncio
+    async def test_get_user_metrics_with_zeros(self):
+        """Test user metrics handles zero values."""
+        from src.app.modules.dashboard.schemas import TimeRange
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (0, 0, 0, 0)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_user_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_users == 0
+        assert result.new_users == 0
+        assert result.active_users == 0
+        assert result.deleted_users == 0
+
+
+class TestRevenueMetrics:
+    """Test revenue metrics calculation."""
+
+    @pytest.mark.asyncio
+    async def test_get_revenue_metrics_with_data(self):
+        """Test revenue metrics calculates correctly with billing data."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        # Return tuple: (total_cents, subscription_count)
+        mock_result.one.return_value = (100000, 50)  # $1000, 50 subs
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_revenue_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_revenue == 1000.0  # cents / 100
+        assert result.total_subscriptions == 50
+
+    @pytest.mark.asyncio
+    async def test_get_revenue_metrics_zero_subs(self):
+        """Test revenue metrics handles zero subscriptions (avoids division by zero)."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (0, 0)  # No revenue, no subs
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_revenue_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_revenue == 0.0
+        assert result.total_subscriptions == 0
+        assert result.average_revenue_per_user == 0.0
+
+
+class TestActivityMetrics:
+    """Test activity metrics calculation."""
+
+    @pytest.mark.asyncio
+    async def test_get_activity_metrics_returns_correct_structure(self):
+        """Test activity metrics returns proper ActivityMetrics object."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        # Return tuple: (logins, api_calls, failed_auth, webhooks)
+        mock_result.one.return_value = (100, 5000, 10, 25)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_logins == 100
+        assert result.api_calls == 5000
+        assert result.failed_authentications == 10
+        assert result.webhook_deliveries == 25
+
+    @pytest.mark.asyncio
+    async def test_get_activity_metrics_with_zeros(self):
+        """Test activity metrics handles zero values."""
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+        mock_result = MagicMock()
+        mock_result.one.return_value = (0, 0, 0, 0)
+        db_mock.execute = AsyncMock(return_value=mock_result)
+
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        result = await dashboard_service._get_activity_metrics(db_mock, start, end, "tenant")
+
+        assert result.total_logins == 0
+        assert result.api_calls == 0
+        assert result.failed_authentications == 0
+        assert result.webhook_deliveries == 0
+
+
+class TestGetMetrics:
+    """Test full get_metrics flow."""
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_returns_dashboard_response(self):
+        """Test get_metrics returns complete DashboardMetricsResponse."""
+        from src.app.modules.dashboard.schemas import (
+            ActivityMetrics,
+            DashboardMetricsResponse,
+            RevenueMetrics,
+            TimeRange,
+            UserMetrics,
+        )
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+
+        # Mock _get_date_range
+        start = datetime.now(UTC) - timedelta(days=30)
+        end = datetime.now(UTC)
+
+        with patch.object(dashboard_service, "_get_date_range", return_value=(start, end)):
+            # Use AsyncMock for the metrics methods to properly await
+            with patch.object(dashboard_service, "_get_user_metrics", new_callable=AsyncMock) as user_mock:
+                with patch.object(dashboard_service, "_get_revenue_metrics", new_callable=AsyncMock) as rev_mock:
+                    with patch.object(dashboard_service, "_get_activity_metrics", new_callable=AsyncMock) as act_mock:
+                        # Set return values for the async mocks
+                        user_mock.return_value = UserMetrics(
+                            total_users=100, new_users=10, active_users=50, deleted_users=2
+                        )
+                        rev_mock.return_value = RevenueMetrics(
+                            total_revenue=1000.0,
+                            recurring_revenue=800.0,
+                            average_revenue_per_user=10.0,
+                            total_subscriptions=50,
+                        )
+                        act_mock.return_value = ActivityMetrics(
+                            total_logins=500,
+                            api_calls=10000,
+                            webhook_deliveries=100,
+                            failed_authentications=5,
+                        )
+
+                        result = await dashboard_service.get_metrics(db_mock, "tenant", TimeRange.MONTH)
+
+                        assert result.time_range == TimeRange.MONTH
+                        assert result.start_date == start
+                        assert result.end_date == end
+                        user_mock.assert_called_once()
+                        rev_mock.assert_called_once()
+                        act_mock.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_get_metrics_uses_default_time_range(self):
+        """Test get_metrics defaults to MONTH time range."""
+        from src.app.modules.dashboard.schemas import (
+            ActivityMetrics,
+            RevenueMetrics,
+            TimeRange,
+            UserMetrics,
+        )
+        from src.app.modules.dashboard.service import dashboard_service
+
+        db_mock = AsyncMock()
+
+        with patch.object(dashboard_service, "_get_date_range", return_value=(datetime.now(UTC), datetime.now(UTC))):
+            with patch.object(dashboard_service, "_get_user_metrics", new_callable=AsyncMock) as user_mock:
+                with patch.object(dashboard_service, "_get_revenue_metrics", new_callable=AsyncMock) as rev_mock:
+                    with patch.object(dashboard_service, "_get_activity_metrics", new_callable=AsyncMock) as act_mock:
+                        user_mock.return_value = UserMetrics(
+                            total_users=100, new_users=10, active_users=50, deleted_users=2
+                        )
+                        rev_mock.return_value = RevenueMetrics(
+                            total_revenue=1000.0,
+                            recurring_revenue=800.0,
+                            average_revenue_per_user=10.0,
+                            total_subscriptions=50,
+                        )
+                        act_mock.return_value = ActivityMetrics(
+                            total_logins=500,
+                            api_calls=10000,
+                            webhook_deliveries=100,
+                            failed_authentications=5,
+                        )
+
+                        # Call without time_range - should default to MONTH
+                        result = await dashboard_service.get_metrics(db_mock, "tenant")
+
+                        assert result.time_range == TimeRange.MONTH
+
+
+class TestDashboardMetricsResponse:
+    """Test DashboardMetricsResponse schema."""
+
+    def test_response_includes_all_metric_types(self):
+        """Test response contains user, revenue, and activity metrics."""
+        from src.app.modules.dashboard.schemas import (
+            ActivityMetrics,
+            DashboardMetricsResponse,
+            RevenueMetrics,
+            TimeRange,
+            UserMetrics,
+        )
+
+        now = datetime.now(UTC)
+
+        response = DashboardMetricsResponse(
+            time_range=TimeRange.MONTH,
+            start_date=now - timedelta(days=30),
+            end_date=now,
+            users=UserMetrics(total_users=100, new_users=10, active_users=50, deleted_users=2),
+            revenue=RevenueMetrics(
+                total_revenue=1000.0,
+                recurring_revenue=800.0,
+                average_revenue_per_user=10.0,
+                total_subscriptions=50,
+            ),
+            activity=ActivityMetrics(
+                total_logins=500,
+                api_calls=10000,
+                webhook_deliveries=100,
+                failed_authentications=5,
+            ),
+        )
+
+        assert isinstance(response.users, UserMetrics)
+        assert isinstance(response.revenue, RevenueMetrics)
+        assert isinstance(response.activity, ActivityMetrics)
 
 
 if __name__ == "__main__":

@@ -515,3 +515,171 @@ class TestPasskeyAuthenticationHelpers:
 
         service = PasskeyService()
         assert hasattr(service, "_generate_auth_tokens")
+
+
+# === COVERAGE TESTS: Error handling and edge cases ===
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_credential_required():
+    """Test verify_authentication requires credential."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    with pytest.raises(BadRequestException) as exc:
+        await service.verify_authentication(
+            db=AsyncMock(),
+            redis=AsyncMock(),
+            credential=None,
+            challenge_id="test-id",
+        )
+
+    assert "required" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_challenge_id_required():
+    """Test verify_authentication requires challenge_id."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    with pytest.raises(BadRequestException) as exc:
+        await service.verify_authentication(
+            db=AsyncMock(),
+            redis=AsyncMock(),
+            credential={"id": "test"},
+            challenge_id=None,
+        )
+
+    assert "challenge_id" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_raw_id_required():
+    """Test verify_authentication requires rawId or id in credential."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+
+    mock_redis = AsyncMock()
+    mock_redis.eval = AsyncMock(return_value="dGVzdA==")  # base64
+
+    # Provide credential with id but no rawId - will pass initial check
+    # Then it will try to find by id, and credential not found
+    with pytest.raises(BadRequestException) as exc:
+        await service.verify_authentication(
+            db=AsyncMock(),
+            redis=mock_redis,
+            credential={"id": "test"},  # No rawId
+            challenge_id="test-id",
+        )
+
+    # Either credential not found or credential id required depending on flow
+    assert "credential" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_user_not_found():
+    """Test verify_authentication fails when user not found for credential."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+    mock_db = AsyncMock()
+    mock_redis = AsyncMock()
+
+    mock_challenge_data = {"challenge": b"test-challenge"}
+    mock_cred = MagicMock(id=1, user_id=1, credential_id=b"cred-id", public_key=b"pub-key", counter=10)
+
+    with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+        mock_get_challenge.return_value = mock_challenge_data
+
+        with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
+            mock_find.return_value = mock_cred
+
+            with patch.object(service, "_verify_authentication_response") as mock_verify:
+                mock_verify.return_value = MagicMock(new_sign_count=11)
+
+                with patch.object(service, "_update_credential_counter", new_callable=AsyncMock):
+                    with patch.object(service, "_get_user_for_credential", new_callable=AsyncMock) as mock_get_user:
+                        mock_get_user.return_value = None  # User not found
+
+                        with pytest.raises(BadRequestException) as exc:
+                            await service.verify_authentication(
+                                db=mock_db,
+                                redis=mock_redis,
+                                credential={"id": "test", "rawId": "test", "response": {}},
+                                challenge_id="test-id",
+                            )
+
+                        assert "user" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_verify_registration_exception_handling():
+    """Test verify_registration handles exceptions from webauthn."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+    mock_db = AsyncMock()
+    mock_user = {"id": 1, "username": "testuser", "email": "test@example.com"}
+
+    mock_challenge_data = {
+        "challenge": b"test-challenge",
+        "device_type": "Test Device",
+    }
+
+    with patch.object(service, "_get_stored_challenge", new_callable=AsyncMock) as mock_get_challenge:
+        mock_get_challenge.return_value = mock_challenge_data
+
+        with patch.object(service, "_verify_with_webauthn", new_callable=MagicMock) as mock_verify:
+            mock_verify.side_effect = Exception("Verification failed")
+
+            with pytest.raises(BadRequestException) as exc:
+                await service.verify_registration(
+                    db=mock_db,
+                    user=mock_user,
+                    credential={"id": "test", "rawId": "test", "response": {}},
+                    redis=AsyncMock(),
+                )
+
+            assert "verification failed" in str(exc.value.detail).lower()
+
+
+@pytest.mark.asyncio
+async def test_verify_authentication_exception_handling():
+    """Test verify_authentication handles exceptions from webauthn."""
+    from src.app.core.exceptions.http_exceptions import BadRequestException
+    from src.app.modules.passkey.service import PasskeyService
+
+    service = PasskeyService()
+    mock_db = AsyncMock()
+    mock_redis = AsyncMock()
+
+    mock_challenge_data = {"challenge": b"test-challenge"}
+    mock_cred = MagicMock(id=1, user_id=1, credential_id=b"cred-id", public_key=b"pub-key", counter=10)
+
+    with patch.object(service, "_get_stored_auth_challenge", new_callable=AsyncMock) as mock_get_challenge:
+        mock_get_challenge.return_value = mock_challenge_data
+
+        with patch.object(service, "_find_credential_by_id", new_callable=AsyncMock) as mock_find:
+            mock_find.return_value = mock_cred
+
+            with patch.object(service, "_verify_authentication_response") as mock_verify:
+                mock_verify.side_effect = Exception("Auth verification failed")
+
+                with pytest.raises(BadRequestException) as exc:
+                    await service.verify_authentication(
+                        db=mock_db,
+                        redis=mock_redis,
+                        credential={"id": "test", "rawId": "test", "response": {}},
+                        challenge_id="test-id",
+                    )
+
+                assert "authentication failed" in str(exc.value.detail).lower()
