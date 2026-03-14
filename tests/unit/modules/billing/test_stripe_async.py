@@ -1,12 +1,21 @@
-"""P0-3: Stripe Non-Blocking Tests.
+"""Stripe tests - Unit async tests and Contract webhook tests combined.
 
-Verifies that Stripe API calls use asyncio.to_thread() for non-blocking I/O.
+This file contains:
+- Unit tests: Stripe non-blocking async pattern
+- Contract tests: Stripe webhook contract (placeholder)
 """
 
 import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
+
+from src.app.core.config import settings
+
+
+# ============================================================================
+# UNIT TESTS - Stripe Async Pattern
+# ============================================================================
 
 
 class TestStripeAsync:
@@ -50,3 +59,18 @@ class TestStripeAsync:
         from src.app.modules.billing import service
 
         assert service is not None
+
+
+# ============================================================================
+# CONTRACT TESTS - Stripe Webhooks
+# ============================================================================
+
+
+@pytest.mark.skipif(not settings.STRIPE_SECRET_KEY, reason="Stripe keys not configured")
+def test_webhook_contract():
+    """
+    Contract test for Stripe webhooks.
+    Requires stripe-mock or real keys.
+    """
+    # Placeholder for contract test
+    pass
