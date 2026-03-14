@@ -1,6 +1,5 @@
 """Task API router - HTTP handlers delegating to service layer."""
 
-
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.app.api.dependencies import get_current_user, rate_limiter_dependency
@@ -13,7 +12,12 @@ router = APIRouter(prefix="/tasks", tags=["tasks"])
 from src.app.modules.users.models import User
 
 
-@router.post("/task", response_model=Job, status_code=status.HTTP_201_CREATED, dependencies=[Depends(rate_limiter_dependency)])
+@router.post(
+    "/task",
+    response_model=Job,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(rate_limiter_dependency)],
+)
 async def create_task(
     body: TaskCreate,
     current_user: User = Depends(get_current_user),
