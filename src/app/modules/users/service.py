@@ -167,7 +167,12 @@ class UserService(BaseService[User]):
             logger.warning("Failed to cache user %s: %s", user_id_log, e)
 
     async def _invalidate_user_cache(self, user: User | dict[str, Any]) -> None:
-        """Invalidate all cache entries for a user."""
+        """Invalidate all cache entries for a user.
+
+        Avoids relying on tenant context by using tenant_id from the user payload
+        when available to build tenant-scoped cache keys safely.
+        Falls back to get_current_tenant() if tenant_id is not in user data.
+        """
         if cache.client is None:
             return
 
@@ -177,24 +182,42 @@ class UserService(BaseService[User]):
                 user_id = user["id"]
                 email = user["email"]
                 username = user["username"]
+                tenant_id = user.get("tenant_id")
             else:
                 user_id = user.id
                 email = user.email
                 username = user.username
+                tenant_id = user.tenant_id
+
+            # Fallback to get current tenant from context if tenant_id not provided
+            if tenant_id is None:
+                tenant_context = get_current_tenant()
+                if tenant_context is not None:
+                    tenant_id = tenant_context.tenant_id
 
             # Normalize to match cache keys
             email = email.lower().strip()
             username = username.lower().strip()
 
-            await cache.client.delete(
+            keys = [
                 _user_cache_key(user_id),
-                _user_email_cache_key(email),
-                _user_username_cache_key(username),
-                _user_auth_cache_key(username),
-                _user_auth_cache_key(email),  # Also invalidate email-based auth cache
                 f"user:{username}:token_version",  # Invalidate token version correctly
                 f"user:{email}:token_version",  # Also under email namespace
-            )
+            ]
+
+            # Only build tenant-scoped keys when tenant_id is available
+            if tenant_id is not None:
+                tenant_id_str = str(tenant_id)
+                keys.extend(
+                    [
+                        f"{USER_CACHE_PREFIX}:{tenant_id_str}:email:{email}",
+                        f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
+                        f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
+                        f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
+                    ]
+                )
+
+            await cache.client.delete(*keys)
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)
@@ -280,6 +303,7 @@ class UserService(BaseService[User]):
             await self.db.commit()
 
             import asyncio
+
             # Fire-and-forget task to publish the event safely from async context
             asyncio.create_task(
                 event_bus.publish(

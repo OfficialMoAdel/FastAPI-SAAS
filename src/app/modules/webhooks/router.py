@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac import Permission, requires_permission
+from src.app.core.security.encryption import encrypt_data
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.schemas import (
@@ -221,6 +222,8 @@ async def update_webhook_endpoint(
     for field, value in update_data.items():
         if isinstance(value, HttpUrl):
             value = str(value)
+        if field == "secret" and value is not None:
+            value = encrypt_data(value)
         setattr(endpoint, field, value)
 
     await db.commit()
@@ -346,15 +349,17 @@ async def test_webhook_endpoint(
 
     from src.app.core.utils.rate_limit import rate_limiter
     from src.app.modules.rate_limits.models import RateLimit
+    from src.app.modules.rate_limits.schemas import sanitize_path
 
     # Query the database directly for the tenant's rate limit for this endpoint
     tier_id = current_user.get("tier_id")
     if tier_id is None and isinstance(current_user.get("tier"), dict):
         tier_id = current_user["tier"].get("id")
 
+    rate_limit_path = sanitize_path(_WEBHOOK_TEST_RATE_LIMIT_PATH)
     stmt = select(RateLimit).where(
         RateLimit.tier_id == tier_id,
-        RateLimit.path == _WEBHOOK_TEST_RATE_LIMIT_PATH,
+        RateLimit.path == rate_limit_path,
     )
     rate_limit_result = await db.execute(stmt)
     rate_limit_config = rate_limit_result.scalar_one_or_none()

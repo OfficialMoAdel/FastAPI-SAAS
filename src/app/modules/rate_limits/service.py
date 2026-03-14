@@ -102,6 +102,11 @@ class RateLimitService(BaseService[RateLimit]):
         rate_limit_dict = rate_limit.model_dump()
         rate_limit_dict["tier_id"] = db_tier["id"]
 
+        if not rate_limit_dict.get("name"):
+            rate_limit_dict["name"] = (
+                f"{rate_limit_dict['path']}:{rate_limit_dict['limit']}:{rate_limit_dict['period']}"
+            )
+
         rate_limit_exists = await crud_rate_limits.exists(db=self.db, name=rate_limit_dict["name"])
         if rate_limit_exists:
             raise DuplicateError("name", rate_limit_dict["name"])
@@ -219,6 +224,7 @@ class RateLimitService(BaseService[RateLimit]):
             name_exists = await crud_rate_limits.exists(db=self.db, name=values.name)
             if name_exists:
                 from src.app.modules._base.exceptions import DuplicateError
+
                 raise DuplicateError("name", values.name)
 
         await crud_rate_limits.update(db=self.db, object=values, id=rate_limit_id)
