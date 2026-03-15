@@ -6,6 +6,8 @@ Tests the lru_cache-based PEM key caching for RS256 deployments.
 import logging
 from unittest.mock import MagicMock, patch
 
+import pytest
+
 logger = logging.getLogger(__name__)
 
 
@@ -117,7 +119,8 @@ class TestCacheClearUtility:
 class TestDecodeWithParsedKey:
     """Test that decode_jwt_token uses the cached parsed key."""
 
-    def test_decode_uses_parsed_key(self):
+    @pytest.mark.asyncio
+    async def test_decode_uses_parsed_key(self):
         """Verify decode_jwt_token calls _get_parsed_verification_key."""
         from src.app.core.security.jwt_utils import decode_jwt_token
 
@@ -129,7 +132,7 @@ class TestDecodeWithParsedKey:
                 with patch("src.app.core.security.jwt_utils.jwt.decode") as mock_decode:
                     mock_decode.return_value = {"sub": "user1"}
 
-                    decode_jwt_token("dummy.token.here")
+                    await decode_jwt_token("dummy.token.here")
 
                     # Verify _get_parsed_verification_key was called
                     mock_get_key.assert_called_once()

@@ -94,9 +94,12 @@ async def test_disconnect_provider_success(mock_get_service, mock_crud_sso, serv
     mock_user_service.get = AsyncMock(return_value=mock_user)
     mock_get_service.return_value = mock_user_service
 
-    await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE)
+    tenant_id = uuid4()
+    await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=tenant_id)
 
-    mock_crud_sso.delete_by_criteria.assert_awaited_once_with(db=mock_db, id=mock_connection.id)
+    mock_crud_sso.delete_by_criteria.assert_awaited_once_with(
+        db=mock_db, id=mock_connection.id, tenant_id=tenant_id
+    )
 
 
 @pytest.mark.asyncio
@@ -115,7 +118,7 @@ async def test_disconnect_provider_fails_only_method(mock_get_service, mock_crud
     mock_crud_sso.count_for_user = AsyncMock(return_value=1)  # Only 1 connection
 
     with pytest.raises(BadRequestException) as excinfo:
-        await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE)
+        await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=uuid4())
     assert "only authentication method" in str(excinfo.value)
 
 
@@ -288,6 +291,6 @@ async def test_disconnect_provider_success_with_user_check(mock_get_service, moc
     mock_crud_sso.count_for_user = AsyncMock(return_value=2)  # More than 1 connection
 
     # Should not raise
-    await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE)
+    await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=uuid4())
 
     mock_crud_sso.delete_by_criteria.assert_awaited_once()

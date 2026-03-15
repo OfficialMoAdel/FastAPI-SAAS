@@ -494,7 +494,7 @@ class APIKeyService(BaseService[APIKey]):
         # BUG FIX: When the CRUD fallback ran, `old_key` is a dict not an ORM object.
         # Use dict-aware access to prevent AttributeError.
         if isinstance(api_key, dict):
-            if api_key.get("tenant_id") != tenant_id:
+            if api_key.get("tenant_id") != tenant_id or api_key.get("user_id") != user_id:
                 raise ForbiddenException("You don't have permission to rotate this key")
             if not api_key.get("is_active"):
                 raise ForbiddenException("Cannot rotate a revoked key")
@@ -504,7 +504,7 @@ class APIKeyService(BaseService[APIKey]):
             api_key_id = api_key.get("id")
             api_key_prefix = api_key.get("key_prefix")
         else:
-            if api_key.tenant_id != tenant_id:
+            if api_key.tenant_id != tenant_id or api_key.user_id != user_id:
                 raise ForbiddenException("You don't have permission to rotate this key")
             if not api_key.is_active:
                 raise ForbiddenException("Cannot rotate a revoked key")

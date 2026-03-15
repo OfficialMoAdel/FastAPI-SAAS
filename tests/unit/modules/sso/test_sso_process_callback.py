@@ -117,6 +117,7 @@ async def test_process_callback_success(
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance
 
+    mock_crud_sso.get_by_provider_user_id = AsyncMock(return_value=MagicMock(user_id=1, id=uuid4()))
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=MagicMock(user_id=1, id=uuid4()))
     mock_crud_sso.update = AsyncMock()
 
@@ -194,6 +195,7 @@ async def test_process_callback_connect_mode(
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance
 
+    mock_crud_sso.get_by_provider_user_id = AsyncMock(return_value=None)
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=None)
     mock_crud_sso.create = AsyncMock()
 
@@ -279,6 +281,7 @@ async def test_process_callback_apple_custom_flow(
     mock_provider_instance.get_user_info.return_value = mock_user_info
     mock_get_provider.return_value = mock_provider_instance
 
+    mock_crud_sso.get_by_provider_user_id = AsyncMock(return_value=None)
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=None)
     mock_crud_sso.create = AsyncMock()
 

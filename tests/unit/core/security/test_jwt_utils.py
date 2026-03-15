@@ -126,45 +126,50 @@ class TestExtractTokenFromHeader:
 class TestDecodeJwtToken:
     """Tests for decode_jwt_token function."""
 
-    def test_valid_token_decodes(self, valid_token: str, test_secret: str) -> None:
+    @pytest.mark.asyncio
+    async def test_valid_token_decodes(self, valid_token: str, test_secret: str) -> None:
         """Should decode a valid token successfully."""
         with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
-                payload = decode_jwt_token(valid_token)
+                payload = await decode_jwt_token(valid_token)
 
         assert payload is not None
         assert payload["sub"] == "user-123"
         assert payload["tenant_id"] == "tenant-456"
 
-    def test_expired_token_returns_none(self, expired_token: str, test_secret: str) -> None:
+    @pytest.mark.asyncio
+    async def test_expired_token_returns_none(self, expired_token: str, test_secret: str) -> None:
         """Should return None for expired token."""
         with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
-                payload = decode_jwt_token(expired_token)
+                payload = await decode_jwt_token(expired_token)
 
         assert payload is None
 
-    def test_invalid_signature_returns_none(self, valid_token: str) -> None:
+    @pytest.mark.asyncio
+    async def test_invalid_signature_returns_none(self, valid_token: str) -> None:
         """Should return None for wrong secret."""
         with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value="wrong-secret"):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
-                payload = decode_jwt_token(valid_token)
+                payload = await decode_jwt_token(valid_token)
 
         assert payload is None
 
-    def test_malformed_token_returns_none(self, test_secret: str) -> None:
+    @pytest.mark.asyncio
+    async def test_malformed_token_returns_none(self, test_secret: str) -> None:
         """Should return None for malformed token."""
         with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
-                payload = decode_jwt_token("not.a.valid.token")
+                payload = await decode_jwt_token("not.a.valid.token")
 
         assert payload is None
 
-    def test_empty_token_returns_none(self, test_secret: str) -> None:
+    @pytest.mark.asyncio
+    async def test_empty_token_returns_none(self, test_secret: str) -> None:
         """Should return None for empty token."""
         with patch("src.app.core.security.jwt_utils._get_parsed_verification_key", return_value=test_secret):
             with patch("src.app.core.security.jwt_utils._get_algorithm", return_value="HS256"):
-                payload = decode_jwt_token("")
+                payload = await decode_jwt_token("")
 
         assert payload is None
 
