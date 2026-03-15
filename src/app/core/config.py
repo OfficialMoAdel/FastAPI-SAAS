@@ -174,7 +174,7 @@ class SQLiteSettings(DatabaseSettings):
 
 class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
-    MYSQL_PASSWORD: str = Field(..., description="MySQL database password - REQUIRED when using MySQL")
+    MYSQL_PASSWORD: SecretStr = Field(..., description="MySQL database password - REQUIRED when using MySQL")
     MYSQL_SERVER: str = "localhost"
     MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
@@ -185,7 +185,7 @@ class MySQLSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def MYSQL_URI(self) -> str:
-        credentials = f"{self.MYSQL_USER}:{self.MYSQL_PASSWORD}"
+        credentials = f"{self.MYSQL_USER}:{self.MYSQL_PASSWORD.get_secret_value()}"
         location = f"{self.MYSQL_SERVER}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
         return f"{credentials}@{location}"
 
@@ -212,7 +212,7 @@ class FirstUserSettings(BaseSettings):
     ADMIN_NAME: str = "admin"
     ADMIN_EMAIL: str = "admin@admin.com"
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str  # REQUIRED: Must be set via environment variable
+    ADMIN_PASSWORD: SecretStr  # REQUIRED: Must be set via environment variable
 
 
 class AuthSettings(BaseSettings):
@@ -427,7 +427,7 @@ class EmailSettings(BaseSettings):
     SMTP_HOST: str = "smtp.gmail.com"
     SMTP_PORT: int = 587
     SMTP_USER: str | None = None
-    SMTP_PASSWORD: str | None = None
+    SMTP_PASSWORD: SecretStr | None = None
     SMTP_USE_TLS: bool = True
     EMAIL_TEMPLATES_DIR: str = "src/app/templates"
 

@@ -22,7 +22,7 @@ async def create_first_user(session: AsyncSession) -> None:
         name = settings.ADMIN_NAME
         email = settings.ADMIN_EMAIL
         username = settings.ADMIN_USERNAME
-        hashed_password = get_password_hash(settings.ADMIN_PASSWORD)
+        hashed_password = get_password_hash(settings.ADMIN_PASSWORD.get_secret_value())
 
         query = select(User).filter_by(email=email)
         result = await session.execute(query)

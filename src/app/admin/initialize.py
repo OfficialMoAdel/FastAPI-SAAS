@@ -32,7 +32,12 @@ def create_admin_interface() -> CRUDAdmin | None:
             "host": settings.CRUD_ADMIN_REDIS_HOST,
             "port": settings.CRUD_ADMIN_REDIS_PORT,
             "db": settings.CRUD_ADMIN_REDIS_DB,
-            "password": settings.CRUD_ADMIN_REDIS_PASSWORD if settings.CRUD_ADMIN_REDIS_PASSWORD != "None" else None,
+            "password": (
+                settings.CRUD_ADMIN_REDIS_PASSWORD.get_secret_value()
+                if settings.CRUD_ADMIN_REDIS_PASSWORD
+                and settings.CRUD_ADMIN_REDIS_PASSWORD.get_secret_value() != "None"
+                else None
+            ),
         }
 
     admin = CRUDAdmin(
@@ -53,7 +58,7 @@ def create_admin_interface() -> CRUDAdmin | None:
         track_sessions_in_db=settings.CRUD_ADMIN_TRACK_SESSIONS,
         initial_admin={
             "username": settings.ADMIN_USERNAME,
-            "password": settings.ADMIN_PASSWORD,
+            "password": settings.ADMIN_PASSWORD.get_secret_value() if settings.ADMIN_PASSWORD else None,
         }
         if settings.ADMIN_USERNAME and settings.ADMIN_PASSWORD
         else None,

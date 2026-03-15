@@ -525,7 +525,7 @@ async def send_email_task(
                     hostname=settings.SMTP_HOST,
                     port=settings.SMTP_PORT,
                     username=settings.SMTP_USER if settings.SMTP_USER else None,
-                    password=settings.SMTP_PASSWORD if settings.SMTP_PASSWORD else None,
+                    password=settings.SMTP_PASSWORD.get_secret_value() if settings.SMTP_PASSWORD else None,
                     start_tls=settings.SMTP_USE_TLS,
                 )
 

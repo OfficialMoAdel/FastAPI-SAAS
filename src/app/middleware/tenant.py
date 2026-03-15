@@ -94,7 +94,7 @@ def is_path_exempt(path: str) -> bool:
     if path in TENANT_EXEMPT_PATHS:
         return True
     for prefix in TENANT_EXEMPT_PREFIXES:
-        if path.startswith(prefix):
+        if path == prefix or path.startswith(f"{prefix}/"):
             return True
     return False
 

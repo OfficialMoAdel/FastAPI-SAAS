@@ -144,11 +144,10 @@ return new_attempts
             # fail_closed: Raise exception and block operation (security focused, compliance)
             # Note: fail_closed requires ServiceUnavailableException to be defined
             if getattr(settings, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
-                # This would require ServiceUnavailableException to be defined
-                # For now, we log the error and continue (fail_open behavior)
-                logger.warning(
-                    "audit_log_fail_closed_not_implemented",
-                    message="AUDIT_LOG_FAILURE_MODE='fail_closed' requested but exception type not available",
+                from fastapi import HTTPException
+                raise HTTPException(
+                    status_code=503,
+                    detail="Service unavailable (Audit logging failed)"
                 )
 
     async def login(

@@ -143,13 +143,18 @@ class TestPublishLoginAudit:
 
     @pytest.mark.asyncio
     async def test_publish_audit_fail_closed_mode(self, auth_service, mock_request):
-        """Test AUDIT_LOG_FAILURE_MODE='fail_closed' logs warning but continues."""
+        """Test AUDIT_LOG_FAILURE_MODE='fail_closed' raises 503."""
+        from fastapi import HTTPException
         with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Connection failed")):
             with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     mock_settings.AUDIT_LOG_FAILURE_MODE = "fail_closed"
-                    # Should log warning and continue (fail_open behavior due to missing exception type)
-                    await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
+                    
+                    with pytest.raises(HTTPException) as exc_info:
+                        await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
+                    
+                    assert exc_info.value.status_code == 503
+                    assert "Service unavailable" in str(exc_info.value.detail)
 
 
 # ============================================================================

@@ -29,7 +29,7 @@ class EmailService:
                 host=settings.SMTP_HOST,
                 port=settings.SMTP_PORT,
                 username=settings.SMTP_USER or "",
-                password=SecretStr(settings.SMTP_PASSWORD or ""),
+                password=settings.SMTP_PASSWORD or SecretStr(""),
                 use_tls=settings.SMTP_USE_TLS,
                 from_email=settings.EMAIL_FROM_ADDRESS,
                 from_name=settings.EMAIL_FROM_NAME,
