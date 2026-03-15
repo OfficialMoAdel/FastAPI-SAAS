@@ -200,7 +200,7 @@ class MFAService:
         encrypted_secret = await self._encrypt_secret(totp_secret)
 
         # Hash backup codes for storage concurrently
-        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
+        backup_codes_hashed = list(await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes]))
 
         # Create MFA method record
         mfa_method = MFAMethod(
@@ -318,6 +318,14 @@ class MFAService:
                     mfa_method.last_used_at = datetime.now(UTC)
                     await db.commit()
 
+                # Clear lockout counter on successful verification so the user isn't
+                # locked out on their next legitimate MFA attempt.
+                if redis is not None:
+                    try:
+                        await redis.delete(f"mfa_attempts:{user_id}")
+                    except Exception:
+                        pass  # Non-critical — lockout will expire naturally
+
                 # Audit log: MFA verification success
                 try:
                     from src.app.core.events import EventPriority, event_bus
@@ -433,6 +441,14 @@ class MFAService:
             # BUG FIX: Use UTC-aware datetime (was naive)
             mfa_method.last_used_at = datetime.now(UTC)
             await db.commit()
+
+            # Clear lockout counter on successful backup code use so the user isn't
+            # locked out on their very next MFA verification attempt.
+            if redis is not None:
+                try:
+                    await redis.delete(f"mfa_attempts:{user_id}")
+                except Exception:
+                    pass  # Non-critical
 
             remaining = len(mfa_method.backup_codes)
             logger.info("mfa_backup_code_used", user_id=user_id, remaining=remaining)
@@ -653,7 +669,7 @@ class MFAService:
 
         # Generate new backup codes and hash them concurrently
         backup_codes = await self._generate_backup_codes()
-        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
+        backup_codes_hashed = list(await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes]))
 
         # Fetch model instance to update
         mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
