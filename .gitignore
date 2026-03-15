@@ -199,3 +199,4 @@ auto_test_from_report.py
 CODE_REVIEW_REPORT.md
 storage_test
 drop.py
+report.xml
