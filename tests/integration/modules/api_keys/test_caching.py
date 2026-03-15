@@ -98,10 +98,10 @@ class TestAPIKeyCachingIntegration:
         cache_key = f"api_key:{key_hash}:expired_test"
 
         # Cache with very short TTL
-        await real_redis.setex(cache_key, 1, json.dumps({"is_active": True}))
+        await real_redis.setex(cache_key, 2, json.dumps({"is_active": True}))
 
         # Wait for expiration
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.5)
 
         # Expired key should not be returned
         cached = await real_redis.get(cache_key)
@@ -183,14 +183,14 @@ class TestAPIKeyRateLimiting:
         key_id = str(uuid4())
         counter_key = f"rate_limit:api_key:{key_id}:window_test"
 
-        # Set counter with 1 second TTL
-        await real_redis.setex(counter_key, 1, "50")
+        # Set counter with short TTL
+        await real_redis.setex(counter_key, 2, "50")
 
         # Verify exists
         assert await real_redis.get(counter_key) == "50"
 
         # Wait for expiration
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.5)
 
         # Window should reset
         assert await real_redis.get(counter_key) is None

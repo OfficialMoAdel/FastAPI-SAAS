@@ -65,15 +65,15 @@ class TestUserCachingIntegration:
         user_id = str(uuid4())
         cache_key = f"user:{user_id}:ttl_test"
 
-        # Set with 1 second TTL
-        await real_redis.setex(cache_key, 1, json.dumps({"id": user_id}))
+        # Set with short TTL
+        await real_redis.setex(cache_key, 2, json.dumps({"id": user_id}))
 
         # Immediately available
         cached = await real_redis.get(cache_key)
         assert cached is not None
 
         # Wait for expiration
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.5)
 
         # Should be expired
         cached = await real_redis.get(cache_key)
@@ -235,11 +235,11 @@ class TestTokenBlacklistNegativeCaching:
         cache_key = f"token:blacklist:{token_jti}"
 
         # Set negative cache with short TTL
-        negative_cache_ttl = 1  # 1 second for testing
+        negative_cache_ttl = 2  # 2 seconds for testing
         await real_redis.setex(cache_key, negative_cache_ttl, "0")
 
         # Wait for expiration
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(2.5)
 
         # Negative cache expired - would need to check actual blacklist again
         cached = await real_redis.get(cache_key)

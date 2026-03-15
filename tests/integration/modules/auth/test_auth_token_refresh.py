@@ -155,14 +155,14 @@ class TestTokenRefreshWithCaching:
         cache_key = "auth:user:ttltest"
         user_data = {"id": 101, "username": "ttltest"}
 
-        # Set with 1 second TTL
-        await real_redis.set(cache_key, json.dumps(user_data), ex=1)
+        # Set with short TTL
+        await real_redis.set(cache_key, json.dumps(user_data), ex=2)
 
         # Verify it exists
         assert await real_redis.get(cache_key) is not None
 
         # Wait for expiration
-        await asyncio.sleep(1.1)
+        await asyncio.sleep(2.5)
 
         # Verify it's gone
         assert await real_redis.get(cache_key) is None
