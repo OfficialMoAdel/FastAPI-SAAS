@@ -210,6 +210,8 @@ async def connect_provider(
 
     tenant = get_tenant_context()
     tenant_id = tenant.id if tenant else None
+    if tenant_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
 
     existing_connection = await crud_user_sso_connections.exists_for_user(
         db=db,
@@ -255,6 +257,8 @@ async def disconnect_provider(
     """Disconnect SSO provider from account."""
     tenant = get_tenant_context()
     tenant_id = tenant.id if tenant else None
+    if tenant_id is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
 
     await sso_service.disconnect_provider(
         db=db,

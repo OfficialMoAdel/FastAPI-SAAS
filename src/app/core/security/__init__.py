@@ -217,7 +217,10 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     # This eliminates the race condition window between blacklist check and decode
     try:
         if ALGORITHM == "RS256":
-            payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            payload = await asyncio.to_thread(
+                jwt.decode, token, _get_verification_key(),
+                algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+            )
         else:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
     except JWTError:
@@ -335,7 +338,10 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
     for token in [access_token, refresh_token]:
         try:
             if ALGORITHM == "RS256":
-                payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+                payload = await asyncio.to_thread(
+                    jwt.decode, token, _get_verification_key(),
+                    algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+                )
             else:
                 payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
@@ -374,7 +380,10 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     """
     try:
         if ALGORITHM == "RS256":
-            payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            payload = await asyncio.to_thread(
+                jwt.decode, token, _get_verification_key(),
+                algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+            )
         else:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")

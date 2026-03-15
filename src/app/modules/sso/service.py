@@ -522,7 +522,7 @@ class SSOService:
             )
 
         # Delete the connection
-        await crud_user_sso_connections.delete_by_criteria(db=db, id=connection.id)
+        await crud_user_sso_connections.delete_by_criteria(db=db, id=connection.id, tenant_id=tenant_id)
 
     async def _can_disconnect(
         self,
