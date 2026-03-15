@@ -583,7 +583,7 @@ class SessionManager:
             if cursor == 0:
                 break
 
-        logger.info("ZSET migration completed. Migrated users, errors.", migrated=migrated, val=len(errors))
+        logger.info("ZSET migration completed.", migrated=migrated, errors=len(errors))
         return {"migrated": migrated, "errors": errors}
 
     async def migrate_to_hash(self, batch_size: int = 100) -> int:

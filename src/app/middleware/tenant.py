@@ -198,7 +198,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 return response
             finally:
                 # Clear application-level tenant context
-                clear_tenant_context()
+                try:
+                    clear_tenant_context()
+                except Exception as ctx_err:
+                    logger.warning("Failed to clear tenant context (optimized path): %s", ctx_err)
         else:
             # Legacy path: Acquire a connection from the pool for this request
             # Note: tenant_slug is already validated non-empty above (before connection acquisition).
@@ -265,7 +268,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
                             logger.warning("Failed to clear RLS context: %s", e)
 
                     # Clear application-level tenant context
-                    clear_tenant_context()
+                    try:
+                        clear_tenant_context()
+                    except Exception as ctx_err:
+                        logger.warning("Failed to clear tenant context (legacy path): %s", ctx_err)
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching.

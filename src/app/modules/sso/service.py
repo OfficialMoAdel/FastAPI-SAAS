@@ -212,7 +212,7 @@ class SSOService:
             except Exception as e:
                 raise BadRequestException(f"Failed to fetch user info: {str(e)}")
 
-            connection = await crud_user_sso_connections.get_by_criteria(
+            connection = await crud_user_sso_connections.get_by_provider_user_id(
                 db=db,
                 provider=provider,
                 provider_user_id=user_info.provider_user_id,
@@ -488,7 +488,7 @@ class SSOService:
         db: AsyncSession,
         user_id: int,
         provider: str,
-        tenant_id: UUID | None = None,
+        tenant_id: UUID,
     ) -> None:
         """Disconnect SSO provider from user account.
 
@@ -528,7 +528,7 @@ class SSOService:
         self,
         db: AsyncSession,
         user_id: int,
-        tenant_id: UUID | None = None,
+        tenant_id: UUID,
     ) -> bool:
         """Check if user can disconnect an SSO provider.
 

@@ -189,14 +189,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         user = getattr(request.state, "user", None)
         user_id = None
         tier_name = None
+        tenant_id = None
 
         if user:
             # Handle both ORM objects and dicts safely
             if isinstance(user, dict):
                 user_id = user.get("id")
+                tenant_id = str(user["tenant_id"]) if user.get("tenant_id") else None
                 tier_name = await self._get_user_tier_name(user)
             else:
                 user_id = getattr(user, "id", None)
+                tenant_id = str(getattr(user, "tenant_id", None) or "") or None
                 tier_name = await self._get_user_tier_name(user)
 
         # 2. If no user in state, use jwt_utils to extract/cache JWT claims
@@ -215,6 +218,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             if cached_payload:
                 user_id = cached_payload.get("sub")
                 tier_name = cached_payload.get("tier_name")
+
+        # Always try to get tenant_id from JWT payload if not already set
+        if tenant_id is None and cached_payload:
+            tenant_id = cached_payload.get("tenant_id")
 
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
         # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
@@ -238,12 +245,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 limit, period = TIER_RATE_LIMITS.get(tier_name.lower(), DEFAULT_AUTHENTICATED_LIMIT)
             else:
                 limit, period = DEFAULT_AUTHENTICATED_LIMIT
-            key = f"user:{user_id}"
+            # SECURITY FIX: Include tenant_id in key so tenants never share rate limit counters.
+            # Without this, user IDs that happen to collide across tenants share the same bucket.
+            if tenant_id:
+                key = f"tenant:{tenant_id}:user:{user_id}"
+            else:
+                key = f"user:{user_id}"
         else:
-            # Unauthenticated - use global IP-based limits
+            # Unauthenticated - use IP + path so different tenants on same IP aren't pooled.
             limit = settings.DEFAULT_RATE_LIMIT_LIMIT
             period = settings.DEFAULT_RATE_LIMIT_PERIOD
-            key = f"ip:{get_client_ip(request)}"
+            path = request.url.path
+            key = f"ip:{get_client_ip(request)}:path:{path}"
 
         return limit, period, key
 

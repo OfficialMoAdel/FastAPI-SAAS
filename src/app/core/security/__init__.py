@@ -216,7 +216,10 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     # SECURITY FIX: Decode token FIRST (local operation, no race condition)
     # This eliminates the race condition window between blacklist check and decode
     try:
-        payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+        if ALGORITHM == "RS256":
+            payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+        else:
+            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
     except JWTError:
         return None
 
@@ -331,7 +334,10 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
 
     for token in [access_token, refresh_token]:
         try:
-            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            if ALGORITHM == "RS256":
+                payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            else:
+                payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
             jti = payload.get("jti")
             if exp_timestamp is not None:
@@ -367,7 +373,10 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     Also stores the JTI-prefixed key in DB so the DB fallback can find it during Redis outages.
     """
     try:
-        payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+        if ALGORITHM == "RS256":
+            payload = await asyncio.to_thread(jwt.decode, token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+        else:
+            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         jti = payload.get("jti")
         if exp_timestamp is not None:

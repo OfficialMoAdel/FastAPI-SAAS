@@ -150,7 +150,7 @@ def extract_token_from_header(authorization: str | None) -> str | None:
     return parts[1]
 
 
-def decode_jwt_token(token: str) -> dict[str, Any] | None:
+async def decode_jwt_token(token: str) -> dict[str, Any] | None:
     """Decode and verify a JWT token without database checks.
 
     This performs cryptographic verification only:
@@ -174,13 +174,25 @@ def decode_jwt_token(token: str) -> dict[str, Any] | None:
         Decoded payload dict if valid, None if invalid/expired.
     """
     try:
+        import asyncio
+
+        alg = _get_algorithm()
         # Use pre-parsed key for better performance (especially RS256)
-        payload: dict[str, Any] = jwt.decode(
-            token,
-            _get_parsed_verification_key(),
-            algorithms=[_get_algorithm()],
-            audience=JWT_AUDIENCE,
-        )
+        if alg == "RS256":
+            payload: dict[str, Any] = await asyncio.to_thread(
+                jwt.decode,
+                token,
+                _get_parsed_verification_key(),
+                algorithms=[alg],
+                audience=JWT_AUDIENCE,
+            )
+        else:
+            payload = jwt.decode(
+                token,
+                _get_parsed_verification_key(),
+                algorithms=[alg],
+                audience=JWT_AUDIENCE,
+            )
         return payload
     except PyJWTError as e:
         logger.debug("JWT decode failed: %s", e)
@@ -225,7 +237,7 @@ async def extract_jwt_claims_to_state(request: Request) -> dict[str, Any] | None
         return None
 
     # Decode and verify
-    payload = decode_jwt_token(token)
+    payload = await decode_jwt_token(token)
 
     if payload:
         # Cache in request state for reuse

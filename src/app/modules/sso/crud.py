@@ -26,11 +26,12 @@ class CRUDUserSSOConnection(
     async def get_by_criteria(
         self,
         db: AsyncSession,
+        *,
+        tenant_id: UUID,
         id: int | None = None,
         provider: str | None = None,
         provider_user_id: str | None = None,
         user_id: int | None = None,
-        tenant_id: UUID | None = None,
     ) -> UserSSOConnection | None:
         """Get SSO connection by various criteria."""
         query = select(self.model)
@@ -49,12 +50,27 @@ class CRUDUserSSOConnection(
         result = await db.execute(query)
         return result.scalar_one_or_none()
 
+    async def get_by_provider_user_id(
+        self,
+        db: AsyncSession,
+        provider: str,
+        provider_user_id: str,
+    ) -> UserSSOConnection | None:
+        """Global lookup for SSO login by unique provider ID."""
+        query = select(self.model).where(
+            self.model.provider == provider,
+            self.model.provider_user_id == provider_user_id
+        )
+        result = await db.execute(query)
+        return result.scalar_one_or_none()
+
     async def exists_for_user(
         self,
         db: AsyncSession,
         user_id: int,
         provider: str,
-        tenant_id: UUID | None = None,
+        *,
+        tenant_id: UUID,
     ) -> bool:
         """Check if SSO connection exists for user and provider."""
         query = (
@@ -65,8 +81,7 @@ class CRUDUserSSOConnection(
                 self.model.provider == provider,
             )
         )
-        if tenant_id is not None:
-            query = query.where(self.model.tenant_id == tenant_id)
+        query = query.where(self.model.tenant_id == tenant_id)
 
         result = await db.execute(query)
         count = result.scalar()
@@ -75,8 +90,9 @@ class CRUDUserSSOConnection(
     async def count_for_user(
         self,
         db: AsyncSession,
+        *,
+        tenant_id: UUID,
         user_id: int | None = None,
-        tenant_id: UUID | None = None,
         **kwargs: Any,
     ) -> int:
         """Count SSO connections for a user."""
@@ -87,8 +103,7 @@ class CRUDUserSSOConnection(
         if user_id is not None:
             query = query.where(self.model.user_id == user_id)
 
-        if tenant_id is not None:
-            query = query.where(self.model.tenant_id == tenant_id)
+        query = query.where(self.model.tenant_id == tenant_id)
 
         result = await db.execute(query)
         return result.scalar() or 0
@@ -96,10 +111,11 @@ class CRUDUserSSOConnection(
     async def delete_by_criteria(
         self,
         db: AsyncSession,
+        *,
+        tenant_id: UUID,
         id: int | None = None,
         user_id: int | None = None,
         provider: str | None = None,
-        tenant_id: UUID | None = None,
     ) -> None:
         """Delete SSO connection by ID or by user/provider combo."""
         if id is not None:

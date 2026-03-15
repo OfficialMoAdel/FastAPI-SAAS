@@ -342,6 +342,11 @@ class ProductService(BaseService[Product]):
         if product is None:
             raise ModelNotFoundError("Product", product_id)
 
+        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
+        tenant = get_current_tenant()
+        if tenant and product.tenant_id != tenant.id:
+            raise ModelNotFoundError("Product", product_id)
+
         # P2-5: Use optimized dict construction if feature flag is enabled
         if FEATURE_BILLING_DICT_OPTIMIZATION:
             return _product_to_dict(product, product.pricing_tiers)

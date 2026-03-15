@@ -213,10 +213,28 @@ class PasskeyService:
 
     async def list_credentials(self, db: AsyncSession, user_id: int) -> list[Any]:
         """List all passkey credentials for a user."""
+        from src.app.core.tenancy.context import get_current_tenant
+        from src.app.modules.users.crud import crud_users
+
+        tenant = get_current_tenant()
+        if tenant:
+            user = await crud_users.get(db=db, id=user_id)
+            if user and user.get("tenant_id") != tenant.id:
+                raise NotFoundException(detail="Passkey credentials not found.")
+
         return await crud_passkey_credentials.get_by_user(db=db, user_id=user_id)
 
     async def delete_credential(self, db: AsyncSession, user_id: int, credential_id: int) -> None:
         """Delete a passkey credential."""
+        from src.app.core.tenancy.context import get_current_tenant
+        from src.app.modules.users.crud import crud_users
+
+        tenant = get_current_tenant()
+        if tenant:
+            user = await crud_users.get(db=db, id=user_id)
+            if user and user.get("tenant_id") != tenant.id:
+                raise NotFoundException(detail="Passkey credential not found.")
+
         cred = await crud_passkey_credentials.get_credential(db=db, id=credential_id)
         if not cred or cred.user_id != user_id:
             raise NotFoundException(detail="Passkey credential not found.")
