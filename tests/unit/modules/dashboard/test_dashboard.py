@@ -238,9 +238,9 @@ class TestDashboardServiceDateRange:
     @pytest.mark.asyncio
     async def test_date_range_all_with_min_date(self):
         """Test ALL range uses database min date when available."""
+
         from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
-        from sqlalchemy import func, select
 
         db_mock = AsyncMock()
         mock_result = MagicMock()
@@ -277,7 +277,6 @@ class TestUserMetrics:
     @pytest.mark.asyncio
     async def test_get_user_metrics_returns_correct_structure(self):
         """Test user metrics returns proper UserMetrics object."""
-        from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
         db_mock = AsyncMock()
@@ -299,7 +298,6 @@ class TestUserMetrics:
     @pytest.mark.asyncio
     async def test_get_user_metrics_with_zeros(self):
         """Test user metrics handles zero values."""
-        from src.app.modules.dashboard.schemas import TimeRange
         from src.app.modules.dashboard.service import dashboard_service
 
         db_mock = AsyncMock()
@@ -413,7 +411,6 @@ class TestGetMetrics:
         """Test get_metrics returns complete DashboardMetricsResponse."""
         from src.app.modules.dashboard.schemas import (
             ActivityMetrics,
-            DashboardMetricsResponse,
             RevenueMetrics,
             TimeRange,
             UserMetrics,

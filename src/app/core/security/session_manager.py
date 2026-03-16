@@ -114,6 +114,7 @@ class SessionManager:
             "session_id": session_id,
             "device_info": device_info,
             "created_at": now.isoformat(),
+            "last_accessed": now.isoformat(),
         }
 
         invalidated_sessions: list[dict[str, Any]] = []
@@ -612,6 +613,9 @@ class SessionManager:
         match_pattern = f"{self.SESSION_KEY_PREFIX}*"
 
         async for key in self._redis_client.scan_iter(match=match_pattern):
+            if isinstance(key, bytes):
+                key = key.decode("utf-8")
+
             # Skip if it's already a v2 key (though prefix should prevent this if distinct)
             if key.startswith(self.SESSION_HASH_PREFIX):
                 continue

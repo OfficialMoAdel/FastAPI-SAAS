@@ -17,7 +17,6 @@ from src.app.modules.user_preferences.models import UserPreferences
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
 from tests.conftest import MockUser
 
-
 # ============================================================================
 # FIXTURES
 # ============================================================================

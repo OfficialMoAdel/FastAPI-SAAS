@@ -15,7 +15,6 @@ import src.app.modules
 from src.app.modules.users.schemas import UserRead
 from tests.conftest import MockUser
 
-
 # ============================================================================
 # FIXTURE TESTS
 # ============================================================================

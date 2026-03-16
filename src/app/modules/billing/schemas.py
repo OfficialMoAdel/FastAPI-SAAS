@@ -320,13 +320,35 @@ class BillingRecordRead(BaseRead):
 # =============================================================================
 
 
+from urllib.parse import urlparse
+
+from pydantic import AnyHttpUrl, model_validator
+
+from src.app.core.config import settings
+
+
 class CheckoutCreate(BaseCreate):
     """Schema for initiating a checkout session."""
 
     plan_id: int
     billing_interval: BillingInterval
-    success_url: Annotated[str, Field(max_length=2000)]
-    cancel_url: Annotated[str, Field(max_length=2000)]
+    success_url: AnyHttpUrl
+    cancel_url: AnyHttpUrl
+
+    @model_validator(mode="after")
+    def validate_urls(self) -> "CheckoutCreate":
+        frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
+        if not frontend_url:
+            return self  # If no frontend URL configured, skip validation
+
+        parsed_frontend = urlparse(frontend_url)
+        for field_name in ["success_url", "cancel_url"]:
+            url = getattr(self, field_name)
+            if url:
+                parsed_url = urlparse(str(url))
+                if parsed_url.netloc != parsed_frontend.netloc:
+                    raise ValueError(f"{field_name} must match frontend domain")
+        return self
 
 
 class CheckoutSession(BaseCreate):

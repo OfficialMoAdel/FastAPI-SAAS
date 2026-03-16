@@ -32,12 +32,15 @@ if TYPE_CHECKING:
     from redis.asyncio import Redis
 logger = structlog.get_logger(__name__)
 
+import asyncio
+
 # L1 In-Memory Cache for RBAC permissions (R2-HYBRID MED-2)
 # - maxsize: 500 role-permission sets (covers most deployments)
 # - ttl: 5 seconds (balance between freshness and performance)
-# - Thread-safe: cachetools TTLCache is safe for async context
+# - Thread-safe: Access protected by _L1_RBAC_CACHE_LOCK to prevent dictionary iteration bugs
 # - Key format: "{tenant_id}:{role_id}" -> list of permission dicts
 _L1_RBAC_CACHE: TTLCache[str, list[dict[str, Any]]] = TTLCache(maxsize=500, ttl=5.0)
+_L1_RBAC_CACHE_LOCK = asyncio.Lock()
 
 
 class RoleService:
@@ -184,7 +187,8 @@ class RoleService:
 
         # L1: Check in-memory cache first (fastest path)
         try:
-            cached_perms = _L1_RBAC_CACHE.get(l1_cache_key)
+            async with _L1_RBAC_CACHE_LOCK:
+                cached_perms = _L1_RBAC_CACHE.get(l1_cache_key)
             if cached_perms is not None:
                 # L1 hit - reconstruct Permission objects
                 permissions = self._deserialize_permissions(cached_perms)
@@ -211,7 +215,8 @@ class RoleService:
 
                     # Populate L1 cache
                     try:
-                        _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
+                        async with _L1_RBAC_CACHE_LOCK:
+                            _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
                     except Exception as e:
                         logger.warning("RBAC L1 cache write error: %s", e)
 
@@ -257,7 +262,8 @@ class RoleService:
         # risks propagating a stale empty list if permissions are added shortly after.
         if perm_dicts:
             try:
-                _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
+                async with _L1_RBAC_CACHE_LOCK:
+                    _L1_RBAC_CACHE[l1_cache_key] = perm_dicts
             except Exception as e:
                 logger.warning("RBAC L1 cache write error: %s", e)
 
@@ -322,7 +328,8 @@ class RoleService:
 
         # Clear L1 cache first (always)
         try:
-            _L1_RBAC_CACHE.pop(l1_cache_key, None)
+            async with _L1_RBAC_CACHE_LOCK:
+                _L1_RBAC_CACHE.pop(l1_cache_key, None)
             logger.debug(
                 "RBAC L1 cache INVALIDATED",
                 role_id=role_id,
@@ -360,9 +367,10 @@ class RoleService:
         # Clear all L1 cache entries for this tenant
         try:
             tenant_prefix = f"{self.tenant_id}:"
-            keys_to_remove = [k for k in _L1_RBAC_CACHE.keys() if k.startswith(tenant_prefix)]
-            for key in keys_to_remove:
-                _L1_RBAC_CACHE.pop(key, None)
+            async with _L1_RBAC_CACHE_LOCK:
+                keys_to_remove = [k for k in _L1_RBAC_CACHE.keys() if k.startswith(tenant_prefix)]
+                for key in keys_to_remove:
+                    _L1_RBAC_CACHE.pop(key, None)
             logger.debug(
                 "RBAC L1 cache INVALIDATED ALL",
                 tenant_id=self.tenant_id,

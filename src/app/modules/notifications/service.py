@@ -377,10 +377,10 @@ class NotificationService:
                     current_time_only = now.time()
 
                     if start_time < end_time:
-                        # Same day range (e.g., 22:00 - 07:00)
+                        # Same-day range (e.g., 09:00 - 17:00, start < end)
                         in_quiet_hours = start_time <= current_time_only < end_time
                     else:
-                        # Cross-day range (e.g., 22:00 - 07:00)
+                        # Cross-day range (e.g., 22:00 - 07:00, start > end, spans midnight)
                         in_quiet_hours = current_time_only >= start_time or current_time_only < end_time
 
                     if in_quiet_hours:

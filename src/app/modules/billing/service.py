@@ -539,6 +539,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
+        # SECURITY FIX: Enforce tenant isolation
+        tenant = get_current_tenant()
+        if tenant and subscription.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_user_subscriptions.update(db=self.db, object=update_data, id=subscription_id)
@@ -626,6 +631,12 @@ class BillingRecordService(BaseService[BillingRecord]):
         record = await crud_billing_records.get(db=self.db, id=record_id)
         if record is None:
             raise ModelNotFoundError("BillingRecord", record_id)
+
+        # SECURITY FIX: Enforce tenant isolation
+        tenant = get_current_tenant()
+        if tenant and record.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("BillingRecord", record_id)
+
         return record
 
     async def get_user_records(

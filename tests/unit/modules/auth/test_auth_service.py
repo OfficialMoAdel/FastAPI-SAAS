@@ -450,7 +450,10 @@ class TestAuthServiceEmailFlows:
             await auth_service.send_verification_email("test@example.com", mock_db)
 
             # Check token created and stored
-            mock_token_cls.assert_called_with(user_id=1)
+            mock_token_cls.assert_called()
+            assert mock_token_cls.call_args[1]["user_id"] == 1
+            assert "token" in mock_token_cls.call_args[1]
+
             mock_db.add.assert_called_with(mock_token_instance)
             mock_db.commit.assert_called()
 

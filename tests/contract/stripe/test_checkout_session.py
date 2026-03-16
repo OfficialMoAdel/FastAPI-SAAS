@@ -24,11 +24,12 @@ class TestCheckoutSessionContract:
     @pytest.fixture
     def checkout_create_data(self):
         """Valid checkout creation request."""
+        frontend = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else "https://example.com"
         return CheckoutCreate(
             plan_id=1,
             billing_interval="monthly",
-            success_url="https://example.com/success?session_id={CHECKOUT_SESSION_ID}",
-            cancel_url="https://example.com/cancel",
+            success_url=f"{frontend}/success?session_id={{CHECKOUT_SESSION_ID}}",
+            cancel_url=f"{frontend}/cancel",
         )
 
     @pytest.fixture
@@ -187,7 +188,7 @@ class TestCheckoutSessionContract:
         success_url = checkout_create_data.success_url
 
         # Must be valid URL
-        assert success_url.startswith("https://") or success_url.startswith("http://")
+        assert str(success_url).startswith("https://") or str(success_url).startswith("http://")
         # Can contain {CHECKOUT_SESSION_ID} placeholder
         # This is optional but recommended
 
@@ -197,7 +198,7 @@ class TestCheckoutSessionContract:
         cancel_url = checkout_create_data.cancel_url
 
         # Must be valid URL
-        assert cancel_url.startswith("https://") or cancel_url.startswith("http://")
+        assert str(cancel_url).startswith("https://") or str(cancel_url).startswith("http://")
 
     @pytest.mark.asyncio
     async def test_client_reference_id_format(self):
@@ -307,11 +308,12 @@ class TestCheckoutSessionLive:
                 "stripe_price_id_yearly": test_price_id,
             }
 
+            frontend = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else "https://example.com"
             data = CheckoutCreate(
                 plan_id=1,
                 billing_interval="monthly",
-                success_url="https://example.com/success",
-                cancel_url="https://example.com/cancel",
+                success_url=f"{frontend}/success",
+                cancel_url=f"{frontend}/cancel",
             )
 
             try:

@@ -117,17 +117,29 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         if token_type.lower() != "bearer" or not token_value:
             return None
 
-        token_data = await verify_token(token_value, TokenType.ACCESS, db)
-        if token_data is None:
-            return None
+        # Check if JWT was already decoded by RateLimitMiddleware using jwt_utils
+        from src.app.core.security.jwt_utils import get_cached_jwt_payload
+        cached_payload = get_cached_jwt_payload(request)
 
-        # Use token_data directly instead of calling get_current_user
+        if cached_payload:
+            username_or_email = cached_payload.get("sub")
+            payload_version = cached_payload.get("token_version")
+            if not username_or_email:
+                return None
+        else:
+            token_data = await verify_token(token_value, TokenType.ACCESS, db)
+            if token_data is None:
+                return None
+            username_or_email = token_data.username_or_email
+            payload_version = token_data.token_version if hasattr(token_data, "token_version") else None
+
+        # Use username_or_email directly instead of calling get_current_user
         # which would re-verify the token (2nd Redis + JWT decode)
         user_service = UserService(db)
-        if "@" in token_data.username_or_email:
-            user = await user_service.get_user_auth_info(email=token_data.username_or_email)
+        if "@" in username_or_email:
+            user = await user_service.get_user_auth_info(email=username_or_email)
         else:
-            user = await user_service.get_user_auth_info(username=token_data.username_or_email)
+            user = await user_service.get_user_auth_info(username=username_or_email)
 
         if not user:
             return None
@@ -140,7 +152,6 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         # SECURITY FIX: Validate token_version to reject revoked sessions.
         # Mirrors the check performed by get_current_user so that a password change
         # or forced logout also invalidates tokens on optional-auth routes.
-        payload_version = token_data.token_version if hasattr(token_data, "token_version") else None
         if payload_version is not None:
             user_version = user.get("token_version", 0)
             if payload_version != user_version:

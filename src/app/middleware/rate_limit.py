@@ -95,7 +95,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
         # Check if IP is whitelisted and should bypass rate limiting
         if settings.IP_WHITELIST_BYPASS_RATE_LIMIT:
-            is_whitelisted = getattr(request.state, "ip_whitelisted", False)
+            if hasattr(request.state, "ip_whitelisted"):
+                is_whitelisted = request.state.ip_whitelisted
+            else:
+                logger.warning(
+                    "RateLimitMiddleware: ip_whitelisted attribute not set. "
+                    "Ensure IPFilterMiddleware is enabled and ordered before RateLimitMiddleware."
+                )
+                is_whitelisted = False
+
             if is_whitelisted:
                 # Skip rate limiting for whitelisted IPs
                 whitelisted_response: Response = await call_next(request)
@@ -252,11 +260,13 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             else:
                 key = f"user:{user_id}"
         else:
-            # Unauthenticated - use IP + path so different tenants on same IP aren't pooled.
+            # Unauthenticated - use IP + tenant so different tenants on same IP aren't pooled.
             limit = settings.DEFAULT_RATE_LIMIT_LIMIT
             period = settings.DEFAULT_RATE_LIMIT_PERIOD
-            path = request.url.path
-            key = f"ip:{get_client_ip(request)}:path:{path}"
+            if tenant_id:
+                key = f"tenant:{tenant_id}:ip:{get_client_ip(request)}"
+            else:
+                key = f"ip:{get_client_ip(request)}"
 
         return limit, period, key
 

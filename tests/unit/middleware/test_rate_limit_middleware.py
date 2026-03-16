@@ -25,7 +25,6 @@ from src.app.core.utils.rate_limit import reset_rate_limiter
 from src.app.main import app
 from src.app.middleware.rate_limit import RateLimitMiddleware
 
-
 # =============================================================================
 # Unit Tests: Rate Limit Middleware
 # =============================================================================

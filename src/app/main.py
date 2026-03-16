@@ -152,8 +152,12 @@ app = create_application(
 )
 
 # Middleware stack (LIFO - last added runs first on request)
-# Request flow:  GZip → IPFilter → AttackDetection → Security → BodyLimit → Tenant → RateLimit → RequestID → Handler
-# Response flow: Handler → RequestID → RateLimit → Tenant → BodyLimit → Security → AttackDetection → IPFilter → GZip
+# Request flow:
+#   GZip → QueryProfiler → IPFilter → AttackDetection → BodyLimit
+#     → Security → Tenant → RateLimit → RequestID → Handler
+# Response flow:
+#   Handler → RequestID → RateLimit → Tenant → Security
+#     → BodyLimit → AttackDetection → IPFilter → QueryProfiler → GZip
 #
 # Key ordering decisions:
 # - RequestID: Added first = innermost (closest to handler for accurate tracing)

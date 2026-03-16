@@ -13,7 +13,6 @@ import pytest
 from src.app.modules._base import ValidationError
 from src.app.modules.storage.interfaces import StorageResult
 
-
 # ============================================================================
 # UNIT TESTS - Image Service
 # ============================================================================

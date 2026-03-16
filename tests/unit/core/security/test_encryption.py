@@ -4,7 +4,6 @@ Tests follow TDD approach - these tests define the expected behavior
 for the CredentialEncryption class implementation.
 """
 
-import logging
 
 import pytest
 from cryptography.fernet import Fernet

@@ -12,10 +12,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from src.app.api.dependencies import async_get_db, get_current_tenant, get_current_user
 
 # Import the router to test
 from src.app.modules.checkouts.router import router as checkouts_router
-from src.app.api.dependencies import get_current_user, get_current_tenant, async_get_db
 
 MOCK_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 MOCK_NOW = datetime.now(UTC)
@@ -41,11 +41,15 @@ MOCK_SUBSCRIPTION = {
 }
 MOCK_SUBSCRIPTION_CANCELED = {**MOCK_SUBSCRIPTION, "status": "canceled"}
 
+from src.app.core.config import settings as app_settings
+
+_frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+
 VALID_CHECKOUT_PAYLOAD = {
     "plan_id": 1,
     "billing_interval": "monthly",
-    "success_url": "https://example.com/success",
-    "cancel_url": "https://example.com/cancel",
+    "success_url": f"{_frontend}/success",
+    "cancel_url": f"{_frontend}/cancel",
 }
 
 

@@ -5,11 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
-from httpx import Response
 
 from src.app.modules.billing.schemas import StripeSettingsRead, StripeSettingsReadFull
 from src.app.modules.configurations.stripe_router import router as stripe_config_router
-
 
 # ============================================================================
 # Fixtures
@@ -98,7 +96,6 @@ def test_route_count():
 
 def test_response_models():
     """Test that endpoints have correct response models."""
-    from src.app.modules.billing.schemas import StripeSettingsRead, StripeSettingsReadFull
 
     # Find routes and check response models
     for route in stripe_config_router.routes:
@@ -118,9 +115,6 @@ def test_response_models():
 @pytest.mark.asyncio
 async def test_get_stripe_configuration_returns_defaults_when_none():
     """Test GET returns default values when no settings exist."""
-    from src.app.modules.configurations.stripe_router import get_stripe_configuration
-    from src.app.modules.billing.service import get_stripe_settings_service
-    from unittest.mock import AsyncMock, patch, MagicMock
 
     # Create mock service
     mock_service = MagicMock()
@@ -143,8 +137,6 @@ def test_get_endpoint_requires_manage_billing_permission(client):
 
 def test_get_endpoint_with_proper_dependencies():
     """Test GET endpoint with mocked dependencies."""
-    from src.app.modules.configurations.stripe_router import get_stripe_configuration
-    from unittest.mock import AsyncMock, MagicMock, patch
 
     # Test the logic for None case - returns default dict
     default_result = {
@@ -194,7 +186,6 @@ def test_webhook_endpoint_exists(client):
 
 def test_webhook_missing_signature_returns_400(client):
     """Test webhook returns 400 when signature header is missing."""
-    from unittest.mock import patch, AsyncMock, MagicMock
 
     # Mock redis to avoid actual Redis calls
     mock_redis = AsyncMock()
@@ -213,15 +204,12 @@ def test_webhook_missing_signature_returns_400(client):
 @pytest.mark.asyncio
 async def test_webhook_logic_missing_signature():
     """Test webhook logic for missing signature."""
-    from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
-    from fastapi import BackgroundTasks
-    from unittest.mock import MagicMock, AsyncMock, patch
-    import json
 
     # Test the header parameter exists and has alias
     # stripe_signature: Annotated[str | None, Header(alias="stripe-signature")]
     # This verifies the parameter configuration
     from inspect import signature
+
     from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
 
     sig = signature(handle_stripe_webhooks)
@@ -233,8 +221,9 @@ async def test_webhook_logic_missing_signature():
 
 def test_webhook_signature_header_parameter():
     """Test that webhook endpoint requires stripe-signature header."""
-    from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
     from inspect import signature
+
+    from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
 
     sig = signature(handle_stripe_webhooks)
     params = {p.name: p for p in sig.parameters.values()}
@@ -262,8 +251,9 @@ def test_webhook_idempotency_check():
 
 def test_webhook_uses_background_tasks():
     """Test that webhook uses background tasks for processing."""
-    from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
     from inspect import signature
+
+    from src.app.modules.configurations.stripe_router import handle_stripe_webhooks
 
     sig = signature(handle_stripe_webhooks)
     params = {p.name: p for p in sig.parameters.values()}
@@ -355,7 +345,6 @@ def test_get_returns_full_schema_with_derived_fields():
 
 def test_webhook_endpoint_signature_requirement():
     """Test webhook properly validates signature requirement."""
-    from unittest.mock import patch, AsyncMock, MagicMock
 
     # Mock everything needed
     mock_redis = AsyncMock()
@@ -368,7 +357,6 @@ def test_webhook_endpoint_signature_requirement():
 
 def test_all_stripe_settings_fields_in_response():
     """Test that StripeSettingsReadFull includes all expected fields."""
-    from src.app.modules.billing.schemas import StripeSettingsReadFull
 
     # Verify fields exist in the schema
     fields = StripeSettingsReadFull.model_fields

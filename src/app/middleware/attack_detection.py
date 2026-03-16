@@ -264,7 +264,11 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             async def receive():
                                 return {"type": "http.request", "body": body, "more_body": False}
 
-                            request._receive = receive
+                            # Using request._receive (private API) as no public alternative exists.
+                            try:
+                                request._receive = receive
+                            except AttributeError:
+                                logger.error("Failed to reinject request body - request._receive not available")
 
                             # Scan raw bytes directly — no UTF-8 decode needed
                             self._check_for_patterns(body, "request_body", detected_attacks)

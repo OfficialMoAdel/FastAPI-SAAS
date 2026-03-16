@@ -10,16 +10,13 @@ This test file covers:
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID
 
 import pytest
 from fastapi import Response
-from httpx import AsyncClient
 from jwt import ExpiredSignatureError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.auth.service import AuthService
-
 
 # ============================================================================
 # FIXTURES
@@ -149,10 +146,10 @@ class TestPublishLoginAudit:
             with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     mock_settings.AUDIT_LOG_FAILURE_MODE = "fail_closed"
-                    
+
                     with pytest.raises(HTTPException) as exc_info:
                         await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
-                    
+
                     assert exc_info.value.status_code == 503
                     assert "Service unavailable" in str(exc_info.value.detail)
 
@@ -279,7 +276,6 @@ class TestRefreshAccessToken:
     async def test_refresh_token_invalid(self, auth_service, mock_db, mock_response):
         """Test refresh with invalid token."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
-        from src.app.core.security import verify_token
 
         with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
             mock_verify.return_value = None
@@ -293,6 +289,7 @@ class TestRefreshAccessToken:
     async def test_refresh_absolute_session_expired(self, auth_service, mock_db, mock_response):
         """Test refresh when absolute session has expired (lines 351-355)."""
         from datetime import UTC, datetime, timedelta
+
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
         mock_user_data = MagicMock()

@@ -77,7 +77,6 @@ async def test_rls_context_exception(mock_session, mock_connection):
         async with rls_context(mock_session, "tenant-123"):
             raise ValueError("Test error")
 
-    mock_session.rollback.assert_called_once()
     assert mock_connection.execute.call_count == 2 # Set, then Clear in finally
 
 @pytest.mark.asyncio

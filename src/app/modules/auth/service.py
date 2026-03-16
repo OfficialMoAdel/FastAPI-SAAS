@@ -30,7 +30,12 @@ from src.app.core.security import (
     verify_token,
 )
 from src.app.core.tenancy.context import get_tenant_context
-from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken
+from src.app.modules.auth.models import (
+    EmailVerificationToken,
+    PasswordResetToken,
+    generate_reset_token,
+    generate_verification_token,
+)
 from src.app.modules.mfa.service import MFAService
 from src.app.modules.users.crud import crud_users
 from src.app.modules.users.models import User
@@ -289,7 +294,7 @@ return new_attempts
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,  # Always secure - refresh tokens are high-value
+            secure=is_production,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -403,7 +408,7 @@ return new_attempts
             key="refresh_token",
             value=new_refresh_token,
             httponly=True,
-            secure=True,  # Always secure - refresh tokens are high-value
+            secure=is_production,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -642,15 +647,18 @@ return new_attempts
 
         # Always return success to prevent email enumeration
         if user:
+            import hashlib
+            raw_token = generate_reset_token()
+            hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create password reset token (expires in 1 hour)
-            reset_token = PasswordResetToken(user_id=user["id"])
+            reset_token = PasswordResetToken(user_id=user["id"], token=hashed_token)
             db.add(reset_token)
             await db.commit()
             await db.refresh(reset_token)
 
             logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
 
-            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={reset_token.token}"
+            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
 
             # BUG FIX: Previously published directly to "notification.send" with keys
             # `template_name` and `context`. The only subscriber requires `notification_id`,
@@ -714,7 +722,10 @@ return new_attempts
         # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
         # Without this lock, two concurrent requests with the same token could both
         # pass the is_valid check before either marks the token as used.
-        result = await db.execute(select(PasswordResetToken).where(PasswordResetToken.token == token).with_for_update())
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode()).hexdigest()
+        stmt = select(PasswordResetToken).where(PasswordResetToken.token == hashed_token).with_for_update()
+        result = await db.execute(stmt)
         reset_token = result.scalar_one_or_none()
 
         if not reset_token:
@@ -792,15 +803,16 @@ return new_attempts
         user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
 
         if user and not user.get("is_email_verified", False):
-            # Create verification token (defaults handle generation)
-            token_model = EmailVerificationToken(user_id=user["id"])
+            import hashlib
+            raw_token = generate_verification_token()
+            hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
+            # Create verification token
+            token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token)
             db.add(token_model)
             await db.commit()
             await db.refresh(token_model)
 
-            verification_token = token_model.token
-
-            verification_link = f"{settings.FRONTEND_URL}/verify-email?token={verification_token}"
+            verification_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
 
             # BUG FIX: Use NotificationService for correctly shaped events
             from uuid import UUID as _UUID
@@ -849,8 +861,10 @@ return new_attempts
         UnauthorizedException
             If token is invalid or expired
         """
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode()).hexdigest()
         # Find token in database
-        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == token).with_for_update()
+        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == hashed_token).with_for_update()
         result = await db.execute(stmt)
         verification_token = result.scalar_one_or_none()
 

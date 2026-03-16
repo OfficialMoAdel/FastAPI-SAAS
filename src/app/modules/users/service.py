@@ -567,6 +567,14 @@ class UserService(BaseService[User]):
         if not db_user:
             raise ModelNotFoundError("User", username)
 
+        # SECURITY FIX: Cross-Tenant IDOR check - confirm the user belongs to the current tenant.
+        # Without this check, a superuser from Tenant A could delete a same-username user in Tenant B.
+        from src.app.core.tenancy.context import get_current_tenant
+        current_tenant = get_current_tenant()
+        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+        if current_tenant is not None and user_tenant_id != current_tenant.id:
+            raise ModelNotFoundError("User", username)
+
         if username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException()
 

@@ -38,12 +38,12 @@ class LogSanitizer:
         ),
         # API keys (key-value)
         (
-            re.compile(r"(?i)(api[_-]?key|apikey)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"),
+            re.compile(r"(?i)(api[_-]?key|apikey)['\"]?\s*[:=]\s*['\"]?([^'\"\s,}]+)['\"]?"),
             r"\1=[REDACTED]",
         ),
         # Secrets/tokens/passwords
         (
-            re.compile(r"(?i)(secret|token|password|passwd|pwd)[\"']?\s*[:=]\s*[\"']?([^\"'\s,}]+)[\"']?"),
+            re.compile(r"(?i)(secret|token|password|passwd|pwd)['\"]?\s*[:=]\s*['\"]?([^'\"\s,}]+)['\"]?"),
             r"\1=[REDACTED]",
         ),
         # PostgreSQL URLs (sync and async)
@@ -88,7 +88,7 @@ class LogSanitizer:
         ),
         # AWS Secret Keys
         (
-            re.compile(r"(?i)(aws_secret[_]?access[_]?key)[\"']?\s*[:=]\s*[\"']?([A-Za-z0-9/+=]{40})[\"']?"),
+            re.compile(r"(?i)(aws_secret[_]?access[_]?key)['\"]?\s*[:=]\s*['\"]?([A-Za-z0-9/+=]{40})['\"]?"),
             r"\1=[REDACTED]",
         ),
         # Stripe Keys
@@ -103,7 +103,7 @@ class LogSanitizer:
         ),
         # Generic Authorization header
         (
-            re.compile(r"(?i)(authorization[\"']?\s*[:=]\s*[\"']?)[^\"'\s,}]+"),
+            re.compile(r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?)[^'\"\s,}]+"),
             r"\1[REDACTED]",
         ),
     ]

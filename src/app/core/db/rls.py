@@ -193,9 +193,9 @@ async def rls_context(
         yield session
 
     except Exception:
-        # Rollback before clearing RLS context to avoid "current transaction is
-        # aborted" errors when calling RESET on a failed transaction
-        await session.rollback()
+        # Let the upstream context manager (async_get_db) handle the rollback
+        # to avoid "current transaction is aborted" errors when calling RESET
+        # on a failed transaction or attempting double rollbacks.
         raise
 
     finally:

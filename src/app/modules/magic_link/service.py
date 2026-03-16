@@ -278,10 +278,13 @@ class MagicLinkService:
             token: Magic link token.
             user_id: User ID for logging.
         """
+        from urllib.parse import quote
+
         from src.app.core.utils import queue
 
-        # Build magic link URL
-        magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={token}"
+        # Build magic link URL. URL-encode the token to guard against any special
+        # characters in future token formats and prevent URL truncation or injection.
+        magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
 
         # Enqueue via ARQ if available
         if queue.pool:

@@ -63,7 +63,6 @@ class PasswordResetToken(Base):
         nullable=False,
         unique=True,
         index=True,
-        default_factory=generate_reset_token,
     )
 
     expires_at: Mapped[datetime] = mapped_column(
@@ -145,7 +144,6 @@ class EmailVerificationToken(Base):
         nullable=False,
         unique=True,
         index=True,
-        default_factory=generate_verification_token,
     )
 
     expires_at: Mapped[datetime] = mapped_column(

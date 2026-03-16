@@ -10,7 +10,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-
 # ============================================================================
 # CONTRACT TESTS - Endpoint Existence
 # ============================================================================

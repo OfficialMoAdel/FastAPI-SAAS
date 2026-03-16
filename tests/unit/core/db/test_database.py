@@ -15,7 +15,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.db.rls import RLS_TENANT_VAR, restore_rls_context
 from src.app.core.utils import cache
 
-
 # =============================================================================
 # Tests from test_database.py
 # =============================================================================

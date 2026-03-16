@@ -197,7 +197,7 @@ async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, 
 async def test_billing_record_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "amount_cents": 1000})
-    mock_crud.get = AsyncMock(return_value={"id": 1, "amount_cents": 1000})
+    mock_crud.get = AsyncMock(return_value={"id": 1, "amount_cents": 1000, "tenant_id": mock_tenant.id})
     mock_crud.get_multi = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 1})
 
     service = BillingRecordService(mock_db)

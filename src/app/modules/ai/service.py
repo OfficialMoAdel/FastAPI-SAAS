@@ -14,10 +14,6 @@ from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.ai.unified_errors import SessionLimitExceededError
-
-logger = get_logger(__name__)
-
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
 from src.app.modules.ai.ollama_client import OllamaClient, OllamaError, get_ollama_client
@@ -28,6 +24,9 @@ from src.app.modules.ai.schemas import (
     ChatSessionCreate,
     ChatSessionUpdate,
 )
+from src.app.modules.ai.unified_errors import SessionLimitExceededError
+
+logger = get_logger(__name__)
 
 # T096: Token estimation (4 chars per token)
 DEFAULT_CONTEXT_WINDOW = 8192  # Default context window size in tokens

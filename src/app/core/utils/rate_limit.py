@@ -92,7 +92,7 @@ class RateLimiter:
 
         return False, current_count
 
-    async def is_rate_limited(self, db: AsyncSession, user_id: int, path: str, limit: int, period: int) -> bool:
+    async def is_rate_limited(self, db: AsyncSession, user_id: int | str, path: str, limit: int, period: int) -> bool:
         sanitized_path = sanitize_path(path)
         key = f"{user_id}:{sanitized_path}"
         is_limited, _ = await self.check_rate_limit(key, limit, period)

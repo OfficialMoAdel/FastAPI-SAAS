@@ -124,10 +124,12 @@ class FileService:
         # Acquire a distributed per-tenant upload lock to prevent concurrent
         # quota races. Uses Redis SET NX (atomic compare-and-set).
         lock_key = f"upload_lock:{tenant_id}"
+        lock_acquired = False
         if cache.client:
             acquired = await cache.client.set(lock_key, "1", nx=True, ex=30)
             if not acquired:
                 raise QuotaExceededError("Another upload is currently in progress")
+            lock_acquired = True
 
         # Upload to storage
         result = await provider.upload(file, storage_path, mime_type)
@@ -202,8 +204,9 @@ class FileService:
             await provider.delete(storage_path)
             raise
         finally:
-            # Always release the lock regardless of success or failure
-            if cache.client:
+            # Only release the lock if we successfully acquired it.
+            # Do NOT delete if we never acquired it — that would release another request's lock.
+            if lock_acquired and cache.client:
                 await cache.client.delete(lock_key)
 
     async def get_file(self, tenant_id: UUID, file_id: int) -> File | None:

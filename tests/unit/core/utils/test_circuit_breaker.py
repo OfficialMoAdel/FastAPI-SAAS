@@ -26,7 +26,6 @@ from src.app.core.utils.circuit_breaker import (
     circuit_breaker,
 )
 
-
 # =============================================================================
 # Unit Tests: Basic Circuit Breaker Functionality
 # =============================================================================

@@ -10,14 +10,13 @@ This file consolidates tests from:
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from redis.asyncio import ConnectionPool
 from fastapi import Request
+from redis.asyncio import ConnectionPool
 
 from src.app.core import redis_factory, setup
 from src.app.core.config import settings
 from src.app.core.utils import cache as cache_module
 from src.app.core.utils.cache import cache, get_with_lock
-
 
 # =============================================================================
 # Tests from test_cache_lock.py

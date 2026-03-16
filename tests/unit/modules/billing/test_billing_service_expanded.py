@@ -123,8 +123,10 @@ async def test_checkout_service_create_session(
     mock_to_thread.return_value = mock_session
 
     service = CheckoutService(mock_db)
+    from src.app.core.config import settings as app_settings
+    frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
     data = CheckoutCreate(
-        plan_id=1, billing_interval="monthly", success_url="http://success", cancel_url="http://cancel"
+        plan_id=1, billing_interval="monthly", success_url=f"{frontend}/success", cancel_url=f"{frontend}/cancel"
     )
 
     result = await service.create_session(user_id=1, user_email="test@example.com", data=data)

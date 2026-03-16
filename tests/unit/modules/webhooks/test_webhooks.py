@@ -16,7 +16,6 @@ from src.app.core.worker.functions import deliver_webhook_task
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.service import WebhookService
 
-
 # =============================================================================
 # Fixtures (combined from all files)
 # =============================================================================

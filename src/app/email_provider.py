@@ -118,14 +118,17 @@ class SMTPProvider(EmailProvider):
             if message.reply_to:
                 msg["Reply-To"] = message.reply_to
 
-            # Attach HTML content
-            html_part = MIMEText(message.html_content, "html")
-            msg.attach(html_part)
-
-            # Attach plain text content if provided
+            # Attach plain text content FIRST — multipart/alternative parts are ordered
+            # from least-preferred to most-preferred (RFC 2046 §5.1.4). The email client
+            # renders the LAST part it understands, so text/plain must precede text/html
+            # to ensure HTML is the preferred rendering.
             if message.text_content:
                 text_part = MIMEText(message.text_content, "plain")
                 msg.attach(text_part)
+
+            # Attach HTML content LAST — this is the preferred/canonical form
+            html_part = MIMEText(message.html_content, "html")
+            msg.attach(html_part)
 
             # Attach attachments if provided
             if message.attachments:
