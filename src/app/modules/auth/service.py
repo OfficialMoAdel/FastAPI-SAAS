@@ -36,7 +36,6 @@ from src.app.modules.auth.models import (
     generate_reset_token,
     generate_verification_token,
 )
-from src.app.modules.mfa.service import MFAService
 from src.app.modules.users.crud import crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.service import get_user_service
@@ -236,7 +235,8 @@ return new_attempts
         await redis.delete(login_attempts_key)
 
         # Check if MFA is enabled for this user
-        mfa_service = MFAService()
+        from src.app.modules.mfa.service import get_mfa_service
+        mfa_service = get_mfa_service()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
         if mfa_enabled:

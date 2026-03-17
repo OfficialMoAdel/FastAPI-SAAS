@@ -185,8 +185,7 @@ app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses a
 
 if admin:
     try:
-        if hasattr(settings, "ADMIN_ENABLE") and settings.ADMIN_ENABLE:
-            app.mount("/admin", admin)  # type: ignore[arg-type]
+        app.mount("/admin", admin)  # type: ignore[arg-type]
     except Exception as e:
         logger.warning("Failed to mount admin interface", error=e)
 

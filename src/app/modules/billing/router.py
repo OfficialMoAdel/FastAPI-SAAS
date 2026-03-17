@@ -89,8 +89,8 @@ async def stripe_webhook(
         None, verify_webhook_signature, payload, sig_header, webhook_secret
     )
 
-    # Handle event in background task (idempotency is enforced atomically in webhook worker)
-    background_tasks.add_task(handle_webhook_event, event, background_tasks)
+    # Handle event directly so that exceptions propagate and Stripe can retry
+    await handle_webhook_event(event, background_tasks)
 
     return {"status": "success"}
 

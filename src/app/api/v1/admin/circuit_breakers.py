@@ -6,13 +6,15 @@ including health summaries, state inspection, and reset operations.
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
+from src.app.api.dependencies import get_current_superuser
 from src.app.core.resilience.registry import get_registry
 
 router = APIRouter(
     prefix="/circuit-breakers",
     tags=["admin", "circuit-breakers"],
+    dependencies=[Depends(get_current_superuser)],
 )
 
 

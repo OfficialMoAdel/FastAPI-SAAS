@@ -1,7 +1,8 @@
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 
+from src.app.api.dependencies import get_current_superuser
 from src.app.core.job_monitoring import get_job_monitor
 from src.app.schemas.job import (
     DLQItemResponse,
@@ -11,7 +12,11 @@ from src.app.schemas.job import (
     JobSummaryResponse,
 )
 
-router = APIRouter(prefix="/jobs", tags=["admin", "jobs"])
+router = APIRouter(
+    prefix="/jobs",
+    tags=["admin", "jobs"],
+    dependencies=[Depends(get_current_superuser)],
+)
 
 
 @router.get("/summary", response_model=JobSummaryResponse)

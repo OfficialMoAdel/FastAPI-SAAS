@@ -26,12 +26,20 @@ def test_client():
     """Test client for circuit breaker router without tenant middleware."""
     # Create a minimal FastAPI app with just the circuit breaker router
     from fastapi import FastAPI
+    from unittest.mock import MagicMock
+
+    from src.app.api.dependencies import get_current_superuser
 
     app = FastAPI()
     # The tests expect the full path /api/v1/admin/circuit-breakers/...
     # The router provides /circuit-breakers
     # So we need to mount it under /api/v1/admin
     app.include_router(router, prefix="/api/v1/admin")
+
+    # Override the superuser dependency so integration tests don't need real auth
+    mock_superuser = MagicMock()
+    mock_superuser.is_superuser = True
+    app.dependency_overrides[get_current_superuser] = lambda: mock_superuser
 
     with TestClient(app) as client:
         yield client

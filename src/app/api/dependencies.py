@@ -119,11 +119,12 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
         # Check if JWT was already decoded by RateLimitMiddleware using jwt_utils
         from src.app.core.security.jwt_utils import get_cached_jwt_payload
+
         cached_payload = get_cached_jwt_payload(request)
 
         if cached_payload:
             username_or_email = cached_payload.get("sub")
-            payload_version = cached_payload.get("token_version")
+            payload_version = cached_payload.get("token_version", 0)
             if not username_or_email:
                 return None
         else:
@@ -131,7 +132,11 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
             if token_data is None:
                 return None
             username_or_email = token_data.username_or_email
-            payload_version = token_data.token_version if hasattr(token_data, "token_version") else None
+            payload_version = (
+                token_data.token_version
+                if hasattr(token_data, "token_version") and token_data.token_version is not None
+                else 0
+            )
 
         # Use username_or_email directly instead of calling get_current_user
         # which would re-verify the token (2nd Redis + JWT decode)
@@ -152,10 +157,9 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         # SECURITY FIX: Validate token_version to reject revoked sessions.
         # Mirrors the check performed by get_current_user so that a password change
         # or forced logout also invalidates tokens on optional-auth routes.
-        if payload_version is not None:
-            user_version = user.get("token_version", 0)
-            if payload_version != user_version:
-                return None
+        user_version = user.get("token_version", 0)
+        if payload_version != user_version:
+            return None
 
         # Verify tenant context
         current_tenant = get_tenant_context()

@@ -177,7 +177,9 @@ class TestLogin:
                 mock_auth.return_value = None  # Invalid credentials - tests the coercion path
 
                 with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                    with patch("src.app.modules.auth.service.MFAService"):
+                    mock_mfa_svc = MagicMock()
+                    mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
+                    with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_svc):
                         # Should handle the bytes coercion and proceed
                         try:
                             await auth_service.login(
@@ -206,7 +208,9 @@ class TestLogin:
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                with patch("src.app.modules.auth.service.MFAService"):
+                mock_mfa_svc = MagicMock()
+                mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
+                with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_svc):
                     with pytest.raises(Exception) as exc_info:
                         await auth_service.login(
                             "inactiveuser", "password", mock_response, mock_request, mock_db, mock_redis
@@ -236,11 +240,9 @@ class TestLogin:
             mock_auth.return_value = mock_user
 
             with patch.object(auth_service, "_publish_login_audit", new_callable=AsyncMock):
-                with patch("src.app.modules.auth.service.MFAService") as mock_mfa_service:
-                    mock_mfa_instance = MagicMock()
-                    mock_mfa_service.return_value = mock_mfa_instance
-                    mock_mfa_instance.is_mfa_enabled = AsyncMock(return_value=True)
-
+                mock_mfa_instance = MagicMock()
+                mock_mfa_instance.is_mfa_enabled = AsyncMock(return_value=True)
+                with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_instance):
                     with patch("src.app.modules.auth.service.MFAPendingTokenManager") as mock_token_manager:
                         mock_manager_instance = MagicMock()
                         mock_token_manager.return_value = mock_manager_instance
