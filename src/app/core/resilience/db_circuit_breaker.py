@@ -72,19 +72,13 @@ async def execute_query_with_circuit_breaker(
         # No fallback available
         raise RuntimeError("Database circuit breaker is OPEN and no fallback available")
 
-    # FIXED: Corrected HALF_OPEN state transition logic
-    # Previous bug: checked state == HALF_OPEN AND _state == OPEN (always false)
-    # The HALF_OPEN state requires single-request testing - allow one operation through
+    # HALF_OPEN state: allow one test request through.
+    # When the request completes, record_success() or record_failure()
+    # will transition the circuit to CLOSED or OPEN respectively.
+    # NOTE: No manual _state manipulation is needed here — the circuit
+    # is already in HALF_OPEN and will self-transition on the next outcome.
     if current_state == CircuitState.HALF_OPEN:
-        # In HALF_OPEN state, we allow only one test request
-        logger.debug("Database circuit HALF_OPEN - allowing test request")
-        # Handle HALF_OPEN transition manually so record_success works
-        if db_circuit._state == CircuitState.OPEN:
-            async with db_circuit._lock:
-                if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
-                    db_circuit._state = CircuitState.HALF_OPEN
-        # If we succeed, record_success() will transition to CLOSED
-        # If we fail, record_failure() will transition back to OPEN
+        logger.debug("Database circuit HALF_OPEN — allowing test request")
 
     # Execute query
     try:
@@ -154,11 +148,10 @@ async def execute_transaction_with_circuit_breaker(
             logger.error("Database circuit OPEN, aborting transaction after attempts", attempt=attempt)
             break
 
-        # Handle HALF_OPEN transition manually
-        if current_state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
-            async with db_circuit._lock:
-                if db_circuit.state == CircuitState.HALF_OPEN and db_circuit._state == CircuitState.OPEN:
-                    db_circuit._state = CircuitState.HALF_OPEN
+        # HALF_OPEN: allow the request through. record_success/failure will
+        # handle the state transition — no manual _state update is needed.
+        if current_state == CircuitState.HALF_OPEN:
+            logger.debug("Database circuit HALF_OPEN — allowing test transaction")
 
         try:
             # Execute operations

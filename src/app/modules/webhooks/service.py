@@ -434,10 +434,29 @@ class WebhookService:
             delivery_id = delivery.id
 
             def enqueue_retry(session) -> None:
+                # BUG FIX: asyncio.create_task() requires being called from within a running
+                # coroutine context. SQLAlchemy's sync after_commit event fires synchronously
+                # and may not have a running loop on the calling thread.
+                # Safe approach: get the running loop and schedule the coroutine on it.
                 import asyncio
 
-                # Background task to enqueue to avoid blocking the commit thread
-                asyncio.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+                try:
+                    loop = asyncio.get_running_loop()
+                    # We are inside an async context (common when using asyncio+SQLAlchemy 2.0)
+                    loop.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+                except RuntimeError:
+                    # No running event loop in this thread — use run_coroutine_threadsafe
+                    try:
+                        loop = asyncio.get_event_loop()
+                        asyncio.run_coroutine_threadsafe(
+                            self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop
+                        )
+                    except Exception as loop_err:
+                        logger.error(
+                            "webhook_retry_enqueue_failed",
+                            delivery_id=str(delivery_id),
+                            error=str(loop_err),
+                        )
 
             event.listen(self.db.sync_session, "after_commit", enqueue_retry, once=True)
 

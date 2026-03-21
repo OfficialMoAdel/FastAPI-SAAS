@@ -56,12 +56,19 @@ def create_admin_interface() -> CRUDAdmin | None:
         enforce_https=settings.ENVIRONMENT == EnvironmentOption.PRODUCTION,
         track_events=settings.CRUD_ADMIN_TRACK_EVENTS,
         track_sessions_in_db=settings.CRUD_ADMIN_TRACK_SESSIONS,
-        initial_admin={
-            "username": settings.ADMIN_USERNAME,
-            "password": settings.ADMIN_PASSWORD.get_secret_value() if settings.ADMIN_PASSWORD else None,
-        }
-        if settings.ADMIN_USERNAME and settings.ADMIN_PASSWORD
-        else None,
+        initial_admin=(
+            {
+                "username": settings.ADMIN_USERNAME,
+                # BUG FIX: get_secret_value() is called here explicitly so we can also check
+                # that the secret is non-empty. SecretStr("") is truthy, so the outer
+                # `and settings.ADMIN_PASSWORD` guard would pass even for empty passwords.
+                "password": settings.ADMIN_PASSWORD.get_secret_value(),
+            }
+            if settings.ADMIN_USERNAME
+            and settings.ADMIN_PASSWORD
+            and settings.ADMIN_PASSWORD.get_secret_value()  # BUG FIX: reject empty string
+            else None
+        ),
     )
 
     register_admin_views(admin)

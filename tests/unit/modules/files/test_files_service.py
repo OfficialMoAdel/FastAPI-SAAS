@@ -6,7 +6,7 @@ from uuid import uuid4
 import pytest
 
 from src.app.modules.files.schemas import FileUpdate
-from src.app.modules.files.service import FileEntityNotFoundError, FileService, QuotaExceededError
+from src.app.modules.files.service import FileEntityNotFoundError, FileService, FileTypeNotAllowedError, QuotaExceededError
 
 
 @pytest.fixture
@@ -100,7 +100,7 @@ async def test_upload_file_type_not_allowed(file_service, mock_storage_service):
     mock_settings.allowed_file_types = ["image/png"]
     mock_storage_service.get_settings_or_raise.return_value = mock_settings
 
-    with pytest.raises(QuotaExceededError, match="File type text/plain not allowed"):
+    with pytest.raises(FileTypeNotAllowedError, match="text/plain"):
         await file_service.upload_file(
             tenant_id=tenant_id,
             user_id=1,

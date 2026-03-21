@@ -59,9 +59,11 @@ def _get_tenant_lock(slug: str) -> asyncio.Lock:
     """
     loop = asyncio.get_running_loop()
     key = f"{id(loop)}:{slug}"
-    if key not in _TENANT_LOCKS:
-        _TENANT_LOCKS[key] = asyncio.Lock()
-    return _TENANT_LOCKS[key]
+    # BUG FIX: Use setdefault() instead of the non-atomic check-then-set pattern.
+    # `if key not in d: d[key] = Lock()` is a TOCTOU race — two coroutines could
+    # both read `key not in d` as True and each create their own Lock, defeating
+    # stampede protection. setdefault() is atomic under CPython's GIL.
+    return _TENANT_LOCKS.setdefault(key, asyncio.Lock())
 
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(

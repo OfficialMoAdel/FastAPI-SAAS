@@ -496,7 +496,13 @@ def audit_action(action: str, entity_type: str) -> Callable:
                     except Exception as e:
                         logger.error("audit_publish_failed", error=str(e), action=action)
 
-                asyncio.create_task(_publish_audit_event())
+                try:
+                    loop = asyncio.get_running_loop()
+                    loop.create_task(_publish_audit_event())
+                except RuntimeError:
+                    # No running event loop (e.g., called from sync context in tests).
+                    # Run the coroutine directly as a best-effort fallback.
+                    await _publish_audit_event()
 
             return result
 

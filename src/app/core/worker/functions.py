@@ -34,7 +34,15 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
     """
     # Convert string to UUID if needed (orjson deserializes UUID as string)
     if isinstance(delivery_id, str):
-        delivery_id = UUID(delivery_id)
+        # BUG FIX: Wrap UUID conversion to provide a clear error on malformed input.
+        # Previously, a bare ValueError from UUID() would surface with no context.
+        try:
+            delivery_id = UUID(delivery_id)
+        except ValueError as e:
+            raise ValueError(
+                f"Invalid UUID format for delivery_id: {delivery_id!r}. "
+                "Expected a valid UUID string (e.g. '550e8400-e29b-41d4-a716-446655440000')."
+            ) from e
 
     # First, get tenant_id from delivery record (bypass needed for lookup)
     async with job_bypass_context("Fetching tenant_id for webhook delivery") as db:

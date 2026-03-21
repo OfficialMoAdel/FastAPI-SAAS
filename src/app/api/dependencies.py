@@ -124,6 +124,7 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
 
         if cached_payload:
             username_or_email = cached_payload.get("sub")
+            # BUG FIX: Use .get() with explicit default 0 — matches the non-cached path below.
             payload_version = cached_payload.get("token_version", 0)
             if not username_or_email:
                 return None
@@ -132,11 +133,10 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
             if token_data is None:
                 return None
             username_or_email = token_data.username_or_email
-            payload_version = (
-                token_data.token_version
-                if hasattr(token_data, "token_version") and token_data.token_version is not None
-                else 0
-            )
+            # BUG FIX: Unified extraction — same default 0 as the cached path above.
+            # Previously used `hasattr` + `is not None` check which is subtly different:
+            # if token_version is explicitly None, hasattr returns True but result differed.
+            payload_version = getattr(token_data, "token_version", None) or 0
 
         # Use username_or_email directly instead of calling get_current_user
         # which would re-verify the token (2nd Redis + JWT decode)

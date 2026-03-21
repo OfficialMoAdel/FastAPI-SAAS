@@ -38,6 +38,12 @@ class QuotaExceededError(Exception):
     pass
 
 
+class FileTypeNotAllowedError(ValueError):
+    """Raised when the uploaded file's MIME type is not permitted by tenant settings."""
+
+    pass
+
+
 class FileEntityNotFoundError(Exception):
     """Raised when file entity is not found in database."""
 
@@ -99,7 +105,9 @@ class FileService:
 
         # Check file type
         if settings.allowed_file_types and mime_type not in settings.allowed_file_types:
-            raise QuotaExceededError(f"File type {mime_type} not allowed. Allowed: {settings.allowed_file_types}")
+            raise FileTypeNotAllowedError(
+                f"File type '{mime_type}' is not allowed. Permitted types: {settings.allowed_file_types}"
+            )
 
         # Generate unique storage path
         file_uuid = uuid.uuid4()
@@ -602,6 +610,7 @@ def get_file_service(db: AsyncSession = Depends(async_get_db)) -> FileService:
 __all__ = [
     "FileService",
     "QuotaExceededError",
+    "FileTypeNotAllowedError",
     "FileEntityNotFoundError",
     "get_file_service",
 ]

@@ -145,8 +145,12 @@ class TenantService(BaseService[Tenant]):
             tenant_id = await redis_client.get(slug_key)
 
             if tenant_id:
-                # Now get the full tenant data by ID
-                cached = await redis_client.get(_get_cache_key(tenant_id.decode()))
+                # Now get the full tenant data by ID.
+                # BUG FIX: cache.client is configured with decode_responses=True,
+                # so Redis already returns str, not bytes. Calling .decode() on a
+                # str raises AttributeError, silently breaking all slug cache hits
+                # and forcing every slug lookup to fall through to the database.
+                cached = await redis_client.get(_get_cache_key(str(tenant_id)))
                 if cached:
                     result: dict[str, Any] = json_loads(cached)
                     return result

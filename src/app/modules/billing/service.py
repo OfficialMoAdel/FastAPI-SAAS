@@ -134,7 +134,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
         if not tenant.is_active:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
 
-        settings = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
+        stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
 
         update_data = data.model_dump(exclude_unset=True)
 
@@ -146,7 +146,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
         update_data["updated_at"] = datetime.now(UTC)
 
-        if settings is None:
+        if stripe_settings_record is None:
             # Create new settings
             update_data["tenant_id"] = tenant.id
             # Create object must be a Pydantic model for FastCRUD
@@ -159,8 +159,8 @@ class StripeSettingsService(BaseService[StripeSettings]):
             return dict(create_result) if create_result else {}
         else:
             # Update existing settings
-            await crud_stripe_settings.update(db=self.db, object=update_data, id=settings["id"])
-            update_result = await crud_stripe_settings.get(db=self.db, id=settings["id"])
+            await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
+            update_result = await crud_stripe_settings.get(db=self.db, id=stripe_settings_record["id"])
             return dict(update_result) if update_result else {}
 
 

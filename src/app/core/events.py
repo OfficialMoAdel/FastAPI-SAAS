@@ -94,12 +94,17 @@ class EventBus:
         Sequence numbers are monotonically increasing per event type,
         enabling consumers to detect gaps and process events in order.
 
+        Returns 0 if Redis is not configured (ordering not guaranteed).
+        Returns -1 on Redis error (sentinel for unexpected failure — consumers
+        should log/alert on negative sequence numbers).
+
         Args:
             event_name: Name of the event type
 
         Returns
         -------
-            Next sequence number (starting from 1)
+            Next sequence number (starting from 1), 0 if Redis unavailable,
+            or -1 on Redis error.
         """
         if not self._redis_client:
             return 0  # No ordering guarantee without Redis
@@ -114,10 +119,13 @@ class EventBus:
                 error=str(e),
             )
             logger.warning(
-                "Falling back to local sequence counter - ordering guarantees compromised",
+                "Falling back to -1 sentinel — ordering guarantees compromised",
                 event_name=event_name,
             )
-            return 0
+            # BUG FIX: Return -1 (not 0) so consumers can distinguish between
+            # 'no Redis configured' (0) and 'Redis error occurred' (-1).
+            # Previously both returned 0, making error cases invisible to consumers.
+            return -1
 
     def subscribe(self, event_name: str) -> Callable:
         """Decorator to subscribe a handler to an event.
