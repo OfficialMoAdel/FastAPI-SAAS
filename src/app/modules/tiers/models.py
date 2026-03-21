@@ -7,7 +7,7 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from src.app.core.db.database import Base
 
 if TYPE_CHECKING:
-    from src.app.app.modules.rate_limits.models import RateLimit
+    from src.app.modules.rate_limits.models import RateLimit
 
 
 class Tier(Base):

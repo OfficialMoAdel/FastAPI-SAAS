@@ -93,6 +93,9 @@ class UserRead(BaseRead):
     profile_image_url: str
     tier_id: int | None
     tenant_id: UUID
+    is_superuser: bool = False
+    is_email_verified: bool = False
+    is_active: bool = True
 
 
 class UserCreate(UserBase, BaseCreate):

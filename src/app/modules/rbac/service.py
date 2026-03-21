@@ -448,6 +448,14 @@ class RoleService:
         # Invalidate cache for this role
         await self._invalidate_role_cache(role_id)
 
+        # Invalidate user permission caches for affected users
+        affected_users_stmt = select(UserRole.user_id).where(
+            and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
+        )
+        affected_users_result = await self.db.execute(affected_users_stmt)
+        for user_id in affected_users_result.scalars().all():
+            await invalidate_user_permissions_cache(user_id, self.tenant_id)
+
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
         role = await self.get_role(role_id)
@@ -477,6 +485,14 @@ class RoleService:
 
             # Invalidate cache for this role
             await self._invalidate_role_cache(role_id)
+
+            # Invalidate user permission caches for affected users
+            affected_users_stmt = select(UserRole.user_id).where(
+                and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
+            )
+            affected_users_result = await self.db.execute(affected_users_stmt)
+            for user_id in affected_users_result.scalars().all():
+                await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
         """Assign a role to a user within the current tenant.

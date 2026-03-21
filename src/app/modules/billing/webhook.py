@@ -188,6 +188,19 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
                 await redis_client.delete(f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
             except Exception as redis_e:
                 logger.error("Failed to release webhook event lock:", redis_e=redis_e)
+
+        # Also remove from DB to allow retries if DB fallback was used
+        from sqlalchemy import delete
+
+        from src.app.core.worker.rls_context import job_bypass_context
+        from src.app.modules.billing.models import WebhookEvent
+        try:
+            async with job_bypass_context("Webhook DB unlock on error") as db:
+                await db.execute(delete(WebhookEvent).where(WebhookEvent.event_id == event_id))
+                await db.commit()
+        except Exception as db_err:
+            logger.error("Failed to release DB webhook event lock:", db_err=str(db_err))
+
         raise
 
     return {"status": "success"}
@@ -238,9 +251,10 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     if stripe_subscription_id:
         try:
             stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id)
-            # Access Stripe subscription period timestamps with .get or default to 0
-            current_period_start = datetime.fromtimestamp(stripe_sub.get("current_period_start", 0), UTC)
-            current_period_end = datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC)
+            # Access Stripe subscription period timestamps with .get or default to current time
+            now_ts = int(datetime.now(UTC).timestamp())
+            current_period_start = datetime.fromtimestamp(stripe_sub.get("current_period_start") or now_ts, UTC)
+            current_period_end = datetime.fromtimestamp(stripe_sub.get("current_period_end") or now_ts, UTC)
 
             # Determine billing interval from Stripe subscription
             interval = "month"
@@ -283,8 +297,12 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     # SECURITY: Ensure all timestamps are timezone-aware (UTC)
                     update_data: dict[str, Any] = {
                         "status": stripe_sub.get("status"),
-                        "current_period_start": datetime.fromtimestamp(stripe_sub.get("current_period_start", 0), UTC),
-                        "current_period_end": datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC),
+                        "current_period_start": datetime.fromtimestamp(
+                            stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
+                        ),
+                        "current_period_end": datetime.fromtimestamp(
+                            stripe_sub.get("current_period_end") or int(datetime.now(UTC).timestamp()), UTC
+                        ),
                         "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                     }
                     canceled_at = stripe_sub.get("canceled_at")
@@ -323,9 +341,11 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         race_update_data: dict[str, Any] = {
                             "status": stripe_sub.get("status"),
                             "current_period_start": datetime.fromtimestamp(
-                                stripe_sub.get("current_period_start", 0), UTC
+                                stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
                             ),
-                            "current_period_end": datetime.fromtimestamp(stripe_sub.get("current_period_end", 0), UTC),
+                            "current_period_end": datetime.fromtimestamp(
+                                stripe_sub.get("current_period_end") or int(datetime.now(UTC).timestamp()), UTC
+                            ),
                             "cancel_at_period_end": stripe_sub.get("cancel_at_period_end", False),
                         }
                         canceled_at = stripe_sub.get("canceled_at")
@@ -418,15 +438,16 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
 
         # M-04: Explicitly downgrade tenant to free tier if canceled/expired
         if new_status in ("canceled", "expired"):
+            from sqlalchemy import func
+
             from src.app.modules.billing.crud import crud_subscription_plans
             from src.app.modules.tenants.crud import crud_tenants
 
             # Find the free plan
-            # BUG FIX: Use exact match instead of ilike("%free%") which would match
-            # unintended plans like "Freedom Plan" or "Carefree Plan".
+            # BUG FIX: Use exact match and lower case for case-insensitivity
             free_plan_stmt = (
                 select(crud_subscription_plans.model)
-                .where(crud_subscription_plans.model.name == "free")
+                .where(func.lower(crud_subscription_plans.model.name) == "free")
                 .limit(1)
             )
             free_plan_result = await db.execute(free_plan_stmt)
@@ -489,15 +510,16 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         )
 
         # M-04: Explicitly downgrade tenant to free tier
+        from sqlalchemy import func
+
         from src.app.modules.billing.crud import crud_subscription_plans
         from src.app.modules.tenants.crud import crud_tenants
 
         # Find the free plan
-        # BUG FIX: Use exact match instead of ilike("%free%") which would match
-        # unintended plans like "Freedom Plan" or "Carefree Plan".
+        # BUG FIX: Use exact match and lower case for case-insensitivity
         free_plan_stmt = (
             select(crud_subscription_plans.model)
-            .where(crud_subscription_plans.model.name == "free")
+            .where(func.lower(crud_subscription_plans.model.name) == "free")
             .limit(1)
         )
         free_plan_result = await db.execute(free_plan_stmt)
@@ -680,10 +702,7 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             stripe_subscription_id = invoice.get("subscription")
         except stripe.error.StripeError as e:
             logger.error("Error retrieving invoice", error=e)
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail=f"Failed to retrieve invoice {stripe_invoice_id} from Stripe",
-            )
+            raise ValueError(f"Failed to retrieve invoice {stripe_invoice_id} from Stripe") from e
 
     if not stripe_subscription_id:
         logger.warning("Could not determine subscription for charge", val=charge["id"])

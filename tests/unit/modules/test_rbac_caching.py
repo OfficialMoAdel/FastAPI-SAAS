@@ -229,7 +229,10 @@ class TestRBACCacheInvalidation:
         mock_result_exists = MagicMock()
         mock_result_exists.scalar_one_or_none.return_value = None  # Not yet assigned
 
-        mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_exists]
+        mock_result_affected = MagicMock()
+        mock_result_affected.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_exists, mock_result_affected]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
             mock_settings.RBAC_USE_REDIS_CACHE = True
@@ -270,7 +273,10 @@ class TestRBACCacheInvalidation:
         mock_result_role_perm = MagicMock()
         mock_result_role_perm.scalar_one_or_none.return_value = mock_role_perm
 
-        mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_role_perm]
+        mock_result_affected = MagicMock()
+        mock_result_affected.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_result_role, mock_result_perm, mock_result_role_perm, mock_result_affected]
 
         with patch("src.app.modules.rbac.service.settings") as mock_settings:
             mock_settings.RBAC_USE_REDIS_CACHE = True

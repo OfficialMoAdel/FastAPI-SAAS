@@ -1,6 +1,5 @@
 """Notification models for email delivery tracking and template management."""
 
-import enum
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Optional
@@ -19,19 +18,13 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.core.db.models import UUIDMixin
+from src.app.core.db.models import NotificationStatus, UUIDMixin
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
     from src.app.modules.users.models import User
 
 
-class NotificationStatus(str, enum.Enum):
-    """Status of notification delivery."""
-
-    PENDING = "pending"
-    SENT = "sent"
-    FAILED = "failed"
 
 
 class Notification(Base, UUIDMixin):

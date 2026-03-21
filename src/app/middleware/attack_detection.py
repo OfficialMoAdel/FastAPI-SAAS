@@ -54,75 +54,6 @@ EXEMPT_PATHS: frozenset[str] = frozenset(
     ]
 )
 
-# Pre-compiled regex patterns for SQL injection detection
-# These patterns are compiled at module load for optimal performance
-SQL_INJECTION_PATTERNS: list[re.Pattern] = [
-    # UNION SELECT pattern - classic SQL injection
-    re.compile(r"(\bunion\b.*\bselect\b)", re.IGNORECASE),
-    # OR 1=1 pattern - boolean-based blind injection
-    re.compile(r"(\bor\b\s+1\s*=\s*1)", re.IGNORECASE),
-    # DROP TABLE pattern - destructive SQL injection
-    re.compile(r"(\bdrop\b.*\btable\b)", re.IGNORECASE),
-    # DELETE FROM pattern - destructive SQL injection
-    re.compile(r"(\bdelete\b.*\bfrom\b)", re.IGNORECASE),
-    # Comment at end of line - comment injection
-    re.compile(r"(--\s*$)", re.IGNORECASE),
-    # Semicolon followed by comment - query termination
-    re.compile(r"(;\s*--)", re.IGNORECASE),
-    # EXEC xp_ pattern - stored procedure execution (SQL Server)
-    re.compile(r"(\bexec\b.*\bxp_)", re.IGNORECASE),
-]
-
-# Pre-compiled regex patterns for XSS detection
-XSS_PATTERNS: list[re.Pattern] = [
-    # Script tag start - inline script injection
-    re.compile(r"(<script[\s>])", re.IGNORECASE),
-    # JavaScript protocol - protocol-based XSS
-    re.compile(r"(javascript\s*:)", re.IGNORECASE),
-    # Event handler pattern - onerror, onclick, etc.
-    re.compile(r"(\bon\w+\s*=)", re.IGNORECASE),
-    # Iframe tag - iframe injection
-    re.compile(r"(<iframe[\s>])", re.IGNORECASE),
-    # Object tag - object embedding
-    re.compile(r"(<object[\s>])", re.IGNORECASE),
-]
-
-# Pre-compiled regex patterns for path traversal detection
-PATH_TRAVERSAL_PATTERNS: list[re.Pattern] = [
-    # Dot-dot-slash pattern - basic directory traversal
-    re.compile(r"(\.\.\/)", re.IGNORECASE),
-    # Triple dot pattern - some filter bypasses
-    re.compile(r"(\.\.\.)", re.IGNORECASE),
-    # URL-encoded dot-dot-slash - encoding bypass
-    re.compile(r"(%2e%2e%2f)", re.IGNORECASE),
-    # Partially-encoded dot-dot-slash - mixed encoding bypass
-    re.compile(r"(%2e%2e\/)", re.IGNORECASE),
-]
-
-# Combined attack patterns dictionary for backward compatibility and type grouping
-# Maps pattern names to (compiled_pattern, attack_type) tuples
-ATTACK_PATTERNS: dict[str, tuple[re.Pattern, AttackType]] = {
-    # SQL Injection patterns
-    "sql_union_select": (SQL_INJECTION_PATTERNS[0], AttackType.SQL_INJECTION),
-    "sql_or_1_equals_1": (SQL_INJECTION_PATTERNS[1], AttackType.SQL_INJECTION),
-    "sql_drop_table": (SQL_INJECTION_PATTERNS[2], AttackType.SQL_INJECTION),
-    "sql_delete_from": (SQL_INJECTION_PATTERNS[3], AttackType.SQL_INJECTION),
-    "sql_comment_end": (SQL_INJECTION_PATTERNS[4], AttackType.SQL_INJECTION),
-    "sql_semicolon_comment": (SQL_INJECTION_PATTERNS[5], AttackType.SQL_INJECTION),
-    "sql_exec_xp": (SQL_INJECTION_PATTERNS[6], AttackType.SQL_INJECTION),
-    # XSS patterns
-    "xss_script_tag": (XSS_PATTERNS[0], AttackType.XSS),
-    "xss_javascript_uri": (XSS_PATTERNS[1], AttackType.XSS),
-    "xss_event_handler": (XSS_PATTERNS[2], AttackType.XSS),
-    "xss_iframe": (XSS_PATTERNS[3], AttackType.XSS),
-    "xss_object": (XSS_PATTERNS[4], AttackType.XSS),
-    # Path Traversal patterns
-    "path_dotdot_slash": (PATH_TRAVERSAL_PATTERNS[0], AttackType.PATH_TRAVERSAL),
-    "path_triple_dot": (PATH_TRAVERSAL_PATTERNS[1], AttackType.PATH_TRAVERSAL),
-    "path_encoded": (PATH_TRAVERSAL_PATTERNS[2], AttackType.PATH_TRAVERSAL),
-    "path_partial_encoded": (PATH_TRAVERSAL_PATTERNS[3], AttackType.PATH_TRAVERSAL),
-}
-
 # Named group → (pattern_name, AttackType) mapping for combined regex matches
 _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
     "sql_union": ("sql_union_select", AttackType.SQL_INJECTION),
@@ -315,21 +246,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                     }
                 )
 
-    def _get_attack_type(self, pattern_name: str) -> str:
-        """Map pattern name to attack type category.
 
-        NOTE: This method is kept for backward compatibility.
-        The AttackType is now directly available from ATTACK_PATTERNS tuples.
-        """
-        attack_type_map = {
-            "sql_": AttackType.SQL_INJECTION.value,
-            "xss_": AttackType.XSS.value,
-            "path_": AttackType.PATH_TRAVERSAL.value,
-        }
-        for prefix, attack_type in attack_type_map.items():
-            if pattern_name.startswith(prefix):
-                return attack_type
-        return AttackType.SQL_INJECTION.value  # Default fallback
 
     async def _handle_attack_detection(
         self,

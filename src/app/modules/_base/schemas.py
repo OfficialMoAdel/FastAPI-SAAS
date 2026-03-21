@@ -18,7 +18,7 @@ Usage:
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Generic, TypeVar
+from typing import Generic, TypeVar
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -84,7 +84,7 @@ class BaseList(BaseModel, Generic[T]):
             pass
     """
 
-    items: list[Any]  # Subclasses should override with specific type
+    items: list[T]  # Subclasses should override with specific type
     total: int
     page: int
     per_page: int

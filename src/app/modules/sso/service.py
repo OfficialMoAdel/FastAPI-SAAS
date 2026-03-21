@@ -488,7 +488,7 @@ class SSOService:
         db: AsyncSession,
         user_id: int,
         provider: str,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
     ) -> None:
         """Disconnect SSO provider from user account.
 
@@ -507,7 +507,7 @@ class SSOService:
             db=db,
             user_id=user_id,
             provider=provider,
-            tenant_id=tenant_id,
+            tenant_id=cast(UUID, tenant_id),
         )
 
         if not connection:
@@ -522,13 +522,13 @@ class SSOService:
             )
 
         # Delete the connection
-        await crud_user_sso_connections.delete_by_criteria(db=db, id=connection.id, tenant_id=tenant_id)
+        await crud_user_sso_connections.delete_by_criteria(db=db, id=connection.id, tenant_id=cast(UUID, tenant_id))
 
     async def _can_disconnect(
         self,
         db: AsyncSession,
         user_id: int,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
     ) -> bool:
         """Check if user can disconnect an SSO provider.
 
@@ -557,7 +557,7 @@ class SSOService:
         connection_count = await crud_user_sso_connections.count_for_user(
             db=db,
             user_id=user_id,
-            tenant_id=tenant_id,
+            tenant_id=cast(UUID, tenant_id),
         )
 
         return connection_count > 1

@@ -239,8 +239,12 @@ class TestRoleServicePermissions:
         mock_result_link = MagicMock()
         mock_result_link.scalar_one_or_none.return_value = None
 
-        # Chain execute results: [permission_query, existing_link_query]
-        mock_db.execute.side_effect = [mock_result_perm, mock_result_link]
+        # Mock affected users
+        mock_affected_result = MagicMock()
+        mock_affected_result.scalars.return_value.all.return_value = []
+
+        # Chain execute results: [permission_query, existing_link_query, affected_users]
+        mock_db.execute.side_effect = [mock_result_perm, mock_result_link, mock_affected_result]
 
         await role_service.add_permission_to_role(1, "users:read")
 
@@ -260,7 +264,11 @@ class TestRoleServicePermissions:
         mock_result_link = MagicMock()
         mock_result_link.scalar_one_or_none.return_value = mock_link
 
-        mock_db.execute.side_effect = [mock_result_perm, mock_result_link]
+        # Mock affected users
+        mock_affected_result = MagicMock()
+        mock_affected_result.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_result_perm, mock_result_link, mock_affected_result]
 
         await role_service.remove_permission_from_role(1, "users:read")
 
@@ -315,7 +323,11 @@ class TestRoleServicePermissions:
         mock_result_link = MagicMock()
         mock_result_link.scalar_one_or_none.return_value = RolePermission(role_id=1, permission_id=1)
 
-        mock_db.execute.side_effect = [mock_result_perm, mock_result_link]
+        # Mock affected users
+        mock_affected_result = MagicMock()
+        mock_affected_result.scalars.return_value.all.return_value = []
+
+        mock_db.execute.side_effect = [mock_result_perm, mock_result_link, mock_affected_result]
 
         await role_service.add_permission_to_role(1, "users:read")
 

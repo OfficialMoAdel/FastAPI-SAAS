@@ -460,6 +460,9 @@ class TestPydanticOptimization:
             profile_image_url = "https://example.com/img.png"
             tier_id = 1
             tenant_id = MockUser.DEFAULT_TENANT_ID  # Use UUID
+            is_superuser = False
+            is_email_verified = False
+            is_active = True
 
         mock_user = MockUserObj()
 
@@ -474,6 +477,9 @@ class TestPydanticOptimization:
             "profile_image_url": mock_user.profile_image_url,
             "tier_id": mock_user.tier_id,
             "tenant_id": mock_user.tenant_id,
+            "is_superuser": mock_user.is_superuser,
+            "is_email_verified": mock_user.is_email_verified,
+            "is_active": mock_user.is_active,
         }
 
         # Verify all UserRead fields are present

@@ -58,13 +58,20 @@ class TestCancellationService:
             mock_get.side_effect = [mock_subscription, mock_updated_subscription]
 
             with patch(
-                "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                "src.app.modules.billing.crud.crud_stripe_settings.get",
                 new_callable=AsyncMock,
+                return_value=None,
             ):
-                result = await service.cancel_subscription(subscription_id=1)
+                with patch(
+                    "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                    new_callable=AsyncMock,
+                ):
+                    with patch("src.app.modules.billing.service.settings") as mock_settings:
+                        mock_settings.STRIPE_SECRET_KEY = None
+                        result = await service.cancel_subscription(subscription_id=1)
 
-                assert result["cancel_at_period_end"] is True
-                assert result["canceled_at"] is not None
+                        assert result["cancel_at_period_end"] is True
+                        assert result["canceled_at"] is not None
 
     @pytest.mark.asyncio
     async def test_cancel_subscription_not_found(self, mock_db_session):
@@ -103,13 +110,20 @@ class TestCancellationService:
             mock_get.return_value = mock_subscription
 
             with patch(
-                "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                "src.app.modules.billing.crud.crud_stripe_settings.get",
                 new_callable=AsyncMock,
+                return_value=None,
             ):
-                # Should still update (idempotent operation)
-                result = await service.cancel_subscription(subscription_id=1)
-                # Subscription is returned after update
-                assert result is not None
+                with patch(
+                    "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                    new_callable=AsyncMock,
+                ):
+                    with patch("src.app.modules.billing.service.settings") as mock_settings:
+                        mock_settings.STRIPE_SECRET_KEY = None
+                        # Should still update (idempotent operation)
+                        result = await service.cancel_subscription(subscription_id=1)
+                        # Subscription is returned after update
+                        assert result is not None
 
     @pytest.mark.asyncio
     async def test_cancel_subscription_sets_canceled_at_timestamp(self, mock_db_session):
@@ -169,13 +183,24 @@ class TestCancellationWithStripe:
             return_value=mock_subscription,
         ):
             with patch(
-                "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                "src.app.modules.billing.crud.crud_stripe_settings.get",
                 new_callable=AsyncMock,
+                return_value={"encrypted_secret_key": "dummy_key"},
             ):
-                # Current implementation only updates local DB
-                # T109 may enhance this with Stripe API call
-                result = await service.cancel_subscription(subscription_id=1)
-                assert result is not None
+                with patch(
+                    "src.app.core.security.encryption.CredentialEncryption.decrypt_column",
+                    return_value="sk_test_mock",
+                ):
+                    with patch(
+                        "src.app.modules.billing.crud.crud_user_subscriptions.update",
+                        new_callable=AsyncMock,
+                    ):
+                        with patch("stripe.Subscription.modify") as mock_stripe_modify:
+                            # Current implementation only updates local DB
+                            # T109 may enhance this with Stripe API call
+                            result = await service.cancel_subscription(subscription_id=1)
+                            assert result is not None
+                            mock_stripe_modify.assert_called_once()
 
 
 class TestCancellationAccessControl:

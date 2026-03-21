@@ -12,13 +12,14 @@ import hashlib
 import hmac
 import inspect
 from datetime import UTC, datetime, timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import insert, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from src.app.core.events import event_bus
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
@@ -428,37 +429,26 @@ class WebhookService:
             delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
             delivery.status = WebhookDeliveryStatus.PENDING
 
-            # Enqueue retry task with delay ONLY after successful commit
-            from sqlalchemy import event
-
+            # Enqueue retry task. Delay is large enough that commit will finish first.
+            # Avoid SQLAlchemy event.listen to prevent memory leak accumulation on rollback.
             delivery_id = delivery.id
+            import asyncio
 
-            def enqueue_retry(session) -> None:
-                # BUG FIX: asyncio.create_task() requires being called from within a running
-                # coroutine context. SQLAlchemy's sync after_commit event fires synchronously
-                # and may not have a running loop on the calling thread.
-                # Safe approach: get the running loop and schedule the coroutine on it.
-                import asyncio
-
+            try:
+                loop = asyncio.get_running_loop()
+                loop.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+            except RuntimeError:
                 try:
-                    loop = asyncio.get_running_loop()
-                    # We are inside an async context (common when using asyncio+SQLAlchemy 2.0)
-                    loop.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
-                except RuntimeError:
-                    # No running event loop in this thread — use run_coroutine_threadsafe
-                    try:
-                        loop = asyncio.get_event_loop()
-                        asyncio.run_coroutine_threadsafe(
-                            self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop
-                        )
-                    except Exception as loop_err:
-                        logger.error(
-                            "webhook_retry_enqueue_failed",
-                            delivery_id=str(delivery_id),
-                            error=str(loop_err),
-                        )
-
-            event.listen(self.db.sync_session, "after_commit", enqueue_retry, once=True)
+                    loop = asyncio.get_event_loop()
+                    asyncio.run_coroutine_threadsafe(
+                        self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop
+                    )
+                except Exception as loop_err:
+                    logger.error(
+                        "webhook_retry_enqueue_failed",
+                        delivery_id=str(delivery_id),
+                        error=str(loop_err),
+                    )
 
             logger.warning(
                 f"Webhook delivery failed, will retry in {retry_delay}s: "
@@ -622,3 +612,39 @@ class WebhookService:
             "old_secret_expires_at": rotated_at,  # Immediate - no grace period
             "grace_period_seconds": grace_period_seconds,
         }
+
+# Event handler for webhook.trigger events
+@event_bus.subscribe("webhook.trigger")
+async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
+    """Handle webhook trigger events by enqueuing deliveries.
+
+    Args:
+        data: Event payload with tenant_id, event_type, and payload.
+    """
+    tenant_id_str = data.get("tenant_id")
+    event_type = data.get("event_type")
+    payload = data.get("payload")
+
+    if not all([tenant_id_str, event_type, payload]):
+        logger.warning(
+            "webhook_trigger_event_missing_data",
+            has_tenant=bool(tenant_id_str),
+            has_event_type=bool(event_type),
+            has_payload=bool(payload),
+        )
+        return
+
+    from src.app.core.db.database import async_session_maker
+
+    try:
+        tenant_id = UUID(tenant_id_str)
+        async with async_session_maker() as db:
+            service = WebhookService(db)
+            await service.trigger_webhooks(tenant_id, str(event_type), cast(dict[str, Any], payload))
+    except Exception as e:
+        logger.error(
+            "failed_to_process_webhook_trigger",
+            tenant_id=tenant_id_str,
+            event_type=event_type,
+            error=str(e),
+        )

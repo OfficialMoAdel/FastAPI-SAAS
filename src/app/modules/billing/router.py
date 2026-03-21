@@ -322,7 +322,7 @@ async def get_my_subscriptions(
     """Get current user's subscriptions."""
     service = get_user_subscription_service(db)
     result = await service.get_user_subscriptions(current_user["id"])
-    data: list[UserSubscriptionRead] = result.get("data", [])
+    data: list[Any] = result.get("data", [])
     return data
 
 
@@ -336,8 +336,13 @@ async def cancel_subscription(
     service = get_user_subscription_service(db)
     subscription = await service.get_subscription(subscription_id)
 
-    # Verify ownership
-    if subscription["user_id"] != current_user["id"]:
+    from src.app.core.tenancy.context import get_current_tenant
+    tenant = get_current_tenant()
+
+    # Verify ownership and tenant isolation
+    if subscription["user_id"] != current_user["id"] or (
+        tenant and subscription.get("tenant_id") and subscription["tenant_id"] != tenant.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to cancel this subscription",
@@ -421,8 +426,13 @@ async def get_billing_record(
     service = get_billing_record_service(db)
     record = await service.get_record(record_id)
 
-    # Verify ownership
-    if record["user_id"] != current_user["id"]:
+    from src.app.core.tenancy.context import get_current_tenant
+    tenant = get_current_tenant()
+
+    # Verify ownership and tenant isolation
+    if record["user_id"] != current_user["id"] or (
+        tenant and record.get("tenant_id") and record["tenant_id"] != tenant.id
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to view this record",

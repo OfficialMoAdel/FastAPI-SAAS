@@ -302,7 +302,11 @@ class NotificationService:
         if user_id:
             query = query.where(Notification.user_id == user_id)
         if status:
-            query = query.where(Notification.status == status)
+            try:
+                enum_status = NotificationStatus(status)
+                query = query.where(Notification.status == enum_status)
+            except ValueError:
+                return 0, []
         if start_date:
             query = query.where(Notification.created_at >= start_date)
         if end_date:

@@ -59,11 +59,30 @@ def test_list_endpoint_pagination():
     """Test that list endpoint supports pagination parameters."""
     with patch("src.app.modules.billing.routes.products.get_product_service") as mock_get_service:
         mock_service = AsyncMock()
+        import uuid
+        from datetime import datetime
+
         mock_service.get_products = AsyncMock(
             return_value={
                 "data": [
-                    {"id": 1, "name": "Product 1"},
-                    {"id": 2, "name": "Product 2"},
+                    {
+                        "id": 1, 
+                        "name": "Product 1",
+                        "tenant_id": str(uuid.uuid4()),
+                        "description": "Desc 1",
+                        "stripe_product_id": "prod_1",
+                        "is_active": True,
+                        "created_at": datetime.now().isoformat()
+                    },
+                    {
+                        "id": 2, 
+                        "name": "Product 2",
+                        "tenant_id": str(uuid.uuid4()),
+                        "description": "Desc 2",
+                        "stripe_product_id": "prod_2",
+                        "is_active": True,
+                        "created_at": datetime.now().isoformat()
+                    },
                 ],
                 "total_count": 2,
             }

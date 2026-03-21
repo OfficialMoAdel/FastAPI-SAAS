@@ -254,11 +254,9 @@ async def rate_limiter_dependency(
         if request.client and request.client.host:
             user_id = request.client.host
         else:
-            # Generate a temporary unique identifier for this request
-            # This prevents attackers from exhausting a shared bucket
-            import uuid
-
-            user_id = f"unknown_{uuid.uuid4().hex[:8]}"
+            # Drop the UUID so that unknown clients all share the same bucket
+            # and effectively get rate limited.
+            user_id = "unknown"
         limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
 
     is_limited = await rate_limiter.is_rate_limited(db=db, user_id=user_id, path=path, limit=limit, period=period)

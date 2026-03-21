@@ -186,7 +186,7 @@ class TestUserCacheInvalidation:
                 # Verify all cache keys were deleted (5 keys total)
                 mock_cache.client.delete.assert_called_once()
                 call_args = mock_cache.client.delete.call_args[0]
-                assert len(call_args) == 7
+                assert len(call_args) == 5
 
                 # Verify the right keys were invalidated (tenant-scoped)
                 expected_keys = [
@@ -195,8 +195,6 @@ class TestUserCacheInvalidation:
                     f"user:profile:{mock_tenant.id}:username:testuser",
                     f"user:auth:{mock_tenant.id}:testuser",
                     f"user:auth:{mock_tenant.id}:test@example.com",
-                    "user:testuser:token_version",
-                    "user:test@example.com:token_version",
                 ]
                 for key in expected_keys:
                     assert key in call_args, f"Expected {key} to be invalidated"

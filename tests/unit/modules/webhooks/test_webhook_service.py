@@ -379,12 +379,11 @@ class TestWebhookServiceDelivery:
 
                     mock_webhook_delivery.attempt_count = 0
 
-                    with patch("sqlalchemy.event.listen") as mock_listen:
-                        result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
+                    result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
-                        assert result.status == WebhookDeliveryStatus.PENDING
-                        assert result.next_retry_at is not None
-                        mock_listen.assert_called_once()
+                    assert result.status == WebhookDeliveryStatus.PENDING
+                    assert result.next_retry_at is not None
+                    webhook_service._enqueue_delivery.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_max_retries_exceeded(

@@ -1,10 +1,11 @@
 """API Key Pydantic schemas."""
 
+import json
 from datetime import datetime
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from src.app.modules._base.schemas import BaseCreate, BaseList, BaseRead
 
@@ -34,6 +35,22 @@ class APIKeyRead(BaseRead):
     scopes: list[str] | None = None
     expires_at: datetime | None = None
     last_used_at: datetime | None = None
+
+    @field_validator("scopes", mode="before")
+    @classmethod
+    def parse_scopes(cls, v: Any) -> list[str] | None:
+        if isinstance(v, str):
+            try:
+                parsed = json.loads(v)
+                if isinstance(parsed, list):
+                    return [str(item) for item in parsed]
+                return None
+            except json.JSONDecodeError:
+                return [s.strip() for s in v.split(",") if s.strip()]
+
+        if isinstance(v, list):
+            return [str(item) for item in v]
+        return None
 
     model_config = ConfigDict(from_attributes=True)
 

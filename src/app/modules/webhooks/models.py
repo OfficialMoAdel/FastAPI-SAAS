@@ -1,6 +1,5 @@
 """Webhook models for event subscriptions and delivery tracking."""
 
-import enum
 import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -21,18 +20,12 @@ from sqlalchemy.dialects.postgresql import UUID as PgUUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.core.db.models import UUIDMixin
+from src.app.core.db.models import UUIDMixin, WebhookDeliveryStatus
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
 
 
-class WebhookDeliveryStatus(str, enum.Enum):
-    """Status of webhook delivery attempt."""
-
-    PENDING = "pending"
-    DELIVERED = "delivered"
-    FAILED = "failed"
 
 
 class WebhookEndpoint(Base, UUIDMixin):

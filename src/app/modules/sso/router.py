@@ -28,7 +28,7 @@ def _validate_redirect_uri(uri: str | None) -> None:
     # Allow relative paths or URLs matching the frontend domain
     if uri.startswith("/") and not uri.startswith("//"):
         return
-    if uri.startswith(settings.FRONTEND_URL):
+    if uri == settings.FRONTEND_URL or uri.startswith(settings.FRONTEND_URL + "/"):
         return
 
     raise HTTPException(

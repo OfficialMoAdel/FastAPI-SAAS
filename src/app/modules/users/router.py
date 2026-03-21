@@ -101,7 +101,7 @@ async def read_users_me(
             user = await service.get_by_username(username)
             if user:
                 return UserRead.model_validate(user)
-    except (ValueError, TypeError, KeyError) as e:
+    except (ValueError, TypeError) as e:
         from src.app.core.logger import get_logger
         logger = get_logger(__name__)
         logger.warning("Invalid user context inside read_users_me", error=str(e))
@@ -175,7 +175,7 @@ async def erase_user(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     await service.delete(username, current_user, token)
@@ -196,7 +196,7 @@ async def erase_db_user(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     return await service.hard_delete(username, token)
@@ -213,7 +213,7 @@ async def read_user_rate_limits(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     return await service.get_with_rate_limits(username)
@@ -230,7 +230,7 @@ async def read_user_tier(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     result = await service.get_with_tier(username)
@@ -255,7 +255,7 @@ async def patch_user_tier(
     # Try to get by ID first, then fall back to username
     try:
         username = await _get_username_from_id(service, user_id)
-    except (ValueError, KeyError):
+    except ValueError:
         username = user_id
 
     return await service.update_tier(username, values)

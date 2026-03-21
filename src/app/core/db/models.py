@@ -26,9 +26,8 @@ class NotificationStatus(str, Enum):
 
 class WebhookDeliveryStatus(str, Enum):
     PENDING = "pending"
-    SUCCESS = "success"
+    DELIVERED = "delivered"
     FAILED = "failed"
-    RETRYING = "retrying"
 
 
 class UUIDMixin(MappedAsDataclass):

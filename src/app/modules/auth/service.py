@@ -294,7 +294,7 @@ return new_attempts
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=is_production,
+            secure=True,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -408,7 +408,7 @@ return new_attempts
             key="refresh_token",
             value=new_refresh_token,
             httponly=True,
-            secure=is_production,
+            secure=True,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )

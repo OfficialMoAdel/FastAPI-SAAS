@@ -201,8 +201,6 @@ class UserService(BaseService[User]):
 
             keys = [
                 _user_cache_key(user_id),
-                f"user:{username}:token_version",  # Invalidate token version correctly
-                f"user:{email}:token_version",  # Also under email namespace
             ]
 
             # Only build tenant-scoped keys when tenant_id is available

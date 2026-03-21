@@ -21,7 +21,7 @@ from src.app.modules.users.models import User
 async def create_task(
     body: TaskCreate,
     current_user: User = Depends(get_current_user),
-) -> dict[str, str]:
+) -> Job:
     """Create a new background task.
 
     Parameters
@@ -35,7 +35,8 @@ async def create_task(
         A dictionary containing the ID of the created task.
     """
     try:
-        return await task_service.create_task(body.message, tenant_id=str(current_user.tenant_id))
+        result = await task_service.create_task(body.message, tenant_id=str(current_user.tenant_id))
+        return Job(**result)
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
     except ValueError as e:

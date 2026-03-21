@@ -576,7 +576,15 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         # T109: Call Stripe API to cancel subscription at period end
         stripe_subscription_id = subscription.get("stripe_subscription_id")
         if stripe_subscription_id:
-            api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
+            tenant_id = subscription.get("tenant_id")
+            stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
+            api_key = None
+            if stripe_settings_record and stripe_settings_record.get("encrypted_secret_key"):
+                from src.app.core.security.encryption import CredentialEncryption
+                api_key = CredentialEncryption().decrypt_column(stripe_settings_record["encrypted_secret_key"])
+            else:
+                api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
+
             if api_key:
                 try:
                     # Wrap sync Stripe call in thread to avoid blocking event loop
@@ -691,20 +699,24 @@ class CheckoutService:
         try:
             # Use Platform API Key from Env
             api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
-            if not api_key:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
-                )
         except AttributeError:
-            raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe configuration error")
+            api_key = None
 
-        # Get settings to find Customer ID
+        # Get settings to find Customer ID and tenant stripe key
         settings_service = StripeSettingsService(self.db)
         stripe_settings = await settings_service.get_settings()
 
         customer_id = None
         if stripe_settings:
             customer_id = stripe_settings.get("stripe_customer_id")
+            if stripe_settings.get("encrypted_secret_key"):
+                from src.app.core.security.encryption import CredentialEncryption
+                api_key = CredentialEncryption().decrypt_column(stripe_settings["encrypted_secret_key"])
+
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
+            )
 
         # Get Plan
         plan_service = SubscriptionPlanService(self.db)
