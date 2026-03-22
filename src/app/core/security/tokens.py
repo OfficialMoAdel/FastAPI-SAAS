@@ -268,8 +268,12 @@ class MagicLinkManager:
         if extra_data:
             token_data["extra_data"] = extra_data
 
+        # Hash token before storing in Redis to prevent plaintext exposure
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
         # Store in Redis with expiration
-        key = f"magic_link:{token}"
+        key = f"magic_link:{hashed_token}"
         await self._redis.setex(
             key,
             self.TOKEN_EXPIRY,
@@ -296,7 +300,9 @@ class MagicLinkManager:
         Returns:
             Token metadata dict if valid, None if expired/used/invalid.
         """
-        key = f"magic_link:{token}"
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        key = f"magic_link:{hashed_token}"
 
         # Get and delete token data atomically to prevent race conditions
         data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]

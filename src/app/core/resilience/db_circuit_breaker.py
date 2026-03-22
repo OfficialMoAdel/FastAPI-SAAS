@@ -58,7 +58,7 @@ async def execute_query_with_circuit_breaker(
             try:
                 cached = await cache.client.get(cache_key)
                 if cached:
-                    logger.info("Using cached data for key:", cache_key=cache_key)
+                    logger.info("Using cached data", cache_key=cache_key)
                     # Assume simple JSON serialization for fallback data
                     return list(json.loads(cached))
             except Exception as cache_error:
@@ -104,14 +104,14 @@ async def execute_query_with_circuit_breaker(
 
     except Exception as e:
         await db_circuit.record_failure(e)
-        logger.error(f"Database query failed: {e}", extra={"circuit_state": db_circuit.state.value})
+        logger.error("Database query failed", error=str(e), circuit_state=db_circuit.state.value)
 
         # Try fallback on failure
         if cache_key and cache.client:
             try:
                 cached = await cache.client.get(cache_key)
                 if cached:
-                    logger.info("Using cached data after failure for key:", cache_key=cache_key)
+                    logger.info("Using cached data after failure", cache_key=cache_key)
                     return list(json.loads(cached))
             except Exception as cache_error:
                 logger.debug("Circuit breaker cache fallback failed: %s", cache_error)
@@ -173,13 +173,16 @@ async def execute_transaction_with_circuit_breaker(
             if attempt <= max_retries:
                 wait_time = 2**attempt
                 logger.warning(
-                    f"Transaction failed, retrying in {wait_time}s (attempt {attempt}/{max_retries})",
-                    extra={"error": str(e)},
+                    "Transaction failed, retrying",
+                    wait_time=wait_time,
+                    attempt=attempt,
+                    max_retries=max_retries,
+                    error=str(e),
                 )
                 await asyncio.sleep(wait_time)
 
     # All retries exhausted
-    logger.error(f"Transaction failed after {max_retries} attempts", extra={"last_error": str(last_error)})
+    logger.error("Transaction failed", max_attempts=max_retries, error=str(last_error))
     raise RuntimeError(f"Transaction failed after {max_retries} attempts") from last_error
 
 

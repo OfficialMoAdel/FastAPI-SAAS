@@ -232,7 +232,7 @@ async def test_quota_query_fusion(file_service_from_phase2, mock_db):
         await file_service_from_phase2.upload_file(
             tenant_id=tenant_id,
             user_id=uuid4(),
-            file=MagicMock(),
+            file=__import__("io").BytesIO(b"dummy data"),
             filename="test.txt",
             mime_type="text/plain",
             size_bytes=1024,

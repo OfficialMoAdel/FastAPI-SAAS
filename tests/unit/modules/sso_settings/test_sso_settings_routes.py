@@ -112,7 +112,6 @@ def test_response_models():
     from src.app.modules.sso_settings.schemas import (
         SSOSettingsList,
         SSOSettingsRead,
-        SSOSettingsReadWithSecrets,
     )
 
     # Find routes and check response models
@@ -124,8 +123,8 @@ def test_response_models():
             # List endpoint should return SSOSettingsList
             assert route.response_model == SSOSettingsList
         elif route.path == "/ssos/{provider}" and "GET" in route.methods:
-            # Get endpoint should return SSOSettingsReadWithSecrets
-            assert route.response_model == SSOSettingsReadWithSecrets
+            # Get endpoint should return SSOSettingsRead
+            assert route.response_model == SSOSettingsRead
         elif route.path == "/ssos/{provider}" and "PATCH" in route.methods:
             # Update endpoint should return SSOSettingsRead
             assert route.response_model == SSOSettingsRead

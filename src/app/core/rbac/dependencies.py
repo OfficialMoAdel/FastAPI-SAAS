@@ -237,11 +237,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # 1. Get current user FIRST to check for superuser bypass
         current_user = await _get_current_user_from_token(token, db)
 
-        # 2. Superuser bypass - skip all permission checks including tenant context
-        if current_user.get("is_superuser", False):
-            return
-
-        # 3. Get tenant context (required for non-superusers)
+        # 2. Get tenant context (required for everyone, even superusers, to ensure operations are scoped)
         from src.app.core.tenancy.context import get_tenant_context
 
         tenant_context = get_tenant_context()
@@ -253,6 +249,10 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
                 detail="Tenant context required for permission check",
             )
         tenant_id = tenant_context.id
+
+        # 3. Superuser bypass - skip permission checks, but AFTER verifying tenant context exists
+        if current_user.get("is_superuser", False):
+            return
 
         # 4. Check permission using O(1) bitmask
         has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)

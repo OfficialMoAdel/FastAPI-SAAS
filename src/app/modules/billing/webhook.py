@@ -90,14 +90,18 @@ async def _db_idempotency_check(event_id: str) -> bool:
                 )
                 return False  # Already processed
     except Exception as db_err:
-        # If both Redis AND DB checks fail, fail open as last resort
-        # (Stripe will retry, better to risk a duplicate than lose the event)
+        # If both Redis AND DB checks fail, fail closed.
+        # Let Stripe retry later when the DB/Cache is healthy to avoid duplicates.
         logger.error(
-            "DB idempotency fallback also failed, allowing processing",
+            "DB idempotency fallback also failed, rejecting processing",
             event_id=event_id,
             error=str(db_err),
         )
-        return True
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail="Service unavailable for idempotency check. Please retry."
+        )
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:

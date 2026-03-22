@@ -83,12 +83,27 @@ class AzureBlobStorage(StorageProvider):
             # Read file content in thread pool to prevent blocking
             import asyncio
 
-            content = await asyncio.to_thread(file.read)
-            size = len(content)
+            # Stream the file in chunks to prevent memory exhaustion
+            async def file_chunk_generator():
+                while True:
+                    chunk = await asyncio.to_thread(file.read, 1024 * 1024)  # 1MB chunks
+                    if not chunk:
+                        break
+                    yield chunk
+
+            # Determine size for Azure Blob Storage upload
+            if hasattr(file, "seek"):
+                size = await asyncio.to_thread(file.seek, 0, 2)
+                await asyncio.to_thread(file.seek, 0)
+            elif hasattr(file, "size"):
+                size = file.size
+            else:
+                size = getattr(file, "length", 0)
 
             # Upload with content type
             await blob_client.upload_blob(
-                content,
+                file_chunk_generator(),
+                length=size,
                 overwrite=True,
                 content_settings=ContentSettings(content_type=mime_type),
             )

@@ -271,8 +271,9 @@ async def test_db_idempotency_check_duplicate():
 
 
 @pytest.mark.asyncio
-async def test_db_idempotency_check_failure_fails_open():
-    """Test DB idempotency check fails open when DB also fails (lines 92-100)."""
+async def test_db_idempotency_check_failure_fails_closed():
+    """Test DB idempotency check fails closed when DB also fails (lines 92-100)."""
+    from fastapi import HTTPException
     mock_db = AsyncMock()
     mock_db.commit = AsyncMock(side_effect=Exception("DB connection failed"))
 
@@ -285,10 +286,11 @@ async def test_db_idempotency_check_failure_fails_open():
             mock_event_class.return_value = mock_event_instance
             mock_db.add = AsyncMock()
 
-            # Should fail open - return True to allow processing
-            result = await _db_idempotency_check("evt_error")
+            # Should fail closed - raise 503 to allow Stripe to retry
+            with pytest.raises(HTTPException) as exc_info:
+                await _db_idempotency_check("evt_error")
 
-            assert result is True
+            assert exc_info.value.status_code == 503
 
 
 @pytest.mark.asyncio

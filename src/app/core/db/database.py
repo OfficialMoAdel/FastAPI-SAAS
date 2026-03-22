@@ -36,8 +36,6 @@ class Base(DeclarativeBase, MappedAsDataclass):
 
 DATABASE_URI = settings.POSTGRES_URI
 DATABASE_PREFIX = settings.POSTGRES_ASYNC_PREFIX
-# DATABASE_URI = settings.SQLITE_URI
-# DATABASE_PREFIX = settings.SQLITE_ASYNC_PREFIX
 DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"
 
 # Use NullPool in test mode to prevent event loop binding issues
@@ -128,7 +126,7 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
         await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        logger.error(f"Database transaction failed for tenant {tenant_context}, rolling back", exc_info=exc)
+        logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
         raise
     finally:
         # Always close session to prevent connection pool exhaustion
@@ -164,7 +162,7 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         await db.rollback()
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
-        logger.error(f"Database transaction failed for tenant {tenant_context}, rolling back", exc_info=exc)
+        logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
         raise
     finally:
         # Always close session to prevent connection pool exhaustion

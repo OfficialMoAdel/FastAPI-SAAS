@@ -32,6 +32,7 @@ def create_mock_redis_with_pipeline() -> tuple[AsyncMock, AsyncMock]:
     """
     mock_redis = AsyncMock()
     mock_pipeline = AsyncMock()
+    mock_redis.scan = AsyncMock(return_value=(0, []))
 
     @asynccontextmanager
     async def mock_pipeline_cm(**kwargs):  # noqa: ANN003
@@ -215,9 +216,11 @@ class TestInvalidateTenantCache:
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await invalidate_tenant_cache(1)
 
-            # Should use smembers, NOT scan
+            # Should use smembers
             mock_redis.smembers.assert_called_once()
-            mock_redis.scan.assert_not_called()
+            
+            # Should use scan, but only to clean up orphaned sharded indexes, not for data key lookup
+            mock_redis.scan.assert_called_with(0, match="tenant_index:1:*", count=100)
 
             # Should delete found keys
             assert result == 2

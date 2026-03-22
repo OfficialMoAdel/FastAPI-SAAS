@@ -10,6 +10,7 @@ from typing import Any, cast
 
 import bcrypt
 import jwt
+import orjson
 from fastapi.security import OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
@@ -493,7 +494,7 @@ class MFAPendingTokenManager:
         try:
             token_data = cast(dict[str, Any], json_loads(data))
             return token_data
-        except json.JSONDecodeError:
+        except (json.JSONDecodeError, orjson.JSONDecodeError):
             return None
 
 

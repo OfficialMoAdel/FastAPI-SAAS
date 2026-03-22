@@ -103,11 +103,35 @@ class FileService:
         if size_bytes > max_size:
             raise QuotaExceededError(f"File size {size_bytes} exceeds limit of {settings.max_file_size_mb}MB")
 
-        # Check file type
+        # Check client-side claimed file type
         if settings.allowed_file_types and mime_type not in settings.allowed_file_types:
             raise FileTypeNotAllowedError(
                 f"File type '{mime_type}' is not allowed. Permitted types: {settings.allowed_file_types}"
             )
+
+        # Magic byte validation to prevent mime spoofing
+        import asyncio
+
+        import filetype
+
+        # Read the first 2048 bytes for magic byte check
+        head = await asyncio.to_thread(file.read, 2048)
+        if hasattr(file, "seek"):
+            await asyncio.to_thread(file.seek, 0)
+
+        kind = filetype.guess(head)
+        actual_mime = kind.mime if kind else None
+
+        # If the claimed MIME is a known binary format (image, pdf, etc), filetype should recognize it
+        is_binary_claim = mime_type.startswith(("image/", "video/", "audio/", "application/pdf"))
+        if is_binary_claim and not actual_mime:
+            raise FileTypeNotAllowedError("Invalid file content: missing expected file signature.")
+
+        if actual_mime and actual_mime != mime_type:
+            if settings.allowed_file_types and actual_mime not in settings.allowed_file_types:
+                raise FileTypeNotAllowedError(
+                    f"Spoofed file detected. Actual type '{actual_mime}' is not allowed."
+                )
 
         # Generate unique storage path
         file_uuid = uuid.uuid4()

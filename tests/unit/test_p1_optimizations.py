@@ -81,6 +81,7 @@ async def test_async_storage_non_blocking():
 async def test_tenant_sharded_invalidation_logic():
     # Mock Redis client
     mock_client = AsyncMock()
+    mock_client.scan = AsyncMock(return_value=(0, []))
     mock_pipeline = MagicMock()
     mock_pipeline.__aenter__.return_value = mock_pipeline
     mock_pipeline.__aexit__.return_value = None

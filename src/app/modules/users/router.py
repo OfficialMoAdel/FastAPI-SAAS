@@ -116,10 +116,22 @@ async def read_user(request: Request, user_id: str, service: UserService = Depen
     """
     # Try to get by ID first, then fall back to username
     try:
-        return UserRead.model_validate(await service.get(int(user_id)))
-    except ValueError:
+        user = await service.get(int(user_id))
+    except (ValueError, TypeError):
         # If not a valid integer, try username
-        return UserRead.model_validate(await service.get_by_username(user_id))
+        user = await service.get_by_username(user_id)
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    from src.app.core.tenancy.context import get_current_tenant
+    tenant = get_current_tenant()
+    if tenant:
+        user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+        if user_tenant_id != tenant.id:
+            raise HTTPException(status_code=404, detail="User not found")
+
+    return UserRead.model_validate(user)
 
 
 @router.patch("/{user_id}", response_model=UserUpdateResponse)

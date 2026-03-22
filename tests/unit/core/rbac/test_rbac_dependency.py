@@ -264,12 +264,15 @@ class TestRequiresPermission:
         checker = requires_permission(Permission.ROLES_MANAGE)
 
         # Mock the internal dependencies
+        class DummyTenant:
+            id = 1
+
         with (
             patch(
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": True},
             ),
-            patch("src.app.core.rbac.dependencies._get_current_tenant_id", return_value=1),
+            patch("src.app.core.tenancy.context.get_tenant_context", return_value=DummyTenant()),
             patch("src.app.core.rbac.dependencies.get_cached_permissions") as mock_perms,
         ):
             mock_db = AsyncMock()
@@ -284,6 +287,9 @@ class TestRequiresPermission:
 
         checker = requires_permission(Permission.ROLES_READ)
 
+        class DummyTenant:
+            id = uuid.uuid4()
+
         with (
             patch(
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
@@ -295,7 +301,7 @@ class TestRequiresPermission:
                 return_value=True,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
+            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             # Should not raise
@@ -306,6 +312,9 @@ class TestRequiresPermission:
         """User without required permission should get 403."""
 
         checker = requires_permission(Permission.ROLES_MANAGE)
+
+        class DummyTenant:
+            id = uuid.uuid4()
 
         with (
             patch(
@@ -318,7 +327,7 @@ class TestRequiresPermission:
                 return_value=False,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
+            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             with pytest.raises(HTTPException) as exc_info:
@@ -333,6 +342,9 @@ class TestRequiresPermission:
 
         checker = requires_permission("roles:read")  # Use valid permission slug
 
+        class DummyTenant:
+            id = uuid.uuid4()
+
         with (
             patch(
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
@@ -344,7 +356,7 @@ class TestRequiresPermission:
                 return_value=True,
             ),
         ):
-            mock_tenant.return_value = MagicMock(id=uuid.uuid4())
+            mock_tenant.return_value = DummyTenant()
             mock_db = AsyncMock()
 
             # Should not raise

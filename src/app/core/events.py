@@ -615,7 +615,7 @@ class EventBus:
                     max_size = settings.DLQ_MAX_SIZE
                     alert_threshold = settings.DLQ_ALERT_THRESHOLD_PCT
 
-                    async with self._redis_client.pipeline() as pipe:
+                    async with self._redis_client.pipeline(transaction=True) as pipe:
                         pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
                         pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
                         pipe.llen(self.DLQ_REDIS_KEY)

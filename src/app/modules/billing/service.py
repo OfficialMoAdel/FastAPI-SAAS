@@ -529,8 +529,13 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:
         """Get all subscriptions for a user."""
+        filters: dict[str, Any] = {"user_id": user_id}
+        tenant = get_current_tenant()
+        if tenant:
+            filters["tenant_id"] = tenant.id
+
         return await crud_user_subscriptions.get_multi(
-            db=self.db, user_id=user_id, schema_to_select=UserSubscriptionRead
+            db=self.db, schema_to_select=UserSubscriptionRead, **filters
         )
 
     async def update_subscription(self, subscription_id: int, data: UserSubscriptionUpdate) -> dict[str, Any]:

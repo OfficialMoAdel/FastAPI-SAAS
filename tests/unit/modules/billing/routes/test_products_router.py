@@ -66,7 +66,7 @@ def test_list_endpoint_pagination():
             return_value={
                 "data": [
                     {
-                        "id": 1, 
+                        "id": 1,
                         "name": "Product 1",
                         "tenant_id": str(uuid.uuid4()),
                         "description": "Desc 1",
@@ -75,7 +75,7 @@ def test_list_endpoint_pagination():
                         "created_at": datetime.now().isoformat()
                     },
                     {
-                        "id": 2, 
+                        "id": 2,
                         "name": "Product 2",
                         "tenant_id": str(uuid.uuid4()),
                         "description": "Desc 2",

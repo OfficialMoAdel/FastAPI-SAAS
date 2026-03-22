@@ -12,7 +12,6 @@ from src.app.modules.sso_settings.schemas import (
     SSOSettingsCreate,
     SSOSettingsList,
     SSOSettingsRead,
-    SSOSettingsReadWithSecrets,
     SSOSettingsUpdate,
 )
 
@@ -89,7 +88,7 @@ async def list_available_providers() -> list[str]:
     ]
 
 
-@router.get("/{provider}", response_model=SSOSettingsReadWithSecrets, dependencies=[Depends(get_current_superuser)])
+@router.get("/{provider}", response_model=SSOSettingsRead, dependencies=[Depends(get_current_superuser)])
 async def get_sso_settings(
     request: Request,
     provider: str,

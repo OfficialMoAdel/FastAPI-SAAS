@@ -151,10 +151,13 @@ class TestMagicLinkService:
 
         # Store a valid token in fake redis
         token = "test_token_12345678901234567890123456789012"
+        import hashlib
         import json
 
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
         await fake_redis.setex(
-            f"magic_link:{token}",
+            f"magic_link:{hashed_token}",
             900,
             json.dumps({"email": "test@example.com", "action": "login"}),
         )
@@ -202,10 +205,13 @@ class TestMagicLinkService:
 
         # Store a valid token
         token = "test_token_12345678901234567890123456789012"
+        import hashlib
         import json
 
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
         await fake_redis.setex(
-            f"magic_link:{token}",
+            f"magic_link:{hashed_token}",
             900,
             json.dumps({"email": "test@example.com", "action": "login"}),
         )
@@ -231,7 +237,7 @@ class TestMagicLinkService:
             await service.verify_magic_link(token=token)
 
         # Token should be consumed (deleted from redis)
-        assert await fake_redis.get(f"magic_link:{token}") is None
+        assert await fake_redis.get(f"magic_link:{hashed_token}") is None
 
     @pytest.mark.asyncio
     async def test_verify_magic_link_rejects_used_token(self, fake_redis, mock_db, mock_user):
@@ -242,10 +248,13 @@ class TestMagicLinkService:
 
         # Store and consume a token
         token = "test_token_12345678901234567890123456789012"
+        import hashlib
         import json
 
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
         await fake_redis.setex(
-            f"magic_link:{token}",
+            f"magic_link:{hashed_token}",
             900,
             json.dumps({"email": "test@example.com", "action": "login"}),
         )

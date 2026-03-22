@@ -142,17 +142,15 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
         # If we used a sharded index, we must ALSO remove these keys from the global index
         if prefix and global_index_key:
             pipe.srem(global_index_key, *keys)
-
-        # If we used the global index (prefix=None), we should technically clear all sharded indexes too?
-        # But finding them requires scanning.
-        # It's acceptable to leave sharded indexes as "orphaned" sets of deleted keys
-        # (calling delete on non-existent keys is cheap/no-op).
-        # OR we can scan and delete them if we want to be clean.
-        # But for O(1) performance, we skip scanning.
-        # The indexes will just be empty sets eventually or point to nothing.
-        # Wait, if they point to nothing, `invalidate_tenant_cache(prefix)` later will get keys that don't exist,
-        # call delete on them (no-op).
-        # That's fine.
+        elif not prefix:
+            # BUG FIX: Clear all sharded indexes for the tenant to prevent orphaned empty sets
+            cursor = 0
+            while True:
+                cursor, sharded_keys = await client.scan(cursor, match=f"tenant_index:{tenant_id}:*", count=100)
+                if sharded_keys:
+                    pipe.delete(*sharded_keys)
+                if cursor == 0:
+                    break
 
         results = await pipe.execute()
 

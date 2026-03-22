@@ -41,9 +41,9 @@ async def _warm_token_blacklist_cache() -> None:
             tokens = await crud_token_blacklist.get_active_tokens(db)
             if tokens:
                 count = await warm_cache_from_db(tokens)
-                logger.info(f"Token blacklist cache warmed with {count} tokens")
+                logger.info("Token blacklist cache warmed", count=count)
     except Exception as e:
-        logger.warning(f"Failed to warm token blacklist cache: {e}")
+        logger.warning("Failed to warm token blacklist cache", error=str(e))
 
 
 async def _warm_application_caches() -> None:
@@ -62,15 +62,19 @@ async def _warm_application_caches() -> None:
 
     try:
         async with async_session_maker() as session:
-            logger.info(f"Starting cache warming with {len(warmer.list_warmers())} warmers")
+            logger.info("Starting cache warming", warmer_count=len(warmer.list_warmers()))
             result = await warmer.warm_all(session)
 
             if result.errors:
-                logger.warning(f"Cache warming completed with errors: {result.errors}")
+                logger.warning("Cache warming completed with errors", errors=result.errors)
             else:
-                logger.info(f"Cache warming successful: {result.tenants_cached} tenants, {result.tiers_cached} tiers")
+                logger.info(
+                    "Cache warming successful",
+                    tenants_cached=result.tenants_cached,
+                    tiers_cached=result.tiers_cached,
+                )
     except Exception as e:
-        logger.error(f"Failed to warm application caches: {e}")
+        logger.error("Failed to warm application caches", error=str(e))
 
 
 @asynccontextmanager

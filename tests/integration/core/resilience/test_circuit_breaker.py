@@ -25,8 +25,9 @@ from src.app.core.utils.circuit_breaker import CircuitBreaker, CircuitState
 def test_client():
     """Test client for circuit breaker router without tenant middleware."""
     # Create a minimal FastAPI app with just the circuit breaker router
-    from fastapi import FastAPI
     from unittest.mock import MagicMock
+
+    from fastapi import FastAPI
 
     from src.app.api.dependencies import get_current_superuser
 
