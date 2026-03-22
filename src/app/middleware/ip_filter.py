@@ -32,6 +32,15 @@ EXEMPT_PATHS: frozenset[str] = frozenset(
     ]
 )
 
+import re
+
+# Compile bad bot regex once at module level for O(1) matching
+# instead of O(N) iteration per request.
+_BAD_BOT_REGEX = None
+if settings.BAD_BOT_USER_AGENTS:
+    _escaped_bots = [re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS]
+    _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
+
 
 class IPFilterMiddleware(BaseHTTPMiddleware):
     """Middleware to enforce IP whitelist/blacklist policies.
@@ -75,30 +84,31 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
 
         # BAD BOT FILTERING: Check User-Agent for known malicious scanners
-        if settings.BAD_BOT_FILTER_ENABLED:
-            user_agent = request.headers.get("user-agent", "").lower()
-            for bad_bot in settings.BAD_BOT_USER_AGENTS:
-                if bad_bot in user_agent:
-                    event = create_security_event(
-                        event_type=SecurityEventType.ATTACK_DETECTED,
-                        client_ip=client_ip,
-                        request_path=path,
-                        reason=f"Blocked bad bot: {bad_bot}",
-                        extra={"user_agent": user_agent},
-                    )
-                    log_security_event(event)
+        if settings.BAD_BOT_FILTER_ENABLED and _BAD_BOT_REGEX:
+            user_agent = request.headers.get("user-agent", "")
+            match = _BAD_BOT_REGEX.search(user_agent)
+            if match:
+                bad_bot = match.group(0)
+                event = create_security_event(
+                    event_type=SecurityEventType.ATTACK_DETECTED,
+                    client_ip=client_ip,
+                    request_path=path,
+                    reason=f"Blocked bad bot: {bad_bot}",
+                    extra={"user_agent": user_agent},
+                )
+                log_security_event(event)
 
-                    logger.warning(
-                        "Blocked bad bot: | ip= | user_agent=",
-                        bad_bot=bad_bot,
-                        client_ip=client_ip,
-                        user_agent=user_agent,
-                    )
-                    return Response(
-                        content='{"detail":"Forbidden - Bad bot detected"}',
-                        status_code=status.HTTP_403_FORBIDDEN,
-                        media_type="application/json",
-                    )
+                logger.warning(
+                    "Blocked bad bot: | ip= | user_agent=",
+                    bad_bot=bad_bot,
+                    client_ip=client_ip,
+                    user_agent=user_agent,
+                )
+                return Response(
+                    content='{"detail":"Forbidden - Bad bot detected"}',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    media_type="application/json",
+                )
 
         # Check whitelist first (if enabled)
         if settings.IP_WHITELIST_ENABLED:

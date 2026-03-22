@@ -164,15 +164,17 @@ class FileService:
             lock_acquired = True
 
         # Upload to storage
-        result = await provider.upload(file, storage_path, mime_type)
-
-        if not result.success:
-            raise Exception(f"Storage upload failed: {result.error}")
-
-        # ... remaining logic ...
-        # File model: tenant_id is UUID, user_id is int (FK to user.id)
-        # tenant_id is already UUID from API, user_id is already int from User model
+        # IMPORTANT: Upload is inside try/finally to ensure the Redis lock
+        # is always released in the finally block, even on StorageResult failure.
         try:
+            result = await provider.upload(file, storage_path, mime_type)
+
+            if not result.success:
+                raise Exception(f"Storage upload failed: {result.error}")
+
+            # ... remaining logic ...
+            # File model: tenant_id is UUID, user_id is int (FK to user.id)
+            # tenant_id is already UUID from API, user_id is already int from User model
             file_record = File(
                 tenant_id=tenant_id,  # UUID - no cast needed
                 user_id=user_id,  # int - already correct type
@@ -241,30 +243,34 @@ class FileService:
             if lock_acquired and cache.client:
                 await cache.client.delete(lock_key)
 
-    async def get_file(self, tenant_id: UUID, file_id: int) -> File | None:
+    async def get_file(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> File | None:
         """Get file by ID with tenant isolation.
 
         Args:
             tenant_id: The tenant UUID.
             file_id: The file ID.
+            user_id: Optional user ID to enforce ownership.
 
         Returns:
             File or None if not found.
         """
-        result = await self.db.execute(
-            select(File).where(
-                File.id == file_id,
-                File.tenant_id == tenant_id,
-            )
+        query = select(File).where(
+            File.id == file_id,
+            File.tenant_id == tenant_id,
         )
+        if user_id is not None:
+            query = query.where(File.user_id == user_id)
+
+        result = await self.db.execute(query)
         return result.scalar_one_or_none()
 
-    async def get_file_or_raise(self, tenant_id: UUID, file_id: int) -> File:
+    async def get_file_or_raise(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> File:
         """Get file or raise if not found.
 
         Args:
             tenant_id: The tenant UUID.
             file_id: The file ID.
+            user_id: Optional user ID to enforce ownership.
 
         Returns:
             File.
@@ -272,7 +278,7 @@ class FileService:
         Raises:
             FileEntityNotFoundError: If file not found.
         """
-        file = await self.get_file(tenant_id, file_id)
+        file = await self.get_file(tenant_id, file_id, user_id)
         if not file:
             raise FileEntityNotFoundError(f"File {file_id} not found")
         return file
@@ -325,12 +331,14 @@ class FileService:
         self,
         tenant_id: UUID,
         file_id: int,
+        user_id: int | None = None,
     ) -> AsyncGenerator[bytes, None]:
         """Download file content as async stream.
 
         Args:
             tenant_id: The tenant UUID.
             file_id: The file ID.
+            user_id: Optional user ID to enforce ownership.
 
         Yields:
             File content chunks.
@@ -338,7 +346,7 @@ class FileService:
         Raises:
             FileEntityNotFoundError: If file not found.
         """
-        file = await self.get_file_or_raise(tenant_id, file_id)
+        file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         provider = await self._storage_service.get_provider(tenant_id)
         settings = await self._storage_service.get_settings_or_raise(tenant_id)
 
@@ -365,6 +373,7 @@ class FileService:
         tenant_id: UUID,
         file_id: int,
         data: FileUpdate,
+        user_id: int | None = None,
     ) -> File:
         """Update file metadata.
 
@@ -372,6 +381,7 @@ class FileService:
             tenant_id: The tenant UUID.
             file_id: The file ID.
             data: Update data.
+            user_id: Optional user ID to enforce ownership.
 
         Returns:
             Updated File.
@@ -379,7 +389,7 @@ class FileService:
         Raises:
             FileEntityNotFoundError: If file not found.
         """
-        file = await self.get_file_or_raise(tenant_id, file_id)
+        file = await self.get_file_or_raise(tenant_id, file_id, user_id)
 
         if data.original_name is not None:
             file.original_name = data.original_name
@@ -393,17 +403,18 @@ class FileService:
 
         return file
 
-    async def delete_file(self, tenant_id: UUID, file_id: int) -> None:
+    async def delete_file(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> None:
         """Delete a file from storage and database.
 
         Args:
             tenant_id: The tenant UUID.
             file_id: The file ID.
+            user_id: Optional user ID to enforce ownership.
 
         Raises:
             FileEntityNotFoundError: If file not found.
         """
-        file = await self.get_file_or_raise(tenant_id, file_id)
+        file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         provider = await self._storage_service.get_provider(tenant_id)
         settings = await self._storage_service.get_settings_or_raise(tenant_id)
         file_size = file.size_bytes
@@ -419,6 +430,8 @@ class FileService:
 
         # Execute an explicit targeted DELETE statement and check the rowcount.
         stmt = delete(File).where(File.id == file_id, File.tenant_id == tenant_id)
+        if user_id is not None:
+            stmt = stmt.where(File.user_id == user_id)
         result = await self.db.execute(stmt)
 
         if result.rowcount == 0:
@@ -449,6 +462,7 @@ class FileService:
         tenant_id: UUID,
         file_id: int,
         expires_in: int = 3600,
+        user_id: int | None = None,
     ) -> str:
         """Get signed URL for file access.
 
@@ -456,6 +470,7 @@ class FileService:
             tenant_id: The tenant UUID.
             file_id: The file ID.
             expires_in: URL expiration in seconds.
+            user_id: Optional user ID to enforce ownership.
 
         Returns:
             Signed URL.
@@ -463,7 +478,7 @@ class FileService:
         Raises:
             FileEntityNotFoundError: If file not found.
         """
-        file = await self.get_file_or_raise(tenant_id, file_id)
+        file = await self.get_file_or_raise(tenant_id, file_id, user_id)
         provider = await self._storage_service.get_provider(tenant_id)
 
         url: str = await provider.get_url(file.storage_path, expires_in)

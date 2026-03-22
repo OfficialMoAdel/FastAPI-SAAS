@@ -225,6 +225,11 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
+        # SECURITY FIX (H-08): tenant authorization on plan access
+        tenant = get_current_tenant()
+        if tenant and plan.tenant_id != tenant.id:
+            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
 
@@ -241,6 +246,11 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         """Soft delete a subscription plan."""
         plan = await crud_subscription_plans.get(db=self.db, id=plan_id)
         if plan is None:
+            raise ModelNotFoundError("SubscriptionPlan", plan_id)
+
+        # SECURITY FIX (H-08): tenant authorization on plan access
+        tenant = get_current_tenant()
+        if tenant and plan.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         await crud_subscription_plans.update(

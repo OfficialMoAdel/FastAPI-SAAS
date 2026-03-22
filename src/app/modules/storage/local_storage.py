@@ -64,9 +64,13 @@ class LocalStorage(StorageProvider):
         Raises:
             ValueError: If path attempts directory traversal.
         """
-        # Prevent directory traversal attacks
+        # Prevent directory traversal attacks.
+        # BUG FIX: Use Path.is_relative_to() (Python 3.9+) which is both
+        # cross-platform (works with both / and \ separators) and semantically
+        # correct — e.g., /uploads2 is NOT relative to /uploads.
         full_path = (self._base_path / path).resolve()
-        if not str(full_path).startswith(str(self._base_path.resolve())):
+        resolved_base = self._base_path.resolve()
+        if not full_path.is_relative_to(resolved_base):
             raise ValueError("Invalid path: directory traversal detected")
         return full_path
 

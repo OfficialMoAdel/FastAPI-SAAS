@@ -122,8 +122,12 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
         else:
             yield db
     except Exception as exc:
-        # Rollback FIRST before logging - if logging fails, rollback must still happen.
-        await db.rollback()
+        # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+        try:
+            await db.rollback()
+        except Exception as rb_exc:
+            logger.error("Database rollback failed", exc_info=rb_exc)
+
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
         logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
@@ -158,8 +162,12 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         else:
             yield db
     except Exception as exc:
-        # Rollback FIRST before logging - if logging fails, rollback must still happen.
-        await db.rollback()
+        # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+        try:
+            await db.rollback()
+        except Exception as rb_exc:
+            logger.error("Database rollback failed", exc_info=rb_exc)
+
         tenant = get_current_tenant()
         tenant_context = str(tenant.id) if tenant else "None"
         logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)

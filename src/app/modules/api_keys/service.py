@@ -232,14 +232,14 @@ class APIKeyService(BaseService[APIKey]):
         # BUG FIX: When the CRUD fallback ran (line above), `key` is a dict
         # not an ORM object. Use .get() for dict access.
         if isinstance(api_key, dict):
-            if api_key.get("tenant_id") != tenant_id:
+            if api_key.get("tenant_id") != tenant_id or api_key.get("user_id") != user_id:
                 raise ForbiddenException("You don't have permission to revoke this key")
             api_key_hashed = api_key.get("hashed_key")
             api_key_name = api_key.get("name")
             api_key_prefix = api_key.get("key_prefix")
             api_key_is_active = api_key.get("is_active")
         else:
-            if api_key.tenant_id != tenant_id:
+            if api_key.tenant_id != tenant_id or api_key.user_id != user_id:
                 raise ForbiddenException("You don't have permission to revoke this key")
             api_key_hashed = api_key.hashed_key
             api_key_name = api_key.name

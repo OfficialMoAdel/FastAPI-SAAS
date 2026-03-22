@@ -11,7 +11,7 @@ from fastapi.responses import ORJSONResponse
 from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
-from src.app.core.config import settings
+from src.app.core.config import EnvironmentOption, settings
 from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
@@ -87,7 +87,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     from src.app.core.env_validator import EnvironmentValidator
 
     if not EnvironmentValidator.validate_and_log():
-        if settings.ENVIRONMENT == "production":
+        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             raise RuntimeError("Environment validation failed - refusing to start in production")
 
     default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
@@ -179,10 +179,10 @@ app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurat
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
+app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal (runs AFTER BodyLimit in LIFO)
 app.add_middleware(
     RequestBodyLimitMiddleware, max_body_size=getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
-)  # 10MB configurable limit
-app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal
+)  # 10MB configurable limit (runs BEFORE AttackDetection in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
@@ -221,15 +221,27 @@ def custom_openapi():
         }
     }
 
-    # Apply security to protected routes
+    # Identify paths that explicitly depend on authentication
+    protected_paths = set()
+    for route in app.routes:
+        if not hasattr(route, "dependencies"):
+            continue
+        for dep in getattr(route, "dependencies", []):
+            if hasattr(dep, "dependency") and callable(dep.dependency):
+                dep_name = dep.dependency.__name__
+                if dep_name in ("get_current_user", "get_current_superuser"):
+                    if hasattr(route, "path"):
+                        protected_paths.add(route.path)
+                    break
+
+    # Apply security only to protected routes
     for path_str, path_item in openapi_schema["paths"].items():
+        is_protected = path_str in protected_paths
         for method in path_item.values():
             if method.get("security"):
                 continue
-            # Apply JWT auth to all non-public routes
-            if path_str.startswith("/api/v1/auth"):
-                continue
-            method.setdefault("security", []).append({"bearerAuth": []})
+            if is_protected:
+                method.setdefault("security", []).append({"bearerAuth": []})
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

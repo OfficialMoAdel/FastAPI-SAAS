@@ -55,6 +55,12 @@ class Tenant(Base):
     )
 
     # Relationships
+    # NOTE ON LAZY LOADING STRATEGY:
+    # - Large collections (users, audit_logs, etc.) keep default lazy="select" to
+    #   avoid loading thousands of rows on every Tenant fetch.
+    # - Singleton/scalar associations (storage_settings, stripe_settings) use
+    #   lazy="selectin" because they are almost always accessed alongside the tenant
+    #   and the extra subquery cost is negligible (one additional tiny query).
     users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False)
     notifications: Mapped[list["Notification"]] = relationship(back_populates="tenant", init=False)
     email_template_overrides: Mapped[list["EmailTemplateOverride"]] = relationship(back_populates="tenant", init=False)
@@ -62,13 +68,16 @@ class Tenant(Base):
     webhook_deliveries: Mapped[list["WebhookDelivery"]] = relationship(back_populates="tenant", init=False)
     feature_flag_overrides: Mapped[list["FeatureFlagOverride"]] = relationship(back_populates="tenant", init=False)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False)
+    # Scalar associations — use selectin to avoid N+1 when loading tenant context
     storage_settings: Mapped["StorageSettings | None"] = relationship(
-        back_populates="tenant", uselist=False, init=False
+        back_populates="tenant", uselist=False, init=False, lazy="selectin"
     )
     files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False)
     api_keys: Mapped[list["APIKey"]] = relationship(back_populates="tenant", init=False)
     # Billing & AI relationships (Phase 3/5)
-    stripe_settings: Mapped["StripeSettings | None"] = relationship(back_populates="tenant", uselist=False, init=False)
+    stripe_settings: Mapped["StripeSettings | None"] = relationship(
+        back_populates="tenant", uselist=False, init=False, lazy="selectin"
+    )
     subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(back_populates="tenant", init=False)
     products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False)
     ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False)

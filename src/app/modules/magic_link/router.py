@@ -70,6 +70,7 @@ async def send_magic_link(
     response_model=AuthTokenResponse | LoginMFAResponse,
     summary="Verify magic link",
     description="Verify a magic link token and receive authentication tokens.",
+    dependencies=[Depends(rate_limiter_dependency)],
     responses={
         200: {"description": "Token verified, auth tokens returned. If MFA is enabled, returns MFA pending token."},
         400: {"description": "Invalid or expired token"},

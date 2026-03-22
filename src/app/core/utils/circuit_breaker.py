@@ -52,11 +52,22 @@ class CircuitBreaker:
     _failure_count: int = field(default=0, init=False)
     _success_count: int = field(default=0, init=False)
     _last_failure_time: float = field(default=0.0, init=False)
-    _lock: asyncio.Lock = field(default_factory=asyncio.Lock, init=False)
+    # BUG FIX: Do NOT use default_factory=asyncio.Lock here.  Module-level
+    # CircuitBreaker instances are created at import time, which can bind the
+    # Lock to a stale/nonexistent event loop (DeprecationWarning / RuntimeError
+    # in Python ≥ 3.10).  Use a None sentinel and create the lock lazily on
+    # first acquisition so it is always bound to the running event loop.
+    _lock: asyncio.Lock | None = field(default=None, init=False)
     # BUG FIX: Track whether a probe request is already in-flight during HALF_OPEN.
     # Without this flag, multiple concurrent requests can all probe simultaneously,
     # defeating the circuit breaker pattern and potentially overwhelming a recovering service.
     _probe_in_progress: bool = field(default=False, init=False)
+
+    def _get_lock(self) -> asyncio.Lock:
+        """Return the internal asyncio.Lock, creating it lazily on first access."""
+        if self._lock is None:
+            self._lock = asyncio.Lock()
+        return self._lock
 
     @property
     def state(self) -> CircuitState:
@@ -86,7 +97,7 @@ class CircuitBreaker:
         from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
-        async with self._lock:
+        async with self._get_lock():
             # BUG FIX: Always clear the probe flag on success so the next HALF_OPEN
             # cycle can allow a new probe if the circuit opens again later.
             self._probe_in_progress = False
@@ -115,7 +126,7 @@ class CircuitBreaker:
         from src.app.core.config import settings
         from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
 
-        async with self._lock:
+        async with self._get_lock():
             # BUG FIX: Always clear probe flag on failure so the next HALF_OPEN
             # cycle allows a fresh probe after recovery_timeout elapses again.
             self._probe_in_progress = False
@@ -213,7 +224,7 @@ def circuit_breaker(
             if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                 # Optimized path with double-check pattern
                 if state == CircuitState.OPEN:
-                    async with breaker._lock:
+                    async with breaker._get_lock():
                         # Double-check under lock to prevent TOCTOU race
                         if breaker.state == CircuitState.OPEN:
                             recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
@@ -223,7 +234,7 @@ def circuit_breaker(
 
                 # HALF_OPEN requires lock to prevent multiple probe requests
                 if state == CircuitState.HALF_OPEN:
-                    async with breaker._lock:
+                    async with breaker._get_lock():
                         if breaker.state == CircuitState.HALF_OPEN:
                             # BUG FIX: Gate concurrent probes using _probe_in_progress flag.
                             # Previously, all concurrent requests in HALF_OPEN state were

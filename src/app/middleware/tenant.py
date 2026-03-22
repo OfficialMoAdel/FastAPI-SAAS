@@ -374,6 +374,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     cache_data = {
                         "id": tenant.id,
                         "slug": tenant.slug,
+                        "name": tenant.name,
                         "is_active": tenant.is_active,
                     }
 

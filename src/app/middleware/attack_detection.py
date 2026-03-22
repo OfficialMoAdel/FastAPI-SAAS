@@ -177,7 +177,8 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 content_length_str = request.headers.get("content-length")
                 if content_length_str:
                     try:
-                        if int(content_length_str) > 10 * 1024 * 1024:
+                        max_body = getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
+                        if int(content_length_str) > max_body:
                             skip_body = True
                             logger.debug(
                                 "Skipping attack scan of oversized body | content-length=%s",

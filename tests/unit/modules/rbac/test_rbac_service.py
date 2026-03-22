@@ -370,8 +370,11 @@ class TestRoleServiceUserAssignment:
         mock_assignment_result = MagicMock()
         mock_assignment_result.scalar_one_or_none.return_value = None
 
-        # First call: user check, Second call: assignment check
-        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result])
+        # Mock token_version UPDATE result (no return value needed)
+        mock_update_result = MagicMock()
+
+        # Calls: (1) user check, (2) assignment check, (3) token_version UPDATE
+        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_assignment_result, mock_update_result])
 
         # Mock add to accept sync call
         mock_db.add = MagicMock()
@@ -382,7 +385,8 @@ class TestRoleServiceUserAssignment:
             await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
             mock_db.add.assert_called_once()
-            mock_db.commit.assert_called_once()
+            # Two commits: one for UserRole insert, one for token_version update
+            assert mock_db.commit.call_count == 2
             mock_cache.assert_called_once_with(123, MockUser.DEFAULT_TENANT_ID)
 
     @pytest.mark.asyncio
@@ -430,9 +434,19 @@ class TestRoleServiceUserAssignment:
             tenant_id=MockUser.DEFAULT_TENANT_ID,
         )
 
-        mock_result = MagicMock()
-        mock_result.scalar_one_or_none.return_value = mock_user_role
-        mock_db.execute = AsyncMock(return_value=mock_result)
+        # Mock user tenant-isolation check (user exists in tenant)
+        mock_user_result = MagicMock()
+        mock_user_result.scalar_one_or_none.return_value = MagicMock(id=123, tenant_id=MockUser.DEFAULT_TENANT_ID)
+
+        # Mock find-UserRole check
+        mock_role_result = MagicMock()
+        mock_role_result.scalar_one_or_none.return_value = mock_user_role
+
+        # Mock token_version UPDATE result
+        mock_update_result = MagicMock()
+
+        # Calls: (1) user check, (2) find UserRole, (3) token_version UPDATE
+        mock_db.execute = AsyncMock(side_effect=[mock_user_result, mock_role_result, mock_update_result])
 
         with patch(
             "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
@@ -440,5 +454,6 @@ class TestRoleServiceUserAssignment:
             await role_service.remove_role_from_user(user_id=123, role_id=1)
 
             mock_db.delete.assert_called_once_with(mock_user_role)
-            mock_db.commit.assert_called_once()
+            # Two commits: one for delete, one for token_version update
+            assert mock_db.commit.call_count == 2
             mock_cache.assert_called_once()

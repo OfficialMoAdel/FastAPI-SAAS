@@ -213,12 +213,12 @@ async def download_file(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id)
+        file = await service.get_file_or_raise(tenant.id, file_id, user_id=_user["id"])
 
         # SECURITY FIX: RFC 5987 content-disposition
         filename_encoded = quote(file.original_name)
         return StreamingResponse(
-            service.download_file(tenant.id, file_id),
+            service.download_file(tenant.id, file_id, user_id=_user["id"]),
             media_type=file.mime_type,
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
@@ -256,7 +256,7 @@ async def get_file_info(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id)
+        file = await service.get_file_or_raise(tenant.id, file_id, user_id=_user["id"])
         return FileRead.model_validate(file)
 
     except FileServiceNotFoundError:
@@ -293,7 +293,7 @@ async def get_signed_url(
         404: If file not found.
     """
     try:
-        url = await service.get_signed_url(tenant.id, file_id, expires_in)
+        url = await service.get_signed_url(tenant.id, file_id, expires_in, user_id=_user["id"])
         return SignedUrlResponse(url=url, expires_in=expires_in)
 
     except FileServiceNotFoundError:
@@ -328,7 +328,7 @@ async def update_file(
         404: If file not found.
     """
     try:
-        file = await service.update_file(tenant.id, file_id, data)
+        file = await service.update_file(tenant.id, file_id, data, user_id=_user["id"])
         return FileRead.model_validate(file)
 
     except FileServiceNotFoundError:
@@ -361,7 +361,7 @@ async def delete_file(
         404: If file not found.
     """
     try:
-        await service.delete_file(tenant.id, file_id)
+        await service.delete_file(tenant.id, file_id, user_id=_user["id"])
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except FileServiceNotFoundError:

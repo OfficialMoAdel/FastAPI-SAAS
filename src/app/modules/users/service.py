@@ -670,6 +670,17 @@ class UserService(BaseService[User]):
 
         await self.crud.update(db=self.db, object=values.model_dump(), username=username)
 
+        # SECURITY FIX: Increment token_version to invalidate active JWTs
+        from sqlalchemy import update as sa_update
+
+        user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+        await self.db.execute(
+            sa_update(User)
+            .where(User.id == user_id_val)
+            .values(token_version=User.token_version + 1)
+        )
+        await self.db.commit()
+
         # Invalidate cache
         await self._invalidate_user_cache(db_user)
 
