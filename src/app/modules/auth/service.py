@@ -585,9 +585,6 @@ return new_attempts
 
         # SECURITY FIX: Add audit log for password change (H-13)
         try:
-            from src.app.core.events.bus import event_bus
-            from src.app.core.events.models import EventPriority
-
             await event_bus.publish(
                 "audit.log",
                 {
@@ -598,7 +595,7 @@ return new_attempts
                     "user_id": user_id,
                     "details": {"message": "User password was changed"},
                 },
-                priority=EventPriority.HIGH,
+                priority=EventPriority.NORMAL,
             )
         except Exception as e:
             logger.error("failed_to_publish_password_change_audit_log", error=str(e))

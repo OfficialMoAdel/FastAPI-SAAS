@@ -62,7 +62,11 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
                     {
                         "id": tenant.id,
                         "slug": tenant.slug,
+                        "name": tenant.name,
                         "is_active": tenant.is_active,
+                        "feature_flags": tenant.feature_flags,
+                        "storage_usage_bytes": tenant.storage_usage_bytes,
+                        "file_count": tenant.file_count,
                     }
                 )
                 pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
@@ -125,34 +129,34 @@ async def warm_caches() -> CacheWarmingResult:
             # Warm tenant cache
             try:
                 result.tenants_cached = await warm_tenant_cache(session)
-                logger.info("Cached %d active tenants", result.tenants_cached)
+                logger.info("Cached active tenants", count=result.tenants_cached)
             except Exception as e:
                 error_msg = f"Tenant cache warming failed: {e}"
-                logger.error(error_msg)
+                logger.error("Tenant cache warming failed", error=str(e))
                 errors.append(error_msg)
 
             # Warm tier cache
             try:
                 result.tiers_cached = await warm_tier_cache(session)
-                logger.info("Cached %d tiers", result.tiers_cached)
+                logger.info("Cached tiers", count=result.tiers_cached)
             except Exception as e:
                 error_msg = f"Tier cache warming failed: {e}"
-                logger.error(error_msg)
+                logger.error("Tier cache warming failed", error=str(e))
                 errors.append(error_msg)
 
     except Exception as e:
         error_msg = f"Cache warming failed: {e}"
-        logger.error(error_msg)
+        logger.error("Cache warming failed", error=str(e))
         errors.append(error_msg)
 
     result.duration_ms = (time.perf_counter() - start_time) * 1000
     result.errors = errors if errors else None
 
     logger.info(
-        "Cache warming complete | tenants=%d | tiers=%d | duration=%.2fms",
-        result.tenants_cached,
-        result.tiers_cached,
-        result.duration_ms,
+        "Cache warming complete",
+        tenants_cached=result.tenants_cached,
+        tiers_cached=result.tiers_cached,
+        duration_ms=round(result.duration_ms, 2),
     )
 
     return result

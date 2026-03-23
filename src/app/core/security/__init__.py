@@ -376,7 +376,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                 except IntegrityError:
                     await db.rollback()
         except JWTError as e:
-            _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
+            _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
 
     # Bulk add to Redis cache
     if tokens_for_cache:
@@ -417,7 +417,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
             except IntegrityError:
                 await db.rollback()
     except JWTError as e:
-        _jwt_logger.warning("Skipping blacklist for invalid token: %s", e)
+        _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
 
 
 # MFA pending token constants (configured via environment)

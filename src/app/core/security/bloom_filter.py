@@ -91,9 +91,12 @@ class BloomFilter:
         # Log which hash function is being used
         hash_func = "xxhash (xxh3_128)" if self._use_xxhash else "SHA256 (legacy)"
         logger.info(
-            f"Bloom filter initialized: hash_function={hash_func}, "
-            f"size={self._size} bits, hash_count={self._hash_count}, "
-            f"expected_items={expected_items}, target_fpr={false_positive_rate}"
+            "Bloom filter initialized",
+            hash_function=hash_func,
+            size_bits=self._size,
+            hash_count=self._hash_count,
+            expected_items=expected_items,
+            target_fpr=false_positive_rate,
         )
 
     @staticmethod

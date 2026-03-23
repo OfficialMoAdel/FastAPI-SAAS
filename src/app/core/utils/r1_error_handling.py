@@ -149,13 +149,15 @@ async def with_fallback(
     try:
         return await primary_fn()
     except Exception as primary_error:
-        logger.log(log_level, f"{error_msg}: {primary_error}")
+        logger.warning(f"{error_msg}", error=str(primary_error))
 
         try:
             return await fallback_fn()
         except Exception as fallback_error:
             logger.error(
-                f"Fallback also failed after primary error. Primary: {primary_error}, Fallback: {fallback_error}"
+                "Fallback also failed after primary error",
+                primary_error=str(primary_error),
+                fallback_error=str(fallback_error),
             )
             if reraise_on_fallback_failure:
                 raise fallback_error from primary_error
@@ -182,7 +184,7 @@ def with_fallback_sync(
     try:
         return primary_fn()
     except Exception as primary_error:
-        logger.log(log_level, f"{error_msg}: {primary_error}")
+        logger.warning(f"{error_msg}", error=str(primary_error))
         return fallback_fn()
 
 
@@ -231,10 +233,10 @@ async def with_retry(
                 on_retry(e, attempt)
             else:
                 logger.debug(
-                    "Attempt / failed: , retrying in s",
+                    "Attempt failed, retrying",
                     attempt=attempt,
                     max_attempts=max_attempts,
-                    error=e,
+                    error=str(e),
                     delay=delay,
                 )
 
@@ -278,7 +280,7 @@ def fallback_on_error(
             try:
                 return await fn(*args, **kwargs)
             except exceptions as e:
-                logger.log(log_level, f"{fn.__name__} failed, using fallback: {e}")
+                logger.warning(f"{fn.__name__} failed, using fallback", error=str(e))
                 return fallback_value
 
         return wrapper
@@ -305,17 +307,19 @@ def log_optimization_error(
                 return await fn(*args, **kwargs)
             except R1OptimizationError as e:
                 logger.error(
-                    f"[R1-{optimization_name}] {fn.__name__} failed: {e}",
-                    extra={
-                        "optimization": e.optimization,
-                        "function": fn.__name__,
-                        "error_type": type(e).__name__,
-                    },
+                    f"[R1-{optimization_name}] {fn.__name__} failed",
+                    optimization=e.optimization,
+                    function=fn.__name__,
+                    error_type=type(e).__name__,
+                    error=str(e),
                 )
                 raise
             except Exception as e:
                 logger.error(
-                    "[R1-] Unexpected error in :", optimization_name=optimization_name, __name__=fn.__name__, error=e
+                    "Unexpected error in R1 optimization",
+                    optimization_name=optimization_name,
+                    function=fn.__name__,
+                    error=str(e),
                 )
                 raise
 
@@ -432,7 +436,7 @@ def safe_get(
 
     if expected_type is not None and not isinstance(value, expected_type):
         logger.debug(
-            "Type mismatch for key '': expected , got",
+            "Type mismatch for key",
             key=key,
             expected=expected_type.__name__,
             got=type(value).__name__,

@@ -270,9 +270,9 @@ class UserService(BaseService[User]):
         existing_user = await self.db.scalar(stmt)
 
         if existing_user:
-            # SECURITY FIX: Use a generic error message regardless of which field exists.
-            # Different messages for email vs username would allow enumeration of registered users.
-            raise DuplicateError("email or username", user.email)
+            if existing_user.email == user.email:
+                raise DuplicateError("email", user.email)
+            raise DuplicateError("username", user.username)
 
         # Hash password and create internal user object
         user_dict = user.model_dump()

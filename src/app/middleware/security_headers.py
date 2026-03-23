@@ -31,8 +31,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         "default-src 'self'; "
         "script-src 'self'; "
         "style-src 'self'; "
-        "img-src 'self' data: https:; "
-        "font-src 'self' data:; "
+        "img-src 'self' https:; "
+        "font-src 'self'; "
         "frame-ancestors 'none'; "
         "base-uri 'self'; "
         "form-action 'self'"
@@ -65,7 +65,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         self.frame_options = frame_options
 
         # Only enable HSTS in production (requires HTTPS)
-        self.is_production = getattr(settings, "ENVIRONMENT", None) == EnvironmentOption.PRODUCTION
+        self.is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
 
     async def dispatch(self, request: Request, call_next) -> Response:
         """Add security headers to response."""

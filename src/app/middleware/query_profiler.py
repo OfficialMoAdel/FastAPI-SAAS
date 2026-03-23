@@ -21,7 +21,7 @@ from sqlalchemy.engine import Connection, Engine
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
-from src.app.core.config import settings
+from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_engine
 from src.app.core.logger import get_logger
 
@@ -88,7 +88,7 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
     def _check_enabled(self) -> bool:
         """Check if profiler should be enabled."""
         # Never enable in production
-        if settings.ENVIRONMENT.value == "production":
+        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             return False
 
         # Check explicit setting
@@ -113,11 +113,7 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next) -> Response:
         """Process request with query profiling."""
         if not self._is_enabled:
-            response = await call_next(request)
-            response = cast(Response, response)
-            response.headers["X-Query-Count"] = "0"
-            response.headers["X-Query-Time"] = "0"
-            return response
+            return cast(Response, await call_next(request))
 
         stats = QueryStats()
         engine = self._get_engine()
