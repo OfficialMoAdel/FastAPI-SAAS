@@ -99,7 +99,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 log_security_event(event)
 
                 logger.warning(
-                    "Blocked bad bot: | ip= | user_agent=",
+                    "bad_bot_blocked",
                     bad_bot=bad_bot,
                     client_ip=client_ip,
                     user_agent=user_agent,

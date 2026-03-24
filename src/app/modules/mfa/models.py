@@ -24,7 +24,7 @@ class MFAMethod(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, insert_default=uuid.uuid4, init=False)
 
     # Required fields
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), nullable=False, index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), nullable=False, index=True)
     secret: Mapped[str] = mapped_column(String, nullable=False)
 
     # Optional fields with defaults (init=False)

@@ -149,10 +149,8 @@ return new_attempts
             # Note: fail_closed requires ServiceUnavailableException to be defined
             if getattr(settings, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
                 from fastapi import HTTPException
-                raise HTTPException(
-                    status_code=503,
-                    detail="Service unavailable (Audit logging failed)"
-                )
+
+                raise HTTPException(status_code=503, detail="Service unavailable (Audit logging failed)")
 
     async def login(
         self,
@@ -236,6 +234,7 @@ return new_attempts
 
         # Check if MFA is enabled for this user
         from src.app.modules.mfa.service import get_mfa_service
+
         mfa_service = get_mfa_service()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
@@ -559,9 +558,11 @@ return new_attempts
         # SECURITY FIX: Enforce password complexity
         try:
             from src.app.modules.users.schemas import UserCreate
+
             UserCreate.validate_password_complexity(new_password)
         except ValueError as e:
             from src.app.core.exceptions.http_exceptions import BadRequestException
+
             raise BadRequestException(str(e))
 
         # Hash and update new password
@@ -571,6 +572,11 @@ return new_attempts
         # SECURITY FIX: Invalidate ALL user sessions
         await self._invalidate_all_user_sessions(user, db)
 
+        # Invalidate auth cache so new password works immediately, BEFORE commit
+        # to prevent stale cache state on DB failure
+        user_service = get_user_service(db)
+        await user_service._invalidate_user_cache(user)
+
         # Commit the combined transaction of password change + token version increment
         await db.commit()
 
@@ -578,10 +584,6 @@ return new_attempts
             "Password changed successfully",
             extra={"user_id": user["id"]},
         )
-
-        # Invalidate auth cache so new password works immediately
-        user_service = get_user_service(db)
-        await user_service._invalidate_user_cache(user)
 
         # SECURITY FIX: Add audit log for password change (H-13)
         try:
@@ -614,6 +616,25 @@ return new_attempts
         # FIXED: Removed redundant creation/blacklisting of dummy tokens (Item 11b).
         # Token version check in verify_token() is the primary and sufficient mechanism.
         user_id = user.get("id")
+
+        # FIXED: Delete cache FIRST to prevent stale reads during DB update
+        try:
+            from src.app.core.utils.cache import client as redis_client
+
+            if redis_client:
+                username = user.get("username")
+                email = user.get("email")
+                keys = []
+                if username:
+                    keys.append(f"user:{username}:token_version")
+                if email:
+                    keys.append(f"user:{email}:token_version")
+                if keys:
+                    await redis_client.delete(*keys)
+        except Exception as e:
+            logger.warning("Failed to invalidate token_version cache", user_id=user_id, error=str(e))
+
+        # THEN update DB - after cache is invalidated to prevent race condition
         await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
         # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
 
@@ -645,6 +666,7 @@ return new_attempts
         # Always return success to prevent email enumeration
         if user:
             import hashlib
+
             raw_token = generate_reset_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create password reset token (expires in 1 hour)
@@ -720,6 +742,7 @@ return new_attempts
         # Without this lock, two concurrent requests with the same token could both
         # pass the is_valid check before either marks the token as used.
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode()).hexdigest()
         stmt = select(PasswordResetToken).where(PasswordResetToken.token == hashed_token).with_for_update()
         result = await db.execute(stmt)
@@ -753,9 +776,11 @@ return new_attempts
         # SECURITY FIX: Enforce password complexity
         try:
             from src.app.modules.users.schemas import UserCreate
+
             UserCreate.validate_password_complexity(new_password)
         except ValueError as e:
             from src.app.core.exceptions.http_exceptions import BadRequestException
+
             raise BadRequestException(str(e))
 
         # Update password
@@ -801,6 +826,7 @@ return new_attempts
 
         if user and not user.get("is_email_verified", False):
             import hashlib
+
             raw_token = generate_verification_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create verification token
@@ -859,6 +885,7 @@ return new_attempts
             If token is invalid or expired
         """
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode()).hexdigest()
         # Find token in database
         stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == hashed_token).with_for_update()
@@ -878,7 +905,8 @@ return new_attempts
 
         # BUG FIX: Reject verification for inactive accounts. Without this check,
         # an inactive user could verify their email and gain unintended access.
-        if not user.get("is_active", True):
+        # SECURITY: Default to False (deny-by-default) if field is absent.
+        if not user.get("is_active", False):
             raise UnauthorizedException("This account is inactive. Please contact support.")
 
         # Update user status

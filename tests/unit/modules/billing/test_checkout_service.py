@@ -60,7 +60,9 @@ async def test_create_session_no_api_key(db_session, tenant):
         with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
             from src.app.core.config import settings as app_settings
             frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
-            data = CheckoutCreate(plan_id=1, billing_interval="monthly", success_url=f"{frontend}/x", cancel_url=f"{frontend}/x")
+            data = CheckoutCreate(
+                plan_id=1, billing_interval="monthly", success_url=f"{frontend}/x", cancel_url=f"{frontend}/x"
+            )
             with pytest.raises(HTTPException) as exc:
                 await service.create_session(1, "x", data)
             assert exc.value.status_code == 500

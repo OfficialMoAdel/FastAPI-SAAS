@@ -99,7 +99,7 @@ class AuditLogService:
         user_id: int | None = None,  # FIX: Changed from UUID to int to match model
         action: str | None = None,
         entity_type: str | None = None,
-        entity_id: UUID | None = None,
+        entity_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 100,
@@ -157,7 +157,7 @@ class AuditLogService:
         user_id: int | None = None,
         action: str | None = None,
         entity_type: str | None = None,
-        entity_id: UUID | None = None,
+        entity_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
     ) -> int:
@@ -187,7 +187,7 @@ class AuditLogService:
         user_id: int | None = None,  # FIX: Changed from UUID to int to match model
         action: str | None = None,
         entity_type: str | None = None,
-        entity_id: UUID | None = None,
+        entity_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
         limit: int = 100,

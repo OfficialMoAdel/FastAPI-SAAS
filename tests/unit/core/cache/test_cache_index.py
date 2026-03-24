@@ -218,7 +218,7 @@ class TestInvalidateTenantCache:
 
             # Should use smembers
             mock_redis.smembers.assert_called_once()
-            
+
             # Should use scan, but only to clean up orphaned sharded indexes, not for data key lookup
             mock_redis.scan.assert_called_with(0, match="tenant_index:1:*", count=100)
 

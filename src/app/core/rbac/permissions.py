@@ -23,6 +23,9 @@ class Permission(str, Enum):
     WEBHOOKS_READ = "webhooks:read"
     WEBHOOKS_MANAGE = "webhooks:manage"
 
+    # Tenant Management
+    TENANT_UPDATE = "tenant:update"
+
     # === Phase 6: New Permissions ===
 
     # User Self-Access (Phase 6)

@@ -3,7 +3,7 @@
 Adds standard security headers to all responses:
 - X-Content-Type-Options: nosniff
 - X-Frame-Options: DENY
-- X-XSS-Protection: 1; mode=block
+- X-XSS-Protection: 0 (disabled per OWASP — "1; mode=block" is exploitable)
 - Content-Security-Policy (configurable)
 - Strict-Transport-Security (HSTS)
 - Referrer-Policy
@@ -74,7 +74,9 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # XSS Prevention Headers
         response.headers["X-Content-Type-Options"] = "nosniff"
         response.headers["X-Frame-Options"] = self.frame_options
-        response.headers["X-XSS-Protection"] = "1; mode=block"
+        # OWASP: Set to "0" to disable the browser's broken XSS auditor.
+        # "1; mode=block" is deprecated and can be exploited by attackers.
+        response.headers["X-XSS-Protection"] = "0"
 
         # Referrer Policy - don't leak full URL to external sites
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"

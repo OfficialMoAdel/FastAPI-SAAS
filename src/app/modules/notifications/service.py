@@ -273,7 +273,7 @@ class NotificationService:
     async def get_notifications(
         self,
         tenant_id: UUID,
-        user_id: UUID | None = None,
+        user_id: int | None = None,
         status: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,

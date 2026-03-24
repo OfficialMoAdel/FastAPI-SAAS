@@ -28,7 +28,7 @@ def mock_sqlalchemy_event_listen():
 
     def side_effect(target, identifier, fn, *args, **kwargs):
         from unittest.mock import AsyncMock, MagicMock
-        if hasattr(target, '_mock_name') or isinstance(target, (AsyncMock, MagicMock)):
+        if hasattr(target, '_mock_name') or isinstance(target, AsyncMock | MagicMock):
             fn(target)
         else:
             original_listen(target, identifier, fn, *args, **kwargs)

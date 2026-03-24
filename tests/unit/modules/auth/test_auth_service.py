@@ -372,7 +372,13 @@ class TestAuthServiceEmailFlows:
     @pytest.mark.asyncio
     async def test_request_password_reset_sends_email(self, auth_service, mock_db):
         """Test that requesting password reset triggers email event."""
-        mock_user = {"id": 1, "email": "test@example.com", "username": "testuser", "tenant_id": uuid4(), "is_active": True}
+        mock_user = {
+            "id": 1,
+            "email": "test@example.com",
+            "username": "testuser",
+            "tenant_id": uuid4(),
+            "is_active": True,
+        }
 
         with (
             patch("src.app.modules.users.crud.crud_users.get", new_callable=AsyncMock) as mock_get_user,
@@ -401,7 +407,9 @@ class TestAuthServiceEmailFlows:
             await auth_service.request_password_reset("test@example.com", mock_db)
 
             # Check user lookup
-            mock_get_user.assert_called_once_with(db=mock_db, email="test@example.com", is_deleted=False, is_active=True)
+            mock_get_user.assert_called_once_with(
+                db=mock_db, email="test@example.com", is_deleted=False, is_active=True
+            )
 
             # Check token saved
             mock_db.add.assert_called()

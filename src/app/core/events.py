@@ -65,6 +65,8 @@ class EventBus:
         self._registration_complete = False
         # P3-2: Semaphore to bound concurrent sync execution
         self._concurrency_semaphore = asyncio.Semaphore(settings.EVENT_BUS_CONCURRENCY)
+        # Store strong references to background tasks to prevent garbage collection (Bug 3)
+        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     @property
     def is_ready(self) -> bool:
@@ -339,7 +341,9 @@ class EventBus:
         # Fire-and-forget: Schedule handlers as background tasks
         # Do NOT await - this allows the request to return immediately
         for handler in handlers:
-            asyncio.create_task(_call_handler(handler))
+            task = asyncio.create_task(_call_handler(handler))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._background_tasks.discard)
 
     async def _publish_async(
         self,

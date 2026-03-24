@@ -295,7 +295,7 @@ async def test_db_idempotency_check_failure_fails_closed():
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.webhook.redis_client")
-async def test_handle_webhook_event_error_releases_lock(mock_redis):
+async def test_handle_webhook_event_error_releases_lock_missing_coverage(mock_redis):
     """Test that failed webhook processing releases the lock (lines 189-190)."""
     mock_redis.delete = AsyncMock()
 

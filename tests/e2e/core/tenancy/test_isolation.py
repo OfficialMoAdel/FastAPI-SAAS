@@ -622,7 +622,9 @@ class TestTenantIsolationE2E:
 
                     results: list[dict[str, Any]] = []
 
-                    async def fetch_users_load_test(tenant_slug: str, tenant_id: int, request_num: int) -> dict[str, Any]:
+                    async def fetch_users_load_test(
+                        tenant_slug: str, tenant_id: int, request_num: int
+                    ) -> dict[str, Any]:
                         """Fetch users for load testing."""
                         # Set up auth for this tenant
                         fake_user = MockUser(

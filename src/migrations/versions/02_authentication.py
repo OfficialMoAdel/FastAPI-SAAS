@@ -27,11 +27,14 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("token", sa.String(length=500), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_token_blacklist")),
     )
     op.create_index("ix_token_blacklist_token", "token_blacklist", ["token"], unique=True)
     op.create_index("idx_token_blacklist_active", "token_blacklist", ["expires_at"])
+    op.create_index("ix_token_blacklist_tenant_id", "token_blacklist", ["tenant_id"])
+    op.create_index("ix_token_blacklist_tenant_expires", "token_blacklist", ["tenant_id", "expires_at"])
 
     # ===== PASSKEY_CREDENTIALS =====
     op.create_table(

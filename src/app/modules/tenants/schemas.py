@@ -65,7 +65,6 @@ class TenantUpdate(BaseUpdate):
     model_config = ConfigDict(extra="forbid")
 
     name: Annotated[str | None, Field(min_length=1, max_length=100, default=None)]
-    is_active: Annotated[bool | None, Field(default=None)]
 
     @field_validator("name")
     @classmethod

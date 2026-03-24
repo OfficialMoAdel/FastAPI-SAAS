@@ -847,7 +847,7 @@ async def test_verify_with_webauthn():
     with patch("src.app.modules.passkey.service.verify_registration_response") as mock_verify:
         mock_verify.return_value = MagicMock(credential_id=b"test")
 
-        result = service._verify_with_webauthn(test="arg")
+        service._verify_with_webauthn(test="arg")
 
         mock_verify.assert_called_once_with(test="arg")
 
@@ -866,7 +866,7 @@ async def test_find_credential_by_id_fallback_decryption():
     mock_result.scalar_one_or_none.return_value = mock_cred
     mock_db.execute = AsyncMock(return_value=mock_result)
 
-    with patch("src.app.modules.passkey.service.get_encryption") as mock_get_enc:
+    with patch("src.app.core.security.encryption.get_encryption") as mock_get_enc:
         mock_enc = MagicMock()
         mock_enc.decrypt_credential.return_value = b"different-id"
         mock_get_enc.return_value = mock_enc
@@ -879,7 +879,7 @@ async def test_find_credential_by_id_fallback_decryption():
 
 
 @pytest.mark.asyncio
-async def test_find_credential_by_id_fallback_decryption():
+async def test_find_credential_by_id_fallback_decryption_local_import():
     """Test _find_credential_by_id fallback decryption path."""
     from src.app.modules.passkey.service import PasskeyService
 

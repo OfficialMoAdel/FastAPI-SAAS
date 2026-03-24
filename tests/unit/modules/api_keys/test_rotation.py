@@ -431,7 +431,7 @@ class TestAPIKeyRotationGracePeriod:
         with (
             patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
             patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
-            patch("src.app.modules.api_keys.service.AuditLogService.create_log") as mock_audit,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
             mock_get.return_value = mock_key
@@ -477,7 +477,7 @@ class TestAPIKeyRotationGracePeriod:
         with (
             patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
             patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
-            patch("src.app.modules.api_keys.service.AuditLogService.create_log") as mock_audit,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
             mock_get.return_value = mock_key

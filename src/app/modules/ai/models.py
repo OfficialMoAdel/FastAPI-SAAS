@@ -28,7 +28,7 @@ class AIChatSession(Base):
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
 
     title: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
@@ -94,7 +94,9 @@ class AISettings(Base):
     __tablename__ = "ai_settings"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True, unique=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("user.id", ondelete="CASCADE"), index=True, unique=True, nullable=False
+    )
 
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
     temperature: Mapped[float] = mapped_column(Float, nullable=False, default=0.7)
@@ -131,7 +133,7 @@ class AITokenUsage(Base):
         nullable=True,
     )
     user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user.id"),
+        ForeignKey("user.id", ondelete="CASCADE"),
         index=True,
         nullable=True,
     )

@@ -577,7 +577,7 @@ class TestChangePassword:
             with patch("src.app.modules.auth.service.verify_password", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = True
 
-                with pytest.raises(BadRequestException) as exc_info:
+                with pytest.raises(BadRequestException):
                     await auth_service.change_password(
                         user_id=1,
                         current_password="oldpassword",
@@ -669,7 +669,7 @@ class TestResetPassword:
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
 
-        with patch("src.app.modules.auth.service.select") as mock_select:
+        with patch("src.app.modules.auth.service.select"):
             with patch("src.app.modules.auth.service.PasswordResetToken"):
                 with patch("src.app.modules.auth.service.crud_users"):
                     mock_db.execute = AsyncMock(return_value=mock_result)

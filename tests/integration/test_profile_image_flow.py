@@ -159,6 +159,14 @@ async def test_upload_profile_image_invalid_type(service, mock_db):
 
 
 def test_upload_profile_image_flow(client, regular_user_token_headers):
+    # Minimal valid 1x1 PNG bytes so magic-byte validation passes
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n"
+        b"\x00\x00\x00\rIHDR\x00\x00\x00\x01\x00\x00\x00\x01"
+        b"\x08\x02\x00\x00\x00\x90wS\xde"
+        b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
+        b"\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
     # Mock storage to avoid actual S3 calls
     with patch("src.app.modules.user_preferences.service.get_storage") as mock_get_storage:
         mock_storage = AsyncMock()
@@ -167,8 +175,8 @@ def test_upload_profile_image_flow(client, regular_user_token_headers):
         mock_storage.upload.return_value = StorageResult(success=True, path="users/1/profile.png")
         mock_storage.get_url.return_value = "https://s3.example.com/users/1/profile.png"
 
-        # Prepare file upload
-        files = {"file": ("profile.png", b"fake_content", "image/png")}
+        # Prepare file upload with real PNG content
+        files = {"file": ("profile.png", png_bytes, "image/png")}
 
         response = client.patch("/api/v1/user/me/image", files=files, headers=regular_user_token_headers)
 

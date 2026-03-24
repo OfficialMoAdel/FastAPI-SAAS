@@ -302,14 +302,26 @@ class UserService(BaseService[User]):
 
             import asyncio
 
+            def _log_task_error(task: asyncio.Task) -> None:
+                """Log errors from background event tasks so they are not silently swallowed."""
+                exc = task.exception() if not task.cancelled() else None
+                if exc is not None:
+                    logger.error(
+                        "Background event publish failed",
+                        action="user.created",
+                        error=str(exc),
+                        exc_info=exc,
+                    )
+
             # Fire-and-forget task to publish the event safely from async context
-            asyncio.create_task(
+            task = asyncio.create_task(
                 event_bus.publish(
                     "user.created",
                     event_payload,
                     priority=EventPriority.NORMAL,
                 )
             )
+            task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
             # Handle race condition: duplicate was created between our check and insert

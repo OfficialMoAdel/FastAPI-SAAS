@@ -181,7 +181,7 @@ class PreferencesService:
         Returns:
             dict: {"image_url": "..."}
         """
-        # 1. Validate file type
+        # 1. Validate file type via Content-Type header (fast initial check)
         if file.content_type not in ALLOWED_IMAGE_TYPES:
             raise ValidationError(f"Invalid file type '{file.content_type}'. Allowed: {', '.join(ALLOWED_IMAGE_TYPES)}")
 
@@ -197,7 +197,24 @@ class PreferencesService:
                 f"File too large ({size / 1024 / 1024:.1f} MB). Max size: {MAX_IMAGE_SIZE_BYTES / 1024 / 1024:.0f} MB"
             )
 
-        # 3. Get User record first
+        # 3. SECURITY: Validate actual file content via magic bytes (prevents Content-Type spoofing).
+        # An attacker can set Content-Type: image/jpeg but upload a malicious script.
+        # `filetype` reads the file signature bytes to determine true type.
+        try:
+            import filetype  # type: ignore[import-untyped]
+
+            header_chunk = await file.read(261)  # 261 bytes is enough for filetype detection
+            await file.seek(0)
+            detected_kind = filetype.guess(header_chunk)
+            detected_mime = detected_kind.mime if detected_kind else None
+            if detected_mime not in ALLOWED_IMAGE_TYPES:
+                raise ValidationError(
+                    f"File content does not match an allowed image type. Detected: {detected_mime or 'unknown'}"
+                )
+        except ImportError:
+            logger.warning("filetype library not available; skipping magic-byte validation")
+
+        # 4. Get User record first
         user = await crud_users.get(db=db, id=user_id)
         if not user:
             raise ModelNotFoundError("User", user_id)

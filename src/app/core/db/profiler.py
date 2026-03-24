@@ -143,6 +143,12 @@ def _track_query(
     """
     now = time.perf_counter()
 
+    # BUG FIX: Opportunistically evict stale entries every ~1000 queries.
+    # Prevents unbounded memory growth in long-running processes where
+    # reset_query_tracker() was never called from the request lifecycle.
+    if len(_query_tracker) % 1000 == 0 and _query_tracker:
+        _evict_stale_tracker_entries()
+
     if normalized_statement in _query_tracker:
         tracker = _query_tracker[normalized_statement]
         tracker["count"] += 1
@@ -178,6 +184,26 @@ def reset_query_tracker() -> None:
     """
     _query_tracker.clear()
     logger.debug("Query tracker reset")
+
+
+# BUG FIX: Maximum age (seconds) for entries in _query_tracker before automatic eviction.
+# Previously the dict grew unbounded because reset_query_tracker() was never called.
+# Entries older than this are purged during the next _track_query call.
+_QUERY_TRACKER_MAX_AGE_SECONDS = 3600  # 1 hour
+
+
+def _evict_stale_tracker_entries() -> None:
+    """Evict _query_tracker entries that haven't been seen for over an hour.
+
+    Called opportunistically from _track_query to bound memory growth without
+    requiring an explicit periodic reset from the request lifecycle.
+    """
+    cutoff = time.perf_counter() - _QUERY_TRACKER_MAX_AGE_SECONDS
+    stale_keys = [k for k, v in _query_tracker.items() if v.get("last_seen", 0) < cutoff]
+    for k in stale_keys:
+        del _query_tracker[k]
+    if stale_keys:
+        logger.debug("Query tracker evicted %d stale entries", len(stale_keys))
 
 
 def get_query_stats() -> dict[str, dict[str, Any]]:

@@ -9,6 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_superuser, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.rbac.permissions import Permission
 from src.app.modules.tenants.schemas import TenantCreate, TenantList, TenantResponse, TenantUpdate
 from src.app.modules.tenants.service import TenantService, get_tenant_service
 
@@ -81,7 +83,11 @@ async def get_tenant(
     return await service.get_tenant(tenant_id)
 
 
-@router.patch("/{tenant_id}", response_model=TenantResponse)
+@router.patch(
+    "/{tenant_id}",
+    response_model=TenantResponse,
+    dependencies=[Depends(requires_permission(Permission.TENANT_UPDATE))],
+)
 async def update_tenant(
     tenant_id: UUID,
     values: TenantUpdate,
@@ -90,7 +96,7 @@ async def update_tenant(
 ) -> dict[str, Any]:
     """Update a tenant.
 
-    Requires authentication. Returns 404 if not found.
+    Requires TENANT_UPDATE permission. Returns 404 if not found.
     Can update name and is_active status.
     """
     if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:

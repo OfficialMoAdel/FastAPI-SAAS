@@ -18,7 +18,7 @@ class Post(Base):
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
-    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("user.id"), index=True)
+    created_by_user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
     title: Mapped[str] = mapped_column(String(30))
     text: Mapped[str] = mapped_column(String(63206))
     uuid: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), default_factory=uuid7, unique=True)

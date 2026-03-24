@@ -142,7 +142,7 @@ class IPFilterService:
         return True
 
     async def remove_from_blacklist(self, ip_address: str) -> bool:
-        """Remove an IP address from the whitelist.
+        """Remove an IP address from the blacklist.
 
         Args:
             ip_address: IPv4 or IPv6 address
@@ -297,9 +297,10 @@ class IPFilterService:
                 if cursor == 0:
                     break
 
-        if keys:
-            return int(await client.delete(*keys))
-        return 0
+            # BUG FIX: delete must be called inside the context manager while `client` is live.
+            if keys:
+                return int(await client.delete(*keys))
+            return 0
 
     async def clear_blacklist(self) -> int:
         """Clear all entries from the blacklist.
@@ -321,9 +322,10 @@ class IPFilterService:
                 if cursor == 0:
                     break
 
-        if keys:
-            return int(await client.delete(*keys))
-        return 0
+            # BUG FIX: delete must be called inside the context manager while `client` is live.
+            if keys:
+                return int(await client.delete(*keys))
+            return 0
 
 
 # Global instance

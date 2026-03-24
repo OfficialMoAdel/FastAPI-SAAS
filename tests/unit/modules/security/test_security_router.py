@@ -33,7 +33,9 @@ async def test_add_ip_to_whitelist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
     current_user = {"id": 1}
 
-    with patch("src.app.modules.security.router.ip_filter_service.add_to_whitelist", new_callable=AsyncMock) as mock_add:
+    with patch(
+        "src.app.modules.security.router.ip_filter_service.add_to_whitelist", new_callable=AsyncMock
+    ) as mock_add:
         mock_add.return_value = True
         response = await add_ip_to_whitelist(request, current_user)  # type: ignore[arg-type]
 
@@ -53,7 +55,9 @@ async def test_add_ip_to_whitelist() -> None:
 async def test_remove_ip_from_whitelist() -> None:
     current_user = {"id": 1}
 
-    with patch("src.app.modules.security.router.ip_filter_service.remove_from_whitelist", new_callable=AsyncMock) as mock_remove:
+    with patch(
+        "src.app.modules.security.router.ip_filter_service.remove_from_whitelist", new_callable=AsyncMock
+    ) as mock_remove:
         mock_remove.return_value = True
         response = await remove_ip_from_whitelist("1.2.3.4", current_user)  # type: ignore[arg-type]
 
@@ -68,7 +72,9 @@ async def test_add_ip_to_blacklist() -> None:
     request = IPAddressRequest(ip_address="1.2.3.4", reason="test")
     current_user = {"id": 1}
 
-    with patch("src.app.modules.security.router.ip_filter_service.add_to_blacklist", new_callable=AsyncMock) as mock_add:
+    with patch(
+        "src.app.modules.security.router.ip_filter_service.add_to_blacklist", new_callable=AsyncMock
+    ) as mock_add:
         mock_add.return_value = True
         response = await add_ip_to_blacklist(request, current_user)  # type: ignore[arg-type]
 
@@ -82,7 +88,9 @@ async def test_add_ip_to_blacklist() -> None:
 async def test_remove_ip_from_blacklist() -> None:
     current_user = {"id": 1}
 
-    with patch("src.app.modules.security.router.ip_filter_service.remove_from_blacklist", new_callable=AsyncMock) as mock_remove:
+    with patch(
+        "src.app.modules.security.router.ip_filter_service.remove_from_blacklist", new_callable=AsyncMock
+    ) as mock_remove:
         mock_remove.return_value = True
         response = await remove_ip_from_blacklist("1.2.3.4", current_user)  # type: ignore[arg-type]
 
@@ -94,8 +102,10 @@ async def test_remove_ip_from_blacklist() -> None:
 async def test_get_ip_lists() -> None:
     current_user = {"id": 1}
 
-    with patch("src.app.modules.security.router.ip_filter_service.get_whitelist", new_callable=AsyncMock) as mock_white, \
-         patch("src.app.modules.security.router.ip_filter_service.get_blacklist", new_callable=AsyncMock) as mock_black:
+    with (
+        patch("src.app.modules.security.router.ip_filter_service.get_whitelist", new_callable=AsyncMock) as mock_white,
+        patch("src.app.modules.security.router.ip_filter_service.get_blacklist", new_callable=AsyncMock) as mock_black,
+    ):
 
         mock_white.return_value = [{"ip_address": "1.1.1.1", "added_at": "2023-01-01T00:00:00Z"}]
         mock_black.return_value = [{"ip_address": "2.2.2.2", "added_at": "2023-01-01T00:00:00Z"}]
@@ -243,8 +253,10 @@ async def test_get_ip_violation_stats_none() -> None:
 async def test_passkey_routes() -> None:
     current_user = {"id": 1}
     mock_db = AsyncMock()
-    with patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list, \
-         patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock) as mock_del:
+    with (
+        patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list,
+        patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock),
+    ):
 
         mock_list.return_value = []
         res = await list_passkeys(current_user, mock_db)

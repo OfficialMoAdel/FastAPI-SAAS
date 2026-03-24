@@ -43,8 +43,8 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
         try:
             cached_value = await redis_client.get(cache_key)
             if cached_value is not None:
-                # Redis returns bytes, need to decode
-                val_str: str = cached_value.decode().lower()
+                # Redis may return bytes or str depending on decode_responses setting
+                val_str: str = (cached_value.decode() if isinstance(cached_value, bytes) else cached_value).lower()
                 return val_str == "true"
         except Exception as e:
             logger.debug("Cache get failed", error=e)

@@ -20,7 +20,7 @@ from httpx import AsyncClient
 class TestWebhookEndpointSecurity:
     """E2E tests for webhook endpoint security."""
 
-    async def test_webhook_endpoint_requires_authentication(self, async_client: AsyncClient) -> None:
+    async def test_webhook_endpoint_requires_authentication(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test that webhook endpoints require authentication."""
         response = await async_client.get("/api/v1/webhooks/")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -406,7 +406,7 @@ class TestWebhookDelivery:
 class TestAPIKeySecurity:
     """E2E tests for API key security."""
 
-    async def test_api_key_creation_requires_auth(self, async_client: AsyncClient) -> None:
+    async def test_api_key_creation_requires_auth(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test API key creation requires authentication."""
         response = await async_client.post(
             "/api/v1/api-keys",
@@ -455,7 +455,7 @@ class TestAPIKeySecurity:
         assert "key_prefix" in data
         assert len(data["key_prefix"]) > 3  # Should have meaningful prefix
 
-    async def test_api_key_list_requires_auth(self, async_client: AsyncClient) -> None:
+    async def test_api_key_list_requires_auth(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test API key listing requires authentication."""
         response = await async_client.get("/api/v1/api-keys")
         assert response.status_code == status.HTTP_401_UNAUTHORIZED

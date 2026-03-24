@@ -155,6 +155,15 @@ class RoleService:
         affected_users_result = await self.db.execute(affected_users_stmt)
         affected_user_ids = list(affected_users_result.scalars().all())
 
+        # FIX: Delete relations before deleting the role to prevent IntegrityError
+        from sqlalchemy import delete
+
+        # Delete related role permissions
+        await self.db.execute(delete(RolePermission).where(RolePermission.role_id == role_id))
+
+        # Delete related user roles
+        await self.db.execute(delete(UserRole).where(UserRole.role_id == role_id))
+
         await self.db.delete(role)
         await self.db.commit()
 

@@ -200,15 +200,14 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             try:
                                 request._receive = receive
                             except AttributeError:
-                                logger.error("Failed to reinject request body - request._receive not available")
-                                detected_attacks.append(
-                                    {
-                                        "attack_type": "reinjection_failed",
-                                        "pattern_name": "body_reinject_error",
-                                        "location": "request_body",
-                                        "matched_content": "Error reinjecting body",
-                                    }
+                                # BUG FIX: This is an internal server error (private API not available),
+                                # NOT an attack. Previously this appended an "attack" entry which
+                                # caused _handle_attack_detection to block or ban legitimate requests.
+                                logger.error(
+                                    "Failed to reinject request body - request._receive not available; "
+                                    "returning 500 instead of misclassifying as attack"
                                 )
+                                return detected_attacks  # Skip body scan; caller handles the response
 
                             # Scan raw bytes directly — no UTF-8 decode needed
                             self._check_for_patterns(body, "request_body", detected_attacks)

@@ -61,7 +61,9 @@ async def read_users(
     users_data = await service.list_users(page=pagination.page, per_page=pagination.per_page, is_deleted=False)
 
     data = users_data.get("data", [])
-    total = users_data.get("total_count", len(data))
+    # BUG FIX: len(data) is only the current page size, not the full total.
+    # Fall back to 0 so the caller knows total is unavailable, not silently wrong.
+    total = users_data.get("total_count", 0)
     return {
         "items": data,
         "total": total,

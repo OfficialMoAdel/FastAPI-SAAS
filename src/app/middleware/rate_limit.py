@@ -157,7 +157,18 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
 
             # AUTO-BAN: Track violations and ban repeat offenders
             if settings.AUTO_BAN_ENABLED and client_ip:
-                was_banned, violation_count = await check_and_auto_ban(client_ip)
+                try:
+                    was_banned, violation_count = await check_and_auto_ban(client_ip)
+                except Exception as auto_ban_err:
+                    # BUG FIX: If auto-ban (Redis) fails, log warning but still return 429.
+                    # Without this, a Redis outage would cause an unhandled exception here,
+                    # turning a rate-limit response into a 500 for all rate-limited clients.
+                    logger.warning(
+                        "Auto-ban check failed, skipping | ip=%s | error=%s",
+                        client_ip,
+                        auto_ban_err,
+                    )
+                    was_banned, violation_count = False, 0
                 if was_banned:
                     logger.warning(
                         "Auto-ban triggered | ip=%s | violations=%d | threshold=%d",

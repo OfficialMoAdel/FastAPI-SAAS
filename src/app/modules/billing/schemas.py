@@ -30,7 +30,8 @@ class StripeSettingsCreateInternal(StripeSettingsCreate):
     """Internal schema for creating Stripe settings with tenant_id and encrypted fields."""
 
     tenant_id: UUID
-    encrypted_secret_key: bytes | None = None
+    # BUG FIX: encrypt_column returns a hex-encoded str, not bytes.
+    encrypted_secret_key: str | None = None
     updated_at: datetime | None = None
 
 
