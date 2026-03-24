@@ -51,8 +51,24 @@ if TYPE_CHECKING:
 
 logger = get_logger(__name__)
 
-# Constants matching main security module - now uses settings for consistency
-JWT_AUDIENCE: str = settings.JWT_AUDIENCE or "fastapi-saas-api"
+# JWT_AUDIENCE must be explicitly configured in production.
+# Falling back to a generic default in production is a misconfiguration risk.
+_raw_audience = settings.JWT_AUDIENCE
+if not _raw_audience:
+    _env = getattr(settings, "ENVIRONMENT", "development")
+    if str(_env).lower() in ("production", "staging"):
+        raise RuntimeError(
+            "JWT_AUDIENCE is not configured. "
+            "Set the JWT_AUDIENCE environment variable before deploying to production/staging. "
+            "Leaving this unset allows tokens issued by any service to be accepted."
+        )
+    # Non-production: use a harmless default and warn loudly
+    logger.warning(
+        "JWT_AUDIENCE is not set. Defaulting to 'fastapi-saas-api'. "
+        "Set JWT_AUDIENCE explicitly before deploying to production."
+    )
+    _raw_audience = "fastapi-saas-api"
+JWT_AUDIENCE: str = _raw_audience
 REQUEST_STATE_KEY: str = "jwt_payload"
 
 

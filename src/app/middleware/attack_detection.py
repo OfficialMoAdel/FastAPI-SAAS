@@ -24,6 +24,10 @@ from starlette.types import ASGIApp
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
+
+
+class BodyScanError(Exception):
+    """Raised when the request body cannot be properly scanned or reinjected."""
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
@@ -199,15 +203,14 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             # Using request._receive (private API) as no public alternative exists.
                             try:
                                 request._receive = receive
-                            except AttributeError:
+                            except AttributeError as e:
                                 # BUG FIX: This is an internal server error (private API not available),
-                                # NOT an attack. Previously this appended an "attack" entry which
-                                # caused _handle_attack_detection to block or ban legitimate requests.
+                                # NOT an attack. Raise BodyScanError to forcefully return 500
+                                # instead of failing open and allowing a malicious payload through.
                                 logger.error(
-                                    "Failed to reinject request body - request._receive not available; "
-                                    "returning 500 instead of misclassifying as attack"
+                                    "Failed to reinject request body - request._receive not available"
                                 )
-                                return detected_attacks  # Skip body scan; caller handles the response
+                                raise BodyScanError("Failed to reinject request body") from e
 
                             # Scan raw bytes directly — no UTF-8 decode needed
                             self._check_for_patterns(body, "request_body", detected_attacks)
@@ -345,7 +348,15 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
 
         # Detect attack patterns
-        detected_attacks = await self._detect_attack_patterns(request)
+        try:
+            detected_attacks = await self._detect_attack_patterns(request)
+        except BodyScanError as e:
+            logger.error("Body scan failed: %s", str(e))
+            return Response(
+                content='{"detail":"Internal Server Error - Request body processing failed"}',
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                media_type="application/json",
+            )
 
         if detected_attacks:
             # Handle based on mode

@@ -343,8 +343,8 @@ class ChatCompletionService:
         messages_result = await self._message_service.get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
-        temperature = request.temperature or user_settings.get("temperature", 0.7)
-        max_tokens = request.max_tokens or user_settings.get("max_tokens", 2048)
+        temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
+        max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
         history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]

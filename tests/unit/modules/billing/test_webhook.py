@@ -300,7 +300,7 @@ async def test_handle_webhook_event_subscription_deleted():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
-        patch("src.app.modules.tenants.crud.crud_tenants.update", new_callable=AsyncMock),
+        patch("src.app.modules.users.crud.crud_users.update", new_callable=AsyncMock),
         patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):  # noqa: E501
         # Mock bypass db

@@ -413,14 +413,32 @@ class SSOService:
 
     async def _create_sso_user(self, db: AsyncSession, user_info: Any) -> Any:
         """Create a new user from SSO data."""
-        from src.app.core.security.tokens import TokenGenerator
+        # Generate a 23-char random password that satisfies complexity rules:
+        # at least 1 uppercase, 1 lowercase, 1 digit, 1 special char - all random.
+        import secrets
+        import string
 
-        password = TokenGenerator.generate_secure_password(19) + "!1Aa"  # Fully random, no predictable suffix
+        _upper = string.ascii_uppercase
+        _lower = string.ascii_lowercase
+        _digits = string.digits
+        _special = "!@#$%^&*"
+        _all = _upper + _lower + _digits + _special
+        # Guarantee at least one of each required class, then fill the rest randomly
+        _required = [
+            secrets.choice(_upper),
+            secrets.choice(_lower),
+            secrets.choice(_digits),
+            secrets.choice(_special),
+        ]
+        _rest = [secrets.choice(_all) for _ in range(19)]
+        _combined = _required + _rest
+        secrets.SystemRandom().shuffle(_combined)
+        password = "".join(_combined)
 
         base_username = user_info.email.split("@")[0]
         # Ensure username is lowercase and alphanumeric
         clean_base = "".join(c for c in base_username if c.isalnum()).lower()
-        random_suffix = "".join(c for c in TokenGenerator.generate_secure_password(4) if c.isalnum()).lower()
+        random_suffix = "".join(secrets.choice(_lower + _digits) for _ in range(4))
         username = f"{clean_base}{random_suffix}"[:30]  # Limit length
 
         user_in = UserCreate(

@@ -113,23 +113,20 @@ class TenantMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: FastAPI) -> None:
         super().__init__(app)
         if getattr(settings, "FEATURE_REMOVE_WASTED_CONNECTION", False):
-            # Emit a loud warning at startup so operators are aware of the security trade-off.
-            # In production, this flag means DB-level RLS is disabled; only application-layer
-            # tenant_id filters protect data. Any query missing an explicit tenant_id filter
-            # will leak cross-tenant data.
             env = getattr(settings, "ENVIRONMENT", "development")
-            if env in ("production", "staging"):
-                logger.error(
-                    "SECURITY DEGRADED: FEATURE_REMOVE_WASTED_CONNECTION=True in %s. "
-                    "PostgreSQL RLS is DISABLED. ALL queries MUST explicitly filter by tenant_id. "
-                    "Consider disabling this flag in production unless you have audited every query.",
-                    env,
+            _env_str = str(env).lower()
+            if _env_str in ("production", "staging"):
+                raise RuntimeError(
+                    f"SECURITY MISCONFIGURATION: FEATURE_REMOVE_WASTED_CONNECTION=True is forbidden in {env}. "
+                    "This flag disables PostgreSQL Row-Level Security (RLS), which is your primary tenant "
+                    "data isolation barrier. Set this flag to False or remove it before deploying to "
+                    "production or staging environments."
                 )
-            else:
-                logger.error(
-                    "SECURITY DEGRADED: FEATURE_REMOVE_WASTED_CONNECTION=True. "
-                    "PostgreSQL RLS is bypassed; tenant isolation relies solely on application-layer filters.",
-                )
+            # Non-production: loud warning so developers are aware of the risk
+            logger.error(
+                "SECURITY DEGRADED: FEATURE_REMOVE_WASTED_CONNECTION=True. "
+                "PostgreSQL RLS is bypassed; tenant isolation relies solely on application-layer filters.",
+            )
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         """Process the request and validate tenant header.

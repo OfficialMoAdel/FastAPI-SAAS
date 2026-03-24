@@ -445,7 +445,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             from sqlalchemy import func
 
             from src.app.modules.billing.crud import crud_subscription_plans
-            from src.app.modules.tenants.crud import crud_tenants
+            from src.app.modules.users.crud import crud_users
 
             # Find the free plan
             # BUG FIX: Use exact match and lower case for case-insensitivity
@@ -458,9 +458,13 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             free_plan = free_plan_result.scalar_one_or_none()
 
             if free_plan:
-                await crud_tenants.update(db=db, id=tenant_id, object={"tier_id": free_plan.id})
+                await crud_users.update(db=db, id=db_subscription.user_id, object={"tier_id": free_plan.id})
                 logger.info(
-                    f"Downgraded tenant {tenant_id} to free tier ({free_plan.id}) due to subscription {new_status}"
+                    "Downgraded user to free tier due to subscription cancellation",
+                    user_id=db_subscription.user_id,
+                    tenant_id=tenant_id,
+                    tier_id=free_plan.id,
+                    reason=new_status,
                 )
 
         await db.commit()
@@ -513,11 +517,11 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
             id=subscription_id,
         )
 
-        # M-04: Explicitly downgrade tenant to free tier
+        # M-04: Explicitly downgrade user to free tier
         from sqlalchemy import func
 
         from src.app.modules.billing.crud import crud_subscription_plans
-        from src.app.modules.tenants.crud import crud_tenants
+        from src.app.modules.users.crud import crud_users
 
         # Find the free plan
         # BUG FIX: Use exact match and lower case for case-insensitivity
@@ -530,8 +534,8 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         free_plan = free_plan_result.scalar_one_or_none()
 
         if free_plan:
-            await crud_tenants.update(db=db, id=tenant_id, object={"tier_id": free_plan.id})
-            logger.info("Downgraded tenant to free tier ()", tenant_id=tenant_id, id=free_plan.id)
+            await crud_users.update(db=db, id=db_subscription.user_id, object={"tier_id": free_plan.id})
+            logger.info("Downgraded user to free tier ()", user_id=db_subscription.user_id, id=free_plan.id)
 
         await db.commit()
 

@@ -135,15 +135,6 @@ async def warm_caches() -> CacheWarmingResult:
                 logger.error("Tenant cache warming failed", error=str(e))
                 errors.append(error_msg)
 
-            # Warm tier cache
-            try:
-                result.tiers_cached = await warm_tier_cache(session)
-                logger.info("Cached tiers", count=result.tiers_cached)
-            except Exception as e:
-                error_msg = f"Tier cache warming failed: {e}"
-                logger.error("Tier cache warming failed", error=str(e))
-                errors.append(error_msg)
-
     except Exception as e:
         error_msg = f"Cache warming failed: {e}"
         logger.error("Cache warming failed", error=str(e))

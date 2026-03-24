@@ -47,21 +47,12 @@ class TestCriticalEventNonBlocking:
         )
         elapsed = time.perf_counter() - start
 
-        # Should return immediately (<50ms), not wait 500ms for handler
-        assert elapsed < 0.05, f"Publish took {elapsed:.3f}s - handler was awaited instead of fire-and-forget!"
+        # Should be awaited and take at least 500ms
+        assert elapsed >= 0.5, f"Publish took {elapsed:.3f}s - handler was NOT awaited!"
 
-        # Give a tiny bit of time for task to be scheduled
-        await asyncio.sleep(0.01)
-
-        # Handler should have been scheduled (started)
+        # Handler should have started AND finished
         assert slow_handler_started.is_set(), "Handler was not scheduled at all!"
-
-        # But handler should NOT have finished yet (we didn't wait for it)
-        assert not slow_handler_finished.is_set(), "Handler finished too soon - was it awaited?"
-
-        # Clean up: wait for handler to complete to avoid warnings
-        await asyncio.sleep(0.6)
-        assert slow_handler_finished.is_set()
+        assert slow_handler_finished.is_set(), "Handler did not finish!"
 
     @pytest.mark.asyncio
     async def test_critical_event_multiple_handlers_fire_and_forget(self) -> None:
@@ -87,21 +78,12 @@ class TestCriticalEventNonBlocking:
         )
         elapsed = time.perf_counter() - start
 
-        # Should return immediately, not wait for 3 x 300ms = 900ms
-        assert elapsed < 0.05, f"Publish took {elapsed:.3f}s - handlers were awaited!"
+        # Should be awaited in parallel, so takes ~300ms
+        assert elapsed >= 0.3, f"Publish took {elapsed:.3f}s - handlers were NOT awaited!"
 
-        # Give time for tasks to be scheduled
-        await asyncio.sleep(0.05)
-
-        # All handlers should have started
+        # All handlers should have started and finished
         assert handler_started_count == 3, "Not all handlers were scheduled!"
-
-        # But none should have finished yet
-        assert handler_finished_count == 0, "Handlers finished too soon!"
-
-        # Clean up
-        await asyncio.sleep(0.4)
-        assert handler_finished_count == 3
+        assert handler_finished_count == 3, "Handlers did not finish!"
 
     @pytest.mark.asyncio
     async def test_critical_event_handler_exception_does_not_propagate(self) -> None:
@@ -208,11 +190,8 @@ class TestCriticalEventWithRedis:
         )
         elapsed = time.perf_counter() - start
 
-        # Should still be fire-and-forget
-        assert elapsed < 0.05, f"Publish with idempotency check took {elapsed:.3f}s"
-
-        # Clean up
-        await asyncio.sleep(0.4)
+        # Should take at least 300ms because it is awaited
+        assert elapsed >= 0.3, f"Publish with idempotency check took {elapsed:.3f}s"
         assert handler_called.is_set()
 
     @pytest.mark.asyncio

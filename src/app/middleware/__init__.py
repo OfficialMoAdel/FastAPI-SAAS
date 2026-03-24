@@ -1,15 +1,15 @@
 """FastAPI middleware components for request processing.
 
-Middleware order in application:
-1. GZipMiddleware (outermost - compresses responses)
-2. IPFilterMiddleware (IP whitelist/blacklist enforcement)
-3. AttackDetectionMiddleware (detects SQLi, XSS, path traversal)
-4. SecurityHeadersMiddleware (CSP, HSTS, etc.)
-5. BodyLimitMiddleware (request size limits)
-6. TenantMiddleware (multi-tenant context)
-7. RateLimitMiddleware (tier-aware rate limiting)
-8. QueryProfilerMiddleware (dev-mode query analysis)
-9. RequestIDMiddleware (innermost - request tracing)
+Middleware order in application (Outermost to Innermost):
+1. GZipMiddleware           (compresses all responses)
+2. QueryProfilerMiddleware  (dev-mode query analysis)
+3. IPFilterMiddleware       (IP whitelist/blacklist enforcement)
+4. RequestBodyLimitMiddleware (request size limits)
+5. AttackDetectionMiddleware  (detects SQLi, XSS, path traversal)
+6. SecurityHeadersMiddleware  (CSP, HSTS, etc.)
+7. TenantMiddleware         (multi-tenant context)
+8. RateLimitMiddleware      (tier-aware rate limiting)
+9. RequestIDMiddleware      (request tracing)
 """
 
 from src.app.middleware.attack_detection import AttackDetectionMiddleware

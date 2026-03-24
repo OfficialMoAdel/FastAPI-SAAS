@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import get_current_tenant
 from src.app.core.rbac.dependencies import requires_permission
+from src.app.core.tenancy.context import TenantContext
 from src.app.core.rbac.permissions import Permission
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.feature_flags.schemas import (
@@ -13,8 +14,6 @@ from src.app.modules.feature_flags.schemas import (
     FeatureFlagUpdateRequest,
 )
 from src.app.modules.feature_flags.service import FeatureFlagService, get_feature_flag_service
-from src.app.modules.tenants.models import Tenant
-from src.app.modules.users.models import User
 
 router = APIRouter(prefix="/features", tags=["features"])
 
@@ -22,7 +21,7 @@ router = APIRouter(prefix="/features", tags=["features"])
 from uuid import UUID
 
 
-def _get_tenant_id(current_tenant: Tenant) -> UUID:
+def _get_tenant_id(current_tenant: TenantContext) -> UUID:
     """Extract tenant ID from tenant object."""
     return current_tenant.id
 
@@ -30,8 +29,7 @@ def _get_tenant_id(current_tenant: Tenant) -> UUID:
 @router.get("", response_model=FeatureFlagsResponse)
 async def list_feature_flags(
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> FeatureFlagsResponse:
     """
     Get all feature flags for the current tenant.
@@ -48,8 +46,7 @@ async def list_feature_flags(
 async def check_feature_flag(
     flag_name: str,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> FeatureFlagCheckResponse:
     """
     Check if a specific feature flag is enabled.
@@ -75,8 +72,7 @@ async def update_feature_flag(
     flag_name: str,
     request: FeatureFlagUpdateRequest,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> FeatureFlagCheckResponse:
     """
     Update a specific feature flag for the current tenant.
@@ -113,8 +109,7 @@ from fastapi import Response
 async def delete_feature_flag(
     flag_name: str,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> Response:
     """
     Remove a feature flag from the tenant configuration.
@@ -139,8 +134,7 @@ async def delete_feature_flag(
 async def bulk_update_flags(
     request: FeatureFlagBulkUpdateRequest,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
+    current_tenant: TenantContext = Depends(get_current_tenant),
 ) -> FeatureFlagsResponse:
     """
     Bulk update feature flags for the current tenant.

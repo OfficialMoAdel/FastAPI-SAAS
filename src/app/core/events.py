@@ -338,12 +338,8 @@ class EventBus:
         if not handlers:
             return
 
-        # Fire-and-forget: Schedule handlers as background tasks
-        # Do NOT await - this allows the request to return immediately
-        for handler in handlers:
-            task = asyncio.create_task(_call_handler(handler))
-            self._background_tasks.add(task)
-            task.add_done_callback(self._background_tasks.discard)
+        # Execute all handlers concurrently and await completion to ensure fully synchronous finish
+        await asyncio.gather(*[_call_handler(handler) for handler in handlers], return_exceptions=True)
 
     async def _publish_async(
         self,

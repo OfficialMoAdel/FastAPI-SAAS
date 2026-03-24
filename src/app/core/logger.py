@@ -123,7 +123,3 @@ def get_logger(name: str | None = None) -> structlog.stdlib.BoundLogger:
 
 # Initialize logging on module import
 # setup_logging()  # REMOVED: Called explicitly in main.py lifespan to avoid side effects
-
-
-# Export for backward compatibility
-logging = logging
