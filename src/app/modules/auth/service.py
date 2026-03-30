@@ -1,6 +1,7 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
 import asyncio
+import random
 from datetime import timedelta
 from typing import Any
 from uuid import UUID
@@ -64,15 +65,15 @@ class AuthService:
     # Atomic Lua script for login attempt checking.
     # Combines lockout check + increment + expire into single Redis roundtrip.
     # Returns -1 if locked out, otherwise the new attempt count.
+    # OPT-11: Always execute EXPIRE to ensure constant-time Redis operations regardless of user existence.
     _LOGIN_CHECK_LUA = """
 local attempts = redis.call('GET', KEYS[1])
 if attempts and tonumber(attempts) >= tonumber(ARGV[1]) then
     return -1
 end
 local new_attempts = redis.call('INCR', KEYS[1])
-if new_attempts == 1 then
-    redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-end
+-- SECURITY FIX: Always set/refresh expiry to ensure constant timing and prevent enumeration
+redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
 return new_attempts
 """
 
@@ -704,7 +705,8 @@ return new_attempts
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention
             # Simulate DB and event bus operations to match the "user exists" path timing
-            await asyncio.sleep(0.15)  # Simulate DB write and event publish latency
+            # Added jitter to prevent precise timing analysis
+            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
 
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
@@ -856,7 +858,8 @@ return new_attempts
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention
             # Simulate DB writes and event bus publishing latency
-            await asyncio.sleep(0.15)
+            # Added jitter to prevent precise timing analysis
+            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
 
         return {"message": "If the email is registered and unverified, a verification link has been sent."}
 

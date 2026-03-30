@@ -11,7 +11,7 @@ from typing import Any, cast
 import bcrypt
 import jwt
 import orjson
-from fastapi.security import OAuth2PasswordBearer
+from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError as JWTError
 from pydantic import SecretStr
 from redis.asyncio import Redis
@@ -78,6 +78,7 @@ def _get_verification_key() -> str:
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
+api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 
 class TokenType(str, Enum):

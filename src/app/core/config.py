@@ -146,6 +146,7 @@ class DatabaseSettings(BaseSettings):
 class ArqSettings(BaseSettings):
     """ARQ worker and job queue settings."""
 
+    ARQ_ENABLED: bool = Field(default=True, description="Enable ARQ background task queue")
     ARQ_WORKERS: int = Field(default=1, ge=1, le=8, description="Number of ARQ worker processes")
     ARQ_MAX_JOBS: int = Field(default=10, ge=1, le=100, description="Max concurrent jobs per worker")
     ARQ_JOB_TIMEOUT: int = Field(default=300, ge=10, le=3600, description="Default job timeout (seconds)")

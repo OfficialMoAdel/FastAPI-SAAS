@@ -4,7 +4,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -23,7 +23,10 @@ class APIKey(Base):
 
     __tablename__ = "api_keys"
 
-    __table_args__ = (Index("idx_api_keys_tenant_active", "tenant_id", "is_active"),)
+    __table_args__ = (
+        Index("idx_api_keys_tenant_active", "tenant_id", "is_active"),
+        UniqueConstraint("name", "tenant_id", name="uq_api_key_name_tenant"),
+    )
 
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True, init=False)
 

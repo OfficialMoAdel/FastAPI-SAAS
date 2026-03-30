@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security import oauth2_scheme
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
+from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -48,8 +50,35 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 
 router = APIRouter(prefix="/account", tags=["account"])
 
+# SECURITY: Specific rate limits for authentication endpoints (per IP)
+# Prevents large-scale automated brute-force attempts.
+AUTH_RATE_LIMIT = 5  # attempts
+AUTH_RATE_PERIOD = 60  # 1 minute
 
-@router.post("/login", response_model=LoginTokenResponse | LoginMFAResponse)
+
+async def check_auth_rate_limit(request: Request) -> None:
+    """Rate limit sensitive auth endpoints by client IP."""
+    # Get client IP, handling proxies
+    forwarded = request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = request.client.host if request.client else "unknown"
+
+    key = f"auth_ip:{client_ip}"
+    is_limited, _ = await rate_limiter.check_rate_limit(key, limit=AUTH_RATE_LIMIT, period=AUTH_RATE_PERIOD)
+
+    if is_limited:
+        raise RateLimitException(
+            f"Too many authentication attempts. Please try again in {AUTH_RATE_PERIOD} seconds."
+        )
+
+
+@router.post(
+    "/login",
+    response_model=LoginTokenResponse | LoginMFAResponse,
+    dependencies=[Depends(check_auth_rate_limit)],
+)
 async def login_for_access_token(
     response: Response,
     request: Request,
@@ -62,7 +91,12 @@ async def login_for_access_token(
     return await auth_service.login(form_data.username, form_data.password, response, request, db, redis)
 
 
-@router.post("/register", response_model=UserRead, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "/register",
+    response_model=UserRead,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(check_auth_rate_limit)],
+)
 async def register(
     request: Request,
     user: UserCreate,
@@ -123,7 +157,7 @@ async def change_password(
     return PasswordChangeResponse(**result)
 
 
-@router.post("/forgot-password", response_model=ForgotPasswordResponse)
+@router.post("/forgot-password", response_model=ForgotPasswordResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def forgot_password(
     body: PasswordResetRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
@@ -134,7 +168,7 @@ async def forgot_password(
     return ForgotPasswordResponse(**result)
 
 
-@router.post("/reset-password", response_model=PasswordResetResponse)
+@router.post("/reset-password", response_model=PasswordResetResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def reset_password(
     body: PasswordResetConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],
@@ -145,7 +179,9 @@ async def reset_password(
     return PasswordResetResponse(**result)
 
 
-@router.post("/send-verification", response_model=EmailVerificationResponse)
+@router.post(
+    "/send-verification", response_model=EmailVerificationResponse, dependencies=[Depends(check_auth_rate_limit)]
+)
 async def send_verification_email(
     body: EmailVerificationRequest,
     db: Annotated[AsyncSession, Depends(async_get_db)],
@@ -156,7 +192,7 @@ async def send_verification_email(
     return EmailVerificationResponse(**result)
 
 
-@router.post("/verify-email", response_model=EmailVerificationResponse)
+@router.post("/verify-email", response_model=EmailVerificationResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def verify_email(
     body: EmailVerificationConfirm,
     db: Annotated[AsyncSession, Depends(async_get_db)],

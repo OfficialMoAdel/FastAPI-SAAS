@@ -347,7 +347,7 @@ class SSOService:
             )
 
             refresh_token = await create_refresh_token(
-                data={"sub": token_data["sub"]},
+                data=token_data,
             )
 
             # Audit log SSO login success

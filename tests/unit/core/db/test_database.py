@@ -39,7 +39,7 @@ async def test_async_get_db_applies_rls_when_tenant_present():
     mock_rls_cm.__aenter__.return_value = None
     mock_rls_cm.__aexit__.return_value = None
 
-    with patch("src.app.core.db.database.local_session", mock_local_session):
+    with patch("src.app.core.db.database._get_local_session", return_value=mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=mock_tenant):
             with patch("src.app.core.db.database.rls_context", return_value=mock_rls_cm) as mock_rls_factory:
                 # async_get_db is an async generator, so we iterate it manually
@@ -70,7 +70,7 @@ async def test_async_get_db_no_rls_when_no_tenant():
     # Mock local_session returns a session object
     mock_local_session = MagicMock(return_value=mock_session)
 
-    with patch("src.app.core.db.database.local_session", mock_local_session):
+    with patch("src.app.core.db.database._get_local_session", return_value=mock_local_session):
         with patch("src.app.core.db.database.get_current_tenant", return_value=None):
             with patch("src.app.core.db.database.rls_context") as mock_rls_factory:
                 # async_get_db is an async generator

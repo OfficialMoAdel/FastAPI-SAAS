@@ -263,13 +263,28 @@ class EventBus:
         # Get sequence number for ordering guarantees
         sequence = await self.get_next_sequence(event_name)
 
-        # Inject sequence into event data for consumers
+        # SECURITY FIX: Capture tenant context if available to propagate to background tasks
+        # This is critical for RLS-enabled database operations in worker processes.
+        from src.app.core.tenancy.context import get_tenant_context
+
+        tenant = get_tenant_context()
+        tenant_info = None
+        if tenant:
+            tenant_info = {
+                "id": str(tenant.id),
+                "slug": tenant.slug,
+                "name": tenant.name,
+                "is_active": tenant.is_active,
+            }
+
+        # Inject sequence and tenant into event data for consumers
         enriched_data = {
             **data,
             "_event_meta": {
                 "sequence": sequence,
                 "event_id": event_id,
                 "event_name": event_name,
+                "tenant": tenant_info,
             },
         }
 
@@ -280,6 +295,7 @@ class EventBus:
             handler_count=len(handlers),
             event_id=event_id,
             sequence=sequence,
+            tenant_id=tenant_info["id"] if tenant_info else None,
         )
 
         if priority == EventPriority.CRITICAL:
@@ -809,6 +825,30 @@ async def process_event_handler(
     """
     job_try = ctx.get("job_try", 1)
 
+    # SECURITY FIX: Restore tenant context from event metadata
+    # This ensures RLS-protected operations in background tasks work correctly.
+    meta = data.get("_event_meta", {})
+    tenant_info = meta.get("tenant")
+    tenant_context_set = False
+
+    if tenant_info:
+        try:
+            from uuid import UUID
+
+            from src.app.core.tenancy.context import TenantContext, set_current_tenant
+
+            tenant_context = TenantContext(
+                tenant_id=UUID(tenant_info["id"]),
+                tenant_slug=tenant_info["slug"],
+                tenant_name=tenant_info["name"],
+                is_active=tenant_info["is_active"],
+            )
+            set_current_tenant(tenant_context)
+            tenant_context_set = True
+            logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
+        except Exception as e:
+            logger.error("Failed to restore tenant context in worker", error=str(e))
+
     try:
         # Dynamically import and execute handler
         import importlib
@@ -869,3 +909,10 @@ async def process_event_handler(
             error=str(e),
         )
         raise  # Re-raise for ARQ retry logic
+    finally:
+        # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
+        if tenant_context_set:
+            from src.app.core.tenancy.context import clear_tenant_context
+
+            clear_tenant_context()
+            logger.debug("Tenant context cleared after background task")

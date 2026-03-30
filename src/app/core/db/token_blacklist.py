@@ -12,7 +12,8 @@ class TokenBlacklist(Base):
 
     id: Mapped[int] = mapped_column("id", autoincrement=True, nullable=False, unique=True, primary_key=True, init=False)
     token: Mapped[str] = mapped_column(String, unique=True, index=True)
-    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    # Task 21: Added index to expires_at to speed up database cleanup sweeps
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), index=True)
     # BUG FIX: tenant_id scopes blacklisted tokens to their originating tenant.
     # Without this, cross-tenant token-reuse was possible if RLS was bypassed.
     # Nullable for backward compatibility with rows created before this migration.

@@ -6,7 +6,7 @@ products, pricing, and billing records.
 
 import asyncio
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 import stripe
 from fastapi import HTTPException, status
@@ -181,8 +181,9 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
         create_obj = SubscriptionPlanCreateInternal(**plan_data)
-        return await crud_subscription_plans.create(
-            db=self.db, object=create_obj, schema_to_select=SubscriptionPlanRead
+        return cast(
+            dict[str, Any],
+            await crud_subscription_plans.create(db=self.db, object=create_obj, schema_to_select=SubscriptionPlanRead),
         )
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
@@ -278,7 +279,9 @@ class ProductService(BaseService[Product]):
         product_data = data.model_dump()
         product_data["tenant_id"] = tenant.id
         create_obj = ProductCreateInternal(**product_data)
-        return await crud_products.create(db=self.db, object=create_obj, schema_to_select=ProductRead)
+        return cast(
+            dict[str, Any], await crud_products.create(db=self.db, object=create_obj, schema_to_select=ProductRead)
+        )
 
     async def get_product(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID."""
@@ -406,7 +409,9 @@ class ProductService(BaseService[Product]):
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
-        return await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
+        return cast(
+            dict[str, Any], await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
+        )
 
 
 class PricingService(BaseService[Pricing]):
@@ -429,7 +434,9 @@ class PricingService(BaseService[Pricing]):
         pricing_data = data.model_dump()
         pricing_data["product_id"] = product_id
         create_obj = PricingCreateInternal(**pricing_data)
-        return await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
+        return cast(
+            dict[str, Any], await crud_pricing.create(db=self.db, object=create_obj, schema_to_select=PricingRead)
+        )
 
     async def get_pricing(self, pricing_id: int) -> dict[str, Any]:
         """Get a pricing tier by ID."""
@@ -518,8 +525,9 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         sub_data["tenant_id"] = tenant.id
         sub_data["user_id"] = user_id
         create_obj = UserSubscriptionCreateInternal(**sub_data)
-        result = await crud_user_subscriptions.create(
-            db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead
+        result = cast(
+            dict[str, Any],
+            await crud_user_subscriptions.create(db=self.db, object=create_obj, schema_to_select=UserSubscriptionRead),
         )
         logger.info("Subscription created:", val=result.get("id") if result else None)
         return result
@@ -647,7 +655,10 @@ class BillingRecordService(BaseService[BillingRecord]):
         record_data = data.model_dump()
         record_data["tenant_id"] = tenant.id
         create_obj = BillingRecordCreateInternal(**record_data)
-        return await crud_billing_records.create(db=self.db, object=create_obj, schema_to_select=BillingRecordRead)
+        return cast(
+            dict[str, Any],
+            await crud_billing_records.create(db=self.db, object=create_obj, schema_to_select=BillingRecordRead),
+        )
 
     async def get_record(self, record_id: int) -> dict[str, Any]:
         """Get a billing record by ID."""

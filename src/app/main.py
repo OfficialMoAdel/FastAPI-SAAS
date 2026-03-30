@@ -108,20 +108,24 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
             event_bus.set_redis_client(redis_client)
             # Initialize ARQ queue so NORMAL/LOW events dispatch asynchronously
             # Without this, all events fall back to synchronous in-process execution
-            try:
-                from arq import create_pool
-                from arq.connections import RedisSettings
+            # Task 26: Only initialize if ARQ_ENABLED is True
+            if settings.ARQ_ENABLED:
+                try:
+                    from arq import create_pool
+                    from arq.connections import RedisSettings
 
-                arq_queue = await create_pool(
-                    RedisSettings(
-                        host=settings.REDIS_QUEUE_HOST,
-                        port=settings.REDIS_QUEUE_PORT,
+                    arq_queue = await create_pool(
+                        RedisSettings(
+                            host=settings.REDIS_QUEUE_HOST,
+                            port=settings.REDIS_QUEUE_PORT,
+                        )
                     )
-                )
-                event_bus.set_arq_queue(arq_queue)
-                logger.info("ARQ queue initialized for async event dispatch")
-            except Exception as e:
-                logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
+                    event_bus.set_arq_queue(arq_queue)
+                    logger.info("ARQ queue initialized for async event dispatch")
+                except Exception as e:
+                    logger.warning("ARQ queue initialization failed, events will run synchronously", error=str(e))
+            else:
+                logger.info("ARQ background tasks are disabled, events will run synchronously")
 
         # Pre-register event handlers to avoid cold start penalties
         # This scans modules and registers @event_bus.subscribe decorated functions

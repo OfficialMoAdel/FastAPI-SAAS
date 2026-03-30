@@ -162,6 +162,13 @@ async def test_redis_consolidation_single_pool():
 @pytest.mark.asyncio
 async def test_setup_uses_shared_pool():
     """Verify setup uses the shared pool."""
+    # Reset globals to bypass idempotency check
+    cache_module.client = None
+    cache_module.pool = None
+    from src.app.core.utils import queue as queue_module
+
+    queue_module.pool = None
+
     mock_pool = MagicMock(spec=ConnectionPool)
 
     with patch.object(redis_factory, "get_redis_pool", new_callable=AsyncMock) as mock_get_pool:

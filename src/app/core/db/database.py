@@ -5,7 +5,7 @@ from contextlib import asynccontextmanager
 from typing import Any
 
 from sqlalchemy import event
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr
 from sqlalchemy.pool import NullPool
@@ -38,65 +38,93 @@ DATABASE_URI = settings.POSTGRES_URI
 DATABASE_PREFIX = settings.POSTGRES_ASYNC_PREFIX
 DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"
 
-# Use NullPool in test mode to prevent event loop binding issues
-# NullPool creates fresh connections per use, avoiding "Event loop is closed" errors
-_is_testing = (
-    "pytest" in os.environ.get("_", "")
-    or "PYTEST_CURRENT_TEST" in os.environ
-    or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
-    or "pytest" in sys.modules
-)
+# Internal state for lazy initialization
+_async_engine = None
+_local_session = None
 
-if _is_testing:
-    async_engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        poolclass=NullPool,
-    )
-else:
-    async_engine = create_async_engine(
-        DATABASE_URL,
-        echo=False,
-        future=True,
-        pool_size=settings.DB_POOL_SIZE,
-        max_overflow=settings.DB_MAX_OVERFLOW,
-        pool_pre_ping=True,
-        pool_recycle=3600,
-        pool_timeout=settings.DB_POOL_TIMEOUT,
-        # P1-1: Configure asyncpg statement cache for better performance
-        # Default 100 statements, 1KB max - increase for complex workloads
-        connect_args={
-            "statement_cache_size": getattr(
-                settings, "DB_STATEMENT_CACHE_SIZE", 100
-            ),  # Configurable statement cache size for pg_bouncer/asyncpg usage
-            "max_cacheable_statement_size": 10240,  # 10KB max statement size
-        },
+
+def _create_engine() -> AsyncEngine:
+    """Internal helper to create the SQLAlchemy engine with proper settings."""
+    # Use NullPool in test mode to prevent event loop binding issues
+    # NullPool creates fresh connections per use, avoiding "Event loop is closed" errors
+    _is_testing = (
+        "pytest" in os.environ.get("_", "")
+        or "PYTEST_CURRENT_TEST" in os.environ
+        or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
+        or "pytest" in sys.modules
     )
 
-# Setup query profiler in development mode
-if settings.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.ENVIRONMENT.value):
-    setup_query_profiler(
-        async_engine,
-        slow_query_threshold_ms=settings.QUERY_PROFILER_SLOW_THRESHOLD_MS,
-        n_plus_1_threshold=settings.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
-        detailed_logs=settings.QUERY_PROFILER_DETAILED_LOGS,
-    )
+    if _is_testing:
+        engine = create_async_engine(
+            DATABASE_URL,
+            echo=False,
+            future=True,
+            poolclass=NullPool,
+        )
+    else:
+        engine = create_async_engine(
+            DATABASE_URL,
+            echo=False,
+            future=True,
+            pool_size=settings.DB_POOL_SIZE,
+            max_overflow=settings.DB_MAX_OVERFLOW,
+            pool_pre_ping=True,
+            pool_recycle=3600,
+            pool_timeout=settings.DB_POOL_TIMEOUT,
+            # P1-1: Configure asyncpg statement cache for better performance
+            connect_args={
+                "statement_cache_size": getattr(settings, "DB_STATEMENT_CACHE_SIZE", 100),
+                "max_cacheable_statement_size": 10240,  # 10KB max statement size
+            },
+        )
 
-local_session = async_sessionmaker(bind=async_engine, class_=AsyncSession, expire_on_commit=False)
+    # Setup query profiler in development mode
+    if settings.QUERY_PROFILER_ENABLED and is_profiler_enabled(settings.ENVIRONMENT.value):
+        setup_query_profiler(
+            engine,
+            slow_query_threshold_ms=settings.QUERY_PROFILER_SLOW_THRESHOLD_MS,
+            n_plus_1_threshold=settings.QUERY_PROFILER_N_PLUS_1_THRESHOLD,
+            detailed_logs=settings.QUERY_PROFILER_DETAILED_LOGS,
+        )
 
-# Register RLS event listener
-# We listen to the underlying sync Session class because AsyncSession wraps it
-# and events are dispatched from the inner session.
-# M8: Add idempotency check to prevent duplicate listener registration during testing
-try:
-    if not event.contains(Session, "after_begin", restore_rls_context):
-        event.listen(Session, "after_begin", restore_rls_context)
-except Exception as e:
-    logger.warning("Failed to check or register RLS event listener", error=e)
+    # Register RLS event listener
+    # M8: Add idempotency check to prevent duplicate listener registration
+    try:
+        if not event.contains(Session, "after_begin", restore_rls_context):
+            event.listen(Session, "after_begin", restore_rls_context)
+    except Exception as e:
+        logger.warning("Failed to check or register RLS event listener", error=e)
 
-# Alias for compatibility with code expecting async_session_maker
-async_session_maker = local_session
+    return engine
+
+
+def _get_local_session() -> async_sessionmaker[AsyncSession]:
+    """Internal helper to get or create the local session maker."""
+    global _local_session
+    if _local_session is None:
+        # Ensure engine is created first
+        engine = __getattr__("async_engine")
+        _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    return _local_session
+
+
+def __getattr__(name: str) -> Any:
+    """Lazy-load engine and session maker to prevent connection leaks during module import.
+
+    This ensures that database connections are only initialized when actually needed,
+    avoiding leaks during configuration validation or middleware setup.
+    """
+    global _async_engine
+
+    if name == "async_engine":
+        if _async_engine is None:
+            _async_engine = _create_engine()
+        return _async_engine
+
+    if name in ("local_session", "async_session_maker"):
+        return _get_local_session()
+
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
@@ -112,7 +140,8 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
         >>> async def get_user(db: AsyncSession = Depends(async_get_db)):
         ...     return await crud_users.get(db, id=1)
     """
-    db = local_session()
+    session_maker = _get_local_session()
+    db = session_maker()
     try:
         tenant = get_current_tenant()
         if tenant:
@@ -152,7 +181,8 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         ...     result = await db.execute(select(User))
         ...     return result.scalars().all()
     """
-    db = local_session()
+    session_maker = _get_local_session()
+    db = session_maker()
     try:
         tenant = get_current_tenant()
         if tenant:

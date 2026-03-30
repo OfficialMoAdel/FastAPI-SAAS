@@ -1,6 +1,6 @@
 """User service layer - encapsulates all user business logic."""
 
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import HTTPException, status
@@ -286,7 +286,7 @@ class UserService(BaseService[User]):
         user_internal = UserCreateInternal(**user_dict)
 
         try:
-            result = await self.crud.create(db=self.db, object=user_internal, commit=False)
+            result = cast(User, await self.crud.create(db=self.db, object=user_internal, commit=False))
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
             # Capture result data before commit since it may expire after session flush

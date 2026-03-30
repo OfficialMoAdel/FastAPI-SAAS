@@ -243,6 +243,47 @@ class MFAService:
             "backup_codes_remaining": len(backup_codes),
         }
 
+    async def _check_mfa_lockout(self, user_id: int) -> None:
+        """Check and increment MFA lockout counter.
+
+        Uses atomic Lua script to check if user is already locked out,
+        and if not, increments the attempt counter.
+
+        Raises:
+            UnauthorizedException: If user is locked out.
+        """
+        if redis is None:
+            # Redis unavailable - log warning and continue without lockout (fail open)
+            logger.warning("Redis unavailable - MFA lockout disabled | user_id=%s", user_id)
+            return
+
+        mfa_attempts_key = f"mfa_attempts:{user_id}"
+        try:
+            raw_result = await redis.eval(  # type: ignore[misc]
+                _MFA_CHECK_LUA,
+                1,
+                mfa_attempts_key,
+                str(MFA_MAX_ATTEMPTS),
+                str(MFA_LOCKOUT_DURATION_SECONDS),
+            )
+            # Handle potential bytes return from redis.eval
+            result = int(raw_result) if raw_result is not None else 0
+        except (TypeError, ValueError, Exception) as e:
+            logger.error("MFA lockout check failed", user_id=user_id, error=str(e))
+            return  # Fail open
+
+        if result == -1:
+            logger.warning("mfa_lockout_enforced", user_id=user_id)
+            raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
+
+    async def _reset_mfa_lockout(self, user_id: int) -> None:
+        """Reset MFA lockout counter after successful verification."""
+        if redis is not None:
+            try:
+                await redis.delete(f"mfa_attempts:{user_id}")
+            except Exception as e:
+                logger.debug("Failed to reset MFA lockout counter", user_id=user_id, error=str(e))
+
     async def verify_totp_token(
         self,
         user_id: int,
@@ -262,35 +303,8 @@ class MFAService:
         Raises:
             UnauthorizedException: If token is invalid or MFA not enabled.
         """
-        # SECURITY FIX: Check MFA lockout before verification to prevent brute force
-        # Skip lockout check if Redis is unavailable (fail open for availability)
-        mfa_attempts_key = f"mfa_attempts:{user_id}"
-        result: int = 0  # Initialize to prevent UnboundLocalError when Redis unavailable
-        if redis is not None:
-            raw_result = await redis.eval(  # type: ignore[misc]
-                _MFA_CHECK_LUA,
-                1,
-                mfa_attempts_key,
-                str(MFA_MAX_ATTEMPTS),
-                str(MFA_LOCKOUT_DURATION_SECONDS),
-            )
-            # BUG FIX: Coerce to int — redis.eval may return bytes (b'-1') when
-            # the client is not configured with decode_responses=True.
-            try:
-                result = int(raw_result)
-            except (TypeError, ValueError):
-                result = 0
-
-            if result == -1:
-                raise UnauthorizedException("MFA locked. Too many failed attempts. Try again later.")
-        else:
-            # Redis unavailable - log warning and continue without lockout
-            logger.warning(
-                "Redis unavailable - MFA lockout disabled | user_id=%s",
-                user_id,
-            )
-
-        # FIXED: Removed redundant duplicate check for result == -1 (Item 11a)
+        # SECURITY FIX: Check and increment MFA lockout before any verification
+        await self._check_mfa_lockout(user_id)
 
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
@@ -301,6 +315,7 @@ class MFAService:
         if request.backup_code:
             backup_result = await self._verify_backup_code(user_id, request.backup_code, db)
             if backup_result["valid"]:
+                # Lockout is reset inside _verify_backup_code on success
                 return backup_result
 
         # Verify TOTP token if provided
@@ -314,17 +329,12 @@ class MFAService:
                 # Update last_used_at - fetch model instance
                 mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
                 if mfa_method:
-                    # BUG FIX: Use UTC-aware datetime (was naive, inconsistent with the rest of codebase)
+                    # BUG FIX: Use UTC-aware datetime
                     mfa_method.last_used_at = datetime.now(UTC)
                     await db.commit()
 
-                # Clear lockout counter on successful verification so the user isn't
-                # locked out on their next legitimate MFA attempt.
-                if redis is not None:
-                    try:
-                        await redis.delete(f"mfa_attempts:{user_id}")
-                    except Exception:
-                        pass  # Non-critical — lockout will expire naturally
+                # Clear lockout counter on successful verification
+                await self._reset_mfa_lockout(user_id)
 
                 # Audit log: MFA verification success
                 try:
@@ -523,12 +533,18 @@ class MFAService:
 
         # If TOTP token provided, verify it as well
         if totp_token:
+            # SECURITY FIX: Check and increment MFA lockout before verification
+            await self._check_mfa_lockout(user_id)
+
             try:
                 secret = await self._decrypt_secret(mfa_method_dict["secret"])
                 totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
 
                 if not totp.verify(totp_token, valid_window=TOTP_SKEW):
                     raise UnauthorizedException("Invalid MFA token")
+
+                # Clear lockout counter on successful verification
+                await self._reset_mfa_lockout(user_id)
             except UnauthorizedException:
                 # BUG FIX: Re-raise auth exceptions explicitly so they aren't swallowed.
                 # The broad `except Exception` below would re-wrap them with a different
@@ -655,12 +671,18 @@ class MFAService:
 
         # If TOTP token provided, verify it as well
         if totp_token:
+            # SECURITY FIX: Check and increment MFA lockout before verification
+            await self._check_mfa_lockout(user_id)
+
             try:
                 secret = await self._decrypt_secret(mfa_method_dict["secret"])
                 totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
 
                 if not totp.verify(totp_token, valid_window=TOTP_SKEW):
                     raise UnauthorizedException("Invalid MFA token")
+
+                # Clear lockout counter on successful verification
+                await self._reset_mfa_lockout(user_id)
             except UnauthorizedException:
                 # BUG FIX: Re-raise auth exceptions before the broad except catches them.
                 raise

@@ -4,8 +4,8 @@ from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.app.api.dependencies import get_current_tenant
 from src.app.core.rbac.dependencies import requires_permission
-from src.app.core.tenancy.context import TenantContext
 from src.app.core.rbac.permissions import Permission
+from src.app.core.tenancy.context import TenantContext
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.feature_flags.schemas import (
     FeatureFlagBulkUpdateRequest,

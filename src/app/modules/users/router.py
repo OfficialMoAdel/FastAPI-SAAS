@@ -110,8 +110,13 @@ async def read_users_me(
     raise HTTPException(status_code=401, detail="Invalid user context")
 
 
-@router.get("/{user_id}", response_model=UserRead, dependencies=[Depends(get_current_user)])
-async def read_user(request: Request, user_id: str, service: UserService = Depends(_get_user_service)) -> UserRead:
+@router.get("/{user_id}", response_model=UserRead)
+async def read_user(
+    request: Request,
+    user_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: UserService = Depends(_get_user_service),
+) -> UserRead:
     """Get user by ID or username (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -126,12 +131,21 @@ async def read_user(request: Request, user_id: str, service: UserService = Depen
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
+    # SECURITY FIX: Ensure tenant context is available and matches user
     from src.app.core.tenancy.context import get_current_tenant
+
     tenant = get_current_tenant()
-    if tenant:
-        user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
-        if user_tenant_id != tenant.id:
-            raise HTTPException(status_code=404, detail="User not found")
+    if not tenant:
+        raise HTTPException(status_code=400, detail="Tenant context required")
+
+    user_tenant_id = user.get("tenant_id") if isinstance(user, dict) else getattr(user, "tenant_id", None)
+    if str(user_tenant_id) != str(tenant.id):
+        raise HTTPException(status_code=404, detail="User not found")
+
+    # SECURITY FIX: IDOR check - ensure user can only read their own profile (or is superuser)
+    db_username = user.get("username") if isinstance(user, dict) else user.username
+    if db_username != current_user["username"] and not current_user.get("is_superuser"):
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own profile")
 
     return UserRead.model_validate(user)
 
@@ -233,9 +247,12 @@ async def read_user_rate_limits(
     return await service.get_with_rate_limits(username)
 
 
-@router.get("/{user_id}/tier", response_model=UserTierResponse | None, dependencies=[Depends(get_current_user)])
+@router.get("/{user_id}/tier", response_model=UserTierResponse | None)
 async def read_user_tier(
-    request: Request, user_id: str, service: UserService = Depends(_get_user_service)
+    request: Request,
+    user_id: str,
+    current_user: Annotated[dict, Depends(get_current_user)],
+    service: UserService = Depends(_get_user_service),
 ) -> UserTierResponse | None:
     """Get user's tier information (authenticated users only).
 
@@ -246,6 +263,10 @@ async def read_user_tier(
         username = await _get_username_from_id(service, user_id)
     except ValueError:
         username = user_id
+
+    # SECURITY FIX: IDOR check - ensure user can only view their own tier (or is superuser)
+    if username != current_user["username"] and not current_user.get("is_superuser"):
+        raise HTTPException(status_code=403, detail="Forbidden: You can only view your own tier")
 
     result = await service.get_with_tier(username)
     if result is None:

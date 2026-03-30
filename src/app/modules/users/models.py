@@ -2,7 +2,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Integer, String, UniqueConstraint, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
@@ -37,8 +37,22 @@ if TYPE_CHECKING:
 class User(Base, kw_only=True):
     __tablename__ = "user"
     __table_args__: tuple[Index | UniqueConstraint, ...] = (
-        UniqueConstraint("email", "tenant_id", name="uq_user_email_tenant"),
-        UniqueConstraint("username", "tenant_id", name="uq_user_username_tenant"),
+        # SECURITY FIX: Use partial unique indexes to allow re-registration of soft-deleted emails/usernames
+        # This prevents "unique constraint slots" being occupied by deleted records.
+        Index(
+            "uq_user_email_tenant",
+            "email",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
+        Index(
+            "uq_user_username_tenant",
+            "username",
+            "tenant_id",
+            unique=True,
+            postgresql_where=text("is_deleted = false"),
+        ),
         Index("idx_users_tenant_email", "tenant_id", "email"),
         Index("idx_users_tenant_username", "tenant_id", "username"),
         Index("idx_users_tenant_deleted", "tenant_id", "is_deleted"),

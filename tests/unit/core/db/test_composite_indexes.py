@@ -43,9 +43,24 @@ class TestCompositeIndexDefinitions:
         pytest.fail("Index idx_users_tenant_deleted not found")
 
     def test_unique_constraint_email_tenant(self):
-        """Verify unique constraint on email+tenant_id."""
-        constraints = [c.name for c in User.__table__.constraints if hasattr(c, "name") and c.name]
-        assert "uq_user_email_tenant" in constraints
+        """Verify unique constraint on email+tenant_id (implemented as partial index)."""
+        index_names = [idx.name for idx in User.__table__.indexes]
+        assert "uq_user_email_tenant" in index_names
+        for idx in User.__table__.indexes:
+            if idx.name == "uq_user_email_tenant":
+                assert idx.unique is True
+                return
+        pytest.fail("Index uq_user_email_tenant not found or not unique")
+
+    def test_unique_constraint_username_tenant(self):
+        """Verify unique constraint on username+tenant_id (implemented as partial index)."""
+        index_names = [idx.name for idx in User.__table__.indexes]
+        assert "uq_user_username_tenant" in index_names
+        for idx in User.__table__.indexes:
+            if idx.name == "uq_user_username_tenant":
+                assert idx.unique is True
+                return
+        pytest.fail("Index uq_user_username_tenant not found or not unique")
 
 
 class TestIndexUsagePatterns:

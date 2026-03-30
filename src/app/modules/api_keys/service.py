@@ -85,6 +85,16 @@ class APIKeyService(BaseService[APIKey]):
         APIKeyResponse
             Created API key with the actual key (only shown once)
         """
+        # SECURITY FIX: Prevent duplicate API key names within the same tenant
+        from sqlalchemy import select
+
+        stmt = select(APIKey).where(APIKey.tenant_id == tenant_id, APIKey.name == api_key_data.name)
+        existing_result = await self.db.execute(stmt)
+        if existing_result.scalar_one_or_none():
+            from src.app.core.exceptions.http_exceptions import BadRequestException
+
+            raise BadRequestException(f"API key with name '{api_key_data.name}' already exists in this tenant")
+
         # Generate the key
         full_key, prefix, hashed_key = self._generate_key()
 

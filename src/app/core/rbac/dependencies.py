@@ -343,6 +343,12 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if not user.get("is_active", False):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="User account is no longer active",
+        )
+
     return user
 
 

@@ -57,41 +57,52 @@ async def create_tables() -> None:
 
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
+    """Initialize Redis cache pool and client."""
     # P2-2: Use shared connection pool from factory
-    cache.pool = await redis_factory.get_redis_pool()
+    if cache.pool is None:
+        cache.pool = await redis_factory.get_redis_pool()
 
     # Cache client needs string decoding
     # Note: The shared pool is raw (bytes), but client overrides decoding
-    cache.client = redis.Redis(connection_pool=cache.pool, decode_responses=True)
+    # SECURITY FIX: Prevent redundant re-instantiation to avoid connection leaks
+    if cache.client is None:
+        cache.client = redis.Redis(connection_pool=cache.pool, decode_responses=True)
 
 
 async def close_redis_cache_pool() -> None:
+    """Close Redis cache client and pool."""
     if cache.client is not None:
-        await cache.client.close()
+        # Use aclose() for proper async cleanup if available (redis-py 5.0+)
+        if hasattr(cache.client, "aclose"):
+            await cache.client.aclose()
+        else:
+            await cache.client.close()
+        cache.client = None
 
-    # We close the shared pool separately or via factory
-    # But since cache.pool IS the shared pool, closing it here might affect others if not careful.
-    # However, redis_factory.close_redis_pool() handles the actual disconnect.
-    # Here we just clean up the client.
+    # We close the shared pool separately via factory
+    # This ensures all clients using the pool are shut down before the pool itself
     await redis_factory.close_redis_pool()
+    cache.pool = None
 
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
+    """Initialize ARQ queue pool."""
     # P2-2: Reuse the shared connection pool for ARQ
     pool = await redis_factory.get_redis_pool()
 
     # Create ArqRedis using the same pool
     # ARQ uses default decoding (bytes) which matches the pool
-    queue.pool = ArqRedis(connection_pool=pool)
+    # SECURITY FIX: Prevent redundant re-instantiation
+    if queue.pool is None:
+        queue.pool = ArqRedis(connection_pool=pool)
 
 
 async def close_redis_queue_pool() -> None:
+    """Close ARQ queue pool."""
     if queue.pool is not None:
         await queue.pool.close()
-        # Note: We don't close the shared pool here because close_redis_cache_pool handles it.
-        # Ideally, we should have a centralized shutdown, but lifespan calls both.
-        # Calling close on the pool multiple times is safe.
+        queue.pool = None
 
 
 # -------------- rate limit --------------

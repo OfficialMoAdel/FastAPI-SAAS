@@ -105,7 +105,9 @@ def _token_cache_key(token: str) -> str:
     Uses xxhash for fast hashing instead of token prefix, which is
     collision-prone for JWTs (first 20+ chars are often identical headers).
     """
-    return xxhash.xxh64(token.encode()).hexdigest()
+    # R2 #11b: Use JTI for key if available to match blacklist members
+    member = _extract_blacklist_member(token)
+    return xxhash.xxh64(member.encode()).hexdigest()
 
 
 # P0-3: Lua script for atomic blacklist check (4 operations → 1 roundtrip)
@@ -341,11 +343,13 @@ async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:
     try:
         # Use expiry timestamp as score for sorted set
         score = expires_at.timestamp()
+        # Use JTI-based member key if available
+        blacklist_member = _extract_blacklist_member(token)
         # P2-4: Invalidate negative cache for this token
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         # OPT-5: Pipeline both operations for 1 roundtrip instead of 2
         async with redis_client.pipeline() as pipe:
-            pipe.zadd(BLACKLIST_KEY, {token: score})  # type: ignore[misc]
+            pipe.zadd(BLACKLIST_KEY, {blacklist_member: score})  # type: ignore[misc]
             pipe.delete(negative_key)
             await pipe.execute()
         return True
@@ -373,8 +377,12 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
     try:
         # M1: Use pipeline for atomic multi-operation (add to blacklist + invalidate negative cache)
         async with redis_client.pipeline() as pipe:
-            # Build mapping of token -> expiry score
-            mapping = {token: expires_at.timestamp() for token, expires_at in tokens}
+            # Build mapping of member -> expiry score
+            # R2 #11b: Use JTI for key if available to match lookup logic
+            mapping = {
+                _extract_blacklist_member(token): expires_at.timestamp()
+                for token, expires_at in tokens
+            }
             pipe.zadd(BLACKLIST_KEY, mapping)  # type: ignore[misc]
             # M1: Invalidate negative cache for all tokens being blacklisted
             for token, _ in tokens:

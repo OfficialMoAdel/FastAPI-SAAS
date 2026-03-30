@@ -18,6 +18,7 @@ Isolation must be handled at the application layer.
 """
 
 import asyncio
+from typing import cast
 
 from cachetools import TTLCache
 from fastapi import FastAPI, Request, Response, status
@@ -400,7 +401,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     except Exception as e:
                         logger.warning("Tenant L2 cache write error: %s", e)
 
-                return tenant
+                return cast(Tenant | None, tenant)
 
     async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext | None:
         """Create a TenantContext directly from cached data, skipping ORM overhead.

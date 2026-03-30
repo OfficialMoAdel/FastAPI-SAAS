@@ -97,11 +97,17 @@ def setup_query_profiler(
 
         # Log slow queries
         if elapsed_ms > slow_query_threshold_ms:
+            # Truncate parameters to prevent huge log entries
+            params_str = str(parameters)
+            if len(params_str) > 500:
+                params_str = params_str[:500] + "..."
+
             logger.warning(
-                "SLOW QUERY: %.2fms (threshold: %dms)\n  SQL: %s",
+                "SLOW QUERY: %.2fms (threshold: %dms)\n  SQL: %s\n  Params: %s",
                 elapsed_ms,
                 slow_query_threshold_ms,
                 statement[:500] + ("..." if len(statement) > 500 else ""),
+                params_str,
             )
 
 

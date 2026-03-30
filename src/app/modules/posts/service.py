@@ -1,6 +1,6 @@
 """Post service layer - encapsulates all post business logic."""
 
-from typing import Any
+from typing import Any, cast
 
 from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -67,7 +67,9 @@ class PostService(BaseService[Post]):
             post_dict["tenant_id"] = tenant.id
 
         post_internal = PostCreateInternal(**post_dict)
-        created_post = await crud_posts.create(db=self.db, object=post_internal, schema_to_select=PostRead)
+        created_post = cast(
+            dict[str, Any], await crud_posts.create(db=self.db, object=post_internal, schema_to_select=PostRead)
+        )
 
         if created_post is None:
             raise ModelNotFoundError("Post", "new")

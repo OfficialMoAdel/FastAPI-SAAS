@@ -91,6 +91,43 @@ class TenantAwareCRUD(
                 return {"tenant_id": tenant_id, **kwargs}
         return kwargs
 
+    async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:  # type: ignore[override]
+        """Create a new record, automatically injecting tenant_id from context.
+
+        Supports all FastCRUD keyword arguments via **kwargs (e.g., commit, schema_to_select).
+
+        Args:
+            db: The database session.
+            object: The creation data.
+            **kwargs: Additional FastCRUD keyword arguments.
+
+        Returns
+        -------
+            The created model instance or selected schema.
+        """
+        tenant = get_tenant_context()
+        if tenant:
+            tenant_id = tenant.id
+            # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
+            if isinstance(tenant_id, str):
+                import uuid
+
+                try:
+                    tenant_id = uuid.UUID(tenant_id)
+                except ValueError:
+                    pass
+
+            # Inject tenant_id if not already present
+            if isinstance(object, dict):
+                if "tenant_id" not in object:
+                    object["tenant_id"] = tenant_id
+            elif isinstance(object, BaseModel):
+                # Only set if the field exists and is None/empty
+                if hasattr(object, "tenant_id") and not getattr(object, "tenant_id"):
+                    setattr(object, "tenant_id", tenant_id)
+
+        return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
+
     async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
         """Get a single record, filtered by tenant context.
 

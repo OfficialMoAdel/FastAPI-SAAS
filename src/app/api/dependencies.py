@@ -8,7 +8,7 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException, RateLimitException, UnauthorizedException
 from src.app.core.logger import get_logger
-from src.app.core.security import TokenType, oauth2_scheme, verify_token
+from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import get_current_tenant as get_tenant_context
 from src.app.core.utils.rate_limit import rate_limiter
@@ -41,15 +41,14 @@ async def get_current_user(
         from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
         # Check Redis cache first (O(1) lookup)
-        # SECURITY FIX: Use jti:{jti} key to match how blacklist_tokens() stores entries.
-        # Using the raw JWT string would never match because blacklist_tokens() uses JTI.
-        jti_in_payload = cached_payload.get("jti")
-        blacklist_token_key = f"jti:{jti_in_payload}" if jti_in_payload else token
-        cache_result = await is_token_blacklisted(blacklist_token_key)
+        # SECURITY FIX: is_token_blacklisted extracts JTI internally if available.
+        # This unified extraction prevents mismatches between JTI-based and token-based lookup.
+        cache_result = await is_token_blacklisted(token)
         if cache_result is True:
             raise UnauthorizedException("User not authenticated.")
         elif cache_result is None:
             # Redis unavailable, fall back to DB check
+            jti_in_payload = cached_payload.get("jti")
             is_blacklisted = False
             if jti_in_payload:
                 is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti_in_payload}")
@@ -107,13 +106,76 @@ async def get_current_user(
     raise UnauthorizedException("User not authenticated.")
 
 
-async def get_optional_user(request: Request, db: AsyncSession = Depends(async_get_db)) -> dict | None:
-    token = request.headers.get("Authorization")
-    if not token:
+async def get_user_by_api_key(
+    api_key: Annotated[str | None, Depends(api_key_scheme)],
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+) -> dict[str, Any] | None:
+    """Validate API key and return user info.
+
+    This dependency allows authentication using 'X-API-Key' header.
+    Returns user dict if valid, None otherwise.
+    """
+    if not api_key:
+        return None
+
+    from src.app.modules.api_keys.service import APIKeyService
+
+    api_key_service = APIKeyService(db)
+    key_info = await api_key_service.validate_api_key(api_key)
+
+    if not key_info:
+        return None
+
+    # Fetch full user auth info
+    user_service = UserService(db)
+    user_data = await user_service.get(key_info["user_id"])
+
+    if not user_data:
+        return None
+
+    # Ensure we have a dict
+    if not isinstance(user_data, dict):
+        # Convert ORM object to dict if needed
+        # This is a simplified conversion for security context
+        user_dict = {
+            "id": user_data.id,
+            "username": user_data.username,
+            "email": user_data.email,
+            "tenant_id": user_data.tenant_id,
+            "is_active": user_data.is_active,
+            "is_superuser": user_data.is_superuser,
+            "token_version": user_data.token_version,
+        }
+    else:
+        user_dict = user_data
+
+    if user_dict.get("is_active", False):
+        # Attach API key specific info to the user object
+        user_dict["api_key_scopes"] = key_info.get("scopes", [])
+        user_dict["api_key_id"] = key_info.get("key_id")
+        return user_dict
+
+    return None
+
+
+async def get_optional_user(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    api_key_user: Annotated[dict | None, Depends(get_user_by_api_key)] = None,
+) -> dict | None:
+    """Get optional user from Bearer token or API Key.
+
+    Try API key first (via api_key_user dependency), then fall back to Bearer token.
+    """
+    if api_key_user:
+        return api_key_user
+
+    auth_header = request.headers.get("Authorization")
+    if not auth_header:
         return None
 
     try:
-        token_type, _, token_value = token.partition(" ")
+        token_type, _, token_value = auth_header.partition(" ")
         if token_type.lower() != "bearer" or not token_value:
             return None
 
@@ -123,6 +185,26 @@ async def get_optional_user(request: Request, db: AsyncSession = Depends(async_g
         cached_payload = get_cached_jwt_payload(request)
 
         if cached_payload:
+            # SECURITY FIX: Need to check blacklist even if cached
+            from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+            from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+
+            # Check Redis cache first (O(1) lookup)
+            # is_token_blacklisted extracts JTI internally if available
+            cache_result = await is_token_blacklisted(token_value)
+            if cache_result is True:
+                return None
+            elif cache_result is None:
+                # Redis unavailable, fall back to DB check
+                jti_in_payload = cached_payload.get("jti")
+                is_blacklisted = False
+                if jti_in_payload:
+                    is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti_in_payload}")
+                if not is_blacklisted:
+                    is_blacklisted = await crud_token_blacklist.exists(db, token=token_value)
+                if is_blacklisted:
+                    return None
+
             username_or_email = cached_payload.get("sub")
             # BUG FIX: Use .get() with explicit default 0 — matches the non-cached path below.
             payload_version = cached_payload.get("token_version", 0)

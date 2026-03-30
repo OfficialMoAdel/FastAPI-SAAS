@@ -631,8 +631,10 @@ class TestRequestPasswordReset:
                 )
 
                 assert "sent" in result["message"].lower()
-                # Verify timing equalization was applied
-                mock_sleep.assert_called_once_with(0.15)
+                # Verify timing equalization was applied (with jitter)
+                assert mock_sleep.called
+                sleep_time = mock_sleep.call_args[0][0]
+                assert 0.1 <= sleep_time <= 0.2
 
     @pytest.mark.asyncio
     async def test_request_password_reset_inactive_user(self, auth_service, mock_db):
@@ -649,8 +651,10 @@ class TestRequestPasswordReset:
                 )
 
                 assert "sent" in result["message"].lower()
-                # Should equalize timing for security
-                mock_sleep.assert_called_once_with(0.15)
+                # Should equalize timing for security (with jitter)
+                assert mock_sleep.called
+                sleep_time = mock_sleep.call_args[0][0]
+                assert 0.1 <= sleep_time <= 0.2
 
 
 # ============================================================================
@@ -862,7 +866,10 @@ class TestSendVerificationEmail:
                 )
 
                 assert "sent" in result["message"].lower()
-                mock_sleep.assert_called_once_with(0.15)
+                # Verify timing equalization (with jitter)
+                assert mock_sleep.called
+                sleep_time = mock_sleep.call_args[0][0]
+                assert 0.1 <= sleep_time <= 0.2
 
     @pytest.mark.asyncio
     async def test_send_verification_email_already_verified(self, auth_service, mock_db):
@@ -885,7 +892,10 @@ class TestSendVerificationEmail:
                 )
 
                 assert "sent" in result["message"].lower()
-                mock_sleep.assert_called_once_with(0.15)
+                # Verify timing equalization (with jitter)
+                assert mock_sleep.called
+                sleep_time = mock_sleep.call_args[0][0]
+                assert 0.1 <= sleep_time <= 0.2
 
 
 # ============================================================================

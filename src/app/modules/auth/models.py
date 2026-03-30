@@ -68,6 +68,7 @@ class PasswordResetToken(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
         default_factory=lambda: datetime.now(UTC) + timedelta(hours=1),
     )
 
@@ -149,6 +150,7 @@ class EmailVerificationToken(Base):
     expires_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
+        index=True,
         default_factory=lambda: datetime.now(UTC) + timedelta(hours=24),
     )
 
