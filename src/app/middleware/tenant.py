@@ -47,8 +47,9 @@ _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
 # Cache stampede protection: per-slug locks, keyed by event loop ID.
 # Prevents "thundering herd" where multiple concurrent requests for a cold tenant
 # all bypass cache and hit the DB simultaneously.
-# Using TTLCache prevents memory leaks that occur with unbounded dictionaries over time
-_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=3600)
+# Using TTLCache prevents memory leaks that occur with unbounded dictionaries over time.
+# TTL increased to 24h to ensure locks persist across reasonable burst durations.
+_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=86400)
 
 
 def _get_tenant_lock(slug: str) -> asyncio.Lock:

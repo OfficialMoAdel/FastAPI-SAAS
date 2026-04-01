@@ -82,6 +82,7 @@ class TokenData(BaseModel):
 class TokenBlacklistBase(BaseModel):
     token: str
     expires_at: datetime
+    tenant_id: uuid_pkg.UUID
 
 
 class TokenBlacklistRead(TokenBlacklistBase):

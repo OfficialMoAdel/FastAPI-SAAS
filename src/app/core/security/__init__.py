@@ -354,12 +354,26 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                 payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
             exp_timestamp = payload.get("exp")
             jti = payload.get("jti")
+            tenant_id = payload.get("tenant_id")
+
             if exp_timestamp is not None:
                 expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
                 try:
+                    # BUG FIX: tenant_id is now required for blacklisting (Issue 17)
+                    if not tenant_id:
+                        from src.app.core.tenancy.context import get_tenant_context
+
+                        tenant = get_tenant_context()
+                        if tenant:
+                            tenant_id = tenant.id
+                        else:
+                            # Fallback for system tokens or tokens without tenant_id
+                            # This should be rare if all tokens are correctly issued
+                            tenant_id = "00000000-0000-0000-0000-000000000000"
+
                     # Store full token in DB for backward compatibility
                     await crud_token_blacklist.create(
-                        db, object=TokenBlacklistCreate(token=token, expires_at=expires_at)
+                        db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
                     )
 
                     if jti:
@@ -368,7 +382,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                         # even when Redis is unavailable (Redis stores only jti:{jti}, not the full token).
                         jti_key = f"jti:{jti}"
                         await crud_token_blacklist.create(
-                            db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at)
+                            db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
                         )
 
                     # Cache by JTI if available for precise blacklisting
@@ -401,15 +415,30 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
         exp_timestamp = payload.get("exp")
         jti = payload.get("jti")
+        tenant_id = payload.get("tenant_id")
+
         if exp_timestamp is not None:
             expires_at = datetime.fromtimestamp(exp_timestamp, tz=UTC)
             try:
-                await crud_token_blacklist.create(db, object=TokenBlacklistCreate(token=token, expires_at=expires_at))
+                # BUG FIX: tenant_id is now required for blacklisting (Issue 17)
+                if not tenant_id:
+                    from src.app.core.tenancy.context import get_tenant_context
+
+                    tenant = get_tenant_context()
+                    if tenant:
+                        tenant_id = tenant.id
+                    else:
+                        # Fallback for system tokens or tokens without tenant_id
+                        tenant_id = "00000000-0000-0000-0000-000000000000"
+
+                await crud_token_blacklist.create(
+                    db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
+                )
                 if jti:
                     # SECURITY FIX: Also store JTI-prefixed key in DB for Redis-outage fallback.
                     jti_key = f"jti:{jti}"
                     await crud_token_blacklist.create(
-                        db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at)
+                        db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
                     )
                     await add_token_to_blacklist(jti_key, expires_at)
                 else:

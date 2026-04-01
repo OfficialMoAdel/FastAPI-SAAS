@@ -17,6 +17,20 @@ class AppSettings(BaseSettings):
     # DATABASE: Control table creation (set to False in production)
     CREATE_TABLES_ON_STARTUP: bool = True
 
+    # ISSUE 18: Configurable max body size (bytes) - default 10MB
+    MAX_BODY_SIZE: int = Field(default=10 * 1024 * 1024, ge=1024 * 1024, le=100 * 1024 * 1024)
+
+    # ISSUE 6: System-reserved usernames to prevent phishing/confusion
+    RESERVED_USERNAMES: frozenset[str] = frozenset({
+        "admin", "administrator", "root", "api", "www", "mail", "email",
+        "support", "help", "info", "contact", "sales", "billing",
+        "security", "secure", "auth", "login", "logout", "signup",
+        "register", "user", "users", "account", "accounts", "system",
+        "service", "services", "host", "master", "webmaster",
+        "postmaster", "hostmaster", "abuse", "noc", "team", "staff",
+        "null", "undefined", "test", "testing", "demo", "example"
+    })
+
     # L2: Centralized pagination defaults for API consistency
     PAGINATION_DEFAULT_PER_PAGE: int = Field(default=20, ge=1, le=100, description="Default items per page")
     PAGINATION_MAX_PER_PAGE: int = Field(default=100, ge=1, le=1000, description="Maximum items per page")
@@ -213,7 +227,7 @@ class FirstUserSettings(BaseSettings):
     ADMIN_NAME: str = "admin"
     ADMIN_EMAIL: str = "admin@admin.com"
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: SecretStr  # REQUIRED: Must be set via environment variable
+    ADMIN_PASSWORD: SecretStr = Field(..., min_length=8)  # REQUIRED: Must be at least 8 characters
 
 
 class AuthSettings(BaseSettings):

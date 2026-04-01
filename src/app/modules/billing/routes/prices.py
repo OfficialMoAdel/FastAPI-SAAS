@@ -4,11 +4,12 @@ Provides /api/v1/prices endpoints for frontend compatibility with old backend.
 All business logic is handled by the billing module's PricingService.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.dependencies import get_current_tenant
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
@@ -48,6 +49,7 @@ async def create_price(
 @router.get("", response_model=list[PricingRead])
 async def list_prices(
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    current_tenant: Annotated[Any, Depends(get_current_tenant)],
     product_id: Annotated[int | None, Query(description="Filter by product ID")] = None,
     is_active: Annotated[bool | None, Query(description="Filter by active status")] = None,
 ) -> list[dict]:
@@ -55,6 +57,7 @@ async def list_prices(
 
     Args:
         db: Database session
+        current_tenant: Current tenant context
         product_id: Optional product ID filter
         is_active: Optional active status filter
 
@@ -62,7 +65,12 @@ async def list_prices(
         List of prices
     """
     service = PricingService(db)
-    result = await service.list_prices(limit=100, product_id=product_id, is_active=is_active)
+    result = await service.list_prices(
+        limit=100,
+        product_id=product_id,
+        is_active=is_active,
+        tenant_id=current_tenant.id if hasattr(current_tenant, "id") else current_tenant.get("id"),
+    )
     data = result.get("data", [])
     return list(data) if data else []
 

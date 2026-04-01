@@ -506,7 +506,7 @@ class APIKeyService(BaseService[APIKey]):
         if isinstance(api_key, dict):
             if str(api_key.get("tenant_id")) != str(tenant_id) or str(api_key.get("user_id")) != str(user_id):
                 raise ForbiddenException("You don't have permission to rotate this key")
-            if not api_key.get("is_active"):
+            if not api_key.get("is_active", True):
                 raise ForbiddenException("Cannot rotate a revoked key")
             api_key_name = api_key.get("name")
             api_key_scopes = api_key.get("scopes")

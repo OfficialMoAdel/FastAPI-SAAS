@@ -1,28 +1,37 @@
-# Performance Validation CI Workflow
 name: Performance Validation
 
 on:
   push:
-    branches: [main, develop]
+    branches:
+      - main
+      - develop
     paths:
       - 'src/app/**'
       - 'scripts/perf-validation/**'
+
   pull_request:
-    branches: [main]
+    branches:
+      - main
+    paths:
+      - 'src/app/**'
+      - 'scripts/perf-validation/**'
+
   workflow_dispatch:
     inputs:
       full_validation:
-        description: 'Run full validation including load tests'
+        description: Run full validation including load tests
         required: false
-        default: 'false'
+        default: false
+        type: boolean
 
 env:
-  PYTHON_VERSION: '3.11'
+  PYTHON_VERSION: "3.11"
 
 jobs:
   isomorphism-tests:
     name: Isomorphism Validation
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
 
@@ -45,9 +54,11 @@ jobs:
     name: Phase Validation
     runs-on: ubuntu-latest
     needs: isomorphism-tests
+
     strategy:
       matrix:
         phase: [1, 2, 3, 4]
+
     steps:
       - uses: actions/checkout@v4
 
@@ -70,6 +81,7 @@ jobs:
     name: Full E2E Validation
     runs-on: ubuntu-latest
     needs: phase-validation
+
     steps:
       - uses: actions/checkout@v4
 
@@ -109,12 +121,14 @@ jobs:
     name: Load Test
     runs-on: ubuntu-latest
     needs: full-validation
-    if: github.event.inputs.full_validation == 'true' || github.ref == 'refs/heads/main'
+    if: ${{ github.ref == 'refs/heads/main' || (github.event_name == 'workflow_dispatch' && inputs.full_validation) }}
+
     services:
       redis:
         image: redis:7-alpine
         ports:
           - 6379:6379
+
       postgres:
         image: postgres:15-alpine
         env:
@@ -124,7 +138,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U test -d test_db"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -143,14 +157,59 @@ jobs:
           uv sync
 
       - name: Start application
+        env:
+          ENVIRONMENT: local
+          SECRET_KEY: 12345678901234567890123456789012
+          ADMIN_PASSWORD: Str1ngst!
+
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_SERVER: localhost
+          POSTGRES_PORT: 5432
+          POSTGRES_DB: test_db
+
+          REDIS_CACHE_HOST: localhost
+          REDIS_CACHE_PORT: 6379
+          REDIS_CACHE_PASSWORD: ""
+
+          REDIS_QUEUE_HOST: localhost
+          REDIS_QUEUE_PORT: 6379
+          REDIS_QUEUE_PASSWORD: ""
+
+          CRUD_ADMIN_REDIS_HOST: localhost
+          CRUD_ADMIN_REDIS_PORT: 6379
+          CRUD_ADMIN_REDIS_PASSWORD: ""
         run: |
-          uv run uvicorn src.app.main:app --host 0.0.0.0 --port 8000 &
-          sleep 10  # Wait for app to start
+          uv run uvicorn src.app.main:app --host 0.0.0.0 --port 8000 > uvicorn.log 2>&1 &
+          python - <<'PY'
+          import socket
+          import time
+          host = "127.0.0.1"
+          port = 8000
+          deadline = time.time() + 60
+          while time.time() < deadline:
+              try:
+                  with socket.create_connection((host, port), timeout=2):
+                      print("Application is ready")
+                      break
+              except OSError:
+                  time.sleep(2)
+          else:
+              raise SystemExit("Application did not start within 60 seconds")
+          PY
 
       - name: Run load test
         run: |
           cd scripts/perf-validation
           locust -f load_test.py --headless -u 50 -r 5 --run-time 1m
+
+      - name: Upload app log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: uvicorn-log
+          path: uvicorn.log
+          retention-days: 7
 
       - name: Upload load test results
         uses: actions/upload-artifact@v4
@@ -164,6 +223,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: full-validation
     if: github.event_name == 'pull_request'
+
     steps:
       - uses: actions/checkout@v4
 
@@ -177,11 +237,14 @@ jobs:
           pip install uv
           uv sync
 
-      - name: Download baseline from main
-        run: |
-          mkdir -p scripts/perf-validation/results
-          # In real workflow, download baseline from artifact storage
-          echo "Baseline comparison would run here"
+      - name: Create results directory
+        run: mkdir -p scripts/perf-validation/results
+
+      - name: Download validation report
+        uses: actions/download-artifact@v4
+        with:
+          name: perf-validation-report
+          path: scripts/perf-validation/results/
 
       - name: Compare results
         run: |

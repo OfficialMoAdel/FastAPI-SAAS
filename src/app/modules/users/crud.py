@@ -1,6 +1,6 @@
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
@@ -33,11 +33,11 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         tenant = get_tenant_context()
 
-        # Build WHERE clause based on lookup type
+        # Build WHERE clause based on lookup type - case-insensitive
         if username:
-            lookup_clause = User.username == username
+            lookup_clause = func.lower(User.username) == func.lower(username)
         else:
-            lookup_clause = User.email == email
+            lookup_clause = func.lower(User.email) == func.lower(email)
 
         # Build base statement
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))

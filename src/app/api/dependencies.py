@@ -93,8 +93,11 @@ async def get_current_user(
         if current_tenant and not user.get("is_superuser"):
             if str(user.get("tenant_id")) != str(current_tenant.id):
                 logger.warning(
-                    f"Tenant mismatch: User {user['id']} (tenant {user.get('tenant_id')}) "
-                    f"requested access to tenant {current_tenant.id} ({current_tenant.slug})"
+                    "tenant_mismatch_detected",
+                    user_id=user["id"],
+                    user_tenant_id=user.get("tenant_id"),
+                    requested_tenant_id=current_tenant.id,
+                    requested_tenant_slug=current_tenant.slug,
                 )
                 raise ForbiddenException("User does not belong to the current tenant.")
 
@@ -109,6 +112,7 @@ async def get_current_user(
 async def get_user_by_api_key(
     api_key: Annotated[str | None, Depends(api_key_scheme)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
+    request: Request,
 ) -> dict[str, Any] | None:
     """Validate API key and return user info.
 
@@ -125,6 +129,14 @@ async def get_user_by_api_key(
 
     if not key_info:
         return None
+
+    # ISSUE 5 FIX: Verify tenant from API key matches the requested tenant context.
+    # Prevents an attacker from using a valid API key for Tenant A to access Tenant B.
+    requested_tenant_id = request.headers.get("X-Tenant-ID")
+    if requested_tenant_id and key_info.get("tenant_id") and str(key_info["tenant_id"]) != str(requested_tenant_id):
+        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+
+        raise UnauthorizedException("API key does not match the requested tenant context.")
 
     # Fetch full user auth info
     user_service = UserService(db)
@@ -323,8 +335,10 @@ async def rate_limiter_dependency(
                 limit, period = rate_limit["limit"], rate_limit["period"]
             else:
                 logger.warning(
-                    f"User {user_id} with tier '{tier['name']}' has no specific rate limit for path '{path}'. \
-                        Applying default rate limit."
+                    "path_rate_limit_missing_using_default",
+                    user_id=user_id,
+                    tier_name=tier["name"],
+                    path=path,
                 )
                 limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
         else:
@@ -334,7 +348,8 @@ async def rate_limiter_dependency(
         # Use a unique identifier per request when client info is unavailable
         # to prevent DoS attacks on the shared "unknown" bucket
         if request.client and request.client.host:
-            user_id = request.client.host
+            # ISSUE 7 FIX: Use per-IP bucket for unknown clients
+            user_id = f"unknown:{request.client.host}"
         else:
             # Drop the UUID so that unknown clients all share the same bucket
             # and effectively get rate limited.

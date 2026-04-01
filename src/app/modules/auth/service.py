@@ -485,15 +485,28 @@ return new_attempts
             # Audit log logout
             try:
                 username = user_data.username_or_email if user_data else "unknown"
+                user_id_val = None
+                tenant_id_val = "0"
+
+                if user_data:
+                    user_service = get_user_service(db)
+                    if "@" in user_data.username_or_email:
+                        db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
+                    else:
+                        db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
+
+                    if db_user:
+                        user_id_val = str(db_user["id"])
+                        tenant_id_val = str(db_user.get("tenant_id", "0"))
 
                 await event_bus.publish(
                     "audit.log",
                     {
                         "action": "auth.logout",
                         "entity_type": "user",
-                        "entity_id": None,
-                        "tenant_id": "0",
-                        "user_id": None,
+                        "entity_id": user_id_val,
+                        "tenant_id": tenant_id_val,
+                        "user_id": user_id_val,
                         "details": {
                             "username": username,
                             "success": True,
@@ -573,13 +586,14 @@ return new_attempts
         # SECURITY FIX: Invalidate ALL user sessions
         await self._invalidate_all_user_sessions(user, db)
 
-        # Invalidate auth cache so new password works immediately, BEFORE commit
-        # to prevent stale cache state on DB failure
-        user_service = get_user_service(db)
-        await user_service._invalidate_user_cache(user)
-
         # Commit the combined transaction of password change + token version increment
         await db.commit()
+
+        # Invalidate auth cache so new password works immediately, AFTER commit
+        # to prevent race condition where concurrent reads see old DB value and re-cache it.
+        user_service = get_user_service(db)
+        await user_service._invalidate_user_cache(user)
+        await self._delete_user_token_cache(user)
 
         logger.info(
             "Password changed successfully",
@@ -606,19 +620,29 @@ return new_attempts
         return {"message": "Password changed successfully. All other sessions have been logged out."}
 
     async def _invalidate_all_user_sessions(self, user: dict[str, Any], db: AsyncSession) -> None:
-        """Invalidate all active sessions for a user.
+        """Increment token_version in DB to invalidate all active sessions for a user.
 
         This implementation uses token_versioning for instant global invalidation.
         When token_version is incremented in the DB, all previously issued tokens
         (which contain the old version) will be rejected by verify_token().
+
+        NOTE: Cache invalidation (via _delete_user_token_cache) should be called
+        separately AFTER the DB transaction is committed to prevent race conditions.
         """
-        # SECURITY FIX: Increment token_version to invalidate all existing tokens
-        # This ensures any tokens issued before password change are invalid.
-        # FIXED: Removed redundant creation/blacklisting of dummy tokens (Item 11b).
-        # Token version check in verify_token() is the primary and sufficient mechanism.
         user_id = user.get("id")
 
-        # FIXED: Delete cache FIRST to prevent stale reads during DB update
+        # Update DB - increment token_version
+        await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
+        # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
+
+        logger.info("invalidated_all_user_sessions_in_db", user_id=user_id)
+
+    async def _delete_user_token_cache(self, user: dict[str, Any]) -> None:
+        """Delete token_version cache keys for a user.
+
+        Should be called AFTER DB commit to ensure next reads get the new version.
+        """
+        user_id = user.get("id")
         try:
             from src.app.core.utils.cache import client as redis_client
 
@@ -632,14 +656,9 @@ return new_attempts
                     keys.append(f"user:{email}:token_version")
                 if keys:
                     await redis_client.delete(*keys)
+                    logger.debug("deleted_user_token_cache", user_id=user_id, keys=keys)
         except Exception as e:
-            logger.warning("Failed to invalidate token_version cache", user_id=user_id, error=str(e))
-
-        # THEN update DB - after cache is invalidated to prevent race condition
-        await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-        # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
-
-        logger.info("invalidated_all_user_sessions", user_id=user_id)
+            logger.warning("Failed to delete token_version cache", user_id=user_id, error=str(e))
 
     async def request_password_reset(
         self,
@@ -792,11 +811,12 @@ return new_attempts
         # Invalidate ALL user sessions after password reset
         await self._invalidate_all_user_sessions(user, db)
 
-        # Invalidate auth cache
+        await db.commit()
+
+        # Invalidate auth cache AFTER commit
         user_service = get_user_service(db)
         await user_service._invalidate_user_cache(user)
-
-        await db.commit()
+        await self._delete_user_token_cache(user)
 
         logger.info("Password reset successful", user_id=reset_token.user_id, token_id=reset_token.id)
 

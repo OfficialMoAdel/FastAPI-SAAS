@@ -599,6 +599,8 @@ class UserService(BaseService[User]):
         from sqlalchemy import update as sa_update
 
         user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+        user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
+
         await self.db.execute(
             sa_update(User)
             .where(User.id == user_id_val)
@@ -609,6 +611,26 @@ class UserService(BaseService[User]):
             )
         )
         await self.db.commit()
+
+        # SECURITY FIX: Add audit log for user deletion (Issue 15)
+        try:
+            await event_bus.publish(
+                "audit.log",
+                {
+                    "action": "user.deleted",
+                    "entity_type": "user",
+                    "entity_id": str(user_id_val),
+                    "tenant_id": str(user_tenant_id) if user_tenant_id else "0",
+                    "user_id": str(current_user["id"]),
+                    "details": {
+                        "username": username,
+                        "deleted_by": current_user["username"],
+                    },
+                },
+                priority=EventPriority.NORMAL,
+            )
+        except Exception as e:
+            logger.warning("failed_to_publish_user_deletion_audit_log", error=str(e))
 
         await self._invalidate_user_cache(db_user)
 

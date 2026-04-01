@@ -20,7 +20,7 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
-from src.app.core.utils.cache import client as redis  # FIXED: Import redis client
+from src.app.core.utils import cache
 from src.app.modules.mfa.crud import crud_mfa_methods
 from src.app.modules.mfa.models import MFAMethod
 from src.app.modules.mfa.schemas import (
@@ -124,9 +124,9 @@ class MFAService:
 
         # Store secret temporarily in redis (Expires in 10 minutes)
         setup_token = str(uuid.uuid4())
-        if redis is not None:
+        if cache.client is not None:
             try:
-                await redis.setex(f"mfa_setup:{setup_token}", 600, secret)
+                await cache.client.setex(f"mfa_setup:{setup_token}", 600, secret)
             except Exception as e:
                 logger.error("Redis failed during MFA setup: %s", e)
                 from fastapi import HTTPException, status
@@ -177,7 +177,7 @@ class MFAService:
 
         # Retrieve secret from Redis using setup_token
         mfa_setup_key = f"mfa_setup:{request.setup_token}"
-        totp_secret_bytes = await redis.get(mfa_setup_key) if redis else None
+        totp_secret_bytes = await cache.client.get(mfa_setup_key) if cache.client else None
 
         if not totp_secret_bytes:
             raise BadRequestException("Setup token expired or invalid. Please restart MFA setup.")
@@ -190,8 +190,8 @@ class MFAService:
             raise BadRequestException("Invalid TOTP token. Please try again.")
 
         # Clean up the setup token
-        if redis is not None:
-            await redis.delete(mfa_setup_key)
+        if cache.client is not None:
+            await cache.client.delete(mfa_setup_key)
 
         # Generate backup codes
         backup_codes = await self._generate_backup_codes()
@@ -252,14 +252,14 @@ class MFAService:
         Raises:
             UnauthorizedException: If user is locked out.
         """
-        if redis is None:
+        if cache.client is None:
             # Redis unavailable - log warning and continue without lockout (fail open)
             logger.warning("Redis unavailable - MFA lockout disabled | user_id=%s", user_id)
             return
 
         mfa_attempts_key = f"mfa_attempts:{user_id}"
         try:
-            raw_result = await redis.eval(  # type: ignore[misc]
+            raw_result = await cache.client.eval(  # type: ignore[misc]
                 _MFA_CHECK_LUA,
                 1,
                 mfa_attempts_key,
@@ -278,9 +278,9 @@ class MFAService:
 
     async def _reset_mfa_lockout(self, user_id: int) -> None:
         """Reset MFA lockout counter after successful verification."""
-        if redis is not None:
+        if cache.client is not None:
             try:
-                await redis.delete(f"mfa_attempts:{user_id}")
+                await cache.client.delete(f"mfa_attempts:{user_id}")
             except Exception as e:
                 logger.debug("Failed to reset MFA lockout counter", user_id=user_id, error=str(e))
 
@@ -454,9 +454,9 @@ class MFAService:
 
             # Clear lockout counter on successful backup code use so the user isn't
             # locked out on their very next MFA verification attempt.
-            if redis is not None:
+            if cache.client is not None:
                 try:
-                    await redis.delete(f"mfa_attempts:{user_id}")
+                    await cache.client.delete(f"mfa_attempts:{user_id}")
                 except Exception:
                     pass  # Non-critical
 

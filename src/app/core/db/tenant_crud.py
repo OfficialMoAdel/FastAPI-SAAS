@@ -86,8 +86,12 @@ class TenantAwareCRUD(
 
                     try:
                         tenant_id = uuid.UUID(tenant_id)
-                    except ValueError:
-                        pass
+                    except (ValueError, TypeError):
+                        # ISSUE 11 FIX: Log invalid UUID instead of silent failure
+                        from src.app.core.logger import get_logger
+
+                        get_logger(__name__).warning("invalid_tenant_uuid_in_context", tenant_id=tenant_id)
+                        # Keep as string - downstream DB driver might handle it or fail explicitly
                 return {"tenant_id": tenant_id, **kwargs}
         return kwargs
 

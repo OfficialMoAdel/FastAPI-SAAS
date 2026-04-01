@@ -53,7 +53,7 @@ def test_optimization_flag_exists(flag_name: str, flag_path: str, default_value:
     with patch.dict(
         os.environ,
         {
-            "ADMIN_PASSWORD": "test",
+            "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
             "POSTGRES_PASSWORD": "test",
@@ -81,7 +81,7 @@ def test_optimization_flag_can_be_disabled(flag_name: str, flag_path: str, defau
         os.environ,
         {
             flag_name: "false",
-            "ADMIN_PASSWORD": "test",
+            "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
             "POSTGRES_PASSWORD": "test",
@@ -116,7 +116,7 @@ def test_feature_remove_wasted_connection_rollback() -> None:
         os.environ,
         {
             "FEATURE_REMOVE_WASTED_CONNECTION": "false",
-            "ADMIN_PASSWORD": "test",
+            "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
             "POSTGRES_PASSWORD": "test",
@@ -148,7 +148,7 @@ def test_feature_streaming_uploads_rollback() -> None:
         os.environ,
         {
             "FEATURE_STREAMING_UPLOADS": "false",
-            "ADMIN_PASSWORD": "test",
+            "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
             "POSTGRES_PASSWORD": "test",
@@ -314,7 +314,7 @@ def test_full_rollback_scenario() -> None:
         with patch.dict(
             os.environ,
             {
-                "ADMIN_PASSWORD": "test",
+                "ADMIN_PASSWORD": "testpassword",
                 "SECRET_KEY": "test-secret-key-for-testing-only",
                 "POSTGRES_USER": "test",
                 "POSTGRES_PASSWORD": "test",

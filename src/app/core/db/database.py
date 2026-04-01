@@ -1,12 +1,18 @@
 import os
 import sys
+import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import event
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 from sqlalchemy.ext.asyncio.session import AsyncSession
+
+if TYPE_CHECKING:
+    async_engine: AsyncEngine
+    local_session: async_sessionmaker[AsyncSession]
+    async_session_maker: async_sessionmaker[AsyncSession]
 from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr
 from sqlalchemy.pool import NullPool
 
@@ -41,6 +47,7 @@ DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"
 # Internal state for lazy initialization
 _async_engine = None
 _local_session = None
+_init_lock = threading.RLock()  # RLock: reentrant, prevents deadlock when _get_local_session calls __getattr__
 
 
 def _create_engine() -> AsyncEngine:
@@ -102,9 +109,12 @@ def _get_local_session() -> async_sessionmaker[AsyncSession]:
     """Internal helper to get or create the local session maker."""
     global _local_session
     if _local_session is None:
-        # Ensure engine is created first
-        engine = __getattr__("async_engine")
-        _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        with _init_lock:
+            # Double-check pattern to prevent race condition
+            if _local_session is None:
+                # Ensure engine is created first
+                engine = __getattr__("async_engine")
+                _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     return _local_session
 
 
@@ -118,7 +128,10 @@ def __getattr__(name: str) -> Any:
 
     if name == "async_engine":
         if _async_engine is None:
-            _async_engine = _create_engine()
+            with _init_lock:
+                # Double-check pattern to prevent race condition
+                if _async_engine is None:
+                    _async_engine = _create_engine()
         return _async_engine
 
     if name in ("local_session", "async_session_maker"):

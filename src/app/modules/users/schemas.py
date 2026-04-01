@@ -7,6 +7,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
+from src.app.core.config import settings
 from src.app.core.schemas import PersistentDeletion, TimestampSchema, UUIDSchema
 from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
@@ -119,51 +120,7 @@ class UserCreate(UserBase, BaseCreate):
         SECURITY FIX: Prevents users from registering reserved system usernames
         that could be used for phishing or confusion attacks.
         """
-        reserved = {
-            "admin",
-            "administrator",
-            "root",
-            "api",
-            "www",
-            "mail",
-            "email",
-            "support",
-            "help",
-            "info",
-            "contact",
-            "sales",
-            "billing",
-            "security",
-            "secure",
-            "auth",
-            "login",
-            "logout",
-            "signup",
-            "register",
-            "user",
-            "users",
-            "account",
-            "accounts",
-            "system",
-            "service",
-            "services",
-            "host",
-            "master",
-            "webmaster",
-            "postmaster",
-            "hostmaster",
-            "abuse",
-            "noc",
-            "team",
-            "staff",
-            "null",
-            "undefined",
-            "test",
-            "testing",
-            "demo",
-            "example",
-        }
-        if v.lower() in reserved:
+        if v.lower() in settings.RESERVED_USERNAMES:
             raise ValueError(f"Username '{v}' is reserved and cannot be used")
         return v
 
@@ -202,6 +159,16 @@ class UserUpdate(BaseUpdate):
             default=None,
         ),
     ]
+
+    @field_validator("username")
+    @classmethod
+    def validate_reserved_usernames(cls, v: str | None) -> str | None:
+        """Prevent updating to a reserved username."""
+        if v is None:
+            return v
+        if v.lower() in settings.RESERVED_USERNAMES:
+            raise ValueError(f"Username '{v}' is reserved.")
+        return v
 
 
 class UserTierUpdate(BaseModel):

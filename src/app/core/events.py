@@ -65,8 +65,6 @@ class EventBus:
         self._registration_complete = False
         # P3-2: Semaphore to bound concurrent sync execution
         self._concurrency_semaphore = asyncio.Semaphore(settings.EVENT_BUS_CONCURRENCY)
-        # Store strong references to background tasks to prevent garbage collection (Bug 3)
-        self._background_tasks: set[asyncio.Task[Any]] = set()
 
     @property
     def is_ready(self) -> bool:
@@ -877,6 +875,25 @@ async def process_event_handler(
             event_name=event_name,
             handler=f"{handler_module}.{handler_name}",
         )
+    except (ImportError, AttributeError) as e:
+        # ISSUE 10 FIX: Do not retry on permanent configuration/import errors
+        handler_full_name = f"{handler_module}.{handler_name}"
+        logger.error(
+            "Critical configuration error in ARQ handler - will not retry",
+            event_name=event_name,
+            handler=handler_full_name,
+            error=str(e),
+        )
+        # Move to DLQ immediately
+        await event_bus.add_to_dlq(
+            event_name=event_name,
+            handler_name=handler_full_name,
+            data=data,
+            error=f"Permanent Error: {e}",
+            attempt_count=job_try,
+        )
+        return
+
     except Exception as e:
         handler_full_name = f"{handler_module}.{handler_name}"
 

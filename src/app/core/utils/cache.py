@@ -350,11 +350,13 @@ async def delete_tenant_cache(
         return False
 
     cache_key = tenant_cache_key(tenant_id, prefix, *key_parts)
+    prefix_index_key = _tenant_prefix_index_key(tenant_id, prefix)
 
     # Use pipeline for atomic delete + index remove
     async with client.pipeline(transaction=False) as pipe:
         pipe.delete(cache_key)
         pipe.srem(_tenant_index_key(tenant_id), cache_key)
+        pipe.srem(prefix_index_key, cache_key)
         await pipe.execute()
 
     return True
@@ -970,18 +972,34 @@ def cache(
                 # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder
                 serialized_data = json_dumps(result)
 
-                # Use pipeline for atomic set + index registration if patterns provided
-                if invalidation_patterns:
-                    formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
-                    async with client.pipeline(transaction=False) as pipe:
-                        pipe.setex(cache_key, expiration, serialized_data)
+                # Use pipeline for atomic set + index registration
+                async with client.pipeline(transaction=False) as pipe:
+                    pipe.setex(cache_key, expiration, serialized_data)
+
+                    # Pattern-based invalidation registration
+                    if invalidation_patterns:
+                        formatted_patterns = [_format_prefix(p, kwargs) for p in invalidation_patterns]
                         for pattern in formatted_patterns:
                             idx_key = _pattern_index_key(pattern)
                             pipe.sadd(idx_key, cache_key)
                             pipe.expire(idx_key, expiration)
-                        await pipe.execute()
-                else:
-                    await client.setex(cache_key, expiration, serialized_data)
+
+                    # ISSUE 2 FIX: Register tenant-scoped keys for invalidate_tenant_cache()
+                    if cache_key.startswith("tenant:"):
+                        parts = cache_key.split(":", 3)
+                        if len(parts) >= 2:
+                            tenant_id = parts[1]
+                            pipe.sadd(_tenant_index_key(tenant_id), cache_key)
+                            pipe.expire(_tenant_index_key(tenant_id), expiration * 2)
+
+                            # Also add to prefix-sharded index
+                            if len(parts) >= 3:
+                                prefix = parts[2]
+                                sharded_idx_key = _tenant_prefix_index_key(tenant_id, prefix)
+                                pipe.sadd(sharded_idx_key, cache_key)
+                                pipe.expire(sharded_idx_key, expiration * 2)
+
+                    await pipe.execute()
 
                 return result  # Return original result, not re-parsed
 

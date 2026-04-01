@@ -1,6 +1,6 @@
 """Unit tests for the /prices router (API compatibility layer)."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi import FastAPI
@@ -57,13 +57,19 @@ def test_list_endpoint_supports_filters():
         mock_instance = MockService.return_value
         mock_instance.list_prices = AsyncMock(return_value={"data": [], "total_count": 0})
 
-        # Mock the database dependency
+        # Mock the database and tenant dependencies
         with patch("src.app.modules.billing.routes.prices.async_get_db"):
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
 
+            from src.app.api.dependencies import get_current_tenant
+
             app = FastAPI()
             app.include_router(prices_router, prefix="/api/v1")
+
+            # Use dependency overrides instead of patch
+            app.dependency_overrides[get_current_tenant] = lambda: MagicMock(id="test-tenant-id")
+
             client = TestClient(app)
 
             # Make request with filters
@@ -75,6 +81,10 @@ def test_list_endpoint_supports_filters():
             assert call_kwargs.get("product_id") == 1
             assert call_kwargs.get("is_active") is True
             assert call_kwargs.get("limit") == 100
+            assert call_kwargs.get("tenant_id") == "test-tenant-id"
+
+            # Clean up overrides
+            app.dependency_overrides = {}
 
 
 def test_delegates_to_billing_pricing_service():

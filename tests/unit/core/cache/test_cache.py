@@ -7,6 +7,7 @@ This file consolidates tests from:
 - test_scan_bounds.py
 """
 
+from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -79,9 +80,16 @@ async def test_cache_lock_backoff_logic():
 async def test_cache_decorator_uses_setex():
     """Test that the cache decorator uses atomic setex instead of set + expire."""
 
-    # Mock Redis client
+    # Mock Redis client and pipeline
     mock_redis = AsyncMock()
     mock_redis.get.return_value = None  # Cache miss
+    mock_pipeline = AsyncMock()
+
+    @asynccontextmanager
+    async def mock_pipeline_cm(**kwargs):
+        yield mock_pipeline
+
+    mock_redis.pipeline = mock_pipeline_cm
 
     # Mock the module-level client
     with patch("src.app.core.utils.cache.client", mock_redis):
@@ -100,16 +108,17 @@ async def test_cache_decorator_uses_setex():
         # Verify result
         assert result == {"data": "value"}
 
-        # Verify Redis calls
-        # Should call setex once with correct args
-        mock_redis.setex.assert_called_once()
+        # Verify Redis pipeline calls
+        # Should call setex on pipeline once with correct args
+        mock_pipeline.setex.assert_called_once()
+        mock_pipeline.execute.assert_called_once()
 
-        # Should NOT call set or expire separately
+        # Should NOT call set or expire separately on client
         mock_redis.set.assert_not_called()
         mock_redis.expire.assert_not_called()
 
         # Verify arguments
-        call_args = mock_redis.setex.call_args
+        call_args = mock_pipeline.setex.call_args
         assert call_args[0][0] == "test:123"  # key
         assert call_args[0][1] == 60  # time
 

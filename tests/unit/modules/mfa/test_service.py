@@ -46,7 +46,7 @@ class TestGenerateTotpSecret:
                 mock_totp_instance.provisioning_uri.return_value = "otpauth://totp/..."
                 mock_totp.return_value = mock_totp_instance
 
-                with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                with patch("src.app.core.utils.cache.client") as mock_redis:
                     mock_redis.setex = AsyncMock()
                     result = await mfa_service.generate_totp_secret(
                         user_id=12345,
@@ -63,7 +63,7 @@ class TestGenerateTotpSecret:
         """Test that each call generates a unique secret."""
 
         results = []
-        with patch("src.app.modules.mfa.service.redis") as mock_redis:
+        with patch("src.app.core.utils.cache.client") as mock_redis:
             mock_redis.setex = AsyncMock()
             for _ in range(5):
                 result = await mfa_service.generate_totp_secret(
@@ -111,7 +111,7 @@ class TestEnableMFA:
                     setup_token="some-setup-token",
                     totp_token="000000",
                 )
-                with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                with patch("src.app.core.utils.cache.client") as mock_redis:
                     mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
                     with pytest.raises(BadRequestException, match="Invalid TOTP"):
                         await mfa_service.enable_mfa(
@@ -141,7 +141,7 @@ class TestEnableMFA:
                         setup_token="some-setup-token",
                         totp_token="123456",
                     )
-                    with patch("src.app.modules.mfa.service.redis") as mock_redis:
+                    with patch("src.app.core.utils.cache.client") as mock_redis:
                         mock_redis.get = AsyncMock(return_value=b"JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP")
                         mock_redis.delete = AsyncMock()
                         result = await mfa_service.enable_mfa(

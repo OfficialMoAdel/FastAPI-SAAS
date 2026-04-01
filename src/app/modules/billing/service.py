@@ -463,6 +463,7 @@ class PricingService(BaseService[Pricing]):
         limit: int = 100,
         product_id: int | None = None,
         is_active: bool | None = None,
+        tenant_id: int | str | None = None,
     ) -> dict[str, Any]:
         """List prices with optional filtering."""
         offset = (page - 1) * limit
@@ -471,6 +472,8 @@ class PricingService(BaseService[Pricing]):
             filters["product_id"] = product_id
         if is_active is not None:
             filters["is_active"] = is_active
+        if tenant_id is not None:
+            filters["tenant_id"] = tenant_id
 
         return await crud_pricing.get_multi(
             db=self.db,

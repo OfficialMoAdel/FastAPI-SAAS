@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
 
-from fastapi import FastAPI
+from fastapi import FastAPI, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
@@ -12,6 +12,7 @@ from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
 from src.app.core.config import EnvironmentOption, settings
+from src.app.core.exceptions.cache_exceptions import CacheException
 from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
@@ -175,6 +176,15 @@ app = create_application(
     default_response_class=ORJSONResponse,
 )
 
+
+@app.exception_handler(CacheException)
+async def cache_exception_handler(request, exc):
+    """Handle custom cache exceptions."""
+    return ORJSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": str(exc), "error_type": "cache_error"},
+    )
+
 # Middleware stack (LIFO - last added runs first on request)
 # Request flow:
 #   GZip → QueryProfiler → IPFilter → AttackDetection → BodyLimit
@@ -201,8 +211,8 @@ app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
 app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal (runs AFTER BodyLimit in LIFO)
 app.add_middleware(
-    RequestBodyLimitMiddleware, max_body_size=getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
-)  # 10MB configurable limit (runs BEFORE AttackDetection in LIFO)
+    RequestBodyLimitMiddleware, max_body_size=settings.MAX_BODY_SIZE
+)  # Configurable limit (runs BEFORE AttackDetection in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses

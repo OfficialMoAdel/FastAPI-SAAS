@@ -10,41 +10,19 @@ Tests the complete MFA flow from setup through verification, including:
 6. Regenerate backup codes
 """
 
-from collections.abc import AsyncGenerator
-from unittest.mock import patch
+
+import uuid
 
 import pytest
 
-from tests.conftest import FakeRedis
+
+def ip_headers():
+    """Helper to generate a unique IP for each request to bypass rate limits."""
+    return {"X-Forwarded-For": f"192.168.1.{uuid.uuid4().int % 255}", "X-Tenant-ID": "test-tenant-e2e"}
 
 
-@pytest.fixture(autouse=True)
-async def mock_redis() -> AsyncGenerator[FakeRedis, None]:
-    # Custom FakeRedis for MFA testing
-    fake_redis = FakeRedis()
-
-    async def fake_async_get_redis():
-        yield fake_redis
-
-    with (
-        patch("src.app.modules.mfa.service.redis", new=fake_redis),
-        patch("src.app.core.utils.cache.client", new=fake_redis),
-        patch("src.app.core.utils.cache.async_get_redis", new=fake_async_get_redis),
-    ):
-        yield fake_redis
-
-
-from unittest.mock import AsyncMock
-
-
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    with patch(
-        "src.app.middleware.rate_limit.rate_limiter.check_rate_limit", new_callable=AsyncMock, return_value=(False, 0)
-    ):  # noqa: E501
-        yield
-
-
+# MFA End-to-End Tests
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFASetupFlow:
     """Test complete MFA setup and enable flow."""
@@ -71,6 +49,7 @@ class TestMFASetupFlow:
         # Login to get access token
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -80,7 +59,7 @@ class TestMFASetupFlow:
         # [STEP 1] Setup MFA
         setup_response = await async_client.post(
             "/api/v1/mfa/setup",
-            headers=headers,
+            headers={**headers, **ip_headers()},
         )
         assert setup_response.status_code == 200
         setup_data = setup_response.json()
@@ -105,7 +84,7 @@ class TestMFASetupFlow:
 
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": valid_token},
         )
         if enable_response.status_code != 200:
@@ -119,7 +98,7 @@ class TestMFASetupFlow:
         # [STEP 3] Get backup codes (requires POST to regenerate)
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"password": test_password, "totp_token": None},
         )
         assert backup_codes_response.status_code == 200
@@ -134,7 +113,7 @@ class TestMFASetupFlow:
         # [STEP 4] Verify MFA is enabled
         status_response = await async_client.get(
             "/api/v1/mfa/status",
-            headers=headers,
+            headers={**headers, **ip_headers()},
         )
         assert status_response.status_code == 200
         status_data = status_response.json()
@@ -146,7 +125,7 @@ class TestMFASetupFlow:
         # Cleanup: Disable MFA and delete user
         disable_response = await async_client.post(
             "/api/v1/mfa/disable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"password": test_password, "totp_token": valid_token},
         )
         assert disable_response.status_code == 200
@@ -154,6 +133,7 @@ class TestMFASetupFlow:
         print(f"[E2E SUCCESS] MFA setup flow completed for user {user_id}")
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFALoginWithTOTP:
     """Test login flow with TOTP verification."""
@@ -179,6 +159,7 @@ class TestMFALoginWithTOTP:
         # Login to get tokens
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -201,7 +182,7 @@ class TestMFALoginWithTOTP:
         totp = pyotp.TOTP(secret)
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
@@ -214,6 +195,7 @@ class TestMFALoginWithTOTP:
         # [STEP 1] Login again with MFA
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -228,6 +210,7 @@ class TestMFALoginWithTOTP:
         # [STEP 2] Complete MFA login with valid TOTP
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
+            headers=ip_headers(),
             json={
                 "mfa_token": mfa_token,
                 "totp_token": totp.now(),
@@ -255,6 +238,7 @@ class TestMFALoginWithTOTP:
         print("[E2E SUCCESS] Login with TOTP completed successfully")
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFALoginWithBackupCode:
     """Test login flow with backup code verification."""
@@ -280,6 +264,7 @@ class TestMFALoginWithBackupCode:
         # Login to get tokens
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -302,7 +287,7 @@ class TestMFALoginWithBackupCode:
         totp = pyotp.TOTP(secret)
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
@@ -310,7 +295,7 @@ class TestMFALoginWithBackupCode:
         # Get backup codes (requires POST with password verification)
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"password": test_password, "totp_token": None},
         )
         assert backup_codes_response.status_code == 200
@@ -323,6 +308,7 @@ class TestMFALoginWithBackupCode:
         # Login to get MFA token
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
@@ -331,6 +317,7 @@ class TestMFALoginWithBackupCode:
         backup_code = backup_codes[0]
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
+            headers=ip_headers(),
             json={
                 "mfa_token": mfa_token,
                 "totp_token": None,
@@ -354,12 +341,14 @@ class TestMFALoginWithBackupCode:
 
         login_response2 = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token2 = login_response2.json()["mfa_token"]
 
         complete_response2 = await async_client.post(
             "/api/v1/mfa/complete-login",
+            headers=ip_headers(),
             json={
                 "mfa_token": mfa_token2,
                 "totp_token": None,
@@ -371,6 +360,7 @@ class TestMFALoginWithBackupCode:
         print("[E2E SUCCESS] Login with backup code completed successfully")
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFALockoutFlow:
     """Test MFA lockout mechanism after failed attempts."""
@@ -396,6 +386,7 @@ class TestMFALockoutFlow:
         # Login to get tokens
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -418,7 +409,7 @@ class TestMFALockoutFlow:
         totp = pyotp.TOTP(secret)
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
@@ -427,17 +418,26 @@ class TestMFALockoutFlow:
         cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
         await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
+        # Clear rate limits before looping to avoid 429 on login endpoint
+        from src.app.core.utils import cache
+        from src.app.core.utils.rate_limit import reset_rate_limiter
+        reset_rate_limiter()
+        if cache.client:
+            await cache.client.flushdb()
+
         # [STEP 1] Make 5 failed attempts
         for i in range(5):
             login_response = await async_client.post(
                 "/api/v1/account/login",
-                data={"username": test_user_email, "password": test_password},
+            headers=ip_headers(),
+            data={"username": test_user_email, "password": test_password},
             )
             mfa_token = login_response.json()["mfa_token"]
 
             complete_response = await async_client.post(
                 "/api/v1/mfa/complete-login",
-                json={
+            headers=ip_headers(),
+            json={
                     "mfa_token": mfa_token,
                     "totp_token": "000000",
                     "backup_code": None,
@@ -449,12 +449,14 @@ class TestMFALockoutFlow:
         # [STEP 2] 6th attempt should be locked out (401)
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
 
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
+            headers=ip_headers(),
             json={
                 "mfa_token": mfa_token,
                 "totp_token": "000000",
@@ -468,6 +470,7 @@ class TestMFALockoutFlow:
         print("[E2E SUCCESS] MFA lockout mechanism verified")
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFADisableFlow:
     """Test MFA disable flow."""
@@ -493,6 +496,7 @@ class TestMFADisableFlow:
         # Login to get tokens
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -515,7 +519,7 @@ class TestMFADisableFlow:
         totp = pyotp.TOTP(secret)
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
@@ -523,7 +527,7 @@ class TestMFADisableFlow:
         # [STEP 1] Disable MFA
         disable_response = await async_client.post(
             "/api/v1/mfa/disable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"password": test_password, "totp_token": totp.now()},
         )
         assert disable_response.status_code == 200
@@ -543,6 +547,7 @@ class TestMFADisableFlow:
 
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -554,6 +559,7 @@ class TestMFADisableFlow:
         print("[E2E SUCCESS] MFA disable flow completed successfully")
 
 
+@pytest.mark.e2e
 @pytest.mark.asyncio
 class TestMFARegenerateBackupCodes:
     """Test backup code regeneration flow."""
@@ -579,6 +585,7 @@ class TestMFARegenerateBackupCodes:
         # Login to get tokens
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -601,7 +608,7 @@ class TestMFARegenerateBackupCodes:
         totp = pyotp.TOTP(secret)
         enable_response = await async_client.post(
             "/api/v1/mfa/enable",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"setup_token": setup_token, "totp_token": totp.now()},
         )
         assert enable_response.status_code == 200
@@ -609,7 +616,7 @@ class TestMFARegenerateBackupCodes:
         # Get backup codes
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
-            headers=headers,
+            headers={**headers, **ip_headers()},
             json={"password": test_password, "totp_token": None},
         )
         old_backup_codes = backup_codes_response.json()["backup_codes"]
@@ -620,12 +627,14 @@ class TestMFARegenerateBackupCodes:
 
         login_response = await async_client.post(
             "/api/v1/account/login",
+            headers=ip_headers(),
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
 
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
+            headers=ip_headers(),
             json={
                 "mfa_token": mfa_token,
                 "totp_token": None,

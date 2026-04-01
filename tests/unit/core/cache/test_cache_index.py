@@ -180,7 +180,10 @@ class TestDeleteTenantCache:
 
             # Verify delete and srem called on pipeline
             mock_pipeline.delete.assert_called_once_with("tenant:1:user:42")
-            mock_pipeline.srem.assert_called_once_with("tenant_index:1", "tenant:1:user:42")
+            # Should call srem twice: once for global tenant index, once for prefix index
+            assert mock_pipeline.srem.call_count == 2
+            mock_pipeline.srem.assert_any_call("tenant_index:1", "tenant:1:user:42")
+            mock_pipeline.srem.assert_any_call("tenant_index:1:user", "tenant:1:user:42")
             mock_pipeline.execute.assert_called_once()
 
 

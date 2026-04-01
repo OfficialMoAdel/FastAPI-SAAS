@@ -249,7 +249,8 @@ async def test_token_blacklist_timezone_handling():
         # This simulates what blacklist_tokens does at the DB level
         try:
             # Use proper Pydantic model for create
-            token_create = TokenBlacklistCreate(token=token, expires_at=expires_at)
+            import uuid
+            token_create = TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=uuid.uuid4())
             await crud_token_blacklist.create(db, object=token_create)
             print("Successfully created blacklist entry with aware datetime")
         except Exception as e:
