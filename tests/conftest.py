@@ -1387,7 +1387,7 @@ def mock_redis(request):
         # Patch all top-level importers of redis_client to avoid NoneType errors
         # patch("src.app.modules.security.service.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client  # noqa: E501
         patch("src.app.modules.feature_flags.service.redis_client", new=fake_redis),
-        # patch("src.app.modules.mfa.router.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client dynamically
+        # patch("src.app.modules.mfa.router.redis_client", new=fake_redis),  # REMOVED: uses cache.client
         patch("src.app.core.security.auto_ban.redis_client", new=fake_redis),
         patch("src.app.core.security.rate_limit_cache.redis_client", new=fake_redis),
         # REMOVED: token_blacklist_cache refactored to use cache.client dynamically
