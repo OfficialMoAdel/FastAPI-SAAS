@@ -25,8 +25,6 @@ if TYPE_CHECKING:
     from src.app.modules.users.models import User
 
 
-
-
 class Notification(Base, UUIDMixin):
     """
     Notification record for tracking email deliveries.

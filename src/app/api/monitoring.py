@@ -10,16 +10,17 @@ import time
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 from sqlalchemy import text
 
+from src.app.api.dependencies import get_current_superuser
 from src.app.core.config import settings
 from src.app.core.db.database import async_engine
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 
-router = APIRouter()
+router = APIRouter(dependencies=[Depends(get_current_superuser)])
 
 
 class HealthCheckResponse(BaseModel):

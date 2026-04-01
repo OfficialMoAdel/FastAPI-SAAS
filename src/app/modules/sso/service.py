@@ -350,6 +350,26 @@ class SSOService:
                 data=token_data,
             )
 
+            try:
+                import json
+
+                import jwt
+
+                from src.app.core.security.session_manager import session_manager as global_session_manager
+
+                decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+                session_id = decoded_token.get("jti", access_token[:32])
+
+                device_info_str = json.dumps({"user_agent": "SSO Login", "ip": "Unknown"})
+
+                await global_session_manager.register_session(
+                    user_id=normalized_user["id"],
+                    session_id=session_id,
+                    device_info=device_info_str,
+                )
+            except Exception as e:
+                logger.warning("session_registration_failed", error=str(e))
+
             # Audit log SSO login success
             try:
                 from src.app.core.events import EventPriority, event_bus
@@ -473,10 +493,6 @@ class SSOService:
                 is_enabled = sso_settings.is_enabled
             except NotFoundException:
                 # Provider not configured -> disabled
-                pass
-            except Exception as e:
-                # Any other error -> disabled safety fallback
-                logger.error("SSO provider status check failed", error=e)
                 pass
 
             # If the endpoint is strictly for "enabled" providers as buttons, we might filter here.

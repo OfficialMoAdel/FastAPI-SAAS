@@ -314,7 +314,9 @@ class UserService(BaseService[User]):
                     )
 
             # Fire-and-forget task to publish the event safely from async context
-            task = asyncio.create_task(
+            from src.app.core.utils.background_task import create_safe_task
+
+            task = create_safe_task(
                 event_bus.publish(
                     "user.created",
                     event_payload,
@@ -580,6 +582,7 @@ class UserService(BaseService[User]):
         # SECURITY FIX: Cross-Tenant IDOR check - confirm the user belongs to the current tenant.
         # Without this check, a superuser from Tenant A could delete a same-username user in Tenant B.
         from src.app.core.tenancy.context import get_current_tenant
+
         current_tenant = get_current_tenant()
         user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
         if current_tenant is not None and user_tenant_id != current_tenant.id:
@@ -709,9 +712,7 @@ class UserService(BaseService[User]):
 
         user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
         await self.db.execute(
-            sa_update(User)
-            .where(User.id == user_id_val)
-            .values(token_version=User.token_version + 1)
+            sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
         )
         await self.db.commit()
 

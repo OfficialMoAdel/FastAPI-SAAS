@@ -26,8 +26,6 @@ if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
 
 
-
-
 class WebhookEndpoint(Base, UUIDMixin):
     """
     Webhook endpoint configuration for tenant event subscriptions.

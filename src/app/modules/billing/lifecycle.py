@@ -128,6 +128,7 @@ def map_stripe_status(stripe_status: str) -> str:
     # BUG FIX: Unknown Stripe statuses should not silently default to ACTIVE.
     # Log a warning and treat unknown status as PAST_DUE (safe, conservative default)
     import structlog as _slog
+
     _slog.get_logger(__name__).warning(
         "Unknown Stripe status encountered, treating as past_due",
         stripe_status=stripe_status,

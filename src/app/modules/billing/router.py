@@ -337,6 +337,7 @@ async def cancel_subscription(
     subscription = await service.get_subscription(subscription_id)
 
     from src.app.core.tenancy.context import get_current_tenant
+
     tenant = get_current_tenant()
 
     # Verify ownership and tenant isolation
@@ -427,6 +428,7 @@ async def get_billing_record(
     record = await service.get_record(record_id)
 
     from src.app.core.tenancy.context import get_current_tenant
+
     tenant = get_current_tenant()
 
     # Verify ownership and tenant isolation

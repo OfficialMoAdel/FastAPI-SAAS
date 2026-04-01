@@ -26,6 +26,21 @@ from src.app.modules.billing.schemas import (
 from src.app.modules.billing.service import SubscriptionPlanService
 from src.app.modules.tenants.models import Tenant
 
+
+@pytest.fixture(autouse=True)
+def mock_tenant_context(tenant):
+    """Mock tenant context to avoid fail-closed RuntimeErrors in CRUD tests."""
+    from src.app.core.tenancy.context import TenantContext
+
+    mock_ctx = TenantContext(
+        tenant_id=tenant.id,
+        tenant_slug=tenant.slug,
+        tenant_name=tenant.name,
+        is_active=True
+    )
+    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx):
+        yield
+
 # ==================== Subscription Plan CRUD ====================
 
 
@@ -179,7 +194,7 @@ async def test_update_stripe_settings(db_session: AsyncSession, tenant):
     # Ensure cleanup from previous tests if any (though unlikely if order is guaranteed)
     existing = await crud_stripe_settings.get(db=db_session, tenant_id=tenant.id)
     if existing:
-        await crud_stripe_settings.db_delete(db=db_session, id=existing["id"])
+        await crud_stripe_settings.db_delete(db=db_session, id=existing["id"], tenant_id=tenant.id)
 
     # Setup
     settings_in = StripeSettingsCreate(
@@ -216,7 +231,7 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     # Cleanup tenant 1
     existing = await crud_stripe_settings.get(db=db_session, tenant_id=tenant.id)
     if existing:
-        await crud_stripe_settings.db_delete(db=db_session, id=existing["id"])
+        await crud_stripe_settings.db_delete(db=db_session, id=existing["id"], tenant_id=tenant.id)
 
     # Create settings for tenant 1
     data1 = {"stripe_customer_id": "cus_t1", "tenant_id": tenant.id, "is_active": True}

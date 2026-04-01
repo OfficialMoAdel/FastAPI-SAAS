@@ -298,7 +298,7 @@ class LuaScriptManager:
             return await self.execute(redis, script_name, keys, args)
         except LuaScriptError as e:
             if fallback_fn is not None:
-                logger.warning("Script '' failed, using fallback:", script_name=script_name, error=e)
+                logger.warning("Script failed, using fallback:", script_name=script_name, error=e)
                 return await fallback_fn()
             raise
 

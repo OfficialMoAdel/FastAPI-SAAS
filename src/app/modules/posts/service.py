@@ -149,9 +149,7 @@ class PostService(BaseService[Post]):
         if tenant is not None:
             filters["tenant_id"] = tenant.id
 
-        db_post = await crud_posts.get(
-            db=self.db, schema_to_select=PostRead, **filters
-        )
+        db_post = await crud_posts.get(db=self.db, schema_to_select=PostRead, **filters)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
@@ -284,5 +282,3 @@ def get_post_service(db: AsyncSession) -> PostService:
         Service instance with database session
     """
     return PostService(db)
-
-

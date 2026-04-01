@@ -23,4 +23,3 @@ class TokenBlacklist(Base):
         # Speed up tenant-scoped cleanup queries (e.g. token sweep on tenant deletion)
         Index("ix_token_blacklist_tenant_expires", "tenant_id", "expires_at"),
     )
-

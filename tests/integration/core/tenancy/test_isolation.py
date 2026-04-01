@@ -200,8 +200,10 @@ class TestRLSContext:
         mock_session_cm.__aenter__.return_value = mock_session
         mock_session_cm.__aexit__.return_value = None
 
+        valid_uuid = "12345678-1234-5678-1234-567812345678"
+
         with patch("src.app.core.worker.rls_context.local_session", return_value=mock_session_cm):
-            async with job_tenant_context(tenant_id=123, user_id=456) as db:
+            async with job_tenant_context(tenant_id=valid_uuid, user_id=456) as db:
                 assert db is mock_session
 
                 # Verify RLS was set
@@ -221,7 +223,7 @@ class TestRLSContext:
                     print(f"DEBUG: Checking call - SQL: {sql}, Params: {params}")
 
                     # SQLAlchemy text object string representation
-                    if "app.current_tenant_id" in str(sql) and str(params.get("tenant_id")) == "123":
+                    if "app.current_tenant_id" in str(sql) and str(params.get("tenant_id")) == valid_uuid:
                         tenant_set = True
                 assert tenant_set, "Tenant ID not set in RLS"
 

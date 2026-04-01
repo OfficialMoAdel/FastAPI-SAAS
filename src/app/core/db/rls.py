@@ -71,12 +71,12 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
             )
 
     except Exception as e:
-        # M3: Log error but don't propagate - RLS context is best-effort in event listeners
-        logger.warning(
-            "Failed to restore RLS context in event listener",
+        logger.error(
+            "Failed to restore RLS context in event listener - failing closed",
             error=str(e),
             tenant_id=tenant_id if "tenant_id" in locals() else None,
         )
+        raise RuntimeError(f"Failed to securely apply RLS context: {e}") from e
 
 
 async def set_rls_context(

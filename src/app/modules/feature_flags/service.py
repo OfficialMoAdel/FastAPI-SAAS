@@ -68,7 +68,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
                 cached = await redis_client.get(cache_key)
                 if cached:
                     data = json_loads(cached)
-                    # Convert cached dict back to a simple FeatureFlag-like object
+                    # Return an actual FeatureFlag model to satisfy type checker,
+                    # but it's detached from session
                     return FeatureFlag(**data)
             except Exception as e:
                 logger.debug("Feature flag cache get failed", error=str(e))

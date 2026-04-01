@@ -21,15 +21,52 @@ class AppSettings(BaseSettings):
     MAX_BODY_SIZE: int = Field(default=10 * 1024 * 1024, ge=1024 * 1024, le=100 * 1024 * 1024)
 
     # ISSUE 6: System-reserved usernames to prevent phishing/confusion
-    RESERVED_USERNAMES: frozenset[str] = frozenset({
-        "admin", "administrator", "root", "api", "www", "mail", "email",
-        "support", "help", "info", "contact", "sales", "billing",
-        "security", "secure", "auth", "login", "logout", "signup",
-        "register", "user", "users", "account", "accounts", "system",
-        "service", "services", "host", "master", "webmaster",
-        "postmaster", "hostmaster", "abuse", "noc", "team", "staff",
-        "null", "undefined", "test", "testing", "demo", "example"
-    })
+    RESERVED_USERNAMES: frozenset[str] = frozenset(
+        {
+            "admin",
+            "administrator",
+            "root",
+            "api",
+            "www",
+            "mail",
+            "email",
+            "support",
+            "help",
+            "info",
+            "contact",
+            "sales",
+            "billing",
+            "security",
+            "secure",
+            "auth",
+            "login",
+            "logout",
+            "signup",
+            "register",
+            "user",
+            "users",
+            "account",
+            "accounts",
+            "system",
+            "service",
+            "services",
+            "host",
+            "master",
+            "webmaster",
+            "postmaster",
+            "hostmaster",
+            "abuse",
+            "noc",
+            "team",
+            "staff",
+            "null",
+            "undefined",
+            "test",
+            "testing",
+            "demo",
+            "example",
+        }
+    )
 
     # L2: Centralized pagination defaults for API consistency
     PAGINATION_DEFAULT_PER_PAGE: int = Field(default=20, ge=1, le=100, description="Default items per page")
@@ -706,4 +743,4 @@ class Settings(
     )
 
 
-settings = Settings()  # type: ignore
+settings = Settings()  # type: ignore[call-arg]

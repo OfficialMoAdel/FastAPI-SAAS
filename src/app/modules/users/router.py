@@ -105,6 +105,7 @@ async def read_users_me(
                 return UserRead.model_validate(user)
     except (ValueError, TypeError) as e:
         from src.app.core.logger import get_logger
+
         logger = get_logger(__name__)
         logger.warning("Invalid user context inside read_users_me", error=str(e))
     raise HTTPException(status_code=401, detail="Invalid user context")

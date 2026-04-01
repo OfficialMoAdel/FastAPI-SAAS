@@ -129,9 +129,7 @@ class FileService:
 
         if actual_mime and actual_mime != mime_type:
             if settings.allowed_file_types and actual_mime not in settings.allowed_file_types:
-                raise FileTypeNotAllowedError(
-                    f"Spoofed file detected. Actual type '{actual_mime}' is not allowed."
-                )
+                raise FileTypeNotAllowedError(f"Spoofed file detected. Actual type '{actual_mime}' is not allowed.")
 
         # Generate unique storage path
         file_uuid = uuid.uuid4()
@@ -158,7 +156,7 @@ class FileService:
         lock_key = f"upload_lock:{tenant_id}"
         lock_acquired = False
         if cache.client:
-            acquired = await cache.client.set(lock_key, "1", nx=True, ex=30)
+            acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
             if not acquired:
                 raise QuotaExceededError("Another upload is currently in progress")
             lock_acquired = True
@@ -189,10 +187,7 @@ class FileService:
 
             # Atomically increment quota counters and strictly enforce hard limit (P0 optimization)
             await self._increment_quota_counters(
-                tenant_id,
-                size_bytes,
-                settings.max_file_count,
-                settings.storage_quota_bytes
+                tenant_id, size_bytes, settings.max_file_count, settings.storage_quota_bytes
             )
 
             await self.db.commit()
@@ -568,7 +563,7 @@ class FileService:
                 .where(
                     Tenant.id == tenant_id,
                     Tenant.file_count + 1 <= max_file_count,
-                    Tenant.storage_usage_bytes + size_bytes <= max_storage_bytes
+                    Tenant.storage_usage_bytes + size_bytes <= max_storage_bytes,
                 )
                 .values(
                     file_count=Tenant.file_count + 1,

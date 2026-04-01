@@ -294,7 +294,7 @@ return new_attempts
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=True,
+            secure=is_production,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -408,7 +408,7 @@ return new_attempts
             key="refresh_token",
             value=new_refresh_token,
             httponly=True,
-            secure=True,
+            secure=is_production,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -649,11 +649,18 @@ return new_attempts
             if redis_client:
                 username = user.get("username")
                 email = user.get("email")
+                tenant_id = user.get("tenant_id")
                 keys = []
                 if username:
-                    keys.append(f"user:{username}:token_version")
+                    keys.append(
+                        f"tenant:{tenant_id}:user:{username}:token_version"
+                        if tenant_id
+                        else f"user:{username}:token_version"
+                    )
                 if email:
-                    keys.append(f"user:{email}:token_version")
+                    keys.append(
+                        f"tenant:{tenant_id}:user:{email}:token_version" if tenant_id else f"user:{email}:token_version"
+                    )
                 if keys:
                     await redis_client.delete(*keys)
                     logger.debug("deleted_user_token_cache", user_id=user_id, keys=keys)

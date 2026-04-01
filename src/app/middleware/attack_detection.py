@@ -28,6 +28,8 @@ from src.app.core.security.logging import SecurityEventType, create_security_eve
 
 class BodyScanError(Exception):
     """Raised when the request body cannot be properly scanned or reinjected."""
+
+
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
@@ -207,9 +209,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                                 # BUG FIX: This is an internal server error (private API not available),
                                 # NOT an attack. Raise BodyScanError to forcefully return 500
                                 # instead of failing open and allowing a malicious payload through.
-                                logger.error(
-                                    "Failed to reinject request body - request._receive not available"
-                                )
+                                logger.error("Failed to reinject request body - request._receive not available")
                                 raise BodyScanError("Failed to reinject request body") from e
 
                             # Scan raw bytes directly — no UTF-8 decode needed
@@ -249,8 +249,6 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                     }
                 )
 
-
-
     async def _handle_attack_detection(
         self,
         request: Request,
@@ -283,7 +281,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             logger.warning(
                 "Attack detected | type=%s | pattern=%s | location=%s | ip=%s | path=%s | mode=%s",
-                attack['attack_type'], attack['pattern_name'], attack['location'], client_ip, path, self._mode
+                attack["attack_type"],
+                attack["pattern_name"],
+                attack["location"],
+                client_ip,
+                path,
+                self._mode,
             )
 
         # Mode: log - allow request to continue
@@ -307,7 +310,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             )
 
             logger.warning(
-                "IP auto-banned | ip=%s | attack=%s | mode=ban", client_ip, detected_attacks[0]['attack_type']
+                "IP auto-banned | ip=%s | attack=%s | mode=ban", client_ip, detected_attacks[0]["attack_type"]
             )
 
             return Response(

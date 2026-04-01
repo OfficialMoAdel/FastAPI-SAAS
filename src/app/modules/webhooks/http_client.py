@@ -58,7 +58,7 @@ class SSRFSafePoolTransport(httpx.AsyncHTTPTransport):
                 request.headers["host"] = original_host
             else:
                 # Some versions might normalize to lower-case 'host'
-                pass # Already set by the user/client
+                pass  # Already set by the user/client
 
             # Set SNI hostname in extensions so TLS handshake uses the correct name
             # instead of the IP address, preventing SSL validation failures.
@@ -66,7 +66,6 @@ class SSRFSafePoolTransport(httpx.AsyncHTTPTransport):
                 request.extensions["sni_hostname"] = original_host
 
         return await super().handle_async_request(request)
-
 
 
 def get_webhook_http_client() -> httpx.AsyncClient:

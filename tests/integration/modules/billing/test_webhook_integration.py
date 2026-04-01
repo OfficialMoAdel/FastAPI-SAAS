@@ -84,7 +84,18 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
         patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub),
+        patch("src.app.core.db.tenant_crud.get_tenant_context") as mock_get_tenant,
     ):
+        # Mock tenant context
+        from src.app.core.tenancy.context import TenantContext
+        mock_ctx = TenantContext(
+            tenant_id=tenant.id,
+            tenant_slug=tenant.slug,
+            tenant_name=tenant.name,
+            is_active=True
+        )
+        mock_get_tenant.return_value = mock_ctx
+
         # Bypass signature verification
         mock_verify.return_value = event_payload
 

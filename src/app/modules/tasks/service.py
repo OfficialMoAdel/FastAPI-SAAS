@@ -11,7 +11,6 @@ class QueueUnavailableError(Exception):
     pass
 
 
-
 class TaskService:
     """Service class for task/job-related business logic."""
 

@@ -98,10 +98,8 @@ async def _db_idempotency_check(event_id: str) -> bool:
             error=str(db_err),
         )
         from fastapi import HTTPException
-        raise HTTPException(
-            status_code=503,
-            detail="Service unavailable for idempotency check. Please retry."
-        )
+
+        raise HTTPException(status_code=503, detail="Service unavailable for idempotency check. Please retry.")
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:
@@ -198,6 +196,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
 
         from src.app.core.worker.rls_context import job_bypass_context
         from src.app.modules.billing.models import WebhookEvent
+
         try:
             async with job_bypass_context("Webhook DB unlock on error") as db:
                 await db.execute(delete(WebhookEvent).where(WebhookEvent.event_id == event_id))
@@ -520,16 +519,12 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         # M-04: Explicitly downgrade user to free tier
         from sqlalchemy import func
 
-        from src.app.modules.billing.crud import crud_subscription_plans
+        from src.app.modules.tiers.crud import crud_tiers
         from src.app.modules.users.crud import crud_users
 
         # Find the free plan
         # BUG FIX: Use exact match and lower case for case-insensitivity
-        free_plan_stmt = (
-            select(crud_subscription_plans.model)
-            .where(func.lower(crud_subscription_plans.model.name) == "free")
-            .limit(1)
-        )
+        free_plan_stmt = select(crud_tiers.model).where(func.lower(crud_tiers.model.name) == "free").limit(1)
         free_plan_result = await db.execute(free_plan_stmt)
         free_plan = free_plan_result.scalar_one_or_none()
 

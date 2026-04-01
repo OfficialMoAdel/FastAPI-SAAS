@@ -308,7 +308,6 @@ class SessionManager:
         roundtrips = 0
 
         async with self._redis_client.pipeline() as pipe:
-
             for _ in range(sessions_to_remove):
                 # ZPOPMIN returns [(member, score)] - O(log n)
                 oldest = await self._redis_client.zpopmin(zset_key, count=1)

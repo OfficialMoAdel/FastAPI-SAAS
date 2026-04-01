@@ -379,10 +379,7 @@ async def add_tokens_to_blacklist(tokens: list[tuple[str, datetime]]) -> int:
         async with redis_client.pipeline() as pipe:
             # Build mapping of member -> expiry score
             # R2 #11b: Use JTI for key if available to match lookup logic
-            mapping = {
-                _extract_blacklist_member(token): expires_at.timestamp()
-                for token, expires_at in tokens
-            }
+            mapping = {_extract_blacklist_member(token): expires_at.timestamp() for token, expires_at in tokens}
             pipe.zadd(BLACKLIST_KEY, mapping)  # type: ignore[misc]
             # M1: Invalidate negative cache for all tokens being blacklisted
             for token, _ in tokens:

@@ -69,9 +69,7 @@ async def check_auth_rate_limit(request: Request) -> None:
     is_limited, _ = await rate_limiter.check_rate_limit(key, limit=AUTH_RATE_LIMIT, period=AUTH_RATE_PERIOD)
 
     if is_limited:
-        raise RateLimitException(
-            f"Too many authentication attempts. Please try again in {AUTH_RATE_PERIOD} seconds."
-        )
+        raise RateLimitException(f"Too many authentication attempts. Please try again in {AUTH_RATE_PERIOD} seconds.")
 
 
 @router.post(
@@ -223,6 +221,7 @@ async def list_sessions(
         # Parse JSON format if possible, otherwise fallback to legacy delimited format
         try:
             import json
+
             device_info = json.loads(device_info_raw)
             if isinstance(device_info, dict):
                 user_agent = device_info.get("user_agent")

@@ -77,7 +77,6 @@ class JobMonitoringService:
             return
 
         async with cache.client.pipeline() as pipe:
-
             # Increment total jobs for function
             pipe.hincrby(f"{JOB_STATS_PREFIX}{function_name}", "total", 1)
             # Set start time in a temporary key or update the job key if we manage it

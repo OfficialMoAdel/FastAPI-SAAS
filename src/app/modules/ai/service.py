@@ -475,7 +475,6 @@ class ChatCompletionService:
             # Phase 3: Get fresh session for writing response safely in the background
             full_response = "".join(response_chunks)
             if full_response:
-                import asyncio
 
                 async def _save_response(resp_content: str, resp_tokens: int | None) -> None:
                     try:
@@ -496,7 +495,9 @@ class ChatCompletionService:
                         logger.error("Failed to save AI chat response in background task", error=e)
 
                 # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream
-                asyncio.create_task(_save_response(full_response, token_count))
+                from src.app.core.utils.background_task import create_safe_task
+
+                create_safe_task(_save_response(full_response, token_count))
 
 
 class ChatCompletionError(Exception):

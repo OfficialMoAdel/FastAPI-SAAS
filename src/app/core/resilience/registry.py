@@ -116,7 +116,7 @@ class CircuitBreakerRegistry:
             tags=tags,
         )
 
-        logger.info("Registered circuit breaker: ()", name=name, value=service_type.value)
+        logger.info("Registered circuit breaker", name=name, type=service_type.value)
 
         return breaker
 

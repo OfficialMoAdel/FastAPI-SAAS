@@ -1,6 +1,5 @@
 """Audit logging service for tracking system actions."""
 
-import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
@@ -497,8 +496,9 @@ def audit_action(action: str, entity_type: str) -> Callable:
                         logger.error("audit_publish_failed", error=str(e), action=action)
 
                 try:
-                    loop = asyncio.get_running_loop()
-                    loop.create_task(_publish_audit_event())
+                    from src.app.core.utils.background_task import create_safe_task
+
+                    create_safe_task(_publish_audit_event())
                 except RuntimeError:
                     # No running event loop (e.g., called from sync context in tests).
                     # Run the coroutine directly as a best-effort fallback.

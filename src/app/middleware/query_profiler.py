@@ -11,8 +11,10 @@ Features:
 - Only active in non-production environments
 """
 
+import threading
 import time
 from collections import defaultdict
+from contextvars import ContextVar
 from typing import Any, cast
 
 from fastapi import Request, Response
@@ -41,8 +43,6 @@ class QueryStats:
         self.total_time_ms: float = 0.0
         self.query_counts: dict[str, int] = defaultdict(int)
         self.slow_queries: list[dict[str, Any]] = []
-        self._before_listener: Any = None
-        self._after_listener: Any = None
 
     def add_query(self, statement: str, params: dict, duration_ms: float) -> None:
         """Record a query execution."""
@@ -66,19 +66,50 @@ class QueryStats:
             self.slow_queries.append(query_info)
 
 
+_query_stats_ctx: ContextVar[QueryStats | None] = ContextVar("query_stats_ctx", default=None)
+_profiler_initialized = False
+_profiler_lock = threading.Lock()
+
+
+def _attach_global_listeners(engine: Engine) -> None:
+    """Attach global listeners exactly once."""
+    global _profiler_initialized
+    if _profiler_initialized:
+        return
+    with _profiler_lock:
+        if _profiler_initialized:
+            return
+
+        @event.listens_for(engine, "before_cursor_execute")
+        def before_execute(conn: Connection, cursor, statement, parameters, context, executemany):
+            stats = _query_stats_ctx.get()
+            if stats is not None:
+                conn.info["middleware_query_start_time"] = time.perf_counter()
+
+        @event.listens_for(engine, "after_cursor_execute")
+        def after_execute(conn: Connection, cursor, statement, parameters, context, executemany):
+            stats = _query_stats_ctx.get()
+            if stats is not None:
+                start_time = conn.info.get("middleware_query_start_time")
+                if start_time:
+                    duration_ms = (time.perf_counter() - start_time) * 1000
+                    if isinstance(parameters, dict):
+                        safe_params = parameters
+                    elif parameters:
+                        safe_params = {"positional": list(parameters)}
+                    else:
+                        safe_params = {}
+                    stats.add_query(
+                        statement=str(statement),
+                        params=safe_params,
+                        duration_ms=duration_ms,
+                    )
+
+        _profiler_initialized = True
+
+
 class QueryProfilerMiddleware(BaseHTTPMiddleware):
-    """Middleware to profile SQL queries during request processing.
-
-    Only active when:
-    - ENVIRONMENT is not "production"
-    - QUERY_PROFILER_ENABLED setting is True (or unset, defaults to enabled in dev)
-
-    Logs summary at end of request including:
-    - Total query count
-    - Total query time
-    - Slow queries (>100ms by default)
-    - Potential N+1 issues (repeated queries)
-    """
+    """Middleware to profile SQL queries during request processing."""
 
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
@@ -86,64 +117,47 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
         self._engine: Engine | None = None
 
     def _check_enabled(self) -> bool:
-        """Check if profiler should be enabled."""
-        # Never enable in production
         if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             return False
-
-        # Check explicit setting
         enabled = getattr(settings, "QUERY_PROFILER_ENABLED", None)
         if enabled is not None:
             return bool(enabled)
-
-        # Default: enabled in local/staging
         return True
 
     def _get_engine(self) -> Engine | None:
-        """Get the sync engine from async engine."""
         if self._engine is None:
             try:
-                # Access the sync engine through the async engine's pool
                 self._engine = async_engine.sync_engine
+                if self._engine:
+                    _attach_global_listeners(self._engine)
             except AttributeError:
                 logger.debug("Could not access sync engine for query profiling")
                 return None
         return self._engine
 
     async def dispatch(self, request: Request, call_next) -> Response:
-        """Process request with query profiling."""
         if not self._is_enabled:
             return cast(Response, await call_next(request))
 
-        stats = QueryStats()
         engine = self._get_engine()
-
         if not engine:
-            # Can't profile without engine access - still add zero-value headers
             response = await call_next(request)
             response = cast(Response, response)
             response.headers["X-Query-Count"] = "0"
             response.headers["X-Query-Time"] = "0"
             return response
 
-        # Set up query listener
-        self._attach_listener(engine, stats)
-
+        stats = QueryStats()
+        token = _query_stats_ctx.set(stats)
         start_time = time.perf_counter()
 
         try:
             response = await call_next(request)
         finally:
-            # Calculate total request time
             total_time_ms = (time.perf_counter() - start_time) * 1000
-
-            # Detach listener
-            self._detach_listener(engine, stats)
-
-            # Log profiling results
             self._log_results(request, stats, total_time_ms)
+            _query_stats_ctx.reset(token)
 
-        # Add profiling headers to response
         response = cast(Response, response)
         response.headers["X-Query-Count"] = str(len(stats.queries))
         response.headers["X-Query-Time"] = str(round(stats.total_time_ms, 3))
@@ -151,43 +165,6 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
             response.headers["X-Slow-Queries"] = str(len(stats.slow_queries))
 
         return response
-
-    def _attach_listener(self, engine: Engine, stats: QueryStats) -> None:
-        """Attach SQL execution event listener."""
-
-        @event.listens_for(engine, "before_cursor_execute")
-        def before_execute(conn: Connection, cursor, statement, parameters, context, executemany):
-            conn.info["query_start_time"] = time.perf_counter()
-
-        @event.listens_for(engine, "after_cursor_execute")
-        def after_execute(conn: Connection, cursor, statement, parameters, context, executemany):
-            start_time = conn.info.get("query_start_time")
-            if start_time:
-                duration_ms = (time.perf_counter() - start_time) * 1000
-                # SQLAlchemy parameters may be a dict (named params) OR a tuple/list
-                # (positional params). Safely convert to dict only when possible.
-                if isinstance(parameters, dict):
-                    safe_params = parameters
-                elif parameters:
-                    safe_params = {"positional": list(parameters)}
-                else:
-                    safe_params = {}
-                stats.add_query(
-                    statement=str(statement),
-                    params=safe_params,
-                    duration_ms=duration_ms,
-                )
-
-        # Store references for cleanup
-        stats._before_listener = before_execute
-        stats._after_listener = after_execute
-
-    def _detach_listener(self, engine: Engine, stats: QueryStats) -> None:
-        """Remove SQL execution event listeners."""
-        if stats._before_listener is not None:
-            event.remove(engine, "before_cursor_execute", stats._before_listener)
-        if stats._after_listener is not None:
-            event.remove(engine, "after_cursor_execute", stats._after_listener)
 
     def _log_results(self, request: Request, stats: QueryStats, total_time_ms: float) -> None:
         """Log query profiling results."""

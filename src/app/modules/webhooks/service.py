@@ -435,14 +435,13 @@ class WebhookService:
             import asyncio
 
             try:
-                loop = asyncio.get_running_loop()
-                loop.create_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+                from src.app.core.utils.background_task import create_safe_task
+
+                create_safe_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
             except RuntimeError:
                 try:
                     loop = asyncio.get_event_loop()
-                    asyncio.run_coroutine_threadsafe(
-                        self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop
-                    )
+                    asyncio.run_coroutine_threadsafe(self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop)
                 except Exception as loop_err:
                     logger.error(
                         "webhook_retry_enqueue_failed",
@@ -616,6 +615,7 @@ class WebhookService:
             "old_secret_expires_at": expires_at,
             "grace_period_seconds": grace_period_seconds,
         }
+
 
 # Event handler for webhook.trigger events
 @event_bus.subscribe("webhook.trigger")

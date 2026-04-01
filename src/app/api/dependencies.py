@@ -161,7 +161,7 @@ async def get_user_by_api_key(
     else:
         user_dict = user_data
 
-    if user_dict.get("is_active", False):
+    if not user_dict.get("is_active", False) or user_dict.get("is_deleted", False):
         # Attach API key specific info to the user object
         user_dict["api_key_scopes"] = key_info.get("scopes", [])
         user_dict["api_key_id"] = key_info.get("key_id")

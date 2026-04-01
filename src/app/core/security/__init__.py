@@ -221,8 +221,11 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     try:
         if ALGORITHM == "RS256":
             payload = await asyncio.to_thread(
-                jwt.decode, token, _get_verification_key(),
-                algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+                jwt.decode,
+                token,
+                _get_verification_key(),
+                algorithms=[ALGORITHM],
+                audience=JWT_AUDIENCE,
             )
         else:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
@@ -276,7 +279,11 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     token_version: int | None = payload.get("token_version")
     if token_version is not None:
         # P1-4: Cache token_version in Redis to avoid DB query on every request
-        cache_key = f"user:{username_or_email}:token_version"
+        tenant_id = payload.get("tenant_id")
+        if tenant_id:
+            cache_key = f"tenant:{tenant_id}:user:{username_or_email}:token_version"
+        else:
+            cache_key = f"user:{username_or_email}:token_version"
 
         from src.app.core.utils.cache import client as redis_client
 
@@ -347,8 +354,11 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
         try:
             if ALGORITHM == "RS256":
                 payload = await asyncio.to_thread(
-                    jwt.decode, token, _get_verification_key(),
-                    algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+                    jwt.decode,
+                    token,
+                    _get_verification_key(),
+                    algorithms=[ALGORITHM],
+                    audience=JWT_AUDIENCE,
                 )
             else:
                 payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
@@ -408,8 +418,11 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     try:
         if ALGORITHM == "RS256":
             payload = await asyncio.to_thread(
-                jwt.decode, token, _get_verification_key(),
-                algorithms=[ALGORITHM], audience=JWT_AUDIENCE,
+                jwt.decode,
+                token,
+                _get_verification_key(),
+                algorithms=[ALGORITHM],
+                audience=JWT_AUDIENCE,
             )
         else:
             payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)

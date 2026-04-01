@@ -84,6 +84,7 @@ class SSOSettingsService:
                 cached = await redis_client.get(cache_key)
                 if cached is not None:
                     from src.app.core.json_utils import json_loads
+
                     data = json_loads(cached)
                     return SSOSettingsRead.model_validate(data)
             except Exception as e:

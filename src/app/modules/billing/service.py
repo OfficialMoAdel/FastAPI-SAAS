@@ -555,9 +555,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if tenant:
             filters["tenant_id"] = tenant.id
 
-        return await crud_user_subscriptions.get_multi(
-            db=self.db, schema_to_select=UserSubscriptionRead, **filters
-        )
+        return await crud_user_subscriptions.get_multi(db=self.db, schema_to_select=UserSubscriptionRead, **filters)
 
     async def update_subscription(self, subscription_id: int, data: UserSubscriptionUpdate) -> dict[str, Any]:
         """Update a subscription."""
@@ -607,6 +605,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             api_key = None
             if stripe_settings_record and stripe_settings_record.get("encrypted_secret_key"):
                 from src.app.core.security.encryption import CredentialEncryption
+
                 api_key = CredentialEncryption().decrypt_column(stripe_settings_record["encrypted_secret_key"])
             else:
                 api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
@@ -740,6 +739,7 @@ class CheckoutService:
             customer_id = stripe_settings.get("stripe_customer_id")
             if stripe_settings.get("encrypted_secret_key"):
                 from src.app.core.security.encryption import CredentialEncryption
+
                 api_key = CredentialEncryption().decrypt_column(stripe_settings["encrypted_secret_key"])
 
         if not api_key:

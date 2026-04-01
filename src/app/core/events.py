@@ -185,8 +185,8 @@ class EventBus:
                     keys=[idempotency_key],
                     args=[str(self.IDEMPOTENCY_TTL_SECONDS), "1"],
                 )
-                # Script returns 1 if key was set (first time), 0 if exists
-                is_duplicate = bool(result == 0)
+                # Script returns 1 if key was set (first time), 0 or None if exists
+                is_duplicate = result is None or result == 0
                 record_event_idempotency(is_duplicate)
                 return is_duplicate
 

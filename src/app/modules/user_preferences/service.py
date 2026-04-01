@@ -241,7 +241,7 @@ class PreferencesService:
             base_url = old_url.split("?")[0]
             marker = f"users/{user_id}/profile."
             if marker in base_url:
-                old_path = base_url[base_url.find(marker):]
+                old_path = base_url[base_url.find(marker) :]
                 # If the new path has a different extension, the old image would be orphaned
                 if old_path and old_path != new_path:
                     try:
@@ -317,7 +317,7 @@ class PreferencesService:
         marker = f"users/{user_id}/profile."
 
         if marker in base_url:
-            old_path = base_url[base_url.find(marker):]
+            old_path = base_url[base_url.find(marker) :]
             try:
                 if await storage.exists(old_path):
                     await storage.delete(old_path)

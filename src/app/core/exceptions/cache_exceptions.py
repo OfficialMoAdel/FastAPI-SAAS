@@ -1,5 +1,6 @@
 class CacheException(Exception):
     """Base exception for all cache-related errors."""
+
     pass
 
 

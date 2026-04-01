@@ -635,6 +635,7 @@ async def _mark_notification_failed(notification_id: str | None, tenant_id: str 
 
         from src.app.core.db.database import local_session
         from src.app.core.db.rls import rls_context
+
         async with local_session() as db:
             ctx = rls_context(db, tenant_id) if tenant_id else None
             if ctx:

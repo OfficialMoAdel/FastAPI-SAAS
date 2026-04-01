@@ -617,8 +617,11 @@ class PasskeyService:
             decrypted_id = encryption.decrypt_credential(cred.credential_id)
             if decrypted_id == credential_id_bytes:
                 return cred
-        except Exception:
+        except Exception as e:
             # Decryption failure - credential may be corrupted
+            logger.error(
+                "Failed to decrypt passkey credential_id", exc_info=True, extra={"raw_id": raw_id, "error": str(e)}
+            )
             pass
 
         return None
@@ -731,6 +734,26 @@ class PasskeyService:
 
         access_token = await create_access_token(data=token_data)
         refresh_token = await create_refresh_token(data=token_data)
+
+        try:
+            import json
+
+            import jwt
+
+            from src.app.core.security.session_manager import session_manager as global_session_manager
+
+            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+            session_id = decoded_token.get("jti", access_token[:32])
+
+            device_info_str = json.dumps({"user_agent": "Passkey Login", "ip": "Unknown"})
+
+            await global_session_manager.register_session(
+                user_id=user["id"],
+                session_id=session_id,
+                device_info=device_info_str,
+            )
+        except Exception as e:
+            logger.warning("session_registration_failed", error=str(e))
 
         return {
             "access_token": access_token,

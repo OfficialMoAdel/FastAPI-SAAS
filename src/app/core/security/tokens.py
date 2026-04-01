@@ -270,6 +270,7 @@ class MagicLinkManager:
 
         # Hash token before storing in Redis to prevent plaintext exposure
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
         # Store in Redis with expiration
@@ -301,6 +302,7 @@ class MagicLinkManager:
             Token metadata dict if valid, None if expired/used/invalid.
         """
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
         key = f"magic_link:{hashed_token}"
 

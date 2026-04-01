@@ -40,6 +40,16 @@ class Base(DeclarativeBase, MappedAsDataclass):
         return {"extend_existing": True}
 
 
+from datetime import UTC, datetime
+
+
+@event.listens_for(Base, "before_update", propagate=True)
+def receive_before_update(mapper: Any, connection: Any, target: Any) -> None:
+    """Ensure updated_at is always updated during session.commit() operations."""
+    if hasattr(target, "updated_at"):
+        target.updated_at = datetime.now(UTC)
+
+
 DATABASE_URI = settings.POSTGRES_URI
 DATABASE_PREFIX = settings.POSTGRES_ASYNC_PREFIX
 DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"

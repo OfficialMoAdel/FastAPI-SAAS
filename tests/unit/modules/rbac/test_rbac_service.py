@@ -385,8 +385,8 @@ class TestRoleServiceUserAssignment:
             await role_service.assign_role_to_user(user_id=123, role_id=mock_role.id)
 
             mock_db.add.assert_called_once()
-            # Two commits: one for UserRole insert, one for token_version update
-            assert mock_db.commit.call_count == 2
+            # One commit: both UserRole insert and token_version update happen in same transaction
+            assert mock_db.commit.call_count == 1
             mock_cache.assert_called_once_with(123, MockUser.DEFAULT_TENANT_ID)
 
     @pytest.mark.asyncio

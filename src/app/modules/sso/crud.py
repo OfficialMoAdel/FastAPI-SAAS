@@ -58,8 +58,7 @@ class CRUDUserSSOConnection(
     ) -> UserSSOConnection | None:
         """Global lookup for SSO login by unique provider ID."""
         query = select(self.model).where(
-            self.model.provider == provider,
-            self.model.provider_user_id == provider_user_id
+            self.model.provider == provider, self.model.provider_user_id == provider_user_id
         )
         result = await db.execute(query)
         return result.scalar_one_or_none()

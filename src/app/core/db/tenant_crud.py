@@ -93,9 +93,12 @@ class TenantAwareCRUD(
                         get_logger(__name__).warning("invalid_tenant_uuid_in_context", tenant_id=tenant_id)
                         # Keep as string - downstream DB driver might handle it or fail explicitly
                 return {"tenant_id": tenant_id, **kwargs}
+            else:
+                # Fail-closed: raise an error if context is missing for a tenant-aware operation
+                raise RuntimeError("Tenant-scoped query executed without an active tenant context")
         return kwargs
 
-    async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:  # type: ignore[override]
+    async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:
         """Create a new record, automatically injecting tenant_id from context.
 
         Supports all FastCRUD keyword arguments via **kwargs (e.g., commit, schema_to_select).
@@ -146,7 +149,7 @@ class TenantAwareCRUD(
         kwargs = self._inject_tenant_filter(kwargs)
         return cast(dict[Any, Any] | None, await super().get(db, **kwargs))
 
-    async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
+    async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:
         """Get multiple records, filtered by tenant context.
 
         Args:

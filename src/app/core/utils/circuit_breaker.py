@@ -243,9 +243,7 @@ def circuit_breaker(
                             # also removed — it could never be True inside the HALF_OPEN guard.
                             if breaker._probe_in_progress:
                                 # Another request is already probing — reject immediately
-                                recovery_in = breaker.recovery_timeout - (
-                                    time.time() - breaker.last_failure_time
-                                )
+                                recovery_in = breaker.recovery_timeout - (time.time() - breaker.last_failure_time)
                                 raise CircuitBreakerOpen(breaker.name, max(0, recovery_in))
                             # Claim the probe slot
                             breaker._probe_in_progress = True

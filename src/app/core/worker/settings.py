@@ -42,7 +42,11 @@ class WorkerSettings:
         process_event_handler,  # FIXED: Was missing - handles async event bus events
         send_email_task,  # FIXED: Was missing - handles email notifications
     ]
-    redis_settings = RedisSettings(host=REDIS_QUEUE_HOST, port=REDIS_QUEUE_PORT)
+    redis_settings = RedisSettings(
+        host=settings.REDIS_QUEUE_HOST,
+        port=settings.REDIS_QUEUE_PORT,
+        password=settings.REDIS_QUEUE_PASSWORD.get_secret_value() if settings.REDIS_QUEUE_PASSWORD else None,
+    )
     on_startup = startup
     on_shutdown = shutdown
     handle_signals = False

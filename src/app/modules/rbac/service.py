@@ -550,6 +550,13 @@ class RoleService:
         )
         self.db.add(user_role)
 
+        # SECURITY FIX: Increment token_version to invalidate active JWTs on role change
+        from sqlalchemy import update as sa_update
+
+        from src.app.modules.users.models import User
+
+        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
+
         try:
             await self.db.commit()
         except IntegrityError:
@@ -558,17 +565,6 @@ class RoleService:
 
         # Invalidate user permissions cache
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
-
-        # SECURITY FIX: Increment token_version to invalidate active JWTs on role change
-        from sqlalchemy import update as sa_update
-
-        from src.app.modules.users.models import User
-        await self.db.execute(
-            sa_update(User)
-            .where(User.id == user_id)
-            .values(token_version=User.token_version + 1)
-        )
-        await self.db.commit()
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
         """Remove a role from a user within the current tenant.
@@ -603,10 +599,9 @@ class RoleService:
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
+
             await self.db.execute(
-                sa_update(User)
-                .where(User.id == user_id)
-                .values(token_version=User.token_version + 1)
+                sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
             )
             await self.db.commit()
 

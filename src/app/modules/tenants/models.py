@@ -92,6 +92,7 @@ class Tenant(Base):
 def _ensure_related_models_registered() -> None:
     """Import all models referenced in Tenant relationships."""
     import importlib
+
     for module_path in [
         "src.app.modules.ai.models",
         "src.app.modules.api_keys.models",

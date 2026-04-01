@@ -343,15 +343,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 try:
                     cached = await redis_client.get(cache_key)
                     if cached:
-                        # Deserialize cached tenant data
-                        data = json_loads(cached)
-
                         # Handle negative cache
-                        if data is None:
+                        if cached == b"__negative_cache__" or cached == "__negative_cache__":
                             logger.debug("Tenant L2 negative cache hit | slug=%s", slug)
                             # Populate L1 negative cache
                             _L1_TENANT_CACHE[slug] = None
                             return None
+
+                        # Deserialize cached tenant data
+                        data = json_loads(cached)
 
                         logger.debug("Tenant L2 cache hit | slug=%s", slug)
                         # Populate L1 cache
