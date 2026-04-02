@@ -34,12 +34,17 @@ EXEMPT_PATHS: frozenset[str] = frozenset(
 
 import re
 
-# Compile bad bot regex once at module level for O(1) matching
-# instead of O(N) iteration per request.
-_BAD_BOT_REGEX = None
-if settings.BAD_BOT_USER_AGENTS:
-    _escaped_bots = [re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS]
-    _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
+# Lazy bad bot regex - compiled on first use for testability
+_BAD_BOT_REGEX: re.Pattern[str] | None = None
+
+
+def _get_bad_bot_regex() -> re.Pattern[str] | None:
+    """Get compiled bad bot regex, building lazily from current settings."""
+    global _BAD_BOT_REGEX
+    if _BAD_BOT_REGEX is None and settings.BAD_BOT_USER_AGENTS:
+        _escaped_bots = [re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS]
+        _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
+    return _BAD_BOT_REGEX
 
 
 class IPFilterMiddleware(BaseHTTPMiddleware):
@@ -84,9 +89,11 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
         client_ip = get_client_ip(request)
 
         # BAD BOT FILTERING: Check User-Agent for known malicious scanners
-        if settings.BAD_BOT_FILTER_ENABLED and _BAD_BOT_REGEX:
-            user_agent = request.headers.get("user-agent", "")
-            match = _BAD_BOT_REGEX.search(user_agent)
+        if settings.BAD_BOT_FILTER_ENABLED:
+            bad_bot_regex = _get_bad_bot_regex()
+            if bad_bot_regex:
+                user_agent = request.headers.get("user-agent", "")
+                match = bad_bot_regex.search(user_agent)
             if match:
                 bad_bot = match.group(0)
                 event = create_security_event(

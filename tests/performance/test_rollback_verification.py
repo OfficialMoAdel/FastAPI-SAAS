@@ -28,7 +28,7 @@ OPTIMIZATION_FLAGS: list[tuple[str, str, bool]] = [
     (
         "FEATURE_REMOVE_WASTED_CONNECTION",
         "src.app.core.config.Settings.FEATURE_REMOVE_WASTED_CONNECTION",
-        False,
+        True,
     ),
     (
         "FEATURE_STREAMING_UPLOADS",
@@ -76,11 +76,14 @@ def test_optimization_flag_can_be_disabled(flag_name: str, flag_path: str, defau
 
     from src.app.core.config import Settings
 
+    # PerformanceSettings uses env_prefix='PERFORMANCE_', so env var needs the prefix
+    env_var_name = f"PERFORMANCE_{flag_name}"
+
     # Create settings with flag disabled, mocking required env vars
     with patch.dict(
         os.environ,
         {
-            flag_name: "false",
+            env_var_name: "false",
             "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
@@ -115,7 +118,7 @@ def test_feature_remove_wasted_connection_rollback() -> None:
     with patch.dict(
         os.environ,
         {
-            "FEATURE_REMOVE_WASTED_CONNECTION": "false",
+            "PERFORMANCE_FEATURE_REMOVE_WASTED_CONNECTION": "false",
             "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
@@ -147,7 +150,7 @@ def test_feature_streaming_uploads_rollback() -> None:
     with patch.dict(
         os.environ,
         {
-            "FEATURE_STREAMING_UPLOADS": "false",
+            "PERFORMANCE_FEATURE_STREAMING_UPLOADS": "false",
             "ADMIN_PASSWORD": "testpassword",
             "SECRET_KEY": "test-secret-key-for-testing-only",
             "POSTGRES_USER": "test",
@@ -303,10 +306,10 @@ def test_full_rollback_scenario() -> None:
     """
     import os
 
-    # Set all flags to disabled
+    # Set all flags to disabled (PerformanceSettings uses PERFORMANCE_ prefix)
     env_patches = {
-        "FEATURE_REMOVE_WASTED_CONNECTION": "false",
-        "FEATURE_STREAMING_UPLOADS": "false",
+        "PERFORMANCE_FEATURE_REMOVE_WASTED_CONNECTION": "false",
+        "PERFORMANCE_FEATURE_STREAMING_UPLOADS": "false",
     }
 
     with patch.dict(os.environ, env_patches, clear=False):

@@ -68,10 +68,16 @@ class TestL1CacheIntegration:
     @pytest.mark.asyncio
     async def test_l1_cache_hit_skips_redis(self):
         """Verify L1 cache hit skips Redis lookup."""
+        from uuid import UUID
+
         from src.app.middleware.tenant import TenantMiddleware
 
         # Populate L1 cache
-        _L1_TENANT_CACHE["cached-tenant"] = {"id": "t-001", "slug": "cached-tenant", "is_active": True}
+        _L1_TENANT_CACHE["cached-tenant"] = {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "slug": "cached-tenant",
+            "is_active": True,
+        }
 
         # Create middleware with mocked app
         middleware = TenantMiddleware(MagicMock())
@@ -85,8 +91,9 @@ class TestL1CacheIntegration:
             result = await middleware._get_tenant_by_slug("cached-tenant")
 
         # Assert - got result from L1 cache (returns TenantContext)
+        # _get_tenant_from_cache_data converts string id to UUID
         assert result is not None
-        assert result.tenant_id == "t-001"
+        assert result.tenant_id == UUID("00000000-0000-0000-0000-000000000001")
         assert result.tenant_slug == "cached-tenant"
 
     @pytest.mark.asyncio
@@ -109,6 +116,8 @@ class TestL1CacheIntegration:
     @pytest.mark.asyncio
     async def test_l2_hit_populates_l1(self):
         """Verify L2 (Redis) hit populates L1 cache."""
+        from uuid import UUID
+
         from src.app.middleware.tenant import TenantMiddleware
 
         # L1 cache is empty
@@ -117,16 +126,18 @@ class TestL1CacheIntegration:
         middleware = TenantMiddleware(MagicMock())
         mock_redis = AsyncMock()
         # Use proper JSON string with lowercase true (valid JSON)
-        mock_redis.get = AsyncMock(return_value='{"id": "t-002", "slug": "redis-tenant", "is_active": true}')
+        mock_redis.get = AsyncMock(
+            return_value='{"id": "00000000-0000-0000-0000-000000000002", "slug": "redis-tenant", "is_active": true}'
+        )
 
         with patch("src.app.middleware.tenant.redis_client", mock_redis):
             result = await middleware._get_tenant_by_slug("redis-tenant")
 
         # Assert L1 is now populated
         assert "redis-tenant" in _L1_TENANT_CACHE
-        assert _L1_TENANT_CACHE["redis-tenant"]["id"] == "t-002"
-        # Result is TenantContext, check tenant_id
-        assert result.tenant_id == "t-002"
+        assert _L1_TENANT_CACHE["redis-tenant"]["id"] == "00000000-0000-0000-0000-000000000002"
+        # Result is TenantContext, _get_tenant_from_cache_data converts string id to UUID
+        assert result.tenant_id == UUID("00000000-0000-0000-0000-000000000002")
 
 
 class TestSlugValidation:

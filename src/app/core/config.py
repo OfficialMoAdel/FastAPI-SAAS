@@ -1,6 +1,6 @@
 import os
 from enum import Enum
-from typing import Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import Field, SecretStr, ValidationInfo, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,7 +74,7 @@ class AppSettings(BaseSettings):
 
 
 class CryptSettings(BaseSettings):
-    SECRET_KEY: SecretStr  # REQUIRED: Must be set via environment variable
+    SECRET_KEY: SecretStr
     ALGORITHM: str = "HS256"  # Options: HS256 (symmetric), RS256 (asymmetric)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -222,11 +222,12 @@ class SQLiteSettings(DatabaseSettings):
     SQLITE_URI: str = "./sql_app.db"
     SQLITE_SYNC_PREFIX: str = "sqlite:///"
     SQLITE_ASYNC_PREFIX: str = "sqlite+aiosqlite:///"
+    USE_SQLITE: bool = True
 
 
 class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
-    MYSQL_PASSWORD: SecretStr = Field(..., description="MySQL database password - REQUIRED when using MySQL")
+    MYSQL_PASSWORD: SecretStr
     MYSQL_SERVER: str = "localhost"
     MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
@@ -237,14 +238,15 @@ class MySQLSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def MYSQL_URI(self) -> str:
-        credentials = f"{self.MYSQL_USER}:{self.MYSQL_PASSWORD.get_secret_value()}"
+        password = self.MYSQL_PASSWORD.get_secret_value() if self.MYSQL_PASSWORD else ""
+        credentials = f"{self.MYSQL_USER}:{password}"
         location = f"{self.MYSQL_SERVER}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
         return f"{credentials}@{location}"
 
 
 class PostgresSettings(DatabaseSettings):
-    POSTGRES_USER: str  # REQUIRED: No defaults
-    POSTGRES_PASSWORD: SecretStr  # SECURITY: Use SecretStr to prevent logging exposure
+    POSTGRES_USER: str
+    POSTGRES_PASSWORD: SecretStr
     POSTGRES_SERVER: str = "localhost"  # Override via POSTGRES_SERVER in .env
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
@@ -255,7 +257,8 @@ class PostgresSettings(DatabaseSettings):
     @computed_field  # type: ignore[prop-decorator]
     @property
     def POSTGRES_URI(self) -> str:
-        credentials = f"{self.POSTGRES_USER}:{self.POSTGRES_PASSWORD.get_secret_value()}"
+        password = self.POSTGRES_PASSWORD.get_secret_value() if self.POSTGRES_PASSWORD else ""
+        credentials = f"{self.POSTGRES_USER}:{password}"
         location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         return f"{credentials}@{location}"
 
@@ -264,7 +267,7 @@ class FirstUserSettings(BaseSettings):
     ADMIN_NAME: str = "admin"
     ADMIN_EMAIL: str = "admin@admin.com"
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: SecretStr = Field(..., min_length=8)  # REQUIRED: Must be at least 8 characters
+    ADMIN_PASSWORD: SecretStr = Field(..., min_length=8)
 
 
 class AuthSettings(BaseSettings):
@@ -276,8 +279,9 @@ class AuthSettings(BaseSettings):
     # SECURITY FIX: Make audit log failure mode configurable
     # "fail_open": Log error but allow operation (default, availability focused)
     # "fail_closed": Raise exception and block operation (security focused, compliance)
+    # SECURITY FIX: Changed default to 'fail_closed' to ensure mandatory audit trails in production.
     AUDIT_LOG_FAILURE_MODE: Literal["fail_open", "fail_closed"] = Field(
-        default="fail_open",
+        default="fail_closed",
         description="How to handle audit log failures: 'fail_open' (allow) or 'fail_closed' (block)",
     )
     # Configurable MFA pending token expiry (was previously a hardcoded magic number)
@@ -651,9 +655,6 @@ class PerformanceSettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="PERFORMANCE_")
 
-    FEATURE_REMOVE_WASTED_CONNECTION: bool = False
-    """Remove wasted database connection in tenant middleware (P0-1)."""
-
     FEATURE_CONTEXTVAR_OPTIMIZATION: bool = False
     """Use contextvar for tenant context (P0-2)."""
 
@@ -662,6 +663,9 @@ class PerformanceSettings(BaseSettings):
 
     FEATURE_EAGER_LOADING: bool = False
     """Use eager loading for relationships in base service (P0-4)."""
+
+    FEATURE_REMOVE_WASTED_CONNECTION: bool = True
+    """Remove wasted DB connection in tenant middleware (P0-1)."""
 
 
 class QueryProfilerSettings(BaseSettings):
@@ -704,43 +708,166 @@ class QueryProfilerSettings(BaseSettings):
     """Enable verbose logging of N+1 detection details."""
 
 
-class Settings(
-    AppSettings,
-    SQLiteSettings,
-    PostgresSettings,
-    CryptSettings,
-    FirstUserSettings,
-    AuthSettings,
-    TestSettings,
-    RedisCacheSettings,
-    ClientSideCacheSettings,
-    SecuritySettings,
-    AttackDetectionSettings,
-    RedisQueueSettings,
-    DefaultRateLimitSettings,
-    CRUDAdminSettings,
-    EmailSettings,
-    WebhookSettings,
-    EnvironmentSettings,
-    StorageSettings,
-    BillingSettings,
-    AISettings,
-    EventSettings,
-    CORSSettings,
-    ArqSettings,
-    R1UnifiedSettings,
-    PerformanceSettings,
-    QueryProfilerSettings,
-):
-    # Override model_config to ensure no env_prefix is applied to base fields
-    # This is needed because parent classes (R1UnifiedSettings, PerformanceSettings)
-    # have env_prefix which would otherwise be inherited and break field resolution
+class Settings(BaseSettings):
+    """Main application settings using composition.
+
+    R1-UNIFIED P2-5: Refactored from inheritance to composition to reduce
+    Pydantic model bloat and improve configuration resolution clarity.
+    """
+
+    app: AppSettings = Field(default_factory=AppSettings)
+    sqlite: SQLiteSettings = Field(default_factory=SQLiteSettings)
+    postgres: PostgresSettings = Field(default_factory=PostgresSettings)  # type: ignore[arg-type]
+    crypt: CryptSettings = Field(default_factory=CryptSettings)  # type: ignore[arg-type]
+    first_user: FirstUserSettings = Field(default_factory=FirstUserSettings)  # type: ignore[arg-type]
+    auth: AuthSettings = Field(default_factory=AuthSettings)
+    test: TestSettings = Field(default_factory=TestSettings)
+    redis_cache: RedisCacheSettings = Field(default_factory=RedisCacheSettings)
+    client_cache: ClientSideCacheSettings = Field(default_factory=ClientSideCacheSettings)
+    security: SecuritySettings = Field(default_factory=SecuritySettings)
+    attack_detection: AttackDetectionSettings = Field(default_factory=AttackDetectionSettings)
+    redis_queue: RedisQueueSettings = Field(default_factory=RedisQueueSettings)
+    rate_limit: DefaultRateLimitSettings = Field(default_factory=DefaultRateLimitSettings)
+    admin: CRUDAdminSettings = Field(default_factory=CRUDAdminSettings)
+    email: EmailSettings = Field(default_factory=EmailSettings)
+    webhooks: WebhookSettings = Field(default_factory=WebhookSettings)
+    env: EnvironmentSettings = Field(default_factory=EnvironmentSettings)
+    storage: StorageSettings = Field(default_factory=StorageSettings)
+    billing: BillingSettings = Field(default_factory=BillingSettings)
+    ai: AISettings = Field(default_factory=AISettings)
+    events: EventSettings = Field(default_factory=EventSettings)
+    cors: CORSSettings = Field(default_factory=CORSSettings)
+    arq: ArqSettings = Field(default_factory=ArqSettings)
+    r1_unified: R1UnifiedSettings = Field(default_factory=R1UnifiedSettings)
+    performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
+    query_profiler: QueryProfilerSettings = Field(default_factory=QueryProfilerSettings)
+
     model_config = SettingsConfigDict(
         env_prefix="",
         env_file=".env",
         env_file_encoding="utf-8",
-        extra="ignore",  # Ignore unknown env vars for backward compatibility
+        extra="ignore",
     )
 
+    def __getattr__(self, name: str) -> Any:
+        """Proxy attribute access to sub-models for backward compatibility.
 
+        This allows existing code to use `settings.FIELD` while we transition
+        to nested access `settings.submodel.FIELD`.
+        """
+        for sub_model in [
+            self.app,
+            self.sqlite,
+            self.postgres,
+            self.crypt,
+            self.first_user,
+            self.auth,
+            self.test,
+            self.redis_cache,
+            self.client_cache,
+            self.security,
+            self.attack_detection,
+            self.redis_queue,
+            self.rate_limit,
+            self.admin,
+            self.email,
+            self.webhooks,
+            self.env,
+            self.storage,
+            self.billing,
+            self.ai,
+            self.events,
+            self.cors,
+            self.arq,
+            self.r1_unified,
+            self.performance,
+            self.query_profiler,
+        ]:
+            if hasattr(sub_model, name):
+                return getattr(sub_model, name)
+
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        """Proxy attribute assignments for test patching.
+
+        This allows test suites to patch `settings.FIELD = value` without
+        crashing Pydantic and preserves test isolation by storing the mock
+        on the Settings instance instead of mutating the underlying sub-model.
+        """
+        if name in self.model_fields:
+            super().__setattr__(name, value)
+        else:
+            object.__setattr__(self, name, value)
+
+    def __delattr__(self, name: str) -> None:
+        """Proxy attribute deletion for test patching teardowns.
+
+        This allows mock.patch to clean up injected test overrides.
+        """
+        if name in self.model_fields:
+            super().__delattr__(name)
+        else:
+            try:
+                object.__delattr__(self, name)
+            except AttributeError:
+                raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+
+    # Explicit type hints for common fields to satisfy mypy
+    # These match the most frequently accessed settings project-wide
+    if TYPE_CHECKING:
+        SECRET_KEY: SecretStr
+        ENVIRONMENT: EnvironmentOption
+        USE_SQLITE: bool
+        ADMIN_PASSWORD: SecretStr
+        APP_VERSION: str
+        CREATE_TABLES_ON_STARTUP: bool
+        ARQ_ENABLED: bool
+        MAX_BODY_SIZE: int
+        POSTGRES_URI: str
+        POSTGRES_ASYNC_PREFIX: str
+        DB_POOL_SIZE: int
+        DB_MAX_OVERFLOW: int
+        DB_POOL_TIMEOUT: int
+        REDIS_CACHE_URL: str
+        FRONTEND_URL: str
+        ALGORITHM: str
+        ACCESS_TOKEN_EXPIRE_MINUTES: int
+        REFRESH_TOKEN_EXPIRE_DAYS: int
+        JWT_AUDIENCE: str
+        JWT_PRIVATE_KEY: SecretStr | None
+        JWT_PUBLIC_KEY: str | None
+        ENCRYPTION_KEY: SecretStr | None
+        ENCRYPTION_SALT: SecretStr | None
+        IP_WHITELIST_ENABLED: bool
+        IP_BLACKLIST_ENABLED: bool
+        IP_WHITELIST_BYPASS_RATE_LIMIT: bool
+        AUTO_BAN_ENABLED: bool
+        AUTO_BAN_THRESHOLD: int
+        AUTO_BAN_DURATION: int
+        AUTO_BAN_ESCALATION: bool
+        BAD_BOT_FILTER_ENABLED: bool
+        BAD_BOT_USER_AGENTS: list[str]
+        RBAC_USE_REDIS_CACHE: bool
+        RBAC_CACHE_TTL_SECONDS: int
+        STRIPE_SECRET_KEY: SecretStr | None
+        STRIPE_WEBHOOK_SECRET: SecretStr | None
+        OLLAMA_BASE_URL: str
+        OLLAMA_TIMEOUT: float
+        STORAGE_PROVIDER: str
+        STORAGE_BUCKET: str
+        STORAGE_REGION: str
+        AWS_ACCESS_KEY_ID: str | None
+        AWS_SECRET_ACCESS_KEY: SecretStr | None
+        AWS_ENDPOINT_URL: str | None
+        EVENT_BUS_CONCURRENCY: int
+        EVENT_HANDLER_TIMEOUT_SECONDS: float
+        EVENT_BUS_USE_BATCH_ENQUEUE: bool
+        QUERY_PROFILER_ENABLED: bool
+        QUERY_PROFILER_SLOW_THRESHOLD_MS: int
+        QUERY_PROFILER_N_PLUS_1_THRESHOLD: int
+        QUERY_PROFILER_DETAILED_LOGS: bool
+
+
+# Initialize settings without arguments - Pydantic will populate from env
 settings = Settings()  # type: ignore[call-arg]

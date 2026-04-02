@@ -191,8 +191,10 @@ def test_restore_rls_context_with_tenant():
     sql_text = call_args[0][0]
     params = call_args[0][1]
 
-    assert str(sql_text) == f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"
-    assert params == {"tenant_id": "123"}
+    # The actual implementation uses parameterized query with :tenant_var
+    assert ":tenant_var" in str(sql_text)
+    assert params["tenant_var"] == RLS_TENANT_VAR
+    assert params["tenant_id"] == "123"
 
 
 def test_restore_rls_context_without_tenant():

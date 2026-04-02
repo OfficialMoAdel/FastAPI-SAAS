@@ -57,25 +57,33 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
 
         if tenant_id and user_id:
             connection.execute(
-                text(f"""
-                    SELECT
-                        set_config('{RLS_TENANT_VAR}', :tenant_id, true),
-                        set_config('{RLS_USER_VAR}', :user_id, true)
-                """),
-                {"tenant_id": tenant_id, "user_id": user_id},
+                text(
+                    "SELECT set_config(:tenant_var, :tenant_id, true), "
+                    "set_config(:user_var, :user_id, true)"
+                ),
+                {
+                    "tenant_var": RLS_TENANT_VAR,
+                    "tenant_id": str(tenant_id),
+                    "user_var": RLS_USER_VAR,
+                    "user_id": str(user_id),
+                },
             )
         elif tenant_id:
             connection.execute(
-                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
-                {"tenant_id": tenant_id},
+                text("SELECT set_config(:tenant_var, :tenant_id, true)"),
+                {"tenant_var": RLS_TENANT_VAR, "tenant_id": str(tenant_id)},
             )
 
     except Exception as e:
-        logger.error(
-            "Failed to restore RLS context in event listener - failing closed",
+        # SECURITY FIX: Log heavily but do not raise from SQLAlchemy event listener.
+        # Raising here can corrupt internal transaction state and cause pool starvation.
+        logger.critical(
+            "CRITICAL SECURITY FAILURE: Failed to restore RLS context in event listener",
             error=str(e),
             tenant_id=tenant_id if "tenant_id" in locals() else None,
+            exc_info=True,
         )
+        connection.invalidate()
         raise RuntimeError(f"Failed to securely apply RLS context: {e}") from e
 
 
