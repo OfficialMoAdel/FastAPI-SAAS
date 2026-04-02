@@ -604,7 +604,6 @@ class TestTenantIsolationE2E:
 
             with (
                 patch("src.app.middleware.tenant.local_session", get_testing_session_local()),
-                patch("src.app.middleware.tenant.async_engine", new=test_async_engine),
                 patch("src.app.core.db.database.async_engine", new=test_async_engine),
                 patch(
                     "src.app.core.utils.rate_limit.RateLimiter.check_rate_limit",

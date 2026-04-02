@@ -140,6 +140,7 @@ cython_debug/
 
 # Config files:
 src/.env
+src/.env.local
 
 # Don't ignore files inside of script folder:
 !scripts/*

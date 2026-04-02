@@ -153,11 +153,11 @@ class TestBlacklistIntegration:
         mock_request = MagicMock()
         mock_request.state = MagicMock()
         mock_request.state.user_id = 123
-        mock_request.state.tenant_id = "tenant-001"
+        mock_request.state.tenant_id = "00000000-0000-0000-0000-000000000001"
 
         # Verify state has required fields for rate limiting
         assert mock_request.state.user_id == 123
-        assert mock_request.state.tenant_id == "tenant-001"
+        assert mock_request.state.tenant_id == "00000000-0000-0000-0000-000000000001"
 
 
 # =============================================================================

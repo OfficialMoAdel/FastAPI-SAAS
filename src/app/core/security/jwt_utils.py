@@ -166,6 +166,24 @@ def extract_token_from_header(authorization: str | None) -> str | None:
     return parts[1]
 
 
+def validate_jwt_length(token: str, max_length: int = 4096) -> bool:
+    """Validate that the JWT token string is within reasonable length limits.
+
+    Prevents DoS attacks where extremely large tokens are sent to be decoded
+    without signature verification (e.g., extracting JTI for blacklist check).
+
+    Args:
+        token: The JWT token string to validate.
+        max_length: Maximum allowed length in characters (default 4KB).
+
+    Returns:
+        True if valid length, False otherwise.
+    """
+    if not token:
+        return False
+    return len(token) <= max_length
+
+
 async def decode_jwt_token(token: str) -> dict[str, Any] | None:
     """Decode and verify a JWT token without database checks.
 

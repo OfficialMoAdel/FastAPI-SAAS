@@ -420,13 +420,20 @@ class EventBus:
             try:
                 # Type assertion: we checked _arq_queue at line 337
                 assert self._arq_queue is not None, "ARQ queue should be set"
+                # SECURITY FIX: Unified queue naming with _publish_async_batch.
+                # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
+                q_name = (
+                    default_queue_name
+                    if priority == EventPriority.NORMAL
+                    else f"{default_queue_name}_low_priority"
+                )
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",
                     event_name,
                     handler.__module__,
                     handler.__name__,
                     data,
-                    _queue_name="default" if priority == EventPriority.NORMAL else "low_priority",
+                    _queue_name=q_name,
                 )
                 await arq_circuit.record_success()
                 logger.debug(

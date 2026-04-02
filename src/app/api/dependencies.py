@@ -90,7 +90,7 @@ async def get_current_user(
 
         # Verify user belongs to current tenant context
         current_tenant = get_tenant_context()
-        if current_tenant and not user.get("is_superuser"):
+        if current_tenant:
             if str(user.get("tenant_id")) != str(current_tenant.id):
                 logger.warning(
                     "tenant_mismatch_detected",
@@ -161,7 +161,7 @@ async def get_user_by_api_key(
     else:
         user_dict = user_data
 
-    if not user_dict.get("is_active", False) or user_dict.get("is_deleted", False):
+    if user_dict.get("is_active", True) and not user_dict.get("is_deleted", False):
         # Attach API key specific info to the user object
         user_dict["api_key_scopes"] = key_info.get("scopes", [])
         user_dict["api_key_id"] = key_info.get("key_id")

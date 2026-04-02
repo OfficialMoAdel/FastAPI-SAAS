@@ -740,9 +740,13 @@ class PasskeyService:
 
             import jwt
 
+            from src.app.core.security.jwt_utils import validate_jwt_length
             from src.app.core.security.session_manager import session_manager as global_session_manager
 
-            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+            if not validate_jwt_length(access_token):
+                decoded_token = {}
+            else:
+                decoded_token = jwt.decode(access_token, options={"verify_signature": False})
             session_id = decoded_token.get("jti", access_token[:32])
 
             device_info_str = json.dumps({"user_agent": "Passkey Login", "ip": "Unknown"})

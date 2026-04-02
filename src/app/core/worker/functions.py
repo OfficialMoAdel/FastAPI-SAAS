@@ -16,7 +16,7 @@ try:
 except ImportError:
     pass
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+# Centralized logging configured via src/app/core/logger.py (structlog)
 
 
 # -------- background tasks --------

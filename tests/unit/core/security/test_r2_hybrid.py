@@ -44,7 +44,11 @@ class TestL1TenantCacheComprehensive:
         """Verify L1 hit returns data without Redis call."""
         from src.app.middleware.tenant import _L1_TENANT_CACHE, TenantMiddleware
 
-        _L1_TENANT_CACHE["test-tenant"] = {"id": "t-001", "slug": "test-tenant", "is_active": True}
+        _L1_TENANT_CACHE["test-tenant"] = {
+            "id": "00000000-0000-0000-0000-000000000001",
+            "slug": "test-tenant",
+            "is_active": True,
+        }
 
         middleware = TenantMiddleware(MagicMock())
         mock_redis = AsyncMock()
@@ -54,7 +58,7 @@ class TestL1TenantCacheComprehensive:
             result = await middleware._get_tenant_by_slug("test-tenant")
 
         assert result is not None
-        assert result.id == "t-001"
+        assert str(result.id) == "00000000-0000-0000-0000-000000000001"
 
     @pytest.mark.asyncio
     async def test_l1_negative_cache_prevents_redis_call(self):

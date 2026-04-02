@@ -14,14 +14,8 @@ from fastapi.openapi.utils import get_openapi
 from src.app.api.dependencies import get_current_superuser
 from src.app.core import redis_factory
 from src.app.core.config import (
-    AppSettings,
-    ClientSideCacheSettings,
-    CORSSettings,
-    DatabaseSettings,
     EnvironmentOption,
-    EnvironmentSettings,
-    RedisCacheSettings,
-    RedisQueueSettings,
+    Settings,
 )
 from src.app.core.db.database import Base
 from src.app.core.db.database import async_engine as engine
@@ -105,11 +99,6 @@ async def close_redis_queue_pool() -> None:
         queue.pool = None
 
 
-# -------------- rate limit --------------
-# Rate limiter now uses the shared Redis cache pool
-# See src.app.core.utils.rate_limit.RateLimiter
-
-
 # -------------- application --------------
 async def set_threadpool_tokens(number_of_tokens: int = 100) -> None:
     limiter = anyio.to_thread.current_default_thread_limiter()
@@ -117,15 +106,7 @@ async def set_threadpool_tokens(number_of_tokens: int = 100) -> None:
 
 
 def lifespan_factory(
-    settings: (
-        DatabaseSettings
-        | RedisCacheSettings
-        | AppSettings
-        | ClientSideCacheSettings
-        | CORSSettings
-        | RedisQueueSettings
-        | EnvironmentSettings
-    ),
+    settings: Settings | Any,
     create_tables_on_start: bool = True,
 ) -> Callable[[FastAPI], _AsyncGeneratorContextManager[Any]]:
     """Factory to create a lifespan async context manager for a FastAPI app."""
@@ -140,10 +121,13 @@ def lifespan_factory(
         await set_threadpool_tokens()
 
         try:
-            if isinstance(settings, RedisCacheSettings) and settings.REDIS_CACHE_ENABLED:
+            # R1-UNIFIED: Support both composition (Settings) and legacy mixins
+            redis_cache_enabled = getattr(settings, "REDIS_CACHE_ENABLED", False)
+            if redis_cache_enabled:
                 await create_redis_cache_pool()
 
-            if isinstance(settings, RedisQueueSettings) and settings.REDIS_QUEUE_ENABLED:
+            redis_queue_enabled = getattr(settings, "REDIS_QUEUE_ENABLED", False)
+            if redis_queue_enabled:
                 await create_redis_queue_pool()
 
             if create_tables_on_start:
@@ -168,10 +152,10 @@ def lifespan_factory(
             # Dispose database engine to release connection pool
             await engine.dispose()
 
-            if isinstance(settings, RedisCacheSettings):
+            if redis_cache_enabled:
                 await close_redis_cache_pool()
 
-            if isinstance(settings, RedisQueueSettings):
+            if redis_queue_enabled:
                 await close_redis_queue_pool()
 
             # Close SSO HTTP client pool
@@ -185,70 +169,35 @@ def lifespan_factory(
 # -------------- application --------------
 def create_application(
     router: APIRouter,
-    settings: (
-        DatabaseSettings
-        | RedisCacheSettings
-        | AppSettings
-        | ClientSideCacheSettings
-        | CORSSettings
-        | RedisQueueSettings
-        | EnvironmentSettings
-    ),
+    settings: Settings | Any,
     create_tables_on_start: bool = True,
     lifespan: Callable[[FastAPI], _AsyncGeneratorContextManager[Any]] | None = None,
     **kwargs: Any,
 ) -> FastAPI:
-    """Creates and configures a FastAPI application based on the provided settings.
+    """Creates and configures a FastAPI application based on the provided settings."""
 
-    This function initializes a FastAPI application and configures it with various settings
-    and handlers based on the type of the `settings` object provided.
-
-    Parameters
-    ----------
-    router : APIRouter
-        The APIRouter object containing the routes to be included in the FastAPI application.
-
-    settings
-        An instance representing the settings for configuring the FastAPI application.
-        It determines the configuration applied:
-
-        - AppSettings: Configures basic app metadata like name, description, contact, and license info.
-        - DatabaseSettings: Adds event handlers for initializing database tables during startup.
-        - RedisCacheSettings: Sets up event handlers for creating and closing a Redis cache pool.
-        - ClientSideCacheSettings: Integrates middleware for client-side caching.
-        - CORSSettings: Integrates CORS middleware with specified origins.
-        - RedisQueueSettings: Sets up event handlers for creating and closing a Redis queue pool.
-        - EnvironmentSettings: Conditionally sets documentation URLs and integrates custom routes for API documentation
-          based on the environment type.
-
-    create_tables_on_start : bool
-        A flag to indicate whether to create database tables on application startup.
-        Defaults to True.
-
-    **kwargs
-        Additional keyword arguments passed directly to the FastAPI constructor.
-
-    Returns
-    -------
-    FastAPI
-        A fully configured FastAPI application instance.
-
-    The function configures the FastAPI application with different features and behaviors
-    based on the provided settings. It includes setting up database connections, Redis pools
-    for caching, queue, and rate limiting, client-side caching, and customizing the API documentation
-    based on the environment settings.
-    """
     # --- before creating application ---
-    if isinstance(settings, AppSettings):
-        to_update = {
-            "title": settings.APP_NAME,
-            "description": settings.APP_DESCRIPTION,
-            "contact": {"name": settings.CONTACT_NAME, "email": settings.CONTACT_EMAIL},
-            "license_info": {"name": settings.LICENSE_NAME},
-        }
-        kwargs.update(to_update)
+    # R1-UNIFIED: Support both composition (Settings) and legacy mixins
+    app_name = getattr(settings, "APP_NAME", "FastAPI app")
+    app_description = getattr(settings, "APP_DESCRIPTION", None)
+    contact_name = getattr(settings, "CONTACT_NAME", None)
+    contact_email = getattr(settings, "CONTACT_EMAIL", None)
+    license_name = getattr(settings, "LICENSE_NAME", None)
 
-    if isinstance(settings, EnvironmentSettings):
+    to_update = {
+        "title": app_name,
+        "description": app_description,
+        "contact": {"name": contact_name, "email": contact_email},
+        "license_info": {"name": license_name},
+    }
+    kwargs.update(to_update)
+
+    # Environment-specific docs control
+    environment = getattr(settings, "ENVIRONMENT", EnvironmentOption.LOCAL)
+    # If ENVIRONMENT is set, we might want to hide docs in production
+    # but the legacy logic was checking for EnvironmentSettings instance.
+    # We'll use a more direct check for production.
+    if environment == EnvironmentOption.PRODUCTION:
         kwargs.update({"docs_url": None, "redoc_url": None, "openapi_url": None})
 
     # Use custom lifespan if provided, otherwise use default factory
@@ -258,42 +207,44 @@ def create_application(
     application = FastAPI(lifespan=lifespan, **kwargs)
     application.include_router(router)
 
-    if isinstance(settings, ClientSideCacheSettings):
-        application.add_middleware(ClientCacheMiddleware, max_age=settings.CLIENT_CACHE_MAX_AGE)
+    # Middleware integration via feature detection
+    client_cache_max_age = getattr(settings, "CLIENT_CACHE_MAX_AGE", None)
+    if client_cache_max_age is not None:
+        application.add_middleware(ClientCacheMiddleware, max_age=client_cache_max_age)
 
-    if isinstance(settings, CORSSettings):
+    cors_origins = getattr(settings, "CORS_ORIGINS", None)
+    if cors_origins:
         allow_credentials = True
-        if "*" in settings.CORS_ORIGINS:
+        if "*" in cors_origins:
             allow_credentials = False
 
         application.add_middleware(
             CORSMiddleware,
-            allow_origins=settings.CORS_ORIGINS,
+            allow_origins=cors_origins,
             allow_credentials=allow_credentials,
-            allow_methods=settings.CORS_METHODS,
-            allow_headers=settings.CORS_HEADERS,
+            allow_methods=getattr(settings, "CORS_METHODS", ["*"]),
+            allow_headers=getattr(settings, "CORS_HEADERS", ["*"]),
         )
 
-    if isinstance(settings, EnvironmentSettings):
-        if settings.ENVIRONMENT != EnvironmentOption.PRODUCTION:
-            docs_router = APIRouter()
-            if settings.ENVIRONMENT != EnvironmentOption.LOCAL:
-                docs_router = APIRouter(dependencies=[Depends(get_current_superuser)])
+    if environment != EnvironmentOption.PRODUCTION:
+        docs_router = APIRouter()
+        if environment != EnvironmentOption.LOCAL:
+            docs_router = APIRouter(dependencies=[Depends(get_current_superuser)])
 
-            @docs_router.get("/docs", include_in_schema=False)
-            async def get_swagger_documentation() -> fastapi.responses.HTMLResponse:
-                return get_swagger_ui_html(openapi_url="/openapi.json", title="docs")
+        @docs_router.get("/docs", include_in_schema=False)
+        async def get_swagger_documentation() -> fastapi.responses.HTMLResponse:
+            return get_swagger_ui_html(openapi_url="/openapi.json", title="docs")
 
-            @docs_router.get("/redoc", include_in_schema=False)
-            async def get_redoc_documentation() -> fastapi.responses.HTMLResponse:
-                return get_redoc_html(openapi_url="/openapi.json", title="docs")
+        @docs_router.get("/redoc", include_in_schema=False)
+        async def get_redoc_documentation() -> fastapi.responses.HTMLResponse:
+            return get_redoc_html(openapi_url="/openapi.json", title="docs")
 
-            @docs_router.get("/openapi.json", include_in_schema=False)
-            async def openapi() -> dict[str, Any]:
-                out: dict = get_openapi(title=application.title, version=application.version, routes=application.routes)
-                return out
+        @docs_router.get("/openapi.json", include_in_schema=False)
+        async def openapi() -> dict[str, Any]:
+            out: dict = get_openapi(title=application.title, version=application.version, routes=application.routes)
+            return out
 
-            application.include_router(docs_router)
+        application.include_router(docs_router)
 
     # Register standardized error handlers
     from src.app.core.errors import setup_exception_handlers

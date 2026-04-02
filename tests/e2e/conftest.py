@@ -26,7 +26,6 @@ async def e2e_client(get_test_app):
     from tests.conftest import TestingSessionLocal
 
     with (
-        patch("src.app.middleware.tenant.async_engine", new=test_async_engine),
         patch("src.app.middleware.tenant.local_session", new=TestingSessionLocal),
         patch("src.app.core.db.database.async_engine", new=test_async_engine),
         patch(

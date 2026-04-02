@@ -3,7 +3,6 @@ from unittest.mock import patch
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from src.app.core.config import settings
 from src.app.core.security import get_password_hash
 from src.app.main import app
 from src.app.modules.tenants.models import Tenant
@@ -73,13 +72,11 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     mock_session_factory.return_value.__aenter__.return_value = db_session
     mock_session_factory.return_value.__aexit__.return_value = None
 
-    # Patch the setting, Redis client, AND DB session factory
+    # Patch the Redis client AND DB session factory
     with (
-        patch.object(settings, "FEATURE_REMOVE_WASTED_CONNECTION", True),
         patch.object(cache, "client", fake_redis),
         patch("src.app.middleware.tenant.local_session", mock_session_factory),
-    ):
-        # Set User-Agent to avoid Bad Bot detection
+    ):        # Set User-Agent to avoid Bad Bot detection
         headers = {"User-Agent": "E2ETest/1.0"}
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:
             from src.app.api.dependencies import get_current_user

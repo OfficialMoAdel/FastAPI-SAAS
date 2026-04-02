@@ -600,7 +600,7 @@ def synchronous_event_bus():
     from src.app.core.events import event_bus
 
     # Enable GCRA algorithm for tests to get Retry-After headers
-    patcher = patch.object(settings, "RATE_LIMIT_ALGORITHM", "gcra")
+    patcher = patch.object(settings.rate_limit, "RATE_LIMIT_ALGORITHM", "gcra")
     patcher.start()
 
     original_publish_sync = event_bus._publish_sync

@@ -102,7 +102,7 @@ async def test_stampede_protection_lock():
     cache_module.client = mock_client
 
     # Mock settings to disable LUA script for simpler path (restore after test)
-    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
+    with patch.object(settings.r1_unified, "XFETCH_USE_LUA_SCRIPT", False):
         # Mock get/ttl/set results
         mock_client.get.return_value = b'{"data": "stale"}'
         mock_client.ttl.return_value = 100  # TTL 100s left, Total 3600 -> delta=3500 -> prob ~ 1.0 if beta=1

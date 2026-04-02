@@ -83,7 +83,7 @@ def do_connect(dbapi_connection, connection_record):
 _test_encryption_key = os.getenv("TEST_ENCRYPTION_KEY")
 if not _test_encryption_key:
     _test_encryption_key = Fernet.generate_key().decode()
-settings.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
+settings.crypt.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
 
 # Use SQLite for tests - fresh database each run, no data conflicts
 # We use a file-based DB to allow sharing between sync engine (setup) and async engine (app)
@@ -418,7 +418,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -438,7 +438,6 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
@@ -479,8 +478,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
-        patch("src.app.middleware.ip_filter.settings.BAD_BOT_FILTER_ENABLED", False),
+        patch("src.app.middleware.ip_filter.settings.security.BAD_BOT_FILTER_ENABLED", False),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
@@ -528,7 +526,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -548,7 +546,6 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
@@ -719,7 +716,7 @@ async def full_mock_context(get_test_app):
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -739,7 +736,6 @@ async def full_mock_context(get_test_app):
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 
@@ -769,7 +765,7 @@ async def unauthenticated_mock_context(get_test_app):
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
-        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -786,7 +782,6 @@ async def unauthenticated_mock_context(get_test_app):
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 

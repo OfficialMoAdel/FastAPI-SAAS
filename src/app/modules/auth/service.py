@@ -60,7 +60,7 @@ class AuthService:
 
     # Precomputed dummy bcrypt hash for timing attack prevention.
     # Used when user doesn't exist to ensure constant-time authentication.
-    _DUMMY_BCRYPT_HASH = "$2b$12$E9xqo1Z2bUoF8q1Qn8lFmu9Vz7Z3kQs5r2wEe7yHj3kLmNpQrStu"  # noqa: S105
+    _DUMMY_BCRYPT_HASH = "$2b$12$DOUePotH1f1kDX4WZ21DzuRgFk7C8xFhasEURTDHCx1KnvQstFIvi"  # noqa: S105
 
     # Atomic Lua script for login attempt checking.
     # Combines lockout check + increment + expire into single Redis roundtrip.
@@ -309,9 +309,15 @@ return new_attempts
 
             import jwt
 
+            from src.app.core.security.jwt_utils import validate_jwt_length
             from src.app.core.security.session_manager import session_manager as global_session_manager
 
-            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+            # SECURITY: Validate token length before unverified decoding
+            if not validate_jwt_length(access_token):
+                logger.warning("Unverified JWT decode blocked: token too long")
+                decoded_token = {}
+            else:
+                decoded_token = jwt.decode(access_token, options={"verify_signature": False})
             session_id = decoded_token.get("jti", access_token[:32])
             client_ip = request.client.host if request.client else "Unknown"
 
@@ -474,9 +480,15 @@ return new_attempts
                     if db_user:
                         import jwt
 
+                        from src.app.core.security.jwt_utils import validate_jwt_length
                         from src.app.core.security.session_manager import session_manager as global_session_manager
 
-                        decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+                        # SECURITY: Validate token length before unverified decoding
+                        if not validate_jwt_length(access_token):
+                            logger.warning("Unverified JWT decode blocked during logout: token too long")
+                            decoded_token = {}
+                        else:
+                            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
                         session_id = decoded_token.get("jti", access_token[:32])
                         await global_session_manager.invalidate_session(db_user["id"], session_id)
                 except Exception as e:

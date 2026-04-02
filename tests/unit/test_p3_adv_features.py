@@ -53,7 +53,7 @@ async def test_batch_enqueue_pipeline():
     bus._arq_queue = mock_queue
 
     # Enable batching
-    with patch.object(settings, "EVENT_BUS_USE_BATCH_ENQUEUE", True):
+    with patch.object(settings.r1_unified, "EVENT_BUS_USE_BATCH_ENQUEUE", True):
         # We need >1 handlers to trigger batch
         h1 = AsyncMock()
         h2 = AsyncMock()
@@ -92,7 +92,7 @@ async def test_event_semaphore_concurrency():
     # Mock settings to ensure known limit
     # Note: EVENT_BUS_CONCURRENCY is in the root settings or EventSettings mixin,
     # inherited by settings. It is NOT in r1_unified.
-    with patch.object(settings, "EVENT_BUS_CONCURRENCY", 10):
+    with patch.object(settings.events, "EVENT_BUS_CONCURRENCY", 10):
         bus = EventBus()
         # Verify semaphore is initialized with correct limit
         assert bus._concurrency_semaphore._value == 10
@@ -178,7 +178,7 @@ async def test_refresh_lock_logic():
     mock_client.ttl.return_value = 10
 
     # Disable Lua script for easier testing of python logic
-    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
+    with patch.object(settings.r1_unified, "XFETCH_USE_LUA_SCRIPT", False):
         with patch.object(cache, "client", mock_client):
             # Force random to trigger refresh (return 0.0)
             with patch("random.random", return_value=0.0):
@@ -213,7 +213,7 @@ async def test_refresh_lock_denied():
     mock_client.ttl.return_value = 10
     mock_client.set.return_value = False  # Lock denied
 
-    with patch.object(settings, "XFETCH_USE_LUA_SCRIPT", False):
+    with patch.object(settings.r1_unified, "XFETCH_USE_LUA_SCRIPT", False):
         with patch.object(cache, "client", mock_client):
             with patch("random.random", return_value=0.0):
                 result = await cache.get_with_stampede_protection(key, mock_fetch_func, ttl=ttl, beta=100.0)

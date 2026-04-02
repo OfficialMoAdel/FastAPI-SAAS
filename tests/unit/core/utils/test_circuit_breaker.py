@@ -89,7 +89,7 @@ class TestCircuitBreakerBasic:
         from src.app.core.config import settings
 
         # Patch the feature flag to test legacy path
-        with patch.object(settings, "CIRCUIT_BREAKER_USE_DOUBLE_CHECK", False):
+        with patch.object(settings.r1_unified, "CIRCUIT_BREAKER_USE_DOUBLE_CHECK", False):
             # Feature flag should be False when patched
             assert settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK is False
 

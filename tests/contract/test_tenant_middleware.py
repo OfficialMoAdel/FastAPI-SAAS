@@ -89,7 +89,7 @@ class TestTenantMiddlewareContract:
             mock_get.return_value = None
 
             # Also mock async_engine to prevent real DB connections
-            with patch("src.app.middleware.tenant.async_engine") as mock_engine:
+            with patch("src.app.core.config.settings") as mock_engine:
                 mock_cm = MagicMock()
                 mock_cm.__aenter__ = AsyncMock(return_value=AsyncMock())
                 mock_cm.__aexit__ = AsyncMock(return_value=None)

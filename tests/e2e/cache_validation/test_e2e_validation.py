@@ -53,7 +53,7 @@ class TestL1CacheE2E:
             nonlocal redis_call_count
             redis_call_count += 1
             logger.info(f"Redis GET called (call #{redis_call_count}): {key}")
-            return '{"id": "tenant-001", "slug": "test", "is_active": true}'
+            return '{"id": "00000000-0000-0000-0000-000000000001", "slug": "test", "is_active": true}'
 
         mock_redis = AsyncMock()
         mock_redis.get = mock_redis_get

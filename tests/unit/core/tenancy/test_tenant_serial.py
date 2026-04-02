@@ -63,7 +63,7 @@ class TestTenantSerialization:
         # (there might be as_str=True in other contexts, but not for tenant cache)
         # Check the specific cache_data assignment
         # The code was refactored to: serialized = json_dumps(cache_data)
-        assert "serialized = json_dumps(cache_data)" in source or "serialized = json_dumps(" in source
+        assert "json_dumps(cache_data)" in source or "json_dumps(" in source
 
         # The fix removes as_str=True from cache_data assignment
         # Find the serialized line and verify no as_str

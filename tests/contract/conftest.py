@@ -85,7 +85,6 @@ async def contract_mock_context(get_contract_test_app):
             return_value=fake_tenant,
         ),
         patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 
@@ -120,7 +119,6 @@ async def unauthenticated_contract_context(get_contract_test_app):
             return_value=fake_tenant,
         ),
         patch("src.app.core.db.database.async_get_db", side_effect=override_get_db),
-        patch("src.app.middleware.tenant.async_engine", new=create_mock_engine()),
     ):
         yield
 
