@@ -32,10 +32,6 @@ MAX_SCAN_ITERATIONS = 1000
 logger = get_logger(__name__)
 
 # Structlog logger for stampede
-# We import get_logger from structlog, and type it as Any to bypass mypy checks
-# since structlog loggers support kwargs which standard Logger does not.
-from structlog import get_logger
-
 stampede_logger: Any = get_logger("src.app.core.utils.cache.stampede")
 
 

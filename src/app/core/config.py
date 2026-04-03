@@ -183,13 +183,9 @@ class DatabaseSettings(BaseSettings):
         - 1 worker: 10-20 connections
         - 4 workers: 40-80 connections
         - 8 workers: 80-160 connections
-
-        If DB_POOL_SIZE is explicitly set, use it. Otherwise auto-calculate.
         """
-        # SECURITY FIX: Handle empty string environment variable
-        # Empty string is truthy, so we need to check for actual content
-        pool_size = os.getenv("DB_POOL_SIZE")
-        if pool_size and pool_size.strip():
+        # If DB_POOL_SIZE is explicitly set, use it. Otherwise auto-calculate.
+        if "DB_POOL_SIZE" in self.model_fields_set:
             return self.DB_POOL_SIZE
         return self.DB_WORKERS * 10
 
@@ -539,7 +535,6 @@ class CORSSettings(BaseSettings):
         Warns if wildcard '*' is used in non-local environments.
         """
         import logging
-        import os
 
         env = os.getenv("ENVIRONMENT", "local")
         has_wildcard = "*" in self.CORS_ORIGINS

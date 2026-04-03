@@ -215,6 +215,6 @@ class TenantMiddleware(BaseHTTPMiddleware):
         return TenantContext(
             tenant_id=tenant_id,
             tenant_slug=data["slug"],
-            tenant_name=data.get("name", "cached"),
+            tenant_name=data.get("name", ""),
             is_active=data["is_active"],
         )

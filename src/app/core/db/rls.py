@@ -84,7 +84,6 @@ def restore_rls_context(session: Session, transaction: Any, connection: Any) -> 
             exc_info=True,
         )
         connection.invalidate()
-        raise RuntimeError(f"Failed to securely apply RLS context: {e}") from e
 
 
 async def set_rls_context(

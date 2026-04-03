@@ -210,7 +210,7 @@ async def metrics_export() -> str:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to export metrics: {e}")
 
 
-@router.get("/metrics/json")
+@router.get("/metrics/json", dependencies=[Depends(get_current_superuser)])
 async def metrics_json() -> dict[str, Any]:
     """Metrics export in JSON format.
 

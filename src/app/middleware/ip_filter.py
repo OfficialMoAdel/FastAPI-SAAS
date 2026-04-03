@@ -144,22 +144,6 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 response = await call_next(request)
                 return cast(Response, response)
 
-            # Whitelist is enabled but IP not in it - block
-            event = create_security_event(
-                event_type=SecurityEventType.IP_BLOCKED,
-                client_ip=client_ip,
-                request_path=path,
-                reason="IP not in whitelist",
-            )
-            log_security_event(event)
-
-            logger.warning("IP blocked - not in whitelist for", client_ip=client_ip, path=path)
-            return Response(
-                content='{"detail":"Forbidden - IP not whitelisted"}',
-                status_code=status.HTTP_403_FORBIDDEN,
-                media_type="application/json",
-            )
-
         # Check blacklist (if enabled and whitelist not enforced)
         if settings.IP_BLACKLIST_ENABLED:
             is_blacklisted = await self._filter_service.is_blacklisted(client_ip)

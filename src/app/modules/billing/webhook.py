@@ -181,7 +181,12 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
         # No need to mark again - atomic SET NX handles this
 
     except Exception as e:
-        logger.error("Error handling webhook event (ID: ):", event_type=event_type, event_id=event_id, error=e)
+        logger.error(
+            f"Error handling webhook event (ID: {event_id}):",
+            event_type=event_type,
+            event_id=event_id,
+            error=e,
+        )
         # Do NOT mark as processed on failure - allow Stripe to retry
         # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
         # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!

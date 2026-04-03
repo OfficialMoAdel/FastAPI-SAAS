@@ -842,6 +842,9 @@ async def process_event_handler(
 
             from src.app.core.tenancy.context import TenantContext, set_current_tenant
 
+            if not all(k in tenant_info for k in ("id", "slug", "name", "is_active")):
+                raise KeyError(f"Missing required keys in tenant_info: {tenant_info}")
+
             tenant_context = TenantContext(
                 tenant_id=UUID(tenant_info["id"]),
                 tenant_slug=tenant_info["slug"],
@@ -853,6 +856,7 @@ async def process_event_handler(
             logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
         except Exception as e:
             logger.error("Failed to restore tenant context in worker", error=str(e))
+            raise RuntimeError(f"Failed to restore tenant context in worker: {e}") from e
 
     try:
         # Dynamically import and execute handler

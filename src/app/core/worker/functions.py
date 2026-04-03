@@ -1,5 +1,4 @@
 import asyncio
-import logging
 from uuid import UUID
 
 from arq.worker import Worker
@@ -17,7 +16,9 @@ except ImportError:
     pass
 
 # Centralized logging configured via src/app/core/logger.py (structlog)
+from src.app.core.logger import get_logger
 
+logger = get_logger(__name__)
 
 # -------- background tasks --------
 @monitor_job("sample_background_task")
@@ -62,7 +63,7 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
             await service.deliver_webhook(delivery_id)
             return f"Webhook {delivery_id} delivered."
         except Exception as e:
-            logging.error(f"Failed to deliver webhook {delivery_id}: {e}")
+            logger.error(f"Failed to deliver webhook {delivery_id}: {e}")
             raise
 
 
@@ -71,12 +72,12 @@ async def migrate_sessions_task(ctx: Worker) -> str:
     """Background task to migrate sessions to hash format."""
     from src.app.core.security.session_manager import session_manager
 
-    logging.info("Starting session migration task")
+    logger.info("Starting session migration task")
     try:
         count = await session_manager.migrate_to_hash()
         return f"Migrated {count} users to hash format."
     except Exception as e:
-        logging.error(f"Session migration failed: {e}")
+        logger.error(f"Session migration failed: {e}")
         raise
 
 
@@ -94,7 +95,7 @@ async def flush_audit_logs_task(ctx: dict) -> str:
         flush_audit_log_buffer,
     )
 
-    logging.info("Starting audit log flush task")
+    logger.info("Starting audit log flush task")
     total = 0
 
     async with job_bypass_context("Flushing audit logs to database") as db:
@@ -108,7 +109,7 @@ async def flush_audit_logs_task(ctx: dict) -> str:
                     break
                 total += count
         except Exception as e:
-            logging.error(f"Failed to flush audit logs: {e}")
+            logger.error(f"Failed to flush audit logs: {e}")
             raise
 
     return f"Flushed {total} audit logs."
@@ -125,23 +126,23 @@ async def sync_bloom_filter_task(ctx: dict) -> str:
     """
     from src.app.core.security.bloom_filter import sync_bloom_filter_from_redis
 
-    logging.info("Starting Bloom filter sync task")
+    logger.info("Starting Bloom filter sync task")
 
     async with job_bypass_context("Syncing bloom filter from Redis"):
         try:
             count = await sync_bloom_filter_from_redis()
             if count > 0:
-                logging.info(f"Synced {count} tokens to Bloom filter")
+                logger.info(f"Synced {count} tokens to Bloom filter")
             return f"Synced {count} tokens to Bloom filter."
         except Exception as e:
-            logging.error(f"Bloom filter sync failed: {e}")
+            logger.error(f"Bloom filter sync failed: {e}")
             raise
 
 
 # -------- base functions --------
 async def startup(ctx: Worker) -> None:
-    logging.info("Worker Started")
+    logger.info("Worker Started")
 
 
 async def shutdown(ctx: Worker) -> None:
-    logging.info("Worker end")
+    logger.info("Worker end")

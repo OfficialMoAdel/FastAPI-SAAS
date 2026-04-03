@@ -26,6 +26,8 @@ load_dotenv("src/.env")
 
 # Disable bad bot filter for tests (httpx is used by test clients)
 os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
+# Enable test mode to use NullPool and prevent event loop closed errors
+os.environ["TESTING"] = "1"
 
 from src.app.core.config import settings
 

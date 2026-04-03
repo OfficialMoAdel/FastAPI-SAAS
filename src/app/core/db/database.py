@@ -1,5 +1,4 @@
 import os
-import sys
 import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -68,7 +67,6 @@ def _create_engine() -> AsyncEngine:
         "pytest" in os.environ.get("_", "")
         or "PYTEST_CURRENT_TEST" in os.environ
         or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
-        or "pytest" in sys.modules
     )
 
     if _is_testing:

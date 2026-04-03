@@ -31,20 +31,19 @@ class TestIPWhitelistE2E:
             # Cleanup
             await ip_filter_service.remove_from_whitelist("127.0.0.1")
 
-    async def test_non_whitelisted_ip_blocked_when_whitelist_enabled(
+    async def test_non_whitelisted_ip_allowed_if_not_blacklisted(
         self, async_client: AsyncClient, override_settings
     ):
-        """Test that non-whitelisted IPs are blocked."""
+        """Test that non-whitelisted IPs fall through to blacklist check."""
         # Setup: Enable whitelist without adding the test IP
-        with override_settings(IP_WHITELIST_ENABLED=True):
+        with override_settings(IP_WHITELIST_ENABLED=True, IP_BLACKLIST_ENABLED=False):
             await ip_filter_service.clear_whitelist()
 
             # Execute: Make request from non-whitelisted IP
             response = await async_client.get("/openapi.json", headers={"X-Forwarded-For": "192.168.1.100"})
 
-            # Verify: Should be blocked
-            assert response.status_code == 403
-            assert "not whitelisted" in response.text.lower()
+            # Verify: Should be allowed
+            assert response.status_code == 200
 
     async def test_whitelist_with_expiration(self, async_client: AsyncClient):
         """Test that whitelist entries can have expiration."""

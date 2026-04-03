@@ -74,9 +74,12 @@ class BaseService(Generic[T]):
         Note: No lock needed - FastCRUD initialization is synchronous and
         the cache is populated during first service instantiation per model.
         """
-        if model not in _CRUD_CACHE:
-            _CRUD_CACHE[model] = FastCRUD(model)
-        return _CRUD_CACHE[model]
+        crud = _CRUD_CACHE.get(model)
+        if crud is None:
+            crud = FastCRUD(model)
+            _CRUD_CACHE.setdefault(model, crud)
+            crud = _CRUD_CACHE[model]
+        return crud
 
     async def get(self, id: Any) -> T | None:
         """Get a single record by ID.
@@ -122,7 +125,10 @@ class BaseService(Generic[T]):
             sort_columns = kwargs.pop("sort_columns", None)
             sort_orders = kwargs.pop("sort_orders", None)
 
-            if hasattr(self.crud, "_inject_tenant_filter"):
+            from src.app.core.db.tenant_crud import TenantAwareCRUD
+            if isinstance(self.crud, TenantAwareCRUD):
+                kwargs = self.crud._inject_tenant_filter(kwargs)
+            elif hasattr(self.crud, "_inject_tenant_filter"):
                 kwargs = self.crud._inject_tenant_filter(kwargs)
 
             # Apply kwargs filters via FastCRUD's processor

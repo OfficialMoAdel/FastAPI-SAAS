@@ -132,6 +132,8 @@ class TenantAwareCRUD(
                 # Only set if the field exists and is None/empty
                 if hasattr(object, "tenant_id") and not getattr(object, "tenant_id"):
                     setattr(object, "tenant_id", tenant_id)
+        else:
+            raise RuntimeError("Tenant-scoped create executed without an active tenant context")
 
         return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
 

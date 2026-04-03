@@ -227,7 +227,7 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
 
-    project_name = getattr(settings, "PROJECT_NAME", "FastAPI SaaS")
+    project_name = getattr(settings.app, "APP_NAME", "FastAPI SaaS")
     version = getattr(settings, "VERSION", "1.0.0")
     description = getattr(settings, "API_DESCRIPTION", "FastAPI SaaS Boilerplate")
 

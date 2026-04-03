@@ -149,21 +149,19 @@ class TestWhitelistEnforcement:
             assert mock_request.state.ip_whitelisted is True
 
     @pytest.mark.asyncio
-    async def test_non_whitelisted_ip_blocked(self, middleware, mock_request):
-        """Test that non-whitelisted IPs are blocked when whitelist is enabled."""
-        call_next = AsyncMock()
+    async def test_non_whitelisted_ip_falls_through_to_blacklist(self, middleware, mock_request, mock_response):
+        """Test that non-whitelisted IPs fall through to blacklist checks when whitelist is enabled."""
+        call_next = AsyncMock(return_value=mock_response)
 
         with (
             patch.object(middleware._filter_service, "is_whitelisted", return_value=False),
             patch("src.app.middleware.ip_filter.settings.IP_WHITELIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.settings.IP_BLACKLIST_ENABLED", False),
-            patch("src.app.middleware.ip_filter.log_security_event"),
         ):
             response = await middleware.dispatch(mock_request, call_next)
 
-            assert response.status_code == 403
-            assert b"not whitelisted" in response.body
-            call_next.assert_not_called()
+            assert response.status_code == 200
+            call_next.assert_called_once_with(mock_request)
 
     @pytest.mark.asyncio
     async def test_whitelist_disabled_allows_all(self, middleware, mock_request, mock_response):

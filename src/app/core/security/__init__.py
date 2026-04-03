@@ -305,10 +305,10 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             # Cache miss - fetch from DB and cache for 5 minutes
             from src.app.modules.users.crud import crud_users
 
-            user = await crud_users.get(db, username=username_or_email)
-            if not user:
-                # Try by email if username lookup failed
+            if "@" in username_or_email:
                 user = await crud_users.get(db, email=username_or_email)
+            else:
+                user = await crud_users.get(db, username=username_or_email)
             if not user or user.get("token_version") != token_version:
                 # Token version mismatch - user changed password or was invalidated
                 return None
@@ -442,7 +442,8 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
                         tenant_id = tenant.id
                     else:
                         # Fallback for system tokens or tokens without tenant_id
-                        tenant_id = "00000000-0000-0000-0000-000000000000"
+                        import uuid
+                        tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
                 await crud_token_blacklist.create(
                     db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)

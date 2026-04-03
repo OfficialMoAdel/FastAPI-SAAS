@@ -75,7 +75,6 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
     "xss_iframe_tag": ("xss_iframe", AttackType.XSS),
     "xss_object_tag": ("xss_object", AttackType.XSS),
     "path_dotdot": ("path_dotdot_slash", AttackType.PATH_TRAVERSAL),
-    "path_triple": ("path_triple_dot", AttackType.PATH_TRAVERSAL),
     "path_enc": ("path_encoded", AttackType.PATH_TRAVERSAL),
     "path_penc": ("path_partial_encoded", AttackType.PATH_TRAVERSAL),
 }
@@ -96,7 +95,6 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"|(?P<xss_iframe_tag><iframe[\s>])"
     rb"|(?P<xss_object_tag><object[\s>])"
     rb"|(?P<path_dotdot>\.\.\/)"
-    rb"|(?P<path_triple>\.\.\.)"
     rb"|(?P<path_enc>%2e%2e%2f)"
     rb"|(?P<path_penc>%2e%2e\/)",
     re.IGNORECASE | re.MULTILINE,
@@ -172,59 +170,53 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Check request body if it's a POST/PUT/PATCH with content
         if request.method in ("POST", "PUT", "PATCH"):
-            content_type = request.headers.get("content-type", "")
-            text_content_types = ["application/json", "application/x-www-form-urlencoded", "text/"]
-            if any(ct in content_type.lower() for ct in text_content_types):
-                # BUG FIX: Content-Length pre-check previously used `pass` in the oversized
-                # branch, letting execution fall through to `await request.body()` regardless.
-                # Now we set a flag so extremely large payloads are genuinely skipped.
-                # (They should already be blocked by BodyLimitMiddleware, but defense-in-depth.)
-                skip_body = False
-                content_length_str = request.headers.get("content-length")
-                if content_length_str:
-                    try:
-                        max_body = getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
-                        if int(content_length_str) > max_body:
-                            skip_body = True
-                            logger.debug(
-                                "Skipping attack scan of oversized body | content-length=%s",
-                                content_length_str,
-                            )
-                    except ValueError:
-                        pass  # Malformed Content-Length; proceed with body read
-
-                if not skip_body:
-                    try:
-                        body = await request.body()
-                        if body:
-                            # Re-inject body into a new receive channel so downstream handlers can read it.
-                            # This is necessary because await request.body() consumes the stream.
-                            async def receive():
-                                return {"type": "http.request", "body": body, "more_body": False}
-
-                            # Using request._receive (private API) as no public alternative exists.
-                            try:
-                                request._receive = receive
-                            except AttributeError as e:
-                                # BUG FIX: This is an internal server error (private API not available),
-                                # NOT an attack. Raise BodyScanError to forcefully return 500
-                                # instead of failing open and allowing a malicious payload through.
-                                logger.error("Failed to reinject request body - request._receive not available")
-                                raise BodyScanError("Failed to reinject request body") from e
-
-                            # Scan raw bytes directly — no UTF-8 decode needed
-                            self._check_for_patterns(body, "request_body", detected_attacks)
-                    except Exception as e:
-                        logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
-                        # Fail closed on body read error
-                        detected_attacks.append(
-                            {
-                                "attack_type": "invalid_body",
-                                "pattern_name": "body_read_error",
-                                "location": "request_body",
-                                "matched_content": "Error reading body",
-                            }
+            # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
+            skip_body = False
+            content_length_str = request.headers.get("content-length")
+            if content_length_str:
+                try:
+                    max_body = getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
+                    if int(content_length_str) > max_body:
+                        skip_body = True
+                        logger.debug(
+                            "Skipping attack scan of oversized body | content-length=%s",
+                            content_length_str,
                         )
+                except ValueError:
+                    pass  # Malformed Content-Length; proceed with body read
+
+            if not skip_body:
+                try:
+                    body = await request.body()
+                    if body:
+                        # Re-inject body into a new receive channel so downstream handlers can read it.
+                        # This is necessary because await request.body() consumes the stream.
+                        async def receive():
+                            return {"type": "http.request", "body": body, "more_body": False}
+
+                        # Using request._receive (private API) as no public alternative exists.
+                        try:
+                            request._receive = receive
+                        except AttributeError as e:
+                            # BUG FIX: This is an internal server error (private API not available),
+                            # NOT an attack. Raise BodyScanError to forcefully return 500
+                            # instead of failing open and allowing a malicious payload through.
+                            logger.error("Failed to reinject request body - request._receive not available")
+                            raise BodyScanError("Failed to reinject request body") from e
+
+                        # Scan raw bytes directly — no UTF-8 decode needed
+                        self._check_for_patterns(body, "request_body", detected_attacks)
+                except Exception as e:
+                    logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
+                    # Fail closed on body read error
+                    detected_attacks.append(
+                        {
+                            "attack_type": "invalid_body",
+                            "pattern_name": "body_read_error",
+                            "location": "request_body",
+                            "matched_content": "Error reading body",
+                        }
+                    )
 
         return detected_attacks
 

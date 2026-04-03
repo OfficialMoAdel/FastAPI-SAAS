@@ -148,6 +148,9 @@ class UserService(BaseService[User]):
                     "profile_image_url": user.profile_image_url,
                     "tier_id": user.tier_id,
                     "tenant_id": user.tenant_id,
+                    "is_superuser": user.is_superuser,
+                    "is_email_verified": user.is_email_verified,
+                    "is_active": user.is_active,
                 }
                 user_id = user.id
                 email = user.email
@@ -376,28 +379,6 @@ class UserService(BaseService[User]):
                 await cache.client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
             except Exception as e:
                 logger.warning("Failed to cache auth info for :", identifier=identifier, error=e)
-
-        # FIXED: Ensure return type is dict as expected by callers and hinted in signature.
-        # This resolves the type mismatch between ORM objects and dictionaries.
-        if hasattr(user_with_tier, "__dict__") and not isinstance(user_with_tier, dict):
-            # Convert ORM object to dict
-            return {
-                "id": user_with_tier.id,
-                "username": user_with_tier.username,
-                "email": user_with_tier.email,
-                "hashed_password": user_with_tier.hashed_password,
-                "tenant_id": user_with_tier.tenant_id,
-                "is_superuser": user_with_tier.is_superuser,
-                "is_deleted": user_with_tier.is_deleted,
-                "is_active": user_with_tier.is_active,
-                "token_version": user_with_tier.token_version,
-                "tier": {
-                    "id": user_with_tier.tier.id,
-                    "name": user_with_tier.tier.name,
-                }
-                if user_with_tier.tier
-                else None,
-            }
 
         return user_with_tier
 

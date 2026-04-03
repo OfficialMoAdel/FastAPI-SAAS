@@ -195,9 +195,11 @@ def test_restore_rls_context_error():
         mock_tenant.id = "tenant-123"
         mock_get_tenant.return_value = mock_tenant
 
-        # Should raise RuntimeError because fail-closed behavior
-        with pytest.raises(RuntimeError):
-            restore_rls_context(mock_session, mock_txn, mock_conn)
+        # Should NOT raise RuntimeError because raising from event listener can corrupt state
+        restore_rls_context(mock_session, mock_txn, mock_conn)
+
+        # Verify connection invalidation is still called to protect pool
+        mock_conn.invalidate.assert_called_once()
 @pytest.mark.asyncio
 async def test_with_tenant_context():
     @with_tenant_context(tenant_id="tenant-123", user_id="user-123")

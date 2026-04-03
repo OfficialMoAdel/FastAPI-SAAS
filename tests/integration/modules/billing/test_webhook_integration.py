@@ -36,9 +36,12 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
     # Create a user to associate with the subscription
     user = await create_test_user(email="webhook_test@example.com")
 
+    import uuid
+    unique_event_id = f"evt_test_checkout_{uuid.uuid4().hex}"
+
     # Mock Stripe event payload
     event_payload = {
-        "id": "evt_test_checkout",
+        "id": unique_event_id,
         "type": "checkout.session.completed",
         "data": {
             "object": {
@@ -149,8 +152,11 @@ async def test_webhook_invoice_payment_succeeded_flow(
     await db_session.commit()
     await db_session.refresh(subscription)
 
+    import uuid
+    unique_event_id = f"evt_test_invoice_{uuid.uuid4().hex}"
+
     event_payload = {
-        "id": "evt_test_invoice",
+        "id": unique_event_id,
         "type": "invoice.payment_succeeded",
         "data": {
             "object": {
@@ -167,8 +173,18 @@ async def test_webhook_invoice_payment_succeeded_flow(
         patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify,
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.core.db.tenant_crud.get_tenant_context") as mock_get_tenant,
     ):
         mock_verify.return_value = event_payload
+
+        from src.app.core.tenancy.context import TenantContext
+        mock_ctx = TenantContext(
+            tenant_id=tenant.id,
+            tenant_slug=tenant.slug,
+            tenant_name=tenant.name,
+            is_active=True
+        )
+        mock_get_tenant.return_value = mock_ctx
 
         # Both contexts use the same test session
         mock_ctx_instance = AsyncMock()
