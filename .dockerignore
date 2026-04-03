@@ -20,3 +20,14 @@ coverage.xml
 .mypy_cache
 .pytest_cache
 .hypothesiss
+scripts
+crudadmin_data
+.github
+tests
+docs
+examples
+tasks
+reports
+logs
+*.md
+*.db

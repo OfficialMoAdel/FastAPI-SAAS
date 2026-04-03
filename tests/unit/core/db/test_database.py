@@ -6,13 +6,13 @@ This file consolidates tests from:
 - test_rls_listener.py
 """
 
-from unittest.mock import AsyncMock, MagicMock, Mock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
-from src.app.core.db.rls import RLS_TENANT_VAR, restore_rls_context
+from src.app.core.db.rls import restore_rls_context
 from src.app.core.utils import cache
 
 # =============================================================================
@@ -163,69 +163,62 @@ async def test_migrate_tenant_cache_index_ttl():
 # =============================================================================
 
 
-def test_restore_rls_context_with_tenant():
+@pytest.mark.asyncio
+async def test_restore_rls_context_with_tenant():
     """Test that restore_rls_context executes SQL when tenant is set."""
-    mock_session = Mock()
-    # Use a real dict so session.info.get("rls_bypass") returns None (falsy).
-    # Mock().info.get() returns a truthy Mock, causing bypass SQL to also fire.
-    mock_session.info = {}
-    mock_transaction = Mock()
-    mock_connection = Mock()
-    # Must mock dialect.name since restore_rls_context checks for "postgresql"
-    mock_connection.dialect = Mock()
-    mock_connection.dialect.name = "postgresql"
+    mock_dbapi_connection = MagicMock()
 
-    # Mock tenant
-    mock_tenant = Mock()
-    mock_tenant.id = 123
+    mock_tenant = MagicMock()
+    mock_tenant.id = "123"
 
-    # We patch where it is imported in rls.py
-    # Since rls.py does `from ..tenancy.context import get_current_tenant`
-    # We should patch `src.app.core.db.rls.get_current_tenant`
     with patch("src.app.core.db.rls.get_current_tenant", return_value=mock_tenant):
-        restore_rls_context(mock_session, mock_transaction, mock_connection)
+        restore_rls_context(mock_dbapi_connection, None, None)
 
-    # Verify execute was called
-    mock_connection.execute.assert_called_once()
-    call_args = mock_connection.execute.call_args
-    sql_text = call_args[0][0]
-    params = call_args[0][1]
+    # Verify run_async was called
+    mock_dbapi_connection.run_async.assert_called_once()
 
-    # The actual implementation uses parameterized query with :tenant_var
-    assert ":tenant_var" in str(sql_text)
-    assert params["tenant_var"] == RLS_TENANT_VAR
-    assert params["tenant_id"] == "123"
+    # Call the async function passed to run_async
+    async_func = mock_dbapi_connection.run_async.call_args[0][0]
+    mock_conn = AsyncMock()
+    await async_func(mock_conn)
+
+    mock_conn.execute.assert_called_once()
+    sql_text = mock_conn.execute.call_args[0][0]
+    assert "set_config('app.current_tenant_id', '123', false)" in str(sql_text)
 
 
-def test_restore_rls_context_without_tenant():
-    """Test that restore_rls_context does nothing when no tenant is set."""
-    mock_session = Mock()
-    # Use a real dict so session.info.get("rls_bypass") returns None (falsy)
-    mock_session.info = {}
-    mock_transaction = Mock()
-    mock_connection = Mock()
-    mock_connection.dialect = Mock()
-    mock_connection.dialect.name = "postgresql"
+@pytest.mark.asyncio
+async def test_restore_rls_context_without_tenant():
+    """Test that restore_rls_context clears RLS when no tenant is set."""
+    mock_dbapi_connection = MagicMock()
 
     with patch("src.app.core.db.rls.get_current_tenant", return_value=None):
-        restore_rls_context(mock_session, mock_transaction, mock_connection)
+        restore_rls_context(mock_dbapi_connection, None, None)
 
-    mock_connection.execute.assert_not_called()
+    mock_dbapi_connection.run_async.assert_called_once()
+
+    async_func = mock_dbapi_connection.run_async.call_args[0][0]
+    mock_conn = AsyncMock()
+    await async_func(mock_conn)
+
+    assert mock_conn.execute.call_count == 3
 
 
-def test_restore_rls_context_sqlite_skipped():
-    """Test that restore_rls_context skips execution for SQLite (used in tests)."""
-    mock_session = Mock()
-    mock_transaction = Mock()
-    mock_connection = Mock()
-    mock_connection.dialect = Mock()
-    mock_connection.dialect.name = "sqlite"
-
-    mock_tenant = Mock()
-    mock_tenant.id = 123
+@pytest.mark.asyncio
+async def test_restore_rls_context_exception_handling():
+    """Test that restore_rls_context logs heavily but doesn't raise."""
+    mock_dbapi_connection = MagicMock()
+    mock_tenant = MagicMock()
+    mock_tenant.id = "123"
 
     with patch("src.app.core.db.rls.get_current_tenant", return_value=mock_tenant):
-        restore_rls_context(mock_session, mock_transaction, mock_connection)
+        restore_rls_context(mock_dbapi_connection, None, None)
 
-    # Should not execute for SQLite
-    mock_connection.execute.assert_not_called()
+    async_func = mock_dbapi_connection.run_async.call_args[0][0]
+    mock_conn = AsyncMock()
+    mock_conn.execute.side_effect = Exception("DB error")
+
+    with patch("src.app.core.db.rls.logger.critical") as mock_logger:
+        # Should not raise
+        await async_func(mock_conn)
+        mock_logger.assert_called_once()

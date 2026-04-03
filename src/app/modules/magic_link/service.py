@@ -19,7 +19,7 @@ from src.app.core.security import (
     create_refresh_token,
 )
 from src.app.core.security.tokens import MagicLinkManager
-from src.app.modules.auth.schemas import AuthTokenResponse, LoginMFAResponse
+from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.exceptions import (
     InvalidMagicLinkError,
     MagicLinkUserInactiveError,
@@ -148,14 +148,15 @@ class MagicLinkService:
             may_be_delayed=False,
         )
 
-    async def verify_magic_link(self, token: str) -> AuthTokenResponse | LoginMFAResponse:
+    async def verify_magic_link(self, token: str, response: Any = None) -> LoginTokenResponse | LoginMFAResponse:
         """Verify a magic link token and return auth tokens.
 
         Args:
             token: The magic link token from the email.
+            response: Optional FastAPI Response object to set cookies.
 
         Returns:
-            AuthTokenResponse with access and refresh tokens, or
+            LoginTokenResponse with access token, or
             LoginMFAResponse if MFA is required.
 
         Raises:
@@ -165,7 +166,8 @@ class MagicLinkService:
         """
         # Validate token in Redis (one-time use)
         manager = self._get_magic_link_manager()
-        token_data = await manager.validate_token(token)
+        # Non-destructive read to preserve token if MFA check fails
+        token_data = await manager.peek_token(token)
 
         if token_data is None:
             # Token not found - could be expired or already used
@@ -194,6 +196,11 @@ class MagicLinkService:
 
         mfa_service = MFAService()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
+
+        # MFA check succeeded, now safely consume the token
+        if not await manager.consume_token(token):
+            # Token was consumed concurrently
+            raise InvalidMagicLinkError("Token expired or already used")
 
         # Update audit trail in database before returning (handles MFA drops)
         from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
@@ -233,6 +240,21 @@ class MagicLinkService:
         # Create auth tokens
         tokens = await self._create_auth_tokens(user)
 
+        # Set cookie if response is provided
+        refresh_token = tokens.pop("refresh_token", None)
+        if response and refresh_token:
+            from src.app.core.config import EnvironmentOption
+            max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+            is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+            response.set_cookie(
+                key="refresh_token",
+                value=refresh_token,
+                httponly=True,
+                secure=is_production,
+                samesite="strict" if is_production else "lax",
+                max_age=max_age,
+            )
+
         logger.info(
             "Magic link verified successfully",
             extra={
@@ -241,7 +263,7 @@ class MagicLinkService:
             },
         )
 
-        return AuthTokenResponse(**tokens)
+        return LoginTokenResponse(**tokens)
 
     def _get_magic_link_manager(self) -> MagicLinkManager:
         """Get MagicLinkManager instance.

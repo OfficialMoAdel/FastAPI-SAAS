@@ -1,15 +1,16 @@
 from typing import Any
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
+from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.auth.schemas import LoginTokenResponse
 from src.app.modules.passkey.schemas import (
     PasskeyAuthenticationOptionsResponse,
     PasskeyCredentialResponse,
@@ -140,11 +141,12 @@ async def login_begin(
 
 @router.post(
     "/login/verify",
-    response_model=AuthTokenResponse,
+    response_model=LoginTokenResponse,
     dependencies=[Depends(passkey_login_rate_limit)],
 )
 async def login_complete(
     request: PasskeyLoginVerifyRequest,
+    response: Response,
     db: AsyncSession = Depends(async_get_db),
     redis: Redis = Depends(async_get_redis),
 ):
@@ -159,4 +161,19 @@ async def login_complete(
         credential=request.credential,
         challenge_id=request.challenge_id,
     )
-    return AuthTokenResponse(**result)
+
+    # Set the refresh token as an HttpOnly, Secure cookie
+    refresh_token = result.pop("refresh_token", None)
+    if refresh_token:
+        max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+        response.set_cookie(
+            key="refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=is_production,
+            samesite="strict" if is_production else "lax",
+            max_age=max_age,
+        )
+
+    return LoginTokenResponse(**result)

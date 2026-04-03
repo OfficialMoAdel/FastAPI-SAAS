@@ -120,8 +120,8 @@ class TestMagicLinkE2EFlow:
             assert response.status_code == 200
             data = response.json()
             assert "access_token" in data
-            assert "refresh_token" in data
             assert data["token_type"] == "bearer"
+            # refresh_token is set as HttpOnly cookie, not in JSON body
 
     @pytest.mark.asyncio
     async def test_magic_link_flow_nonexistent_user(self, client, auth_headers):

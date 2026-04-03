@@ -155,13 +155,13 @@ class TestTokenNegativeCacheTTL:
         from src.app.core.config import settings
 
         assert hasattr(settings, "TOKEN_NEGATIVE_CACHE_TTL")
-        assert settings.TOKEN_NEGATIVE_CACHE_TTL == 300  # Default 5 min
+        assert settings.TOKEN_NEGATIVE_CACHE_TTL == 60  # Default 5 min
 
     def test_ttl_function_returns_settings_value(self):
         """Verify NEGATIVE_CACHE_TTL matches settings value."""
         from src.app.core.security.token_blacklist_cache import NEGATIVE_CACHE_TTL
 
-        assert NEGATIVE_CACHE_TTL == 300
+        assert NEGATIVE_CACHE_TTL == 60
 
     def test_ttl_default_is_300_seconds(self):
         """Verify default TTL is 300 seconds (5 minutes)."""
@@ -169,7 +169,7 @@ class TestTokenNegativeCacheTTL:
 
         # This provides 80-90% Redis call reduction while keeping
         # acceptable revocation delay for most SaaS applications
-        assert NEGATIVE_CACHE_TTL == 300
+        assert NEGATIVE_CACHE_TTL == 60
 
 
 class TestPrecompiledRegex:

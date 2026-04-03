@@ -133,10 +133,12 @@ async def get_user_by_api_key(
     # ISSUE 5 FIX: Verify tenant from API key matches the requested tenant context.
     # Prevents an attacker from using a valid API key for Tenant A to access Tenant B.
     requested_tenant_id = request.headers.get("X-Tenant-ID")
-    if requested_tenant_id and key_info.get("tenant_id") and str(key_info["tenant_id"]) != str(requested_tenant_id):
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
+    if requested_tenant_id:
+        key_tenant_id = key_info.get("tenant_id")
+        if not key_tenant_id or str(key_tenant_id) != str(requested_tenant_id):
+            from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
-        raise UnauthorizedException("API key does not match the requested tenant context.")
+            raise UnauthorizedException("API key does not match the requested tenant context.")
 
     # Fetch full user auth info
     user_service = UserService(db)

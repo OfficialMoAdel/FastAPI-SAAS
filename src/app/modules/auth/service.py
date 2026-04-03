@@ -419,6 +419,34 @@ return new_attempts
             max_age=max_age,
         )
 
+        try:
+            import json
+
+            import jwt
+
+            from src.app.core.security.jwt_utils import validate_jwt_length
+            from src.app.core.security.session_manager import session_manager as global_session_manager
+
+            if not validate_jwt_length(new_access_token):
+                decoded_token = {}
+            else:
+                decoded_token = jwt.decode(new_access_token, options={"verify_signature": False})
+
+            session_id = decoded_token.get("jti", new_access_token[:32])
+
+            device_info_str = json.dumps({
+                "user_agent": "Token Refresh",
+                "ip": "Unknown"
+            })
+
+            await global_session_manager.register_session(
+                user_id=db_user["id"],
+                session_id=session_id,
+                device_info=device_info_str,
+            )
+        except Exception as e:
+            logger.warning("session_registration_failed", error=str(e))
+
         return {"access_token": new_access_token, "token_type": "bearer"}
 
     async def logout(

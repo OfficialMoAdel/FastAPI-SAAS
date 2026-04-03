@@ -607,8 +607,10 @@ class R1UnifiedSettings(BaseSettings):
     RBAC_USE_REDIS_CACHE: bool = True
     """Use Redis caching for RBAC permission checks (P5)."""
 
-    TOKEN_NEGATIVE_CACHE_TTL: int = 300
-    """TTL in seconds for token blacklist negative cache (LOW-2). Default 5 minutes."""
+    TOKEN_NEGATIVE_CACHE_TTL: int = 60
+    """TTL in seconds for token blacklist negative cache (LOW-2).
+    Reduced to 60 seconds to prevent delay in invalidation.
+    """
 
     RBAC_CACHE_TTL_SECONDS: int = 86400
     """TTL in seconds for RBAC permission cache. Default 24 hours (86400 seconds)."""

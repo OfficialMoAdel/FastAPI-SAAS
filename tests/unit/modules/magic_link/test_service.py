@@ -184,7 +184,6 @@ class TestMagicLinkService:
 
         assert result is not None
         assert result.access_token is not None
-        assert result.refresh_token is not None
 
     @pytest.mark.asyncio
     async def test_verify_magic_link_invalid_token_raises(self, fake_redis, mock_db):

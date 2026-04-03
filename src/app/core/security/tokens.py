@@ -292,6 +292,48 @@ class MagicLinkManager:
 
         return token
 
+    async def peek_token(self, token: str) -> dict[str, Any] | None:
+        """Peek at a magic link token without consuming it.
+
+        Args:
+            token: The magic link token to peek at.
+
+        Returns:
+            Token metadata dict if valid, None if expired/used/invalid.
+        """
+        import hashlib
+
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        key = f"magic_link:{hashed_token}"
+
+        data = await self._redis.get(key)
+
+        if data is None:
+            return None
+
+        try:
+            return cast(dict[str, Any], json_loads(data))
+        except json.JSONDecodeError:
+            return None
+
+    async def consume_token(self, token: str) -> bool:
+        """Consume a magic link token (delete it).
+
+        Args:
+            token: The magic link token to consume.
+
+        Returns:
+            True if the token was successfully consumed, False if it was already gone.
+        """
+        import hashlib
+
+        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        key = f"magic_link:{hashed_token}"
+
+        # delete returns the number of keys removed (1 if it existed, 0 otherwise)
+        result = await self._redis.delete(key)
+        return int(result) > 0 if result is not None else False
+
     async def validate_token(self, token: str) -> dict[str, Any] | None:
         """Validate magic link token (one-time use, 15-min expiry).
 

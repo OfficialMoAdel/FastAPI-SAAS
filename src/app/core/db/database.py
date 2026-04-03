@@ -12,7 +12,7 @@ if TYPE_CHECKING:
     async_engine: AsyncEngine
     local_session: async_sessionmaker[AsyncSession]
     async_session_maker: async_sessionmaker[AsyncSession]
-from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, Session, declared_attr
+from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
 from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
@@ -105,8 +105,8 @@ def _create_engine() -> AsyncEngine:
     # Register RLS event listener
     # M8: Add idempotency check to prevent duplicate listener registration
     try:
-        if not event.contains(Session, "after_begin", restore_rls_context):
-            event.listen(Session, "after_begin", restore_rls_context)
+        if not event.contains(engine.sync_engine, "checkout", restore_rls_context):
+            event.listen(engine.sync_engine, "checkout", restore_rls_context)
     except Exception as e:
         logger.warning("Failed to check or register RLS event listener", error=e)
 

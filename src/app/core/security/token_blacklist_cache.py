@@ -40,7 +40,7 @@ logger = get_logger(__name__)
 BLACKLIST_KEY = "token:blacklist"
 # P2-4: Negative cache key prefix - stores tokens verified as NOT blacklisted
 # R2-HYBRID LOW-2: TTL tuned via settings for configurable trade-off
-# Higher TTL = fewer Redis calls but slightly delayed revocation detection
+# Reduced to 60 seconds to minimize negative cache invalidation delays
 NEGATIVE_CACHE_KEY = "token:verified:"
 
 # Import settings for configurable TTL

@@ -12,7 +12,6 @@ from typing import Any, TypeVar
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
-from sqlalchemy.orm import Session
 
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
@@ -28,62 +27,41 @@ RLS_BYPASS_VAR = "app.bypass_rls"
 F = TypeVar("F", bound=Callable[..., Any])
 
 
-def restore_rls_context(session: Session, transaction: Any, connection: Any) -> None:
-    """Restores RLS context after a transaction begins.
+def restore_rls_context(dbapi_connection: Any, connection_record: Any, connection_proxy: Any) -> None:
+    """Restores RLS context when a connection is acquired from the pool.
 
     This is necessary because PostgreSQL `set_config` with `is_local=True`
-    is transaction-scoped. When a commit occurs, the configuration is lost.
-    This listener ensures it's re-applied for the next transaction in the same session.
+    is transaction-scoped. By hooking into the pool checkout event with an async callback,
+    we can set a session-level config (`is_local=False`) that persists across all
+    transactions on this connection checkout, until it is returned to the pool and checked out again.
     """
-    # SQLite does not support set_config (used in tests)
-    if connection.dialect.name != "postgresql":
-        return
+    tenant = get_current_tenant()
+    tenant_id = str(tenant.id) if tenant else ""
 
-    # M3: Add error handling to prevent failures from propagating through SQLAlchemy event system
-    try:
-        # 1. Restore bypass if applicable
-        if session.info.get("rls_bypass"):
-            connection.execute(text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"))
+    async def _do_restore(conn: Any) -> None:
+        try:
+            # We use is_local=false so the config persists for the entire connection checkout.
+            # When the connection is returned to the pool and checked out by another request,
+            # this event will fire again and overwrite it.
+            if tenant_id:
+                await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '{tenant_id}', false)")
+            else:
+                await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '', false)")
+                await conn.execute(f"SELECT set_config('{RLS_USER_VAR}', '', false)")
+                await conn.execute(f"SELECT set_config('{RLS_BYPASS_VAR}', '', false)")
+        except Exception as e:
+            # SECURITY FIX: Log heavily but do not raise.
+            # SQLite does not support set_config and will fail here safely.
+            if "set_config" not in str(e).lower() and "syntax error" not in str(e).lower():
+                logger.critical(
+                    "CRITICAL SECURITY FAILURE: Failed to restore RLS context in event listener",
+                    error=str(e),
+                    tenant_id=tenant_id,
+                    exc_info=True,
+                )
 
-        # 2. Restore tenant and user from session.info
-        tenant_id = session.info.get("rls_tenant_id")
-        user_id = session.info.get("rls_user_id")
-
-        # 3. Fallback to thread-local tenant if not in session.info
-        if not tenant_id:
-            tenant = get_current_tenant()
-            if tenant:
-                tenant_id = str(tenant.id)
-
-        if tenant_id and user_id:
-            connection.execute(
-                text(
-                    "SELECT set_config(:tenant_var, :tenant_id, true), "
-                    "set_config(:user_var, :user_id, true)"
-                ),
-                {
-                    "tenant_var": RLS_TENANT_VAR,
-                    "tenant_id": str(tenant_id),
-                    "user_var": RLS_USER_VAR,
-                    "user_id": str(user_id),
-                },
-            )
-        elif tenant_id:
-            connection.execute(
-                text("SELECT set_config(:tenant_var, :tenant_id, true)"),
-                {"tenant_var": RLS_TENANT_VAR, "tenant_id": str(tenant_id)},
-            )
-
-    except Exception as e:
-        # SECURITY FIX: Log heavily but do not raise from SQLAlchemy event listener.
-        # Raising here can corrupt internal transaction state and cause pool starvation.
-        logger.critical(
-            "CRITICAL SECURITY FAILURE: Failed to restore RLS context in event listener",
-            error=str(e),
-            tenant_id=tenant_id if "tenant_id" in locals() else None,
-            exc_info=True,
-        )
-        connection.invalidate()
+    # Invoke the async function in the synchronous checkout event
+    dbapi_connection.run_async(_do_restore)
 
 
 async def set_rls_context(

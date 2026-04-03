@@ -142,9 +142,9 @@ class TestTokenBlacklistE2E:
         logger.info(f"Configured negative cache TTL: {ttl} seconds")
 
         assert ttl == settings.TOKEN_NEGATIVE_CACHE_TTL
-        assert ttl == 300, "Default TTL should be 300 seconds (5 minutes)"
+        assert ttl == 60, "Default TTL should be 60 seconds (1 minute)"
 
-        logger.info("✅ PASSED: Token blacklist TTL is 300 seconds")
+        logger.info("✅ PASSED: Token blacklist TTL is 60 seconds")
 
 
 class TestFeatureFlagsE2E:

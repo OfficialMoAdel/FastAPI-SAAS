@@ -6,14 +6,14 @@ Follows the API contract defined in auth-api.yaml.
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import rate_limiter_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.utils.cache import async_get_redis
-from src.app.modules.auth.schemas import AuthTokenResponse, LoginMFAResponse
+from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
 from src.app.modules.magic_link.service import MagicLinkService
 
@@ -67,7 +67,7 @@ async def send_magic_link(
 
 @router.post(
     "/verify",
-    response_model=AuthTokenResponse | LoginMFAResponse,
+    response_model=LoginTokenResponse | LoginMFAResponse,
     summary="Verify magic link",
     description="Verify a magic link token and receive authentication tokens.",
     dependencies=[Depends(rate_limiter_dependency)],
@@ -80,15 +80,16 @@ async def send_magic_link(
 )
 async def verify_magic_link(
     body: MagicLinkVerifyRequest,
+    response: Response,
     service: Annotated[MagicLinkService, Depends(get_magic_link_service)],
-) -> AuthTokenResponse | LoginMFAResponse:
+) -> LoginTokenResponse | LoginMFAResponse:
     """Verify a magic link token and return authentication tokens.
 
     The token is consumed after first use (one-time use).
-    Returns JWT access and refresh tokens on successful verification.
+    Returns JWT access tokens (and sets secure HTTP-only refresh cookie) on successful verification.
 
     Possible errors:
     - 400: Token is invalid or expired
     - 410: Token was already used
     """
-    return await service.verify_magic_link(token=body.token)
+    return await service.verify_magic_link(token=body.token, response=response)
