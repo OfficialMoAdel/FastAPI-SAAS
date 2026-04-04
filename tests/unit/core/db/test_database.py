@@ -184,7 +184,8 @@ async def test_restore_rls_context_with_tenant():
 
     mock_conn.execute.assert_called_once()
     sql_text = mock_conn.execute.call_args[0][0]
-    assert "set_config('app.current_tenant_id', '123', false)" in str(sql_text)
+    assert "$1" in str(sql_text)
+    assert mock_conn.execute.call_args[0][1] == "123"
 
 
 @pytest.mark.asyncio
