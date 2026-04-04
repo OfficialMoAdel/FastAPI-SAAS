@@ -539,9 +539,11 @@ class WebhookService:
         if not endpoint:
             raise ModelNotFoundError("WebhookEndpoint", endpoint_id)
 
+        secret = endpoint.signing_secret
+        masked_secret = f"{secret[:4]}...{secret[-4:]}" if secret and len(secret) > 8 else "****"
         return {
             "webhook_endpoint_id": endpoint.id,
-            "signing_secret": endpoint.signing_secret,
+            "signing_secret": masked_secret,
             "created_at": endpoint.created_at,
         }
 

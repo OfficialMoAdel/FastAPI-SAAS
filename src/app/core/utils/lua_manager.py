@@ -55,7 +55,7 @@ class LuaScript:
 
     def __post_init__(self) -> None:
         """Calculate SHA1 hash of script source."""
-        self.sha1 = hashlib.sha1(self.source.encode()).hexdigest()
+        self.sha1 = hashlib.sha1(self.source.encode(), usedforsecurity=False).hexdigest()
 
 
 class LuaScriptManager:

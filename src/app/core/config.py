@@ -1,6 +1,6 @@
 import os
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import Field, SecretStr, ValidationInfo, computed_field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -74,7 +74,7 @@ class AppSettings(BaseSettings):
 
 
 class CryptSettings(BaseSettings):
-    SECRET_KEY: SecretStr
+    SECRET_KEY: SecretStr | None
     ALGORITHM: str = "HS256"  # Options: HS256 (symmetric), RS256 (asymmetric)
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 30
     REFRESH_TOKEN_EXPIRE_DAYS: int = 7
@@ -99,6 +99,8 @@ class CryptSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_secrets(self) -> "CryptSettings":
         """Validate required secrets are set and meet security requirements."""
+        if not self.SECRET_KEY:
+            raise ValueError("SECRET_KEY must be set and non-empty")
         key = self.SECRET_KEY.get_secret_value()
         if not key:
             raise ValueError("SECRET_KEY must be set and non-empty")
@@ -128,6 +130,14 @@ class CryptSettings(BaseSettings):
 
         # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
         if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
+            import os
+
+            if os.getenv("ENVIRONMENT", "development").lower() == "production":
+                raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in production.")
+            import os
+
+            if os.getenv("ENVIRONMENT", "development").lower() == "production":
+                raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in production.")
             logging.getLogger("app.core.config").warning(
                 "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing. "
                 "Features relying on encryption (e.g., webhooks, sensitive data) may fail."
@@ -223,7 +233,7 @@ class SQLiteSettings(DatabaseSettings):
 
 class MySQLSettings(DatabaseSettings):
     MYSQL_USER: str = "username"
-    MYSQL_PASSWORD: SecretStr
+    MYSQL_PASSWORD: SecretStr | None
     MYSQL_SERVER: str = "localhost"
     MYSQL_PORT: int = 3306  # FIX: Correct MySQL port (was 5432 which is PostgreSQL)
     MYSQL_DB: str = "dbname"
@@ -242,7 +252,7 @@ class MySQLSettings(DatabaseSettings):
 
 class PostgresSettings(DatabaseSettings):
     POSTGRES_USER: str
-    POSTGRES_PASSWORD: SecretStr
+    POSTGRES_PASSWORD: SecretStr | None
     POSTGRES_SERVER: str = "localhost"  # Override via POSTGRES_SERVER in .env
     POSTGRES_PORT: int = 5432
     POSTGRES_DB: str = "postgres"
@@ -263,7 +273,7 @@ class FirstUserSettings(BaseSettings):
     ADMIN_NAME: str = "admin"
     ADMIN_EMAIL: str = "admin@admin.com"
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: SecretStr = Field(..., min_length=8)
+    ADMIN_PASSWORD: SecretStr | None = Field(..., min_length=8)
 
 
 class AuthSettings(BaseSettings):
@@ -378,7 +388,7 @@ class SecuritySettings(BaseSettings):
         default=True,
         description="Enable blocking of known malicious scanners and bots",
     )
-    BAD_BOT_USER_AGENTS: list[str] = Field(
+    BAD_BOT_USER_AGENTS: list[str] | None = Field(
         default=[
             "sqlmap",  # SQL injection tool
             "nikto",  # Web scanner
@@ -395,11 +405,11 @@ class SecuritySettings(BaseSettings):
     )
 
     # Trusted proxies for rate limiting and IP processing
-    TRUSTED_PROXY_IPS: list[str] = Field(
+    TRUSTED_PROXY_IPS: list[str] | None = Field(
         default=["127.0.0.1", "::1"],
         description="List of trusted proxy IP addresses",
     )
-    TRUSTED_PROXY_NETWORKS: list[str] = Field(
+    TRUSTED_PROXY_NETWORKS: list[str] | None = Field(
         default=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
         description="List of trusted proxy network CIDRs",
     )
@@ -746,124 +756,1356 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    def __getattr__(self, name: str) -> Any:
-        """Proxy attribute access to sub-models for backward compatibility.
+    @property
+    def APP_NAME(self) -> str:
+        return self.app.APP_NAME
 
-        This allows existing code to use `settings.FIELD` while we transition
-        to nested access `settings.submodel.FIELD`.
-        """
-        for sub_model in [
-            self.app,
-            self.sqlite,
-            self.postgres,
-            self.crypt,
-            self.first_user,
-            self.auth,
-            self.test,
-            self.redis_cache,
-            self.client_cache,
-            self.security,
-            self.attack_detection,
-            self.redis_queue,
-            self.rate_limit,
-            self.admin,
-            self.email,
-            self.webhooks,
-            self.env,
-            self.storage,
-            self.billing,
-            self.ai,
-            self.events,
-            self.cors,
-            self.arq,
-            self.r1_unified,
-            self.performance,
-            self.query_profiler,
-        ]:
-            if hasattr(sub_model, name):
-                return getattr(sub_model, name)
+    @APP_NAME.setter
+    def APP_NAME(self, value: str) -> None:
+        self.app.APP_NAME = value
 
-        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    @property
+    def APP_DESCRIPTION(self) -> str | None:
+        return self.app.APP_DESCRIPTION
 
-    def __setattr__(self, name: str, value: Any) -> None:
-        """Proxy attribute assignments for test patching.
+    @APP_DESCRIPTION.setter
+    def APP_DESCRIPTION(self, value: str | None) -> None:
+        self.app.APP_DESCRIPTION = value
 
-        This allows test suites to patch `settings.FIELD = value` without
-        crashing Pydantic and preserves test isolation by storing the mock
-        on the Settings instance instead of mutating the underlying sub-model.
-        """
-        if name in self.model_fields:
-            super().__setattr__(name, value)
-        else:
-            object.__setattr__(self, name, value)
+    @property
+    def APP_VERSION(self) -> str | None:
+        return self.app.APP_VERSION
 
-    def __delattr__(self, name: str) -> None:
-        """Proxy attribute deletion for test patching teardowns.
+    @APP_VERSION.setter
+    def APP_VERSION(self, value: str | None) -> None:
+        self.app.APP_VERSION = value
 
-        This allows mock.patch to clean up injected test overrides.
-        """
-        if name in self.model_fields:
-            super().__delattr__(name)
-        else:
-            try:
-                object.__delattr__(self, name)
-            except AttributeError:
-                raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
+    @property
+    def LICENSE_NAME(self) -> str | None:
+        return self.app.LICENSE_NAME
 
-    # Explicit type hints for common fields to satisfy mypy
-    # These match the most frequently accessed settings project-wide
-    if TYPE_CHECKING:
-        SECRET_KEY: SecretStr
-        ENVIRONMENT: EnvironmentOption
-        USE_SQLITE: bool
-        ADMIN_PASSWORD: SecretStr
-        APP_VERSION: str
-        CREATE_TABLES_ON_STARTUP: bool
-        ARQ_ENABLED: bool
-        MAX_BODY_SIZE: int
-        POSTGRES_URI: str
-        POSTGRES_ASYNC_PREFIX: str
-        DB_POOL_SIZE: int
-        DB_MAX_OVERFLOW: int
-        DB_POOL_TIMEOUT: int
-        REDIS_CACHE_URL: str
-        FRONTEND_URL: str
-        ALGORITHM: str
-        ACCESS_TOKEN_EXPIRE_MINUTES: int
-        REFRESH_TOKEN_EXPIRE_DAYS: int
-        JWT_AUDIENCE: str
-        JWT_PRIVATE_KEY: SecretStr | None
-        JWT_PUBLIC_KEY: str | None
-        ENCRYPTION_KEY: SecretStr | None
-        ENCRYPTION_SALT: SecretStr | None
-        IP_WHITELIST_ENABLED: bool
-        IP_BLACKLIST_ENABLED: bool
-        IP_WHITELIST_BYPASS_RATE_LIMIT: bool
-        AUTO_BAN_ENABLED: bool
-        AUTO_BAN_THRESHOLD: int
-        AUTO_BAN_DURATION: int
-        AUTO_BAN_ESCALATION: bool
-        BAD_BOT_FILTER_ENABLED: bool
-        BAD_BOT_USER_AGENTS: list[str]
-        RBAC_USE_REDIS_CACHE: bool
-        RBAC_CACHE_TTL_SECONDS: int
-        STRIPE_SECRET_KEY: SecretStr | None
-        STRIPE_WEBHOOK_SECRET: SecretStr | None
-        OLLAMA_BASE_URL: str
-        OLLAMA_TIMEOUT: float
-        STORAGE_PROVIDER: str
-        STORAGE_BUCKET: str
-        STORAGE_REGION: str
-        AWS_ACCESS_KEY_ID: str | None
-        AWS_SECRET_ACCESS_KEY: SecretStr | None
-        AWS_ENDPOINT_URL: str | None
-        EVENT_BUS_CONCURRENCY: int
-        EVENT_HANDLER_TIMEOUT_SECONDS: float
-        EVENT_BUS_USE_BATCH_ENQUEUE: bool
-        QUERY_PROFILER_ENABLED: bool
-        QUERY_PROFILER_SLOW_THRESHOLD_MS: int
-        QUERY_PROFILER_N_PLUS_1_THRESHOLD: int
-        QUERY_PROFILER_DETAILED_LOGS: bool
+    @LICENSE_NAME.setter
+    def LICENSE_NAME(self, value: str | None) -> None:
+        self.app.LICENSE_NAME = value
+
+    @property
+    def CONTACT_NAME(self) -> str | None:
+        return self.app.CONTACT_NAME
+
+    @CONTACT_NAME.setter
+    def CONTACT_NAME(self, value: str | None) -> None:
+        self.app.CONTACT_NAME = value
+
+    @property
+    def CONTACT_EMAIL(self) -> str | None:
+        return self.app.CONTACT_EMAIL
+
+    @CONTACT_EMAIL.setter
+    def CONTACT_EMAIL(self, value: str | None) -> None:
+        self.app.CONTACT_EMAIL = value
+
+    @property
+    def FRONTEND_URL(self) -> str:
+        return self.app.FRONTEND_URL
+
+    @FRONTEND_URL.setter
+    def FRONTEND_URL(self, value: str) -> None:
+        self.app.FRONTEND_URL = value
+
+    @property
+    def CREATE_TABLES_ON_STARTUP(self) -> bool:
+        return self.app.CREATE_TABLES_ON_STARTUP
+
+    @CREATE_TABLES_ON_STARTUP.setter
+    def CREATE_TABLES_ON_STARTUP(self, value: bool) -> None:
+        self.app.CREATE_TABLES_ON_STARTUP = value
+
+    @property
+    def MAX_BODY_SIZE(self) -> int:
+        return self.app.MAX_BODY_SIZE
+
+    @MAX_BODY_SIZE.setter
+    def MAX_BODY_SIZE(self, value: int) -> None:
+        self.app.MAX_BODY_SIZE = value
+
+    @property
+    def RESERVED_USERNAMES(self) -> frozenset[str]:
+        return self.app.RESERVED_USERNAMES
+
+    @RESERVED_USERNAMES.setter
+    def RESERVED_USERNAMES(self, value: frozenset[str]) -> None:
+        self.app.RESERVED_USERNAMES = value
+
+    @property
+    def PAGINATION_DEFAULT_PER_PAGE(self) -> int:
+        return self.app.PAGINATION_DEFAULT_PER_PAGE
+
+    @PAGINATION_DEFAULT_PER_PAGE.setter
+    def PAGINATION_DEFAULT_PER_PAGE(self, value: int) -> None:
+        self.app.PAGINATION_DEFAULT_PER_PAGE = value
+
+    @property
+    def PAGINATION_MAX_PER_PAGE(self) -> int:
+        return self.app.PAGINATION_MAX_PER_PAGE
+
+    @PAGINATION_MAX_PER_PAGE.setter
+    def PAGINATION_MAX_PER_PAGE(self, value: int) -> None:
+        self.app.PAGINATION_MAX_PER_PAGE = value
+
+    @property
+    def model_extra(self) -> dict[str, Any] | None:
+        return self.app.model_extra
+
+    @property
+    def model_fields_set(self) -> set:
+        return self.app.model_fields_set
+
+    @property
+    def DB_WORKERS(self) -> int:
+        return self.sqlite.DB_WORKERS
+
+    @DB_WORKERS.setter
+    def DB_WORKERS(self, value: int) -> None:
+        self.sqlite.DB_WORKERS = value
+
+    @property
+    def DB_MAX_OVERFLOW(self) -> int:
+        return self.sqlite.DB_MAX_OVERFLOW
+
+    @DB_MAX_OVERFLOW.setter
+    def DB_MAX_OVERFLOW(self, value: int) -> None:
+        self.sqlite.DB_MAX_OVERFLOW = value
+
+    @property
+    def DB_POOL_TIMEOUT(self) -> int:
+        return self.sqlite.DB_POOL_TIMEOUT
+
+    @DB_POOL_TIMEOUT.setter
+    def DB_POOL_TIMEOUT(self, value: int) -> None:
+        self.sqlite.DB_POOL_TIMEOUT = value
+
+    @property
+    def POSTGRES_MAX_CONNECTIONS(self) -> int:
+        return self.sqlite.POSTGRES_MAX_CONNECTIONS
+
+    @POSTGRES_MAX_CONNECTIONS.setter
+    def POSTGRES_MAX_CONNECTIONS(self, value: int) -> None:
+        self.sqlite.POSTGRES_MAX_CONNECTIONS = value
+
+    @property
+    def DB_POOL_SIZE(self) -> int:
+        return self.sqlite.DB_POOL_SIZE
+
+    @DB_POOL_SIZE.setter
+    def DB_POOL_SIZE(self, value: int) -> None:
+        self.sqlite.DB_POOL_SIZE = value
+
+    @property
+    def SQLITE_URI(self) -> str:
+        return self.sqlite.SQLITE_URI
+
+    @SQLITE_URI.setter
+    def SQLITE_URI(self, value: str) -> None:
+        self.sqlite.SQLITE_URI = value
+
+    @property
+    def SQLITE_SYNC_PREFIX(self) -> str:
+        return self.sqlite.SQLITE_SYNC_PREFIX
+
+    @SQLITE_SYNC_PREFIX.setter
+    def SQLITE_SYNC_PREFIX(self, value: str) -> None:
+        self.sqlite.SQLITE_SYNC_PREFIX = value
+
+    @property
+    def SQLITE_ASYNC_PREFIX(self) -> str:
+        return self.sqlite.SQLITE_ASYNC_PREFIX
+
+    @SQLITE_ASYNC_PREFIX.setter
+    def SQLITE_ASYNC_PREFIX(self, value: str) -> None:
+        self.sqlite.SQLITE_ASYNC_PREFIX = value
+
+    @property
+    def USE_SQLITE(self) -> bool:
+        return self.sqlite.USE_SQLITE
+
+    @USE_SQLITE.setter
+    def USE_SQLITE(self, value: bool) -> None:
+        self.sqlite.USE_SQLITE = value
+
+    @property
+    def EFFECTIVE_POOL_SIZE(self) -> int:
+        return self.sqlite.EFFECTIVE_POOL_SIZE
+
+    @property
+    def POSTGRES_USER(self) -> str:
+        return self.postgres.POSTGRES_USER
+
+    @POSTGRES_USER.setter
+    def POSTGRES_USER(self, value: str) -> None:
+        self.postgres.POSTGRES_USER = value
+
+    @property
+    def POSTGRES_PASSWORD(self) -> SecretStr:
+        assert self.postgres.POSTGRES_PASSWORD is not None, "POSTGRES_PASSWORD must be set"
+        return self.postgres.POSTGRES_PASSWORD
+
+    @POSTGRES_PASSWORD.setter
+    def POSTGRES_PASSWORD(self, value: SecretStr | None) -> None:
+        self.postgres.POSTGRES_PASSWORD = value
+
+    @property
+    def POSTGRES_SERVER(self) -> str:
+        return self.postgres.POSTGRES_SERVER
+
+    @POSTGRES_SERVER.setter
+    def POSTGRES_SERVER(self, value: str) -> None:
+        self.postgres.POSTGRES_SERVER = value
+
+    @property
+    def POSTGRES_PORT(self) -> int:
+        return self.postgres.POSTGRES_PORT
+
+    @POSTGRES_PORT.setter
+    def POSTGRES_PORT(self, value: int) -> None:
+        self.postgres.POSTGRES_PORT = value
+
+    @property
+    def POSTGRES_DB(self) -> str:
+        return self.postgres.POSTGRES_DB
+
+    @POSTGRES_DB.setter
+    def POSTGRES_DB(self, value: str) -> None:
+        self.postgres.POSTGRES_DB = value
+
+    @property
+    def POSTGRES_SYNC_PREFIX(self) -> str:
+        return self.postgres.POSTGRES_SYNC_PREFIX
+
+    @POSTGRES_SYNC_PREFIX.setter
+    def POSTGRES_SYNC_PREFIX(self, value: str) -> None:
+        self.postgres.POSTGRES_SYNC_PREFIX = value
+
+    @property
+    def POSTGRES_ASYNC_PREFIX(self) -> str:
+        return self.postgres.POSTGRES_ASYNC_PREFIX
+
+    @POSTGRES_ASYNC_PREFIX.setter
+    def POSTGRES_ASYNC_PREFIX(self, value: str) -> None:
+        self.postgres.POSTGRES_ASYNC_PREFIX = value
+
+    @property
+    def POSTGRES_URL(self) -> str | None:
+        return self.postgres.POSTGRES_URL
+
+    @POSTGRES_URL.setter
+    def POSTGRES_URL(self, value: str | None) -> None:
+        self.postgres.POSTGRES_URL = value
+
+    @property
+    def POSTGRES_URI(self) -> str:
+        return self.postgres.POSTGRES_URI
+
+    @property
+    def SECRET_KEY(self) -> SecretStr:
+        assert self.crypt.SECRET_KEY is not None, "SECRET_KEY must be set"
+        return self.crypt.SECRET_KEY
+
+    @SECRET_KEY.setter
+    def SECRET_KEY(self, value: SecretStr | None) -> None:
+        self.crypt.SECRET_KEY = value
+
+    @property
+    def ALGORITHM(self) -> str:
+        return self.crypt.ALGORITHM
+
+    @ALGORITHM.setter
+    def ALGORITHM(self, value: str) -> None:
+        self.crypt.ALGORITHM = value
+
+    @property
+    def ACCESS_TOKEN_EXPIRE_MINUTES(self) -> int:
+        return self.crypt.ACCESS_TOKEN_EXPIRE_MINUTES
+
+    @ACCESS_TOKEN_EXPIRE_MINUTES.setter
+    def ACCESS_TOKEN_EXPIRE_MINUTES(self, value: int) -> None:
+        self.crypt.ACCESS_TOKEN_EXPIRE_MINUTES = value
+
+    @property
+    def REFRESH_TOKEN_EXPIRE_DAYS(self) -> int:
+        return self.crypt.REFRESH_TOKEN_EXPIRE_DAYS
+
+    @REFRESH_TOKEN_EXPIRE_DAYS.setter
+    def REFRESH_TOKEN_EXPIRE_DAYS(self, value: int) -> None:
+        self.crypt.REFRESH_TOKEN_EXPIRE_DAYS = value
+
+    @property
+    def MAX_SESSION_DURATION_DAYS(self) -> int:
+        return self.crypt.MAX_SESSION_DURATION_DAYS
+
+    @MAX_SESSION_DURATION_DAYS.setter
+    def MAX_SESSION_DURATION_DAYS(self, value: int) -> None:
+        self.crypt.MAX_SESSION_DURATION_DAYS = value
+
+    @property
+    def BCRYPT_ROUNDS(self) -> int:
+        return self.crypt.BCRYPT_ROUNDS
+
+    @BCRYPT_ROUNDS.setter
+    def BCRYPT_ROUNDS(self, value: int) -> None:
+        self.crypt.BCRYPT_ROUNDS = value
+
+    @property
+    def BCRYPT_THREAD_POOL_SIZE(self) -> int:
+        return self.crypt.BCRYPT_THREAD_POOL_SIZE
+
+    @BCRYPT_THREAD_POOL_SIZE.setter
+    def BCRYPT_THREAD_POOL_SIZE(self, value: int) -> None:
+        self.crypt.BCRYPT_THREAD_POOL_SIZE = value
+
+    @property
+    def ENCRYPTION_KEY(self) -> SecretStr | None:
+        return self.crypt.ENCRYPTION_KEY
+
+    @ENCRYPTION_KEY.setter
+    def ENCRYPTION_KEY(self, value: SecretStr | None) -> None:
+        self.crypt.ENCRYPTION_KEY = value
+
+    @property
+    def ENCRYPTION_SALT(self) -> SecretStr | None:
+        return self.crypt.ENCRYPTION_SALT
+
+    @ENCRYPTION_SALT.setter
+    def ENCRYPTION_SALT(self, value: SecretStr | None) -> None:
+        self.crypt.ENCRYPTION_SALT = value
+
+    @property
+    def JWT_PRIVATE_KEY(self) -> SecretStr | None:
+        return self.crypt.JWT_PRIVATE_KEY
+
+    @JWT_PRIVATE_KEY.setter
+    def JWT_PRIVATE_KEY(self, value: Any) -> None:
+        self.crypt.JWT_PRIVATE_KEY = value
+
+    @property
+    def JWT_PUBLIC_KEY(self) -> str | None:
+        return self.crypt.JWT_PUBLIC_KEY
+
+    @JWT_PUBLIC_KEY.setter
+    def JWT_PUBLIC_KEY(self, value: str | None) -> None:
+        self.crypt.JWT_PUBLIC_KEY = value
+
+    @property
+    def JWT_AUDIENCE(self) -> str:
+        return self.crypt.JWT_AUDIENCE
+
+    @JWT_AUDIENCE.setter
+    def JWT_AUDIENCE(self, value: str) -> None:
+        self.crypt.JWT_AUDIENCE = value
+
+    @property
+    def ADMIN_NAME(self) -> str:
+        return self.first_user.ADMIN_NAME
+
+    @ADMIN_NAME.setter
+    def ADMIN_NAME(self, value: str) -> None:
+        self.first_user.ADMIN_NAME = value
+
+    @property
+    def ADMIN_EMAIL(self) -> str:
+        return self.first_user.ADMIN_EMAIL
+
+    @ADMIN_EMAIL.setter
+    def ADMIN_EMAIL(self, value: str) -> None:
+        self.first_user.ADMIN_EMAIL = value
+
+    @property
+    def ADMIN_USERNAME(self) -> str:
+        return self.first_user.ADMIN_USERNAME
+
+    @ADMIN_USERNAME.setter
+    def ADMIN_USERNAME(self, value: str) -> None:
+        self.first_user.ADMIN_USERNAME = value
+
+    @property
+    def ADMIN_PASSWORD(self) -> SecretStr:
+        assert self.first_user.ADMIN_PASSWORD is not None, "ADMIN_PASSWORD must be set"
+        return self.first_user.ADMIN_PASSWORD
+
+    @ADMIN_PASSWORD.setter
+    def ADMIN_PASSWORD(self, value: SecretStr | None) -> None:
+        self.first_user.ADMIN_PASSWORD = value
+
+    @property
+    def AUTH_MAX_LOGIN_ATTEMPTS(self) -> int:
+        return self.auth.AUTH_MAX_LOGIN_ATTEMPTS
+
+    @AUTH_MAX_LOGIN_ATTEMPTS.setter
+    def AUTH_MAX_LOGIN_ATTEMPTS(self, value: int) -> None:
+        self.auth.AUTH_MAX_LOGIN_ATTEMPTS = value
+
+    @property
+    def AUTH_LOCKOUT_DURATION_SECONDS(self) -> int:
+        return self.auth.AUTH_LOCKOUT_DURATION_SECONDS
+
+    @AUTH_LOCKOUT_DURATION_SECONDS.setter
+    def AUTH_LOCKOUT_DURATION_SECONDS(self, value: int) -> None:
+        self.auth.AUTH_LOCKOUT_DURATION_SECONDS = value
+
+    @property
+    def AUDIT_LOG_FAILURE_MODE(self) -> Literal["fail_open", "fail_closed"]:
+        return self.auth.AUDIT_LOG_FAILURE_MODE
+
+    @AUDIT_LOG_FAILURE_MODE.setter
+    def AUDIT_LOG_FAILURE_MODE(self, value: Any) -> None:
+        self.auth.AUDIT_LOG_FAILURE_MODE = value
+
+    @property
+    def MFA_PENDING_EXPIRY_SECONDS(self) -> int:
+        return self.auth.MFA_PENDING_EXPIRY_SECONDS
+
+    @MFA_PENDING_EXPIRY_SECONDS.setter
+    def MFA_PENDING_EXPIRY_SECONDS(self, value: int) -> None:
+        self.auth.MFA_PENDING_EXPIRY_SECONDS = value
+
+    @property
+    def REDIS_CACHE_ENABLED(self) -> bool:
+        return self.redis_cache.REDIS_CACHE_ENABLED
+
+    @REDIS_CACHE_ENABLED.setter
+    def REDIS_CACHE_ENABLED(self, value: bool) -> None:
+        self.redis_cache.REDIS_CACHE_ENABLED = value
+
+    @property
+    def REDIS_CACHE_HOST(self) -> str:
+        return self.redis_cache.REDIS_CACHE_HOST
+
+    @REDIS_CACHE_HOST.setter
+    def REDIS_CACHE_HOST(self, value: str) -> None:
+        self.redis_cache.REDIS_CACHE_HOST = value
+
+    @property
+    def REDIS_CACHE_PORT(self) -> int:
+        return self.redis_cache.REDIS_CACHE_PORT
+
+    @REDIS_CACHE_PORT.setter
+    def REDIS_CACHE_PORT(self, value: int) -> None:
+        self.redis_cache.REDIS_CACHE_PORT = value
+
+    @property
+    def REDIS_CACHE_PASSWORD(self) -> SecretStr | None:
+        return self.redis_cache.REDIS_CACHE_PASSWORD
+
+    @REDIS_CACHE_PASSWORD.setter
+    def REDIS_CACHE_PASSWORD(self, value: SecretStr | None) -> None:
+        self.redis_cache.REDIS_CACHE_PASSWORD = value
+
+    @property
+    def REDIS_CACHE_MAX_CONNECTIONS(self) -> int:
+        return self.redis_cache.REDIS_CACHE_MAX_CONNECTIONS
+
+    @REDIS_CACHE_MAX_CONNECTIONS.setter
+    def REDIS_CACHE_MAX_CONNECTIONS(self, value: int) -> None:
+        self.redis_cache.REDIS_CACHE_MAX_CONNECTIONS = value
+
+    @property
+    def REDIS_CACHE_SOCKET_TIMEOUT(self) -> float:
+        return self.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT
+
+    @REDIS_CACHE_SOCKET_TIMEOUT.setter
+    def REDIS_CACHE_SOCKET_TIMEOUT(self, value: float) -> None:
+        self.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT = value
+
+    @property
+    def REDIS_CACHE_SOCKET_CONNECT_TIMEOUT(self) -> float:
+        return self.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT
+
+    @REDIS_CACHE_SOCKET_CONNECT_TIMEOUT.setter
+    def REDIS_CACHE_SOCKET_CONNECT_TIMEOUT(self, value: float) -> None:
+        self.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT = value
+
+    @property
+    def TENANT_NEGATIVE_CACHE_TTL(self) -> int:
+        return self.redis_cache.TENANT_NEGATIVE_CACHE_TTL
+
+    @TENANT_NEGATIVE_CACHE_TTL.setter
+    def TENANT_NEGATIVE_CACHE_TTL(self, value: int) -> None:
+        self.redis_cache.TENANT_NEGATIVE_CACHE_TTL = value
+
+    @property
+    def REDIS_CACHE_URL(self) -> str:
+        return self.redis_cache.REDIS_CACHE_URL
+
+    @property
+    def CLIENT_CACHE_MAX_AGE(self) -> int:
+        return self.client_cache.CLIENT_CACHE_MAX_AGE
+
+    @CLIENT_CACHE_MAX_AGE.setter
+    def CLIENT_CACHE_MAX_AGE(self, value: int) -> None:
+        self.client_cache.CLIENT_CACHE_MAX_AGE = value
+
+    @property
+    def BLOOM_FILTER_USE_XXHASH(self) -> bool:
+        return self.security.BLOOM_FILTER_USE_XXHASH
+
+    @BLOOM_FILTER_USE_XXHASH.setter
+    def BLOOM_FILTER_USE_XXHASH(self, value: bool) -> None:
+        self.security.BLOOM_FILTER_USE_XXHASH = value
+
+    @property
+    def IP_WHITELIST_ENABLED(self) -> bool:
+        return self.security.IP_WHITELIST_ENABLED
+
+    @IP_WHITELIST_ENABLED.setter
+    def IP_WHITELIST_ENABLED(self, value: bool) -> None:
+        self.security.IP_WHITELIST_ENABLED = value
+
+    @property
+    def IP_BLACKLIST_ENABLED(self) -> bool:
+        return self.security.IP_BLACKLIST_ENABLED
+
+    @IP_BLACKLIST_ENABLED.setter
+    def IP_BLACKLIST_ENABLED(self, value: bool) -> None:
+        self.security.IP_BLACKLIST_ENABLED = value
+
+    @property
+    def IP_WHITELIST_BYPASS_RATE_LIMIT(self) -> bool:
+        return self.security.IP_WHITELIST_BYPASS_RATE_LIMIT
+
+    @IP_WHITELIST_BYPASS_RATE_LIMIT.setter
+    def IP_WHITELIST_BYPASS_RATE_LIMIT(self, value: bool) -> None:
+        self.security.IP_WHITELIST_BYPASS_RATE_LIMIT = value
+
+    @property
+    def AUTO_BAN_ENABLED(self) -> bool:
+        return self.security.AUTO_BAN_ENABLED
+
+    @AUTO_BAN_ENABLED.setter
+    def AUTO_BAN_ENABLED(self, value: bool) -> None:
+        self.security.AUTO_BAN_ENABLED = value
+
+    @property
+    def AUTO_BAN_THRESHOLD(self) -> int:
+        return self.security.AUTO_BAN_THRESHOLD
+
+    @AUTO_BAN_THRESHOLD.setter
+    def AUTO_BAN_THRESHOLD(self, value: int) -> None:
+        self.security.AUTO_BAN_THRESHOLD = value
+
+    @property
+    def AUTO_BAN_DURATION(self) -> int:
+        return self.security.AUTO_BAN_DURATION
+
+    @AUTO_BAN_DURATION.setter
+    def AUTO_BAN_DURATION(self, value: int) -> None:
+        self.security.AUTO_BAN_DURATION = value
+
+    @property
+    def AUTO_BAN_ESCALATION(self) -> bool:
+        return self.security.AUTO_BAN_ESCALATION
+
+    @AUTO_BAN_ESCALATION.setter
+    def AUTO_BAN_ESCALATION(self, value: bool) -> None:
+        self.security.AUTO_BAN_ESCALATION = value
+
+    @property
+    def AUTO_BAN_VIOLATION_WINDOW(self) -> int:
+        return self.security.AUTO_BAN_VIOLATION_WINDOW
+
+    @AUTO_BAN_VIOLATION_WINDOW.setter
+    def AUTO_BAN_VIOLATION_WINDOW(self, value: int) -> None:
+        self.security.AUTO_BAN_VIOLATION_WINDOW = value
+
+    @property
+    def BAD_BOT_FILTER_ENABLED(self) -> bool:
+        return self.security.BAD_BOT_FILTER_ENABLED
+
+    @BAD_BOT_FILTER_ENABLED.setter
+    def BAD_BOT_FILTER_ENABLED(self, value: bool) -> None:
+        self.security.BAD_BOT_FILTER_ENABLED = value
+
+    @property
+    def BAD_BOT_USER_AGENTS(self) -> list[str] | None:
+        return self.security.BAD_BOT_USER_AGENTS
+
+    @BAD_BOT_USER_AGENTS.setter
+    def BAD_BOT_USER_AGENTS(self, value: list[str] | None) -> None:
+        self.security.BAD_BOT_USER_AGENTS = value
+
+    @property
+    def TRUSTED_PROXY_IPS(self) -> list[str] | None:
+        return self.security.TRUSTED_PROXY_IPS
+
+    @TRUSTED_PROXY_IPS.setter
+    def TRUSTED_PROXY_IPS(self, value: list[str] | None) -> None:
+        self.security.TRUSTED_PROXY_IPS = value
+
+    @property
+    def TRUSTED_PROXY_NETWORKS(self) -> list[str] | None:
+        return self.security.TRUSTED_PROXY_NETWORKS
+
+    @TRUSTED_PROXY_NETWORKS.setter
+    def TRUSTED_PROXY_NETWORKS(self, value: list[str] | None) -> None:
+        self.security.TRUSTED_PROXY_NETWORKS = value
+
+    @property
+    def ATTACK_DETECTION_ENABLED(self) -> bool:
+        return self.attack_detection.ATTACK_DETECTION_ENABLED
+
+    @ATTACK_DETECTION_ENABLED.setter
+    def ATTACK_DETECTION_ENABLED(self, value: bool) -> None:
+        self.attack_detection.ATTACK_DETECTION_ENABLED = value
+
+    @property
+    def ATTACK_DETECTION_MODE(self) -> Literal["log", "block", "ban"]:
+        return self.attack_detection.ATTACK_DETECTION_MODE
+
+    @ATTACK_DETECTION_MODE.setter
+    def ATTACK_DETECTION_MODE(self, value: Any) -> None:
+        self.attack_detection.ATTACK_DETECTION_MODE = value
+
+    @property
+    def ATTACK_DETECTION_LOG_FULL_REQUEST(self) -> bool:
+        return self.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
+
+    @ATTACK_DETECTION_LOG_FULL_REQUEST.setter
+    def ATTACK_DETECTION_LOG_FULL_REQUEST(self, value: bool) -> None:
+        self.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST = value
+
+    @property
+    def REDIS_QUEUE_ENABLED(self) -> bool:
+        return self.redis_queue.REDIS_QUEUE_ENABLED
+
+    @REDIS_QUEUE_ENABLED.setter
+    def REDIS_QUEUE_ENABLED(self, value: bool) -> None:
+        self.redis_queue.REDIS_QUEUE_ENABLED = value
+
+    @property
+    def REDIS_QUEUE_HOST(self) -> str:
+        return self.redis_queue.REDIS_QUEUE_HOST
+
+    @REDIS_QUEUE_HOST.setter
+    def REDIS_QUEUE_HOST(self, value: str) -> None:
+        self.redis_queue.REDIS_QUEUE_HOST = value
+
+    @property
+    def REDIS_QUEUE_PORT(self) -> int:
+        return self.redis_queue.REDIS_QUEUE_PORT
+
+    @REDIS_QUEUE_PORT.setter
+    def REDIS_QUEUE_PORT(self, value: int) -> None:
+        self.redis_queue.REDIS_QUEUE_PORT = value
+
+    @property
+    def REDIS_QUEUE_PASSWORD(self) -> SecretStr | None:
+        return self.redis_queue.REDIS_QUEUE_PASSWORD
+
+    @REDIS_QUEUE_PASSWORD.setter
+    def REDIS_QUEUE_PASSWORD(self, value: SecretStr | None) -> None:
+        self.redis_queue.REDIS_QUEUE_PASSWORD = value
+
+    @property
+    def REDIS_QUEUE_MAX_CONNECTIONS(self) -> int:
+        return self.redis_queue.REDIS_QUEUE_MAX_CONNECTIONS
+
+    @REDIS_QUEUE_MAX_CONNECTIONS.setter
+    def REDIS_QUEUE_MAX_CONNECTIONS(self, value: int) -> None:
+        self.redis_queue.REDIS_QUEUE_MAX_CONNECTIONS = value
+
+    @property
+    def REDIS_QUEUE_CONN_TIMEOUT(self) -> int:
+        return self.redis_queue.REDIS_QUEUE_CONN_TIMEOUT
+
+    @REDIS_QUEUE_CONN_TIMEOUT.setter
+    def REDIS_QUEUE_CONN_TIMEOUT(self, value: int) -> None:
+        self.redis_queue.REDIS_QUEUE_CONN_TIMEOUT = value
+
+    @property
+    def REDIS_QUEUE_CONN_RETRIES(self) -> int:
+        return self.redis_queue.REDIS_QUEUE_CONN_RETRIES
+
+    @REDIS_QUEUE_CONN_RETRIES.setter
+    def REDIS_QUEUE_CONN_RETRIES(self, value: int) -> None:
+        self.redis_queue.REDIS_QUEUE_CONN_RETRIES = value
+
+    @property
+    def DEFAULT_RATE_LIMIT_LIMIT(self) -> int:
+        return self.rate_limit.DEFAULT_RATE_LIMIT_LIMIT
+
+    @DEFAULT_RATE_LIMIT_LIMIT.setter
+    def DEFAULT_RATE_LIMIT_LIMIT(self, value: int) -> None:
+        self.rate_limit.DEFAULT_RATE_LIMIT_LIMIT = value
+
+    @property
+    def DEFAULT_RATE_LIMIT_PERIOD(self) -> int:
+        return self.rate_limit.DEFAULT_RATE_LIMIT_PERIOD
+
+    @DEFAULT_RATE_LIMIT_PERIOD.setter
+    def DEFAULT_RATE_LIMIT_PERIOD(self, value: int) -> None:
+        self.rate_limit.DEFAULT_RATE_LIMIT_PERIOD = value
+
+    @property
+    def RATE_LIMIT_FAIL_OPEN(self) -> bool:
+        return self.rate_limit.RATE_LIMIT_FAIL_OPEN
+
+    @RATE_LIMIT_FAIL_OPEN.setter
+    def RATE_LIMIT_FAIL_OPEN(self, value: bool) -> None:
+        self.rate_limit.RATE_LIMIT_FAIL_OPEN = value
+
+    @property
+    def RATE_LIMIT_ALGORITHM(self) -> str:
+        return self.rate_limit.RATE_LIMIT_ALGORITHM
+
+    @RATE_LIMIT_ALGORITHM.setter
+    def RATE_LIMIT_ALGORITHM(self, value: str) -> None:
+        self.rate_limit.RATE_LIMIT_ALGORITHM = value
+
+    @property
+    def CRUD_ADMIN_ENABLED(self) -> bool:
+        return self.admin.CRUD_ADMIN_ENABLED
+
+    @CRUD_ADMIN_ENABLED.setter
+    def CRUD_ADMIN_ENABLED(self, value: bool) -> None:
+        self.admin.CRUD_ADMIN_ENABLED = value
+
+    @property
+    def CRUD_ADMIN_MOUNT_PATH(self) -> str:
+        return self.admin.CRUD_ADMIN_MOUNT_PATH
+
+    @CRUD_ADMIN_MOUNT_PATH.setter
+    def CRUD_ADMIN_MOUNT_PATH(self, value: str) -> None:
+        self.admin.CRUD_ADMIN_MOUNT_PATH = value
+
+    @property
+    def CRUD_ADMIN_ALLOWED_IPS_LIST(self) -> list[str] | None:
+        return self.admin.CRUD_ADMIN_ALLOWED_IPS_LIST
+
+    @CRUD_ADMIN_ALLOWED_IPS_LIST.setter
+    def CRUD_ADMIN_ALLOWED_IPS_LIST(self, value: list[str] | None) -> None:
+        self.admin.CRUD_ADMIN_ALLOWED_IPS_LIST = value
+
+    @property
+    def CRUD_ADMIN_ALLOWED_NETWORKS_LIST(self) -> list[str] | None:
+        return self.admin.CRUD_ADMIN_ALLOWED_NETWORKS_LIST
+
+    @CRUD_ADMIN_ALLOWED_NETWORKS_LIST.setter
+    def CRUD_ADMIN_ALLOWED_NETWORKS_LIST(self, value: list[str] | None) -> None:
+        self.admin.CRUD_ADMIN_ALLOWED_NETWORKS_LIST = value
+
+    @property
+    def CRUD_ADMIN_MAX_SESSIONS(self) -> int:
+        return self.admin.CRUD_ADMIN_MAX_SESSIONS
+
+    @CRUD_ADMIN_MAX_SESSIONS.setter
+    def CRUD_ADMIN_MAX_SESSIONS(self, value: int) -> None:
+        self.admin.CRUD_ADMIN_MAX_SESSIONS = value
+
+    @property
+    def CRUD_ADMIN_SESSION_TIMEOUT(self) -> int:
+        return self.admin.CRUD_ADMIN_SESSION_TIMEOUT
+
+    @CRUD_ADMIN_SESSION_TIMEOUT.setter
+    def CRUD_ADMIN_SESSION_TIMEOUT(self, value: int) -> None:
+        self.admin.CRUD_ADMIN_SESSION_TIMEOUT = value
+
+    @property
+    def SESSION_SECURE_COOKIES(self) -> bool:
+        return self.admin.SESSION_SECURE_COOKIES
+
+    @SESSION_SECURE_COOKIES.setter
+    def SESSION_SECURE_COOKIES(self, value: bool) -> None:
+        self.admin.SESSION_SECURE_COOKIES = value
+
+    @property
+    def CRUD_ADMIN_TRACK_EVENTS(self) -> bool:
+        return self.admin.CRUD_ADMIN_TRACK_EVENTS
+
+    @CRUD_ADMIN_TRACK_EVENTS.setter
+    def CRUD_ADMIN_TRACK_EVENTS(self, value: bool) -> None:
+        self.admin.CRUD_ADMIN_TRACK_EVENTS = value
+
+    @property
+    def CRUD_ADMIN_TRACK_SESSIONS(self) -> bool:
+        return self.admin.CRUD_ADMIN_TRACK_SESSIONS
+
+    @CRUD_ADMIN_TRACK_SESSIONS.setter
+    def CRUD_ADMIN_TRACK_SESSIONS(self, value: bool) -> None:
+        self.admin.CRUD_ADMIN_TRACK_SESSIONS = value
+
+    @property
+    def CRUD_ADMIN_REDIS_ENABLED(self) -> bool:
+        return self.admin.CRUD_ADMIN_REDIS_ENABLED
+
+    @CRUD_ADMIN_REDIS_ENABLED.setter
+    def CRUD_ADMIN_REDIS_ENABLED(self, value: bool) -> None:
+        self.admin.CRUD_ADMIN_REDIS_ENABLED = value
+
+    @property
+    def CRUD_ADMIN_REDIS_HOST(self) -> str:
+        return self.admin.CRUD_ADMIN_REDIS_HOST
+
+    @CRUD_ADMIN_REDIS_HOST.setter
+    def CRUD_ADMIN_REDIS_HOST(self, value: str) -> None:
+        self.admin.CRUD_ADMIN_REDIS_HOST = value
+
+    @property
+    def CRUD_ADMIN_REDIS_PORT(self) -> int:
+        return self.admin.CRUD_ADMIN_REDIS_PORT
+
+    @CRUD_ADMIN_REDIS_PORT.setter
+    def CRUD_ADMIN_REDIS_PORT(self, value: int) -> None:
+        self.admin.CRUD_ADMIN_REDIS_PORT = value
+
+    @property
+    def CRUD_ADMIN_REDIS_DB(self) -> int:
+        return self.admin.CRUD_ADMIN_REDIS_DB
+
+    @CRUD_ADMIN_REDIS_DB.setter
+    def CRUD_ADMIN_REDIS_DB(self, value: int) -> None:
+        self.admin.CRUD_ADMIN_REDIS_DB = value
+
+    @property
+    def CRUD_ADMIN_REDIS_PASSWORD(self) -> SecretStr | None:
+        return self.admin.CRUD_ADMIN_REDIS_PASSWORD
+
+    @CRUD_ADMIN_REDIS_PASSWORD.setter
+    def CRUD_ADMIN_REDIS_PASSWORD(self, value: SecretStr | None) -> None:
+        self.admin.CRUD_ADMIN_REDIS_PASSWORD = value
+
+    @property
+    def CRUD_ADMIN_REDIS_SSL(self) -> bool:
+        return self.admin.CRUD_ADMIN_REDIS_SSL
+
+    @CRUD_ADMIN_REDIS_SSL.setter
+    def CRUD_ADMIN_REDIS_SSL(self, value: bool) -> None:
+        self.admin.CRUD_ADMIN_REDIS_SSL = value
+
+    @property
+    def EMAIL_FROM_NAME(self) -> str:
+        return self.email.EMAIL_FROM_NAME
+
+    @EMAIL_FROM_NAME.setter
+    def EMAIL_FROM_NAME(self, value: str) -> None:
+        self.email.EMAIL_FROM_NAME = value
+
+    @property
+    def EMAIL_FROM_ADDRESS(self) -> str:
+        return self.email.EMAIL_FROM_ADDRESS
+
+    @EMAIL_FROM_ADDRESS.setter
+    def EMAIL_FROM_ADDRESS(self, value: str) -> None:
+        self.email.EMAIL_FROM_ADDRESS = value
+
+    @property
+    def EMAIL_REPLY_TO(self) -> str | None:
+        return self.email.EMAIL_REPLY_TO
+
+    @EMAIL_REPLY_TO.setter
+    def EMAIL_REPLY_TO(self, value: str | None) -> None:
+        self.email.EMAIL_REPLY_TO = value
+
+    @property
+    def SMTP_HOST(self) -> str:
+        return self.email.SMTP_HOST
+
+    @SMTP_HOST.setter
+    def SMTP_HOST(self, value: str) -> None:
+        self.email.SMTP_HOST = value
+
+    @property
+    def SMTP_PORT(self) -> int:
+        return self.email.SMTP_PORT
+
+    @SMTP_PORT.setter
+    def SMTP_PORT(self, value: int) -> None:
+        self.email.SMTP_PORT = value
+
+    @property
+    def SMTP_USER(self) -> str | None:
+        return self.email.SMTP_USER
+
+    @SMTP_USER.setter
+    def SMTP_USER(self, value: str | None) -> None:
+        self.email.SMTP_USER = value
+
+    @property
+    def SMTP_PASSWORD(self) -> SecretStr | None:
+        return self.email.SMTP_PASSWORD
+
+    @SMTP_PASSWORD.setter
+    def SMTP_PASSWORD(self, value: SecretStr | None) -> None:
+        self.email.SMTP_PASSWORD = value
+
+    @property
+    def SMTP_USE_TLS(self) -> bool:
+        return self.email.SMTP_USE_TLS
+
+    @SMTP_USE_TLS.setter
+    def SMTP_USE_TLS(self, value: bool) -> None:
+        self.email.SMTP_USE_TLS = value
+
+    @property
+    def EMAIL_TEMPLATES_DIR(self) -> str:
+        return self.email.EMAIL_TEMPLATES_DIR
+
+    @EMAIL_TEMPLATES_DIR.setter
+    def EMAIL_TEMPLATES_DIR(self, value: str) -> None:
+        self.email.EMAIL_TEMPLATES_DIR = value
+
+    @property
+    def WEBHOOK_MAX_RETRIES(self) -> int:
+        return self.webhooks.WEBHOOK_MAX_RETRIES
+
+    @WEBHOOK_MAX_RETRIES.setter
+    def WEBHOOK_MAX_RETRIES(self, value: int) -> None:
+        self.webhooks.WEBHOOK_MAX_RETRIES = value
+
+    @property
+    def WEBHOOK_RETRY_DELAY_SECONDS(self) -> int:
+        return self.webhooks.WEBHOOK_RETRY_DELAY_SECONDS
+
+    @WEBHOOK_RETRY_DELAY_SECONDS.setter
+    def WEBHOOK_RETRY_DELAY_SECONDS(self, value: int) -> None:
+        self.webhooks.WEBHOOK_RETRY_DELAY_SECONDS = value
+
+    @property
+    def WEBHOOK_TIMEOUT_SECONDS(self) -> int:
+        return self.webhooks.WEBHOOK_TIMEOUT_SECONDS
+
+    @WEBHOOK_TIMEOUT_SECONDS.setter
+    def WEBHOOK_TIMEOUT_SECONDS(self, value: int) -> None:
+        self.webhooks.WEBHOOK_TIMEOUT_SECONDS = value
+
+    @property
+    def WEBHOOK_SIGNATURE_HEADER(self) -> str:
+        return self.webhooks.WEBHOOK_SIGNATURE_HEADER
+
+    @WEBHOOK_SIGNATURE_HEADER.setter
+    def WEBHOOK_SIGNATURE_HEADER(self, value: str) -> None:
+        self.webhooks.WEBHOOK_SIGNATURE_HEADER = value
+
+    @property
+    def WEBHOOK_SIGNATURE_ALGORITHM(self) -> str:
+        return self.webhooks.WEBHOOK_SIGNATURE_ALGORITHM
+
+    @WEBHOOK_SIGNATURE_ALGORITHM.setter
+    def WEBHOOK_SIGNATURE_ALGORITHM(self, value: str) -> None:
+        self.webhooks.WEBHOOK_SIGNATURE_ALGORITHM = value
+
+    @property
+    def ENVIRONMENT(self) -> EnvironmentOption:
+        return self.env.ENVIRONMENT
+
+    @ENVIRONMENT.setter
+    def ENVIRONMENT(self, value: EnvironmentOption) -> None:
+        self.env.ENVIRONMENT = value
+
+    @property
+    def STORAGE_PROVIDER(self) -> str:
+        return self.storage.STORAGE_PROVIDER
+
+    @STORAGE_PROVIDER.setter
+    def STORAGE_PROVIDER(self, value: str) -> None:
+        self.storage.STORAGE_PROVIDER = value
+
+    @property
+    def STORAGE_BUCKET(self) -> str:
+        return self.storage.STORAGE_BUCKET
+
+    @STORAGE_BUCKET.setter
+    def STORAGE_BUCKET(self, value: str) -> None:
+        self.storage.STORAGE_BUCKET = value
+
+    @property
+    def STORAGE_REGION(self) -> str:
+        return self.storage.STORAGE_REGION
+
+    @STORAGE_REGION.setter
+    def STORAGE_REGION(self, value: str) -> None:
+        self.storage.STORAGE_REGION = value
+
+    @property
+    def AWS_ACCESS_KEY_ID(self) -> str | None:
+        return self.storage.AWS_ACCESS_KEY_ID
+
+    @AWS_ACCESS_KEY_ID.setter
+    def AWS_ACCESS_KEY_ID(self, value: str | None) -> None:
+        self.storage.AWS_ACCESS_KEY_ID = value
+
+    @property
+    def AWS_SECRET_ACCESS_KEY(self) -> SecretStr | None:
+        return self.storage.AWS_SECRET_ACCESS_KEY
+
+    @AWS_SECRET_ACCESS_KEY.setter
+    def AWS_SECRET_ACCESS_KEY(self, value: Any) -> None:
+        self.storage.AWS_SECRET_ACCESS_KEY = value
+
+    @property
+    def AWS_ENDPOINT_URL(self) -> str | None:
+        return self.storage.AWS_ENDPOINT_URL
+
+    @AWS_ENDPOINT_URL.setter
+    def AWS_ENDPOINT_URL(self, value: str | None) -> None:
+        self.storage.AWS_ENDPOINT_URL = value
+
+    @property
+    def STRIPE_SECRET_KEY(self) -> SecretStr | None:
+        return self.billing.STRIPE_SECRET_KEY
+
+    @STRIPE_SECRET_KEY.setter
+    def STRIPE_SECRET_KEY(self, value: SecretStr | None) -> None:
+        self.billing.STRIPE_SECRET_KEY = value
+
+    @property
+    def STRIPE_PUBLISHABLE_KEY(self) -> str | None:
+        return self.billing.STRIPE_PUBLISHABLE_KEY
+
+    @STRIPE_PUBLISHABLE_KEY.setter
+    def STRIPE_PUBLISHABLE_KEY(self, value: str | None) -> None:
+        self.billing.STRIPE_PUBLISHABLE_KEY = value
+
+    @property
+    def STRIPE_WEBHOOK_SECRET(self) -> SecretStr | None:
+        return self.billing.STRIPE_WEBHOOK_SECRET
+
+    @STRIPE_WEBHOOK_SECRET.setter
+    def STRIPE_WEBHOOK_SECRET(self, value: SecretStr | None) -> None:
+        self.billing.STRIPE_WEBHOOK_SECRET = value
+
+    @property
+    def OLLAMA_BASE_URL(self) -> str:
+        return self.ai.OLLAMA_BASE_URL
+
+    @OLLAMA_BASE_URL.setter
+    def OLLAMA_BASE_URL(self, value: str) -> None:
+        self.ai.OLLAMA_BASE_URL = value
+
+    @property
+    def OLLAMA_TIMEOUT(self) -> float:
+        return self.ai.OLLAMA_TIMEOUT
+
+    @OLLAMA_TIMEOUT.setter
+    def OLLAMA_TIMEOUT(self, value: float) -> None:
+        self.ai.OLLAMA_TIMEOUT = value
+
+    @property
+    def OLLAMA_DEFAULT_MODEL(self) -> str:
+        return self.ai.OLLAMA_DEFAULT_MODEL
+
+    @OLLAMA_DEFAULT_MODEL.setter
+    def OLLAMA_DEFAULT_MODEL(self, value: str) -> None:
+        self.ai.OLLAMA_DEFAULT_MODEL = value
+
+    @property
+    def OLLAMA_MAX_CONNECTIONS(self) -> int:
+        return self.ai.OLLAMA_MAX_CONNECTIONS
+
+    @OLLAMA_MAX_CONNECTIONS.setter
+    def OLLAMA_MAX_CONNECTIONS(self, value: int) -> None:
+        self.ai.OLLAMA_MAX_CONNECTIONS = value
+
+    @property
+    def OLLAMA_MAX_KEEPALIVE(self) -> int:
+        return self.ai.OLLAMA_MAX_KEEPALIVE
+
+    @OLLAMA_MAX_KEEPALIVE.setter
+    def OLLAMA_MAX_KEEPALIVE(self, value: int) -> None:
+        self.ai.OLLAMA_MAX_KEEPALIVE = value
+
+    @property
+    def OLLAMA_KEEPALIVE_EXPIRY(self) -> float:
+        return self.ai.OLLAMA_KEEPALIVE_EXPIRY
+
+    @OLLAMA_KEEPALIVE_EXPIRY.setter
+    def OLLAMA_KEEPALIVE_EXPIRY(self, value: float) -> None:
+        self.ai.OLLAMA_KEEPALIVE_EXPIRY = value
+
+    @property
+    def EVENT_HANDLER_TIMEOUT_SECONDS(self) -> float:
+        return self.events.EVENT_HANDLER_TIMEOUT_SECONDS
+
+    @EVENT_HANDLER_TIMEOUT_SECONDS.setter
+    def EVENT_HANDLER_TIMEOUT_SECONDS(self, value: float) -> None:
+        self.events.EVENT_HANDLER_TIMEOUT_SECONDS = value
+
+    @property
+    def EVENT_HANDLER_TIMEOUT_CRITICAL(self) -> float:
+        return self.events.EVENT_HANDLER_TIMEOUT_CRITICAL
+
+    @EVENT_HANDLER_TIMEOUT_CRITICAL.setter
+    def EVENT_HANDLER_TIMEOUT_CRITICAL(self, value: float) -> None:
+        self.events.EVENT_HANDLER_TIMEOUT_CRITICAL = value
+
+    @property
+    def EVENT_BUS_CONCURRENCY(self) -> int:
+        return self.events.EVENT_BUS_CONCURRENCY
+
+    @EVENT_BUS_CONCURRENCY.setter
+    def EVENT_BUS_CONCURRENCY(self, value: int) -> None:
+        self.events.EVENT_BUS_CONCURRENCY = value
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return self.cors.CORS_ORIGINS
+
+    @CORS_ORIGINS.setter
+    def CORS_ORIGINS(self, value: list[str]) -> None:
+        self.cors.CORS_ORIGINS = value
+
+    @property
+    def CORS_METHODS(self) -> list[str]:
+        return self.cors.CORS_METHODS
+
+    @CORS_METHODS.setter
+    def CORS_METHODS(self, value: list[str]) -> None:
+        self.cors.CORS_METHODS = value
+
+    @property
+    def CORS_HEADERS(self) -> list[str]:
+        return self.cors.CORS_HEADERS
+
+    @CORS_HEADERS.setter
+    def CORS_HEADERS(self, value: list[str]) -> None:
+        self.cors.CORS_HEADERS = value
+
+    @property
+    def ARQ_ENABLED(self) -> bool:
+        return self.arq.ARQ_ENABLED
+
+    @ARQ_ENABLED.setter
+    def ARQ_ENABLED(self, value: bool) -> None:
+        self.arq.ARQ_ENABLED = value
+
+    @property
+    def ARQ_WORKERS(self) -> int:
+        return self.arq.ARQ_WORKERS
+
+    @ARQ_WORKERS.setter
+    def ARQ_WORKERS(self, value: int) -> None:
+        self.arq.ARQ_WORKERS = value
+
+    @property
+    def ARQ_MAX_JOBS(self) -> int:
+        return self.arq.ARQ_MAX_JOBS
+
+    @ARQ_MAX_JOBS.setter
+    def ARQ_MAX_JOBS(self, value: int) -> None:
+        self.arq.ARQ_MAX_JOBS = value
+
+    @property
+    def ARQ_JOB_TIMEOUT(self) -> int:
+        return self.arq.ARQ_JOB_TIMEOUT
+
+    @ARQ_JOB_TIMEOUT.setter
+    def ARQ_JOB_TIMEOUT(self, value: int) -> None:
+        self.arq.ARQ_JOB_TIMEOUT = value
+
+    @property
+    def ARQ_KEEP_RESULT(self) -> int:
+        return self.arq.ARQ_KEEP_RESULT
+
+    @ARQ_KEEP_RESULT.setter
+    def ARQ_KEEP_RESULT(self, value: int) -> None:
+        self.arq.ARQ_KEEP_RESULT = value
+
+    @property
+    def ARQ_MAX_TRIES(self) -> int:
+        return self.arq.ARQ_MAX_TRIES
+
+    @ARQ_MAX_TRIES.setter
+    def ARQ_MAX_TRIES(self, value: int) -> None:
+        self.arq.ARQ_MAX_TRIES = value
+
+    @property
+    def ARQ_QUEUE_MAX_SIZE(self) -> int:
+        return self.arq.ARQ_QUEUE_MAX_SIZE
+
+    @ARQ_QUEUE_MAX_SIZE.setter
+    def ARQ_QUEUE_MAX_SIZE(self, value: int) -> None:
+        self.arq.ARQ_QUEUE_MAX_SIZE = value
+
+    @property
+    def EVENT_BUS_USE_LUA_IDEMPOTENCY(self) -> bool:
+        return self.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY
+
+    @EVENT_BUS_USE_LUA_IDEMPOTENCY.setter
+    def EVENT_BUS_USE_LUA_IDEMPOTENCY(self, value: bool) -> None:
+        self.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY = value
+
+    @property
+    def EVENT_BUS_USE_BATCH_ENQUEUE(self) -> bool:
+        return self.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE
+
+    @EVENT_BUS_USE_BATCH_ENQUEUE.setter
+    def EVENT_BUS_USE_BATCH_ENQUEUE(self, value: bool) -> None:
+        self.r1_unified.EVENT_BUS_USE_BATCH_ENQUEUE = value
+
+    @property
+    def SESSION_USE_PIPELINE_EVICTION(self) -> bool:
+        return self.r1_unified.SESSION_USE_PIPELINE_EVICTION
+
+    @SESSION_USE_PIPELINE_EVICTION.setter
+    def SESSION_USE_PIPELINE_EVICTION(self, value: bool) -> None:
+        self.r1_unified.SESSION_USE_PIPELINE_EVICTION = value
+
+    @property
+    def XFETCH_USE_LUA_SCRIPT(self) -> bool:
+        return self.r1_unified.XFETCH_USE_LUA_SCRIPT
+
+    @XFETCH_USE_LUA_SCRIPT.setter
+    def XFETCH_USE_LUA_SCRIPT(self, value: bool) -> None:
+        self.r1_unified.XFETCH_USE_LUA_SCRIPT = value
+
+    @property
+    def RBAC_USE_REDIS_CACHE(self) -> bool:
+        return self.r1_unified.RBAC_USE_REDIS_CACHE
+
+    @RBAC_USE_REDIS_CACHE.setter
+    def RBAC_USE_REDIS_CACHE(self, value: bool) -> None:
+        self.r1_unified.RBAC_USE_REDIS_CACHE = value
+
+    @property
+    def TOKEN_NEGATIVE_CACHE_TTL(self) -> int:
+        return self.r1_unified.TOKEN_NEGATIVE_CACHE_TTL
+
+    @TOKEN_NEGATIVE_CACHE_TTL.setter
+    def TOKEN_NEGATIVE_CACHE_TTL(self, value: int) -> None:
+        self.r1_unified.TOKEN_NEGATIVE_CACHE_TTL = value
+
+    @property
+    def RBAC_CACHE_TTL_SECONDS(self) -> int:
+        return self.r1_unified.RBAC_CACHE_TTL_SECONDS
+
+    @RBAC_CACHE_TTL_SECONDS.setter
+    def RBAC_CACHE_TTL_SECONDS(self, value: int) -> None:
+        self.r1_unified.RBAC_CACHE_TTL_SECONDS = value
+
+    @property
+    def CIRCUIT_BREAKER_USE_DOUBLE_CHECK(self) -> bool:
+        return self.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK
+
+    @CIRCUIT_BREAKER_USE_DOUBLE_CHECK.setter
+    def CIRCUIT_BREAKER_USE_DOUBLE_CHECK(self, value: bool) -> None:
+        self.r1_unified.CIRCUIT_BREAKER_USE_DOUBLE_CHECK = value
+
+    @property
+    def DLQ_USE_BOUNDED_SIZE(self) -> bool:
+        return self.r1_unified.DLQ_USE_BOUNDED_SIZE
+
+    @DLQ_USE_BOUNDED_SIZE.setter
+    def DLQ_USE_BOUNDED_SIZE(self, value: bool) -> None:
+        self.r1_unified.DLQ_USE_BOUNDED_SIZE = value
+
+    @property
+    def DLQ_MAX_SIZE(self) -> int:
+        return self.r1_unified.DLQ_MAX_SIZE
+
+    @DLQ_MAX_SIZE.setter
+    def DLQ_MAX_SIZE(self, value: int) -> None:
+        self.r1_unified.DLQ_MAX_SIZE = value
+
+    @property
+    def DLQ_ALERT_THRESHOLD_PCT(self) -> float:
+        return self.r1_unified.DLQ_ALERT_THRESHOLD_PCT
+
+    @DLQ_ALERT_THRESHOLD_PCT.setter
+    def DLQ_ALERT_THRESHOLD_PCT(self, value: float) -> None:
+        self.r1_unified.DLQ_ALERT_THRESHOLD_PCT = value
+
+    @property
+    def SESSION_MAX_EVICTION_BATCH_SIZE(self) -> int:
+        return self.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE
+
+    @SESSION_MAX_EVICTION_BATCH_SIZE.setter
+    def SESSION_MAX_EVICTION_BATCH_SIZE(self, value: int) -> None:
+        self.r1_unified.SESSION_MAX_EVICTION_BATCH_SIZE = value
+
+    @property
+    def PASSKEY_DECRYPT_CONCURRENCY_LIMIT(self) -> int:
+        return self.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT
+
+    @PASSKEY_DECRYPT_CONCURRENCY_LIMIT.setter
+    def PASSKEY_DECRYPT_CONCURRENCY_LIMIT(self, value: int) -> None:
+        self.r1_unified.PASSKEY_DECRYPT_CONCURRENCY_LIMIT = value
+
+    @property
+    def PASSKEY_USE_COLUMN_SELECT(self) -> bool:
+        return self.r1_unified.PASSKEY_USE_COLUMN_SELECT
+
+    @PASSKEY_USE_COLUMN_SELECT.setter
+    def PASSKEY_USE_COLUMN_SELECT(self, value: bool) -> None:
+        self.r1_unified.PASSKEY_USE_COLUMN_SELECT = value
+
+    @property
+    def PASSKEY_MAX_CREDENTIALS_PER_USER(self) -> int:
+        return self.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER
+
+    @PASSKEY_MAX_CREDENTIALS_PER_USER.setter
+    def PASSKEY_MAX_CREDENTIALS_PER_USER(self, value: int) -> None:
+        self.r1_unified.PASSKEY_MAX_CREDENTIALS_PER_USER = value
+
+    @property
+    def FEATURE_CONTEXTVAR_OPTIMIZATION(self) -> bool:
+        return self.performance.FEATURE_CONTEXTVAR_OPTIMIZATION
+
+    @FEATURE_CONTEXTVAR_OPTIMIZATION.setter
+    def FEATURE_CONTEXTVAR_OPTIMIZATION(self, value: bool) -> None:
+        self.performance.FEATURE_CONTEXTVAR_OPTIMIZATION = value
+
+    @property
+    def FEATURE_STREAMING_UPLOADS(self) -> bool:
+        return self.performance.FEATURE_STREAMING_UPLOADS
+
+    @FEATURE_STREAMING_UPLOADS.setter
+    def FEATURE_STREAMING_UPLOADS(self, value: bool) -> None:
+        self.performance.FEATURE_STREAMING_UPLOADS = value
+
+    @property
+    def FEATURE_EAGER_LOADING(self) -> bool:
+        return self.performance.FEATURE_EAGER_LOADING
+
+    @FEATURE_EAGER_LOADING.setter
+    def FEATURE_EAGER_LOADING(self, value: bool) -> None:
+        self.performance.FEATURE_EAGER_LOADING = value
+
+    @property
+    def FEATURE_REMOVE_WASTED_CONNECTION(self) -> bool:
+        return self.performance.FEATURE_REMOVE_WASTED_CONNECTION
+
+    @FEATURE_REMOVE_WASTED_CONNECTION.setter
+    def FEATURE_REMOVE_WASTED_CONNECTION(self, value: bool) -> None:
+        self.performance.FEATURE_REMOVE_WASTED_CONNECTION = value
+
+    @property
+    def QUERY_PROFILER_ENABLED(self) -> bool:
+        return self.query_profiler.QUERY_PROFILER_ENABLED
+
+    @QUERY_PROFILER_ENABLED.setter
+    def QUERY_PROFILER_ENABLED(self, value: bool) -> None:
+        self.query_profiler.QUERY_PROFILER_ENABLED = value
+
+    @property
+    def QUERY_PROFILER_SLOW_THRESHOLD_MS(self) -> int:
+        return self.query_profiler.QUERY_PROFILER_SLOW_THRESHOLD_MS
+
+    @QUERY_PROFILER_SLOW_THRESHOLD_MS.setter
+    def QUERY_PROFILER_SLOW_THRESHOLD_MS(self, value: int) -> None:
+        self.query_profiler.QUERY_PROFILER_SLOW_THRESHOLD_MS = value
+
+    @property
+    def QUERY_PROFILER_N_PLUS_1_THRESHOLD(self) -> int:
+        return self.query_profiler.QUERY_PROFILER_N_PLUS_1_THRESHOLD
+
+    @QUERY_PROFILER_N_PLUS_1_THRESHOLD.setter
+    def QUERY_PROFILER_N_PLUS_1_THRESHOLD(self, value: int) -> None:
+        self.query_profiler.QUERY_PROFILER_N_PLUS_1_THRESHOLD = value
+
+    @property
+    def QUERY_PROFILER_DETAILED_LOGS(self) -> bool:
+        return self.query_profiler.QUERY_PROFILER_DETAILED_LOGS
+
+    @QUERY_PROFILER_DETAILED_LOGS.setter
+    def QUERY_PROFILER_DETAILED_LOGS(self, value: bool) -> None:
+        self.query_profiler.QUERY_PROFILER_DETAILED_LOGS = value
 
 
 # Initialize settings without arguments - Pydantic will populate from env

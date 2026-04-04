@@ -13,6 +13,10 @@ import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
+# Disable bad bot filter for tests (httpx is used by test clients)
+# MUST be set before importing settings, which reads env vars at module load
+os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
+
 import pytest
 from cryptography.fernet import Fernet
 from httpx import ASGITransport, AsyncClient
@@ -25,6 +29,11 @@ from src.app.core.config import settings
 from src.app.core.db.database import Base
 from src.app.core.encryption import encrypt_value
 from src.app.core.utils import cache
+
+# Reset cached bad bot regex so it picks up the disabled setting
+from src.app.middleware.ip_filter import _reset_bad_bot_regex
+
+_reset_bad_bot_regex()
 
 # Configure detailed logging for E2E tests
 logging.basicConfig(

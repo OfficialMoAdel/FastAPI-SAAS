@@ -44,7 +44,10 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
             # When the connection is returned to the pool and checked out by another request,
             # this event will fire again and overwrite it.
             if tenant_id:
-                await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '{tenant_id}', false)")
+                await conn.execute(
+                    f"SELECT set_config('{RLS_TENANT_VAR}', $1, false)",
+                    tenant_id
+                )
             else:
                 await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '', false)")
                 await conn.execute(f"SELECT set_config('{RLS_USER_VAR}', '', false)")

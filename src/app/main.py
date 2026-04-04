@@ -9,6 +9,7 @@ from fastapi import FastAPI, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
+from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
 from src.app.core.config import EnvironmentOption, settings
@@ -24,8 +25,8 @@ from src.app.middleware.request_id import RequestIDMiddleware
 from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 
-# admin will be initialized in lifespan
-admin: Any = None
+# admin will be initialized before lifespan
+admin: Any = create_admin_interface()
 logger = get_logger(__name__)
 
 CACHE_WARMING_ENABLED = True
@@ -207,10 +208,10 @@ app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurat
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
-app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal (runs AFTER BodyLimit in LIFO)
 app.add_middleware(
     RequestBodyLimitMiddleware, max_body_size=settings.MAX_BODY_SIZE
-)  # Configurable limit (runs BEFORE AttackDetection in LIFO)
+)  # Configurable limit (runs AFTER AttackDetection in LIFO)
+app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal (runs BEFORE BodyLimit in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses

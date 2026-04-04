@@ -38,7 +38,7 @@ logger = get_logger(__name__)
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
 
 # Cache stampede protection
-_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=86400)
+_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=60)
 
 
 def _get_tenant_lock(slug: str) -> asyncio.Lock:

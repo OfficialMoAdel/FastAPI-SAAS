@@ -93,8 +93,12 @@ class TestAuthServiceLockout:
         with (
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            patch(
+                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+            ) as mock_get_user,
         ):
             mock_auth.return_value = None  # Authentication fails
+            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
 
             with pytest.raises(UnauthorizedException) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
@@ -189,7 +193,7 @@ class TestAuthServiceLockout:
 
     @pytest.mark.asyncio
     async def test_lockout_works_when_eval_returns_bytes(
-        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_tenant
     ):
         """BUG FIX REGRESSION: Lockout must work even if redis.eval returns bytes.
 
@@ -201,8 +205,15 @@ class TestAuthServiceLockout:
         # Simulate raw Redis bytes response (happens when decode_responses=False)
         mock_redis.eval = AsyncMock(return_value=b"-1")
 
-        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            patch(
+                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+            ) as mock_get_user,
+        ):
             mock_auth.return_value = None
+            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
 
             with pytest.raises(UnauthorizedException) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)
@@ -212,15 +223,22 @@ class TestAuthServiceLockout:
 
     @pytest.mark.asyncio
     async def test_lockout_works_when_eval_returns_string(
-        self, auth_service, mock_db, mock_redis, mock_response, mock_request
+        self, auth_service, mock_db, mock_redis, mock_response, mock_request, mock_tenant
     ):
         """BUG FIX REGRESSION: Lockout must work even if redis.eval returns str '-1'."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
         mock_redis.eval = AsyncMock(return_value="-1")
 
-        with patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth:
+        with (
+            patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
+            patch(
+                "src.app.modules.users.service.UserService.get_user_auth_info", new_callable=AsyncMock
+            ) as mock_get_user,
+        ):
             mock_auth.return_value = None
+            mock_get_user.return_value = {"id": 1, "tenant_id": mock_tenant.id}
 
             with pytest.raises(UnauthorizedException) as exc_info:
                 await auth_service.login("testuser", "wrongpassword", mock_response, mock_request, mock_db, mock_redis)

@@ -3,6 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from src.app.core.monitoring_metrics import get_r1_metrics, reset_r1_metrics
+from tests.conftest import patch_setting
 
 
 @pytest.mark.asyncio
@@ -71,7 +72,7 @@ async def test_rate_limit_fail_open():
     # Mock get_client to raise Exception
     with (
         patch.object(RateLimiter, "get_client", side_effect=Exception("Redis down")),
-        patch("src.app.core.config.settings.RATE_LIMIT_FAIL_OPEN", True),
+        patch_setting("RATE_LIMIT_FAIL_OPEN", True),
     ):
         is_limited, _ = await limiter.check_rate_limit("key", 10, 60)
 

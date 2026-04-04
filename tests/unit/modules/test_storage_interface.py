@@ -9,6 +9,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from tests.conftest import patch_setting
+
 
 class MockClientError(Exception):
     """Mock ClientError for testing without boto3 installed."""
@@ -122,7 +124,6 @@ class TestS3Storage:
     @pytest.mark.asyncio
     async def test_s3_upload(self, mock_s3_client):
         """Test S3 file upload."""
-        from unittest.mock import patch
 
         from src.app.modules.storage.s3_storage import S3Storage
 
@@ -132,7 +133,7 @@ class TestS3Storage:
         file_obj = BytesIO(file_content)
 
         # Mock settings to disable streaming uploads (avoids botocore import)
-        with patch("src.app.modules.storage.s3_storage.settings.FEATURE_STREAMING_UPLOADS", False):
+        with patch_setting("FEATURE_STREAMING_UPLOADS", False):
             result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is True

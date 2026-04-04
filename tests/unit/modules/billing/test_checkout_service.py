@@ -5,13 +5,14 @@ from fastapi import HTTPException
 from pydantic import SecretStr
 
 from src.app.modules.billing.service import CheckoutCreate, CheckoutService
+from tests.conftest import patch_setting
 
 
 @pytest.mark.asyncio
 async def test_create_session_success(db_session, tenant):
     """Test successful checkout session creation."""
     # Mock settings to ensure key exists
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         # Mock dependencies
@@ -32,7 +33,8 @@ async def test_create_session_success(db_session, tenant):
             )
 
             from src.app.core.config import settings as app_settings
-            frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+
+            frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
             data = CheckoutCreate(
                 plan_id=1,
                 billing_interval="monthly",
@@ -55,11 +57,12 @@ async def test_create_session_success(db_session, tenant):
 @pytest.mark.asyncio
 async def test_create_session_no_api_key(db_session, tenant):
     """Test error when API key is missing."""
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", None):
+    with patch_setting("STRIPE_SECRET_KEY", None):
         service = CheckoutService(db_session)
         with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
             from src.app.core.config import settings as app_settings
-            frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+
+            frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
             data = CheckoutCreate(
                 plan_id=1, billing_interval="monthly", success_url=f"{frontend}/x", cancel_url=f"{frontend}/x"
             )
@@ -72,7 +75,7 @@ async def test_create_session_no_api_key(db_session, tenant):
 async def test_create_portal_session_success(db_session, tenant):
     """Test successful portal session creation."""
     # Mock settings to ensure key exists
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         with (
@@ -94,7 +97,7 @@ async def test_create_portal_session_success(db_session, tenant):
 async def test_create_session_has_tenant_metadata(db_session, tenant):
     """Test that checkout session creation includes tenant_id in metadata."""
     # Mock settings
-    with patch("src.app.core.config.settings.STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
+    with patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_123")):
         service = CheckoutService(db_session)
 
         # Mock dependencies
@@ -115,7 +118,8 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
             )
 
             from src.app.core.config import settings as app_settings
-            frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+
+            frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
             data = CheckoutCreate(
                 plan_id=1,
                 billing_interval="monthly",

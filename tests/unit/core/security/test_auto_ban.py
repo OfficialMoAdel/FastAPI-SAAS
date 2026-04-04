@@ -25,6 +25,7 @@ from src.app.core.security.auto_ban import (
     reset_violations,
     unban_ip,
 )
+from tests.conftest import patch_setting
 
 
 @pytest.fixture
@@ -174,9 +175,7 @@ class TestBanIP:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
+            patch_setting("AUTO_BAN_ENABLED", True, "AUTO_BAN_DURATION", 3600, "AUTO_BAN_ESCALATION", False),
             patch("src.app.core.security.auto_ban.log_security_event"),
         ):
             result = await ban_ip(sample_ip)
@@ -190,7 +189,7 @@ class TestBanIP:
         """Test ban when auto-ban is disabled."""
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", False),
+            patch_setting("AUTO_BAN_ENABLED", False),
         ):
             result = await ban_ip(sample_ip)
 
@@ -201,7 +200,7 @@ class TestBanIP:
         """Test ban when Redis unavailable."""
         with (
             patch("src.app.core.security.auto_ban.redis_client", None),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_ENABLED", True),
         ):
             result = await ban_ip(sample_ip)
 
@@ -217,9 +216,9 @@ class TestBanIP:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", True),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_DURATION", 3600),
+            patch_setting("AUTO_BAN_ESCALATION", True),
         ):
             result = await ban_ip(sample_ip)
 
@@ -235,8 +234,8 @@ class TestBanIP:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_ESCALATION", False),
         ):
             result = await ban_ip(sample_ip, duration=7200, reason="Custom reason")
 
@@ -252,9 +251,9 @@ class TestBanIP:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_DURATION", 3600),
+            patch_setting("AUTO_BAN_ESCALATION", False),
         ):
             result = await ban_ip(sample_ip)
 
@@ -336,8 +335,8 @@ class TestCheckAndAutoBan:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_THRESHOLD", 5),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_THRESHOLD", 5),
         ):
             banned, count = await check_and_auto_ban(sample_ip)
 
@@ -352,9 +351,9 @@ class TestCheckAndAutoBan:
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_THRESHOLD", 5),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_THRESHOLD", 5),
+            patch_setting("AUTO_BAN_DURATION", 3600),
         ):
             banned, count = await check_and_auto_ban(sample_ip)
 
@@ -364,7 +363,7 @@ class TestCheckAndAutoBan:
     @pytest.mark.asyncio
     async def test_check_and_auto_ban_disabled(self, sample_ip):
         """Test no action when auto-ban disabled."""
-        with patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", False):
+        with patch_setting("AUTO_BAN_ENABLED", False):
             banned, count = await check_and_auto_ban(sample_ip)
 
         assert banned is False
@@ -483,10 +482,16 @@ class TestIntegrationScenarios:
         """Test complete ban workflow from violation to ban."""
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_THRESHOLD", 3),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", False),
+            patch_setting(
+                "AUTO_BAN_ENABLED",
+                True,
+                "AUTO_BAN_THRESHOLD",
+                3,
+                "AUTO_BAN_DURATION",
+                3600,
+                "AUTO_BAN_ESCALATION",
+                False,
+            ),
         ):
             # Violation 1 - no ban (incr returns 1, expire succeeds)
             mock_redis.incr = AsyncMock(return_value=1)
@@ -516,9 +521,9 @@ class TestIntegrationScenarios:
         """Test that repeated bans escalate duration."""
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ENABLED", True),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_DURATION", 3600),
-            patch("src.app.core.security.auto_ban.settings.AUTO_BAN_ESCALATION", True),
+            patch_setting("AUTO_BAN_ENABLED", True),
+            patch_setting("AUTO_BAN_DURATION", 3600),
+            patch_setting("AUTO_BAN_ESCALATION", True),
         ):
             # First ban - no escalation (ban_count = 0)
             mock_redis.get.side_effect = [None, None]  # Not banned, no count

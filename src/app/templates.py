@@ -64,8 +64,10 @@ class EmailTemplatesService:
             html_content = override.content or ""
 
             try:
-                subject_template = Template(subject)
-                html_template = Template(html_content)
+                from jinja2.sandbox import SandboxedEnvironment
+                env = SandboxedEnvironment()
+                subject_template = env.from_string(subject)
+                html_template = env.from_string(html_content)
 
                 rendered_subject = subject_template.render(**context)
                 rendered_html = html_template.render(**context)

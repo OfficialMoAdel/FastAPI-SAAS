@@ -7,6 +7,7 @@ from pydantic import SecretStr
 from sqlalchemy import select
 
 from src.app.modules.billing.models import BillingRecord, UserSubscription
+from tests.conftest import patch_setting
 
 
 @pytest.fixture
@@ -22,7 +23,7 @@ def mock_redis_lifespan():
         patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock),
         patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock),
         patch("src.app.core.utils.cache.client", mock_redis),
-        patch("src.app.core.config.settings.STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")),
+        patch_setting("STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")),
     ):
         yield
 
@@ -37,6 +38,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
     user = await create_test_user(email="webhook_test@example.com")
 
     import uuid
+
     unique_event_id = f"evt_test_checkout_{uuid.uuid4().hex}"
 
     # Mock Stripe event payload
@@ -91,12 +93,8 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
     ):
         # Mock tenant context
         from src.app.core.tenancy.context import TenantContext
-        mock_ctx = TenantContext(
-            tenant_id=tenant.id,
-            tenant_slug=tenant.slug,
-            tenant_name=tenant.name,
-            is_active=True
-        )
+
+        mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
         mock_get_tenant.return_value = mock_ctx
 
         # Bypass signature verification
@@ -153,6 +151,7 @@ async def test_webhook_invoice_payment_succeeded_flow(
     await db_session.refresh(subscription)
 
     import uuid
+
     unique_event_id = f"evt_test_invoice_{uuid.uuid4().hex}"
 
     event_payload = {
@@ -178,12 +177,8 @@ async def test_webhook_invoice_payment_succeeded_flow(
         mock_verify.return_value = event_payload
 
         from src.app.core.tenancy.context import TenantContext
-        mock_ctx = TenantContext(
-            tenant_id=tenant.id,
-            tenant_slug=tenant.slug,
-            tenant_name=tenant.name,
-            is_active=True
-        )
+
+        mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
         mock_get_tenant.return_value = mock_ctx
 
         # Both contexts use the same test session

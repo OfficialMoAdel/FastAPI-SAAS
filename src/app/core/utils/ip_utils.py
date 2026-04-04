@@ -12,10 +12,10 @@ from fastapi import Request
 from src.app.core.config import settings
 
 # Parse trusted proxy networks once at module load
-TRUSTED_PROXY_IPS: set[str] = set(settings.TRUSTED_PROXY_IPS)
+TRUSTED_PROXY_IPS: set[str] = set(settings.TRUSTED_PROXY_IPS or [])
 try:
     TRUSTED_PROXY_NETWORKS: tuple[ipaddress.IPv4Network | ipaddress.IPv6Network, ...] = tuple(
-        ipaddress.ip_network(n) for n in settings.TRUSTED_PROXY_NETWORKS
+        ipaddress.ip_network(n) for n in (settings.TRUSTED_PROXY_NETWORKS or [])
     )
 except ValueError:
     TRUSTED_PROXY_NETWORKS = (

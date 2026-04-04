@@ -291,6 +291,7 @@ def get_template_env() -> Environment:
         loader=FileSystemLoader(template_dir),
         trim_blocks=True,
         lstrip_blocks=True,
+        autoescape=True,
     )
 
 

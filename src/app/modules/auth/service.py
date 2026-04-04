@@ -214,7 +214,24 @@ return new_attempts
             result = 0  # Default: allow login attempt if coercion fails
 
         if result == -1:
-            await self._publish_login_audit(request, username, False, reason="account_locked")
+            # Fetch user to get tenant and user ID for audit log
+            user_service = get_user_service(db)
+            if "@" in normalized_username:
+                db_user = await user_service.get_user_auth_info(email=normalized_username)
+            else:
+                db_user = await user_service.get_user_auth_info(username=normalized_username)
+
+            tenant_id = db_user.get("tenant_id") if db_user else None
+            user_id = db_user.get("id") if db_user else None
+
+            await self._publish_login_audit(
+                request,
+                username,
+                False,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                reason="account_locked"
+            )
             raise UnauthorizedException("Wrong username, email or password.")
 
         # Authenticate (this takes time due to bcrypt)
@@ -621,7 +638,7 @@ return new_attempts
 
         # Hash and update new password
         new_hashed = await get_password_hash(new_password)
-        await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed})
+        await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
 
         # SECURITY FIX: Invalidate ALL user sessions
         await self._invalidate_all_user_sessions(user, db)

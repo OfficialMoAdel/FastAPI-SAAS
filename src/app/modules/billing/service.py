@@ -597,6 +597,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
+        # SECURITY FIX: Enforce tenant isolation
+        tenant = get_current_tenant()
+        if tenant and subscription.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
         # T109: Call Stripe API to cancel subscription at period end
         stripe_subscription_id = subscription.get("stripe_subscription_id")
         if stripe_subscription_id:

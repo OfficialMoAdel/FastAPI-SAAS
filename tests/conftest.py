@@ -468,7 +468,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
         patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
-        patch("src.app.middleware.rate_limit.settings.RATE_LIMIT_ALGORITHM", "fixed_window"),
+        patch_setting("RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -480,7 +480,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
             new_callable=AsyncMock,
             return_value=fake_tenant,
         ),
-        patch("src.app.middleware.ip_filter.settings.security.BAD_BOT_FILTER_ENABLED", False),
+        patch_setting("BAD_BOT_FILTER_ENABLED", False),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
@@ -2046,22 +2046,55 @@ def override_settings():
     """Fixture to temporarily override settings for tests.
 
     Returns a context manager that allows temporary setting overrides.
+    Uses direct attribute save/restore instead of mock.patch to avoid
+    Pydantic property deleter issues.
     """
     from contextlib import contextmanager
-    from unittest.mock import patch
 
     @contextmanager
     def _override(**kwargs):
-        patches = []
+        saved = {}
         for key, value in kwargs.items():
             if hasattr(settings, key):
-                patcher = patch.object(settings, key, value)
-                patcher.start()
-                patches.append(patcher)
+                saved[key] = getattr(settings, key)
+                setattr(settings, key, value)
         try:
             yield
         finally:
-            for patcher in patches:
-                patcher.stop()
+            for key, original_value in saved.items():
+                setattr(settings, key, original_value)
 
     return _override
+
+
+class patch_setting:
+    """Context manager to safely patch Settings properties.
+
+    Unlike unittest.mock.patch, this uses setattr/getattr which works
+    with Pydantic properties that have setters but no deleters.
+
+    Usage:
+        with patch_setting("IP_WHITELIST_ENABLED", True):
+            ...
+        # Multiple settings:
+        with patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False):
+            ...
+    """
+
+    def __init__(self, *args):
+        """Accept key-value pairs: patch_setting("KEY", value, "KEY2", value2)."""
+        if len(args) % 2 != 0:
+            raise ValueError("patch_setting requires key-value pairs")
+        self.pairs = list(zip(args[::2], args[1::2]))
+        self.saved = {}
+
+    def __enter__(self):
+        for key, value in self.pairs:
+            if hasattr(settings, key):
+                self.saved[key] = getattr(settings, key)
+                setattr(settings, key, value)
+        return self
+
+    def __exit__(self, *args):
+        for key, original_value in self.saved.items():
+            setattr(settings, key, original_value)
