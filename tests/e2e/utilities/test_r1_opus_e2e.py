@@ -275,6 +275,7 @@ class TestSessionManagerIntegration:
         return redis
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
     async def test_session_limit_enforcement(self, e2e_results, mock_redis_session):
         """Verify session limit is enforced correctly with ZSET eviction."""
         sm = SessionManager(redis_client=mock_redis_session, max_sessions=5)

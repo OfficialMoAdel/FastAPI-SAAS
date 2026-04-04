@@ -80,6 +80,7 @@ def mock_redis_client() -> AsyncMock:
     mock.exists = AsyncMock(return_value=0)
     mock.ttl = AsyncMock(return_value=-1)
     mock.incr = AsyncMock(return_value=1)  # For event sequence numbers
+    mock.eval = AsyncMock(return_value=[])
 
     # Default pipeline: returns an async context manager wrapping an AsyncMock pipe.
     # Individual tests may override: mock_redis_client.pipeline = MagicMock(return_value=make_pipeline_ctx(my_pipe))

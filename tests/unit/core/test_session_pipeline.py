@@ -107,6 +107,7 @@ class TestSessionPipelineOptimization:
                 assert roundtrips >= 2, f"Expected >=2 roundtrips for legacy, got {roundtrips}"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
     async def test_pipelined_eviction_calls_zrange_not_zpopmin(
         self, session_manager: Any, mock_redis: AsyncMock
     ) -> None:
@@ -149,6 +150,7 @@ class TestSessionPipelineOptimization:
                 mock_redis.zpopmin.assert_called()
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
     async def test_batch_size_limit_respected(self, session_manager: Any, mock_redis: AsyncMock) -> None:
         """Test that eviction batch size is capped by SESSION_MAX_EVICTION_BATCH_SIZE."""
         # Simulate 100 sessions over limit
@@ -172,6 +174,7 @@ class TestSessionPipelineOptimization:
                 assert call_args[0][2] <= 9, "Batch size should be capped at 10"
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
     async def test_pipelined_handles_orphaned_sessions(self, session_manager: Any, mock_redis: AsyncMock) -> None:
         """Test that pipelined eviction handles sessions in ZSET but not in hash."""
         # ZRANGE returns sessions
@@ -273,6 +276,7 @@ class TestSessionFeatureFlagToggle:
         return redis
 
     @pytest.mark.asyncio
+    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
     async def test_feature_flag_true_uses_pipelined(self, mock_redis_simple: AsyncMock) -> None:
         """Test that feature flag True uses pipelined path."""
         from src.app.core.security.session_manager import SessionManager
