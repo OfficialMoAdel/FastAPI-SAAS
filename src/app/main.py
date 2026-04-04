@@ -3,12 +3,12 @@
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from datetime import timedelta
+from typing import Any
 
 from fastapi import FastAPI, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
-from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
 from src.app.core.config import EnvironmentOption, settings
@@ -24,7 +24,8 @@ from src.app.middleware.request_id import RequestIDMiddleware
 from src.app.middleware.security_headers import SecurityHeadersMiddleware
 from src.app.middleware.tenant import TenantMiddleware
 
-admin = create_admin_interface()
+# admin will be initialized in lifespan
+admin: Any = None
 logger = get_logger(__name__)
 
 CACHE_WARMING_ENABLED = True
@@ -214,11 +215,7 @@ app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whiteliste
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
 
-if admin:
-    try:
-        app.mount("/admin", admin)  # type: ignore[arg-type]
-    except Exception as e:
-        logger.warning("Failed to mount admin interface", error=e)
+# Admin mounting moved to lifespan
 
 
 # OpenAPI custom schema

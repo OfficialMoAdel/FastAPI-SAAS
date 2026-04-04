@@ -113,6 +113,15 @@ def _create_engine() -> AsyncEngine:
     return engine
 
 
+def get_async_engine() -> AsyncEngine:
+    """Get or create the async engine."""
+    global _async_engine
+    if _async_engine is None:
+        with _init_lock:
+            if _async_engine is None:
+                _async_engine = _create_engine()
+    return _async_engine
+
 def _get_local_session() -> async_sessionmaker[AsyncSession]:
     """Internal helper to get or create the local session maker."""
     global _local_session
@@ -121,10 +130,9 @@ def _get_local_session() -> async_sessionmaker[AsyncSession]:
             # Double-check pattern to prevent race condition
             if _local_session is None:
                 # Ensure engine is created first
-                engine = __getattr__("async_engine")
+                engine = get_async_engine()
                 _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     return _local_session
-
 
 def __getattr__(name: str) -> Any:
     """Lazy-load engine and session maker to prevent connection leaks during module import.
@@ -132,15 +140,8 @@ def __getattr__(name: str) -> Any:
     This ensures that database connections are only initialized when actually needed,
     avoiding leaks during configuration validation or middleware setup.
     """
-    global _async_engine
-
     if name == "async_engine":
-        if _async_engine is None:
-            with _init_lock:
-                # Double-check pattern to prevent race condition
-                if _async_engine is None:
-                    _async_engine = _create_engine()
-        return _async_engine
+        return get_async_engine()
 
     if name in ("local_session", "async_session_maker"):
         return _get_local_session()

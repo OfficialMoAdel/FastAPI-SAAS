@@ -1,18 +1,17 @@
 from datetime import datetime
-from typing import Optional
 
 from pydantic import BaseModel
 
 
 class JobStatusResponse(BaseModel):
     status: str
-    result: Optional[str] = None
-    duration_seconds: Optional[float] = None
-    job_id: Optional[str] = None
-    function: Optional[str] = None
-    enqueue_time: Optional[datetime] = None
-    start_time: Optional[datetime] = None
-    finish_time: Optional[datetime] = None
+    result: str | None = None
+    duration_seconds: float | None = None
+    job_id: str | None = None
+    function: str | None = None
+    enqueue_time: datetime | None = None
+    start_time: datetime | None = None
+    finish_time: datetime | None = None
 
 
 class JobMetrics(BaseModel):
@@ -28,12 +27,12 @@ class JobMetricsResponse(BaseModel):
 
 
 class DLQItemResponse(BaseModel):
-    job_id: Optional[str] = None
-    function: Optional[str] = None
-    error: Optional[str] = None
+    job_id: str | None = None
+    function: str | None = None
+    error: str | None = None
     timestamp: float
     timestamp_iso: str
-    raw: Optional[str] = None  # For malformed items
+    raw: str | None = None  # For malformed items
 
 
 class JobSummaryResponse(BaseModel):

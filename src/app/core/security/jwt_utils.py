@@ -99,7 +99,7 @@ def _get_verification_key() -> str:
 
 
 @lru_cache(maxsize=1)
-def _get_parsed_verification_key() -> Union[JWTPublicKey, str]:
+def _get_parsed_verification_key() -> JWTPublicKey | str:
     """Get a pre-parsed key for JWT verification (cached singleton).
 
     For RS256 deployments, this pre-parses the PEM public key into a

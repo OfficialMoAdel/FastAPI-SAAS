@@ -130,8 +130,8 @@ class TenantAwareCRUD(
                     object["tenant_id"] = tenant_id
             elif isinstance(object, BaseModel):
                 # Only set if the field exists and is None/empty
-                if hasattr(object, "tenant_id") and not getattr(object, "tenant_id"):
-                    setattr(object, "tenant_id", tenant_id)
+                if hasattr(object, "tenant_id") and not object.tenant_id:
+                    object.tenant_id = tenant_id
         else:
             raise RuntimeError("Tenant-scoped create executed without an active tenant context")
 

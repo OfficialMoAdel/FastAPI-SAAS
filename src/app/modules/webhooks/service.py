@@ -629,7 +629,7 @@ async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
     event_type = data.get("event_type")
     payload = data.get("payload")
 
-    if not all([tenant_id_str, event_type, payload]):
+    if not all([tenant_id_str, event_type]) or payload is None:
         logger.warning(
             "webhook_trigger_event_missing_data",
             has_tenant=bool(tenant_id_str),

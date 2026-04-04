@@ -1,4 +1,3 @@
-from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query, status
 
@@ -28,7 +27,7 @@ async def get_jobs_summary() -> JobSummaryResponse:
 
 
 @router.get("/metrics", response_model=JobMetricsResponse)
-async def get_jobs_metrics(function_name: Optional[str] = None) -> JobMetricsResponse:
+async def get_jobs_metrics(function_name: str | None = None) -> JobMetricsResponse:
     """
     Get aggregated metrics for job functions.
     If function_name is provided, returns metrics only for that function.

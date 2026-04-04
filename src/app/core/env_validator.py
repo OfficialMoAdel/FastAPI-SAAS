@@ -4,7 +4,7 @@ import os
 import re
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any, Optional
+from typing import Any
 
 from src.app.core.logger import get_logger
 
@@ -74,7 +74,7 @@ class EnvironmentValidator:
         return results
 
     @classmethod
-    def _validate_variable(cls, var: str, value: str, rules: dict[str, Any]) -> Optional[ValidationResult]:
+    def _validate_variable(cls, var: str, value: str, rules: dict[str, Any]) -> ValidationResult | None:
         """Validate a single variable."""
         if "min_length" in rules and len(value) < rules["min_length"]:
             return ValidationResult(

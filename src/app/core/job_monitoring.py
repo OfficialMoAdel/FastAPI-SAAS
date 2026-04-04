@@ -1,6 +1,6 @@
 import time
 from datetime import UTC, datetime
-from typing import Any, Optional
+from typing import Any
 
 from src.app.core.logger import get_logger
 from src.app.core.utils import cache
@@ -244,7 +244,7 @@ class JobMonitoringService:
 
 
 # Singleton instance
-_job_monitor: Optional[JobMonitoringService] = None
+_job_monitor: JobMonitoringService | None = None
 
 
 def get_job_monitor() -> JobMonitoringService:

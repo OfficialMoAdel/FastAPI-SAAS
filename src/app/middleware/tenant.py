@@ -45,7 +45,12 @@ def _get_tenant_lock(slug: str) -> asyncio.Lock:
     """Get or create an asyncio.Lock for the given slug, bound to current event loop."""
     loop = asyncio.get_running_loop()
     key = f"{id(loop)}:{slug}"
-    return _TENANT_LOCKS.setdefault(key, asyncio.Lock())
+    try:
+        return _TENANT_LOCKS[key]
+    except KeyError:
+        lock = asyncio.Lock()
+        _TENANT_LOCKS[key] = lock
+        return lock
 
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(

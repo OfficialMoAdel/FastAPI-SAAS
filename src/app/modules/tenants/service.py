@@ -130,7 +130,7 @@ class TenantService(BaseService[Tenant]):
                 result: dict[str, Any] = json_loads(cached)
                 return result
         except Exception as e:
-            logger.debug("Failed to get cached tenant", error=str(e))
+            logger.error("Failed to get cached tenant", error=str(e))
 
         return None
 

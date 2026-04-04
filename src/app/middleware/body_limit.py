@@ -6,11 +6,9 @@ Limits the maximum size of request bodies to prevent:
 - Chunked transfer encoding bypass attacks
 """
 
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator
 
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from structlog import get_logger
 
 logger = get_logger(__name__)
@@ -50,7 +48,7 @@ class LimitedBodyStream:
         return self
 
 
-class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
+class RequestBodyLimitMiddleware:
     """Middleware to limit request body size.
 
     Enforces body size limits via:
@@ -63,13 +61,16 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app: ASGIApp, max_body_size: int = DEFAULT_MAX_BODY_SIZE):
-        super().__init__(app)
+        self.app = app
         self.max_body_size = max_body_size
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Check and enforce body size limit."""
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
         # Fast path: Check Content-Length header if present
-        content_length = request.headers.get("content-length")
+        content_length = next((value for name, value in scope.get("headers", []) if name == b"content-length"), b"")
 
         if content_length:
             try:
@@ -79,26 +80,27 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                         "request_body_too_large",
                         content_length=length,
                         max_size=self.max_body_size,
-                        path=request.url.path,
-                        client=request.client.host if request.client else "unknown",
+                        path=scope.get("path", ""),
+                        client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
                     )
-                    return Response(
-                        content="Request body too large",
-                        status_code=413,
-                        headers={"X-Max-Body-Size": str(self.max_body_size)},
-                    )
+                    await self._send_413(send)
+                    return
             except ValueError:
                 pass  # Invalid Content-Length header, continue to stream check
 
-        # For chunked/streaming requests, we wrap the body stream
-        # This handles cases where Content-Length is missing or spoofed
-        original_receive = request._receive
         bytes_received = 0
         max_size = self.max_body_size
+        response_started = False
 
-        async def limited_receive():
+        async def _send_wrapper(message: Message) -> None:
+            nonlocal response_started
+            if message["type"] == "http.response.start":
+                response_started = True
+            await send(message)
+
+        async def limited_receive() -> Message:
             nonlocal bytes_received
-            message = await original_receive()
+            message = await receive()
 
             if message["type"] == "http.request":
                 body = message.get("body", b"")
@@ -109,22 +111,29 @@ class RequestBodyLimitMiddleware(BaseHTTPMiddleware):
                         "chunked_request_body_too_large",
                         bytes_received=bytes_received,
                         max_size=max_size,
-                        path=request.url.path,
-                        client=request.client.host if request.client else "unknown",
+                        path=scope.get("path", ""),
+                        client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
                     )
-                    # FIXED: Stop request processing immediately (Item 13)
                     raise BodySizeLimitExceeded(f"Request body exceeded limit of {max_size} bytes")
 
             return message
 
-        request._receive = limited_receive
-
         try:
-            response: Response = await call_next(request)
-            return response
+            await self.app(scope, limited_receive, _send_wrapper)
         except BodySizeLimitExceeded:
-            return Response(
-                content="Request body too large",
-                status_code=413,
-                headers={"X-Max-Body-Size": str(self.max_body_size)},
-            )
+            if not response_started:
+                await self._send_413(send)
+
+    async def _send_413(self, send: Send) -> None:
+        await send({
+            "type": "http.response.start",
+            "status": 413,
+            "headers": [
+                (b"content-type", b"text/plain"),
+                (b"x-max-body-size", str(self.max_body_size).encode()),
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": b"Request body too large",
+        })

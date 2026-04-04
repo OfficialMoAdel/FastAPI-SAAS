@@ -217,75 +217,70 @@ class SessionManager:
         """
         roundtrips = 0
 
-        # Step 1: READ oldest sessions (non-destructive) - 1 roundtrip
-        oldest_sessions = await self._redis_client.zrange(zset_key, 0, sessions_to_remove - 1, withscores=True)
-        roundtrips += 1
+        # M9: Atomic Lua script for eviction and addition
+        lua_script = """
+        local zset_key = KEYS[1]
+        local hash_key = KEYS[2]
+        local sessions_to_remove = tonumber(ARGV[1])
+        local new_session_id = ARGV[2]
+        local new_session_data = ARGV[3]
+        local timestamp = ARGV[4]
+        local ttl = tonumber(ARGV[5])
 
-        if not oldest_sessions:
-            # No sessions to evict, just add new session
-            async with self._redis_client.pipeline() as pipe:
-                pipe.zadd(zset_key, {new_session_id: timestamp})
-                pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
-                pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-                pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-                await pipe.execute()
+        local evicted_data = {}
+
+        if sessions_to_remove > 0 then
+            local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
+            for i, sid in ipairs(session_ids) do
+                local data = redis.call('HGET', hash_key, sid)
+                if data then
+                    table.insert(evicted_data, data)
+                end
+                redis.call('HDEL', hash_key, sid)
+                redis.call('ZREM', zset_key, sid)
+            end
+        end
+
+        redis.call('ZADD', zset_key, timestamp, new_session_id)
+        redis.call('HSET', hash_key, new_session_id, new_session_data)
+        redis.call('EXPIRE', zset_key, ttl)
+        redis.call('EXPIRE', hash_key, ttl)
+
+        return evicted_data
+        """
+
+        try:
+            evicted = await self._redis_client.eval(
+                lua_script,
+                2,
+                zset_key,
+                hash_key,
+                sessions_to_remove,
+                new_session_id,
+                json_dumps(new_session_data, as_str=True),
+                timestamp,
+                self.SESSION_TTL_SECONDS,
+            )
             roundtrips += 1
+
+            if evicted:
+                for data in evicted:
+                    try:
+                        if isinstance(data, bytes):
+                            data = data.decode('utf-8')
+                        invalidated_sessions.append(json_loads(data))
+                    except Exception as e:
+                        logger.error(
+                            "Failed to parse session data",
+                            user_id=user_id,
+                            error=str(e),
+                        )
+
             return roundtrips
 
-        # Decode session IDs
-        session_ids = [s[0].decode("utf-8") if isinstance(s[0], bytes) else s[0] for s in oldest_sessions]
-
-        # Step 2: Batch HGET for session data - 1 roundtrip
-        async with self._redis_client.pipeline() as pipe:
-            for sid in session_ids:
-                pipe.hget(hash_key, sid)
-            session_data_list = await pipe.execute()
-        roundtrips += 1
-
-        # Step 3: Collect invalidated sessions (with error handling)
-        for sid, data in zip(session_ids, session_data_list):
-            if data is None:
-                logger.warning(
-                    "Session in sorted set but not in hash (orphaned)",
-                    user_id=user_id,
-                    session_id=sid,
-                )
-                continue
-
-            try:
-                invalidated_sessions.append(json_loads(data))
-            except Exception as e:
-                logger.error(
-                    "Failed to parse session data",
-                    user_id=user_id,
-                    session_id=sid,
-                    error=str(e),
-                )
-
-        # Step 4: Atomic delete from BOTH hash and sorted set + add new - 1 roundtrip
-        async with self._redis_client.pipeline() as pipe:
-            for sid in session_ids:
-                pipe.hdel(hash_key, sid)
-                pipe.zrem(zset_key, sid)  # Critical: remove from sorted set too!
-
-                logger.info(
-                    "Session invalidated due to limit",
-                    user_id=user_id,
-                    invalidated_session=sid,
-                )
-
-            # Add new session
-            pipe.zadd(zset_key, {new_session_id: timestamp})
-            pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
-
-            # Set expiry on both keys
-            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-
-            await pipe.execute()
-        roundtrips += 1
-
-        return roundtrips
+        except Exception as e:
+            logger.error("Failed to execute lua script for session eviction", error=str(e))
+            raise
 
     async def _evict_sessions_legacy(
         self,

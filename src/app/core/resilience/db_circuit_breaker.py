@@ -3,7 +3,7 @@
 import asyncio
 import json
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,11 +29,11 @@ db_circuit = create_circuit_breaker(
 async def execute_query_with_circuit_breaker(
     db: AsyncSession,
     query: str,
-    params: Optional[dict] = None,
-    cache_key: Optional[str] = None,
+    params: dict | None = None,
+    cache_key: str | None = None,
     cache_ttl: int = 300,
-    fallback_data: Optional[list] = None,
-) -> Optional[list]:
+    fallback_data: list | None = None,
+) -> list | None:
     """
     Execute query with circuit breaker protection.
 
@@ -139,7 +139,7 @@ async def execute_transaction_with_circuit_breaker(
         List of operation results
     """
     attempt = 0
-    last_error: Optional[Exception] = None
+    last_error: Exception | None = None
 
     while attempt <= max_retries:
         # Check circuit state

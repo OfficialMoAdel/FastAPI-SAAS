@@ -154,7 +154,7 @@ async def health_check() -> HealthCheckResponse:
     keys = ["database", "redis", "worker_queue", "cache_metrics", "dlq_size"]
     checks: dict[str, dict[str, str | float | bool]] = {}
 
-    for key, result in zip(keys, results):
+    for key, result in zip(keys, results, strict=False):
         # M4: Use Exception instead of BaseException to avoid catching KeyboardInterrupt/SystemExit
         if isinstance(result, Exception):
             checks[key] = {"status": "unhealthy", "error": str(result)}
