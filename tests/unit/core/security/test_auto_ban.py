@@ -376,17 +376,19 @@ class TestGetAllBannedIPs:
     @pytest.mark.asyncio
     async def test_get_all_banned_ips(self, mock_redis):
         """Test getting list of banned IPs."""
+
         mock_redis.scan.side_effect = [
             (0, [b"security:ban:192.168.1.1", b"security:ban:192.168.1.2"]),
         ]
-        # For each banned IP: get(ban_key), get(count_key) = 2 calls per IP
-        # Plus the get calls for ban data
+
+        # We queue calls for get(ban), ttl(ban), get(count) for each IP
         mock_redis.get.side_effect = [
             b"Rate limit exceeded",  # ban data for IP 1
             b"1",  # count for IP 1
             b"Too many requests",  # ban data for IP 2
             b"2",  # count for IP 2
         ]
+
         mock_redis.ttl.return_value = 1800
 
         with patch("src.app.core.security.auto_ban.redis_client", mock_redis):

@@ -39,7 +39,7 @@ class TestL1RBACCacheDirectAccess:
 
     def test_l1_cache_has_ttl(self):
         """Verify L1 cache has TTL configured."""
-        assert _L1_RBAC_CACHE.ttl == 5.0
+        assert _L1_RBAC_CACHE.ttl == 30.0
 
 
 class TestL1CacheHit:

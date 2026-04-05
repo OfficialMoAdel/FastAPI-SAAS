@@ -28,10 +28,11 @@ async def sample_background_task(ctx: Worker, name: str) -> str:
 
 
 @monitor_job("deliver_webhook_task")
-async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
+async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str, tenant_id: UUID | str | None = None) -> str:
     """Background task to deliver a webhook.
 
     Note: delivery_id may be str after orjson deserialization (UUID → str → str).
+    When tenant_id is passed as a job arg, skips the extra DB session lookup.
     """
     # Convert string to UUID if needed (orjson deserializes UUID as string)
     if isinstance(delivery_id, str):
@@ -45,16 +46,22 @@ async def deliver_webhook_task(ctx: Worker, delivery_id: UUID | str) -> str:
                 "Expected a valid UUID string (e.g. '550e8400-e29b-41d4-a716-446655440000')."
             ) from e
 
-    # First, get tenant_id from delivery record (bypass needed for lookup)
-    async with job_bypass_context("Fetching tenant_id for webhook delivery") as db:
-        db_result = await db.execute(
-            text("SELECT tenant_id FROM webhook_deliveries WHERE id = :id"),
-            {"id": str(delivery_id)},
-        )
-        row = db_result.fetchone()
-        if not row:
-            raise ValueError(f"Webhook delivery {delivery_id} not found")
-        tenant_id = row[0]
+    # Use tenant_id from job arg if available (saves 1 DB session),
+    # otherwise fall back to DB lookup for backward compatibility
+    if tenant_id is not None:
+        if isinstance(tenant_id, str):
+            tenant_id = UUID(tenant_id)
+    else:
+        # Fallback: lookup tenant_id from delivery record (legacy path)
+        async with job_bypass_context("Fetching tenant_id for webhook delivery") as db:
+            db_result = await db.execute(
+                text("SELECT tenant_id FROM webhook_deliveries WHERE id = :id"),
+                {"id": str(delivery_id)},
+            )
+            row = db_result.fetchone()
+            if not row:
+                raise ValueError(f"Webhook delivery {delivery_id} not found")
+            tenant_id = row[0]
 
     # Now process with proper tenant context
     async with job_tenant_context(tenant_id) as db:

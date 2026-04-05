@@ -57,6 +57,7 @@ class TestL1CacheE2E:
 
         mock_redis = AsyncMock()
         mock_redis.get = mock_redis_get
+        mock_redis.exists = AsyncMock(return_value=False)  # No negative cache
 
         middleware = TenantMiddleware(MagicMock())
 

@@ -37,7 +37,7 @@ class TestL1TenantCacheComprehensive:
         from src.app.middleware.tenant import _L1_TENANT_CACHE
 
         assert _L1_TENANT_CACHE.maxsize == 1000
-        assert _L1_TENANT_CACHE.ttl == 5.0
+        assert _L1_TENANT_CACHE.ttl == 60.0
 
     @pytest.mark.asyncio
     async def test_l1_cache_hit_skips_redis(self):
@@ -94,7 +94,7 @@ class TestL1RBACCacheComprehensive:
         from src.app.modules.rbac.service import _L1_RBAC_CACHE
 
         assert _L1_RBAC_CACHE.maxsize == 500
-        assert _L1_RBAC_CACHE.ttl == 5.0
+        assert _L1_RBAC_CACHE.ttl == 30.0
 
     @pytest.mark.asyncio
     async def test_l1_cache_hit_skips_redis_and_db(self):

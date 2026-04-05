@@ -514,6 +514,8 @@ return new_attempts
             response.delete_cookie(key="refresh_token")
 
             # Try to invalidate the specific session to decrement active sessions
+            db_user = None
+            user_service = None
             if user_data:
                 try:
                     user_service = get_user_service(db)
@@ -539,22 +541,15 @@ return new_attempts
                 except Exception as e:
                     logger.warning("failed_to_invalidate_session_on_logout", error=str(e))
 
-            # Audit log logout
+            # Audit log logout — reuse db_user from session invalidation (saves 1 DB query)
             try:
                 username = user_data.username_or_email if user_data else "unknown"
                 user_id_val = None
                 tenant_id_val = "0"
 
-                if user_data:
-                    user_service = get_user_service(db)
-                    if "@" in user_data.username_or_email:
-                        db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
-                    else:
-                        db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
-
-                    if db_user:
-                        user_id_val = str(db_user["id"])
-                        tenant_id_val = str(db_user.get("tenant_id", "0"))
+                if db_user:
+                    user_id_val = str(db_user["id"])
+                    tenant_id_val = str(db_user.get("tenant_id", "0"))
 
                 await event_bus.publish(
                     "audit.log",

@@ -14,6 +14,7 @@ Whitelist bypass: IPs in whitelist skip attack detection entirely.
 """
 
 import re
+import unicodedata
 from enum import Enum
 from typing import cast
 
@@ -83,6 +84,7 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
 # Compiled as bytes pattern for zero-copy scanning of request body.
 COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"(?P<sql_union>\bunion\b.*?\bselect\b)"
+    rb"|(?P<sql_or>\bor\b\s+['\"]?\d+['\"]?\s*=\s*['\"]?\d+['\"]?)"
     rb"|(?P<sql_drop>\bdrop\b.*?\btable\b)"
     rb"|(?P<sql_delete>\bdelete\b.*?\bfrom\b)"
     rb"|(?P<sql_comment>--\s*$)"
@@ -97,6 +99,19 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"|(?P<path_enc>%2e%2e%2f)"
     rb"|(?P<path_penc>%2e%2e\/)",
     re.IGNORECASE | re.MULTILINE,
+)
+
+# Unicode characters commonly used to bypass regex-based detection.
+# Zero-width joiners/non-joiners, directional overrides, BOM, etc.
+_ZERO_WIDTH_RE = re.compile(
+    "["
+    "\u200B-\u200F"  # Zero-width space, ZWNJ, ZWJ, LRM, RLM
+    "\u202A-\u202E"  # Directional overrides
+    "\u2060-\u2064"  # Word joiner, invisible separators
+    "\u2066-\u2069"  # Directional isolates
+    "\uFEFF"  # BOM / zero-width no-break space
+    "\uFFF9-\uFFFB"  # Interlinear annotation anchors
+    "]"
 )
 
 
@@ -135,6 +150,30 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             return True
         return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
 
+    @staticmethod
+    def _sanitize_input(content: bytes) -> bytes:
+        """Sanitize input bytes to defeat Unicode-based regex bypass attacks.
+
+        Applies:
+        1. NFKC normalization — collapses compatibility codepoints (e.g. U+FF35 → U)
+        2. Zero-width character stripping — removes invisible chars that split tokens
+
+        Falls back to raw bytes if decoding fails (binary payloads).
+        """
+        try:
+            text = content.decode("utf-8")
+        except (UnicodeDecodeError, ValueError):
+            return content
+
+        # NFKC normalization: collapses fullwidth/compatibility chars to their
+        # standard ASCII equivalents (e.g. \uff35\uff2e\uff29\uff2f\uff2e → UNION)
+        text = unicodedata.normalize("NFKC", text)
+
+        # Strip zero-width and invisible formatting characters
+        text = _ZERO_WIDTH_RE.sub("", text)
+
+        return text.encode("utf-8", errors="replace")
+
     async def _detect_attack_patterns(self, request: Request) -> list[dict]:
         """Scan request for attack patterns using zero-copy bytes scanning.
 
@@ -143,26 +182,40 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         - Request body (scanned as raw bytes without UTF-8 decode)
         - Headers (encoded to bytes)
 
+        All text inputs are sanitized via NFKC normalization and zero-width
+        character stripping before regex matching to prevent bypass attacks.
+
         Returns:
             List of detected attacks, each with pattern_type and location
         """
         detected_attacks: list[dict] = []
 
         # Encode small strings to bytes (fast) instead of decoding large body (slow)
-        path_bytes = request.url.path.encode("utf-8", errors="replace")
+        path_bytes = self._sanitize_input(request.url.path.encode("utf-8", errors="replace"))
         self._check_for_patterns(path_bytes, "url_path", detected_attacks)
 
         query = str(request.query_params)
         if query:
-            self._check_for_patterns(query.encode("utf-8", errors="replace"), "query_string", detected_attacks)
+            self._check_for_patterns(
+                self._sanitize_input(query.encode("utf-8", errors="replace")),
+                "query_string",
+                detected_attacks,
+            )
 
-        # Check specific headers
-        headers_to_check = ["user-agent", "referer", "x-requested-with"]
+        # Check security-relevant headers (expanded from original 3)
+        headers_to_check = [
+            "user-agent",
+            "referer",
+            "x-requested-with",
+            "cookie",
+            "x-forwarded-for",
+            "origin",
+        ]
         for header_name in headers_to_check:
             header_value = request.headers.get(header_name, "")
             if header_value:
                 self._check_for_patterns(
-                    header_value.encode("utf-8", errors="replace"),
+                    self._sanitize_input(header_value.encode("utf-8", errors="replace")),
                     f"header:{header_name}",
                     detected_attacks,
                 )
@@ -203,8 +256,10 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             logger.error("Failed to reinject request body - request._receive not available")
                             raise BodyScanError("Failed to reinject request body") from e
 
-                        # Scan raw bytes directly — no UTF-8 decode needed
-                        self._check_for_patterns(body, "request_body", detected_attacks)
+                        # Sanitize then scan — NFKC + zero-width stripping
+                        self._check_for_patterns(
+                            self._sanitize_input(body), "request_body", detected_attacks
+                        )
                 except Exception as e:
                     logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error

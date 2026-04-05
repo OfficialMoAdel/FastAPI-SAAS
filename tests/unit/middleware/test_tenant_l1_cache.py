@@ -58,8 +58,8 @@ class TestL1CacheDirectAccess:
         """Verify L1 cache has TTL configured."""
         from src.app.middleware.tenant import _L1_TENANT_CACHE
 
-        # Should have TTL of 5 seconds
-        assert _L1_TENANT_CACHE.ttl == 5.0
+        # Should have TTL of 60 seconds
+        assert _L1_TENANT_CACHE.ttl == 60.0
 
 
 class TestL1CacheIntegration:
@@ -125,6 +125,7 @@ class TestL1CacheIntegration:
 
         middleware = TenantMiddleware(MagicMock())
         mock_redis = AsyncMock()
+        mock_redis.exists = AsyncMock(return_value=False)  # No negative cache
         # Use proper JSON string with lowercase true (valid JSON)
         mock_redis.get = AsyncMock(
             return_value='{"id": "00000000-0000-0000-0000-000000000002", "slug": "redis-tenant", "is_active": true}'

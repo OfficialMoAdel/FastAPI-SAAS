@@ -342,22 +342,51 @@ class SessionManager:
 
         return roundtrips
 
-    async def is_session_valid(self, user_id: int | str, session_id: str) -> bool:
+    async def is_session_valid(
+        self,
+        user_id: int | str,
+        session_id: str,
+        jwt_exp: float | None = None,
+    ) -> bool:
         """Check if a session is valid (registered and not invalidated).
+
+        When Redis is unavailable, a degraded mode is available: if ``jwt_exp``
+        is provided and the token has not yet expired, the session is accepted.
+        This avoids a total authentication outage during brief Redis downtime
+        while bounding risk to the JWT expiry window.
 
         Args:
             user_id: User identifier
             session_id: Session identifier to check
+            jwt_exp: Optional JWT ``exp`` claim (Unix timestamp) for degraded
+                mode fallback when Redis is unavailable.  If *None*, the method
+                falls back to fail-closed behaviour (returns False).
 
         Returns
         -------
             True if session is valid, False otherwise
         """
         if not self._redis_client:
-            # SECURITY: Fail closed if Redis unavailable - reject when session state cannot be verified
-            # This prevents invalidated sessions from being accepted during Redis outages
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
+            # Degraded mode: accept session if JWT is still within expiry
+            if jwt_exp is not None:
+                now = datetime.now(UTC).timestamp()
+                if jwt_exp > now:
+                    record_fail_open("session_validation_degraded")
+                    logger.warning(
+                        "redis_unavailable_session_accepted_degraded",
+                        extra={
+                            "user_id": user_id,
+                            "session_id": session_id,
+                            "jwt_exp": jwt_exp,
+                            "remaining_seconds": round(jwt_exp - now),
+                            "action": "degraded_mode_accept",
+                        },
+                    )
+                    return True
+
+            # Fail closed: no jwt_exp or token already expired
             record_fail_open("session_validation")
 
             logger.critical(

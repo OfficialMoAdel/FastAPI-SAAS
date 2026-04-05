@@ -165,7 +165,7 @@ class WebhookService:
         # FIX: Log exceptions instead of silently swallowing them
         if deliveries:
             enqueue_results = await asyncio.gather(
-                *(self._enqueue_delivery(d.id) for d in deliveries),
+                *(self._enqueue_delivery(d.id, tenant_id=d.tenant_id) for d in deliveries),
                 return_exceptions=True,
             )
             # Log any exceptions that occurred during enqueue
@@ -221,7 +221,7 @@ class WebhookService:
         await self.db.commit()
         await self.db.refresh(delivery)
 
-        await self._enqueue_delivery(delivery.id)
+        await self._enqueue_delivery(delivery.id, tenant_id=delivery.tenant_id)
 
         logger.info("Triggered webhook delivery for endpoint", delivery_id=delivery.id, endpoint_id=endpoint.id)
         return delivery
@@ -249,15 +249,23 @@ class WebhookService:
 
         return f"sha256={signature}"
 
-    async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0) -> None:
-        """Enqueue webhook delivery task."""
+    async def _enqueue_delivery(self, delivery_id: UUID, defer_by: int = 0, tenant_id: UUID | None = None) -> None:
+        """Enqueue webhook delivery task.
+
+        Args:
+            delivery_id: ID of the delivery record.
+            defer_by: Seconds to defer the job.
+            tenant_id: Tenant ID passed as job arg to avoid a DB lookup in the worker.
+        """
         from src.app.core.utils.queue import pool
 
         if pool:
+            # Pass tenant_id as a job arg so the worker can skip the "lookup" DB session
+            args = [delivery_id, str(tenant_id)] if tenant_id else [delivery_id]
             if defer_by > 0:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", delivery_id, _defer_by=defer_by)
+                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args, _defer_by=defer_by)
             else:
-                enqueue_result = pool.enqueue_job("deliver_webhook_task", delivery_id)
+                enqueue_result = pool.enqueue_job("deliver_webhook_task", *args)
 
             if inspect.isawaitable(enqueue_result):
                 await enqueue_result
@@ -437,11 +445,20 @@ class WebhookService:
             try:
                 from src.app.core.utils.background_task import create_safe_task
 
-                create_safe_task(self._enqueue_delivery(delivery_id, defer_by=retry_delay))
+                create_safe_task(
+                    self._enqueue_delivery(
+                        delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id
+                    )
+                )
             except RuntimeError:
                 try:
                     loop = asyncio.get_event_loop()
-                    asyncio.run_coroutine_threadsafe(self._enqueue_delivery(delivery_id, defer_by=retry_delay), loop)
+                    asyncio.run_coroutine_threadsafe(
+                        self._enqueue_delivery(
+                            delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id
+                        ),
+                        loop,
+                    )
                 except Exception as loop_err:
                     logger.error(
                         "webhook_retry_enqueue_failed",

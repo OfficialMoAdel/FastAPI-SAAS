@@ -35,7 +35,7 @@ from src.app.modules.tenants.models import Tenant
 logger = get_logger(__name__)
 
 # L1 In-Memory Cache for tenant resolution
-_L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=5.0)
+_L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
 
 # Cache stampede protection
 _TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=60)
@@ -141,11 +141,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         # L1: In-memory cache
         try:
-            cached_data = _L1_TENANT_CACHE.get(slug)
-            if cached_data is not None:
-                return await self._get_tenant_from_cache_data(cached_data)
-            elif slug in _L1_TENANT_CACHE:
-                return None
+            if slug in _L1_TENANT_CACHE:
+                cached_data = _L1_TENANT_CACHE[slug]
+                if cached_data is not None:
+                    return await self._get_tenant_from_cache_data(cached_data)
+                return None  # Negative cache hit
         except Exception as e:
             logger.warning("Tenant L1 cache read error: %s", e)
 
@@ -153,7 +153,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
         async with _get_tenant_lock(slug):
             # Double-check L1
             if slug in _L1_TENANT_CACHE:
-                data = _L1_TENANT_CACHE.get(slug)
+                data = _L1_TENANT_CACHE[slug]
                 return await self._get_tenant_from_cache_data(data) if data else None
 
             cache_key = f"tenant:slug:{slug}"
@@ -161,12 +161,14 @@ class TenantMiddleware(BaseHTTPMiddleware):
             # L2: Redis cache
             if redis_client:
                 try:
+                    # Check negative cache first (dedicated key avoids sentinel collision)
+                    neg_key = f"tenant:negative:{slug}"
+                    if await redis_client.exists(neg_key):
+                        _L1_TENANT_CACHE[slug] = None
+                        return None
+
                     cached = await redis_client.get(cache_key)
                     if cached:
-                        if cached in (b"__negative_cache__", "__negative_cache__"):
-                            _L1_TENANT_CACHE[slug] = None
-                            return None
-
                         data = json_loads(cached)
                         _L1_TENANT_CACHE[slug] = data
                         return await self._get_tenant_from_cache_data(data)
@@ -176,6 +178,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
             # L3: Database
             async with local_session() as session:
                 from src.app.core.db.rls import bypass_rls
+
                 stmt = select(Tenant).where(Tenant.slug == slug)
                 async with bypass_rls(session, reason="Tenant resolution via middleware"):
                     result = await session.execute(stmt)
@@ -200,9 +203,14 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     try:
                         if cache_data:
                             await redis_client.setex(cache_key, 3600, json_dumps(cache_data))
+                            # Clear any stale negative cache for this slug
+                            await redis_client.delete(f"tenant:negative:{slug}")
                         else:
+                            # Use dedicated negative-cache key instead of sentinel value
                             await redis_client.setex(
-                                cache_key, settings.TENANT_NEGATIVE_CACHE_TTL, "__negative_cache__"
+                                f"tenant:negative:{slug}",
+                                settings.TENANT_NEGATIVE_CACHE_TTL,
+                                "1",
                             )
                     except Exception as e:
                         logger.warning("Tenant L2 cache write error: %s", e)

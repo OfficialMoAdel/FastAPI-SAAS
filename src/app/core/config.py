@@ -134,10 +134,6 @@ class CryptSettings(BaseSettings):
 
             if os.getenv("ENVIRONMENT", "development").lower() == "production":
                 raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in production.")
-            import os
-
-            if os.getenv("ENVIRONMENT", "development").lower() == "production":
-                raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in production.")
             logging.getLogger("app.core.config").warning(
                 "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing. "
                 "Features relying on encryption (e.g., webhooks, sensitive data) may fail."

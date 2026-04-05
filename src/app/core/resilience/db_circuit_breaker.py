@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import random
 from collections.abc import Callable
 from typing import Any
 
@@ -171,10 +172,10 @@ async def execute_transaction_with_circuit_breaker(
 
             # Exponential backoff
             if attempt <= max_retries:
-                wait_time = 2**attempt
+                wait_time = (2 ** attempt) + random.uniform(0, 0.5)
                 logger.warning(
                     "Transaction failed, retrying",
-                    wait_time=wait_time,
+                    wait_time=round(wait_time, 3),
                     attempt=attempt,
                     max_retries=max_retries,
                     error=str(e),

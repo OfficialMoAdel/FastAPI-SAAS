@@ -108,19 +108,20 @@ def truncate_context(
     truncated: list[dict[str, str]] = []
     current_tokens = 0
 
-    # Iterate from newest to oldest
+    # Iterate from newest to oldest, append and reverse at end (O(n) vs O(n²) insert(0))
     for msg in reversed(messages):
         msg_tokens = estimate_tokens(msg.get("content", ""))
         msg_tokens += estimate_tokens(msg.get("role", ""))
         msg_tokens += 4  # Message structure overhead
 
         if current_tokens + msg_tokens <= available_tokens:
-            truncated.insert(0, msg)  # Insert at beginning to maintain order
+            truncated.append(msg)
             current_tokens += msg_tokens
         else:
             # No more room, stop adding older messages
             break
 
+    truncated.reverse()
     return truncated
 
 

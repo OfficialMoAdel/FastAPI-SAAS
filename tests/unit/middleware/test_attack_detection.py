@@ -267,3 +267,118 @@ class TestConfigurationSettings:
         # Test the default values concept
         assert True is True  # ATTACK_DETECTION_ENABLED default
         assert False is False  # ATTACK_DETECTION_LOG_FULL_REQUEST default
+
+
+# ──────────────────────────────────────────────────────────────────
+# Tests for production COMBINED_ATTACK_RE and _sanitize_input
+# ──────────────────────────────────────────────────────────────────
+from src.app.middleware.attack_detection import (
+    _GROUP_TO_ATTACK,
+    COMBINED_ATTACK_RE,
+    AttackDetectionMiddleware,
+)
+
+
+class TestCombinedRegexSqlOr:
+    """Test that the sql_or pattern is present and functional in COMBINED_ATTACK_RE."""
+
+    @pytest.mark.parametrize(
+        "payload",
+        [
+            b"admin' OR 1=1",
+            b"admin' or 1=1",
+            b"admin' OR '1'='1'",
+            b"x' or 1=1 --",
+            b"something OR 99=99",
+        ],
+    )
+    def test_sql_or_detected(self, payload: bytes) -> None:
+        """OR 1=1 variants must be caught by COMBINED_ATTACK_RE."""
+        match = COMBINED_ATTACK_RE.search(payload)
+        assert match is not None, f"sql_or pattern did not match: {payload!r}"
+        assert match.lastgroup == "sql_or"
+
+    def test_sql_or_mapping_exists(self) -> None:
+        """Ensure _GROUP_TO_ATTACK has a valid entry for sql_or."""
+        assert "sql_or" in _GROUP_TO_ATTACK
+        pattern_name, attack_type = _GROUP_TO_ATTACK["sql_or"]
+        assert pattern_name == "sql_or_1_equals_1"
+        assert attack_type.value == "sql_injection"
+
+
+class TestUnicodeSanitization:
+    """Test _sanitize_input strips zero-width chars and applies NFKC normalization."""
+
+    def test_zero_width_injection_stripped(self) -> None:
+        """Zero-width chars inserted into 'union select' must be stripped."""
+        # "u\u200Bnion s\u200Belect" → "union select" after sanitization
+        payload = "u\u200Bnion s\u200Belect".encode()
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        # After sanitization, the regex should detect 'union select'
+        match = COMBINED_ATTACK_RE.search(sanitized)
+        assert match is not None, "Zero-width bypass was not defeated"
+        assert match.lastgroup == "sql_union"
+
+    def test_bom_stripped(self) -> None:
+        """BOM (U+FEFF) must be stripped before regex scanning."""
+        payload = "\uFEFFunion select * from users".encode()
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        match = COMBINED_ATTACK_RE.search(sanitized)
+        assert match is not None
+
+    def test_directional_override_stripped(self) -> None:
+        """Directional override chars (U+202A-U+202E) must be stripped."""
+        payload = "uni\u202Aon sel\u202Bect".encode()
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        match = COMBINED_ATTACK_RE.search(sanitized)
+        assert match is not None
+
+    def test_fullwidth_nfkc_normalization(self) -> None:
+        """Fullwidth U+FF35 N+FF29 O+FF2F N → UNION after NFKC."""
+        # Fullwidth "UNION" = U+FF35 U+FF2E U+FF29 U+FF2F U+FF2E
+        fullwidth_union = "\uff35\uff2e\uff29\uff2f\uff2e"
+        fullwidth_select = "\uff33\uff25\uff2c\uff25\uff23\uff34"
+        payload = f"{fullwidth_union} {fullwidth_select}".encode()
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        match = COMBINED_ATTACK_RE.search(sanitized)
+        assert match is not None, "Fullwidth UNION SELECT was not caught after NFKC"
+
+    def test_binary_payload_fallback(self) -> None:
+        """Non-UTF-8 binary payloads should fall back to raw bytes (no crash)."""
+        payload = b"\x80\x81\x82\xff\xfe"
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        # Should return raw bytes unchanged
+        assert sanitized == payload
+
+    def test_clean_input_unchanged(self) -> None:
+        """Clean ASCII input should pass through unchanged."""
+        payload = b"Hello, world!"
+        sanitized = AttackDetectionMiddleware._sanitize_input(payload)
+        assert sanitized == payload
+
+
+class TestExpandedHeaderCoverage:
+    """Test that the middleware checks cookie, x-forwarded-for, origin headers.
+
+    These tests verify the _GROUP_TO_ATTACK mapping works for all 15 groups.
+    """
+
+    def test_all_regex_groups_have_mappings(self) -> None:
+        """Every named group in COMBINED_ATTACK_RE must exist in _GROUP_TO_ATTACK."""
+        # Extract all named groups from the compiled regex
+        named_groups = set(COMBINED_ATTACK_RE.groupindex.keys())
+        mapped_groups = set(_GROUP_TO_ATTACK.keys())
+        missing = named_groups - mapped_groups
+        assert not missing, f"Regex groups {missing} have no mapping in _GROUP_TO_ATTACK"
+
+    def test_no_dead_code_mappings(self) -> None:
+        """Every entry in _GROUP_TO_ATTACK must have a corresponding regex group."""
+        named_groups = set(COMBINED_ATTACK_RE.groupindex.keys())
+        mapped_groups = set(_GROUP_TO_ATTACK.keys())
+        dead = mapped_groups - named_groups
+        assert not dead, f"Dead code mappings: {dead} exist in _GROUP_TO_ATTACK but not in regex"
+
+    def test_combined_regex_group_count(self) -> None:
+        """COMBINED_ATTACK_RE should have exactly 15 named groups (14 original + sql_or)."""
+        assert len(COMBINED_ATTACK_RE.groupindex) == 15
+

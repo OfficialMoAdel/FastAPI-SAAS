@@ -200,7 +200,7 @@ class MFAService:
         encrypted_secret = await self._encrypt_secret(totp_secret)
 
         # Hash backup codes for storage concurrently
-        backup_codes_hashed = list(await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes]))
+        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
 
         # Create MFA method record
         mfa_method = MFAMethod(

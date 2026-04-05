@@ -11,7 +11,7 @@ from enum import Enum
 from typing import Annotated
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field
 
 from src.app.modules._base import BaseRead, BaseUpdate
 
@@ -73,12 +73,7 @@ class StorageSettingsCreate(StorageSettingsBase):
     azure_credentials: AzureCredentials | None = None
     local_credentials: LocalCredentials | None = None
 
-    @field_validator("s3_credentials", "azure_credentials", "local_credentials")
-    @classmethod
-    def validate_credentials_match_provider(cls, v, info):
-        """Ensure credentials match the selected provider."""
-        # This validation is handled at service layer for full context
-        return v
+    # Note: credentials-provider matching is validated at service layer for full context
 
     model_config = ConfigDict(
         json_schema_extra={

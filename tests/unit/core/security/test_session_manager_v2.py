@@ -479,3 +479,56 @@ class TestSessionManagerZSETMigration:
         # Verify ZADD was called via pipeline
         pipe_mock.zadd.assert_called()
         pipe_mock.expire.assert_called()
+
+
+class TestSessionManagerDegradedMode:
+    """Test degraded mode when Redis is unavailable but JWT exp is provided."""
+
+    @pytest.mark.asyncio
+    async def test_degraded_mode_accepts_valid_jwt(self):
+        """When Redis is down and JWT is still valid, accept the session."""
+        import time
+
+        manager = SessionManager(redis_client=None)
+        future_exp = time.time() + 3600  # 1 hour from now
+
+        is_valid = await manager.is_session_valid(
+            "user123", "session_abc", jwt_exp=future_exp
+        )
+        assert is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_degraded_mode_rejects_expired_jwt(self):
+        """When Redis is down and JWT is expired, reject the session."""
+        import time
+
+        manager = SessionManager(redis_client=None)
+        past_exp = time.time() - 60  # 1 minute ago
+
+        is_valid = await manager.is_session_valid(
+            "user123", "session_abc", jwt_exp=past_exp
+        )
+        assert is_valid is False
+
+    @pytest.mark.asyncio
+    async def test_no_jwt_exp_preserves_fail_closed(self):
+        """Without jwt_exp, the original fail-closed behavior is preserved."""
+        manager = SessionManager(redis_client=None)
+
+        is_valid = await manager.is_session_valid("user123", "session_abc")
+        assert is_valid is False
+
+    @pytest.mark.asyncio
+    async def test_redis_available_ignores_jwt_exp(self, session_manager, mock_redis):
+        """When Redis IS available, jwt_exp is ignored — normal HEXISTS path."""
+        import time
+
+        mock_redis.hexists.return_value = True
+        future_exp = time.time() + 3600
+
+        is_valid = await session_manager.is_session_valid(
+            "user123", "session_abc", jwt_exp=future_exp
+        )
+        assert is_valid is True
+        mock_redis.hexists.assert_called_once()
+

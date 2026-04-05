@@ -39,7 +39,7 @@ import asyncio
 # - ttl: 5 seconds (balance between freshness and performance)
 # - Thread-safe: Access protected by _L1_RBAC_CACHE_LOCK to prevent dictionary iteration bugs
 # - Key format: "{tenant_id}:{role_id}" -> list of permission dicts
-_L1_RBAC_CACHE: TTLCache[str, list[dict[str, Any]]] = TTLCache(maxsize=500, ttl=5.0)
+_L1_RBAC_CACHE: TTLCache[str, list[dict[str, Any]]] = TTLCache(maxsize=500, ttl=30.0)
 # BUG FIX: asyncio.Lock() must NOT be created at module import time because that
 # binds it to whichever event loop is current at that moment (or raises a
 # DeprecationWarning / RuntimeError in Python ≥ 3.10 if there is no running loop).

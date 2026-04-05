@@ -116,3 +116,33 @@ def test_get_read_only_fallback():
     assert fallback["status"] == "degraded"
     assert "read-only" in fallback["mode"]
     assert "create" in fallback["blocked_operations"]
+
+
+@pytest.mark.asyncio
+async def test_transaction_retry_has_jitter(mock_db_session, reset_circuit, monkeypatch):
+    """Test that retry backoff includes jitter (non-deterministic wait)."""
+    import asyncio
+
+    recorded_waits: list[float] = []
+
+    async def spy_sleep(seconds):
+        recorded_waits.append(seconds)
+        # Don't actually sleep in tests
+        return
+
+    monkeypatch.setattr(asyncio, "sleep", spy_sleep)
+
+    # Fail twice then succeed
+    op = AsyncMock()
+    op.side_effect = [Exception("Fail1"), Exception("Fail2"), "Success"]
+
+    results = await execute_transaction_with_circuit_breaker(mock_db_session, [op], max_retries=3)
+
+    assert results == ["Success"]
+    assert len(recorded_waits) == 2  # Two retries before success
+
+    # Attempt 1: base = 2^1 = 2, jitter = 0..0.5 → range [2.0, 2.5]
+    assert 2.0 <= recorded_waits[0] <= 2.5, f"Wait 1 out of bounds: {recorded_waits[0]}"
+    # Attempt 2: base = 2^2 = 4, jitter = 0..0.5 → range [4.0, 4.5]
+    assert 4.0 <= recorded_waits[1] <= 4.5, f"Wait 2 out of bounds: {recorded_waits[1]}"
+

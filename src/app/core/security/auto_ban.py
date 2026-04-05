@@ -316,25 +316,73 @@ async def get_all_banned_ips() -> list[dict]:
         while True:
             cursor, keys = await redis_client.scan(cursor, match="security:ban:*", count=100)
 
-            for key in keys:
-                key_str = key.decode() if isinstance(key, bytes) else key
-                ip = key_str.replace("security:ban:", "")
+            if keys:
+                # Filter out ban_count keys (SCAN pattern "security:ban:*" also matches "security:ban_count:*")
+                ban_keys = [
+                    k for k in keys if not (k.decode() if isinstance(k, bytes) else k).startswith("security:ban_count:")
+                ]
 
-                ban_data = await redis_client.get(key)
-                ttl = await redis_client.ttl(key)
+                if ban_keys:
+                    # Filter out ban_count keys just in case, though the pattern should only match ban:
+                    valid_keys = [
+                        k for k in ban_keys
+                        if not (k.decode() if isinstance(k, bytes) else k).startswith("security:ban_count:")
+                    ]
 
-                ban_count_key = BAN_COUNT_KEY_PREFIX.format(ip=ip)
-                ban_count_str = await redis_client.get(ban_count_key)
-                ban_count = int(ban_count_str) if ban_count_str else 1
+                    if valid_keys:
+                        ips = []
+                        for key in valid_keys:
+                            key_str = key.decode() if isinstance(key, bytes) else key
+                            ip = key_str.replace("security:ban:", "")
+                            ips.append(ip)
 
-                banned.append(
-                    {
-                        "ip": ip,
-                        "reason": ban_data.decode() if isinstance(ban_data, bytes) else ban_data,
-                        "ttl_seconds": ttl if ttl > 0 else 0,
-                        "ban_count": ban_count,
-                    }
-                )
+                        # Fetch all ban data concurrently
+                        # asyncio.gather achieves the same multiplexing network efficiency
+                        # as pipeline(transaction=False) without the fragile execute() order bugs
+                        import asyncio
+
+                        tasks = []
+                        for ip in ips:
+                            ban_key = BAN_KEY_PREFIX.format(ip=ip)
+                            ban_count_key = BAN_COUNT_KEY_PREFIX.format(ip=ip)
+                            tasks.extend([
+                                redis_client.get(ban_key),
+                                redis_client.ttl(ban_key),
+                                redis_client.get(ban_count_key)
+                            ])
+
+                        results = await asyncio.gather(*tasks, return_exceptions=True)
+
+                        for i, ip in enumerate(ips):
+                            ban_data = results[i * 3]
+                            ttl = results[i * 3 + 1]
+                            ban_count_str = results[i * 3 + 2]
+
+                            # Handle exceptions gracefully
+                            if isinstance(ban_data, BaseException) or ban_data is None:
+                                continue
+
+                            if isinstance(ttl, BaseException):
+                                ttl_val = 0
+                            else:
+                                ttl_val = int(ttl) if int(ttl) > 0 else 0
+
+                            if isinstance(ban_count_str, BaseException):
+                                ban_count = 1
+                            else:
+                                try:
+                                    ban_count = int(ban_count_str) if ban_count_str else 1
+                                except (ValueError, TypeError):
+                                    ban_count = 1
+
+                            banned.append(
+                                {
+                                    "ip": ip,
+                                    "reason": ban_data.decode() if isinstance(ban_data, bytes) else ban_data,
+                                    "ttl_seconds": ttl_val,
+                                    "ban_count": ban_count,
+                                }
+                            )
 
             if cursor == 0:
                 break

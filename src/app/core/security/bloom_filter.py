@@ -189,10 +189,24 @@ class BloomFilter:
             True → item MIGHT be in set (possible false positive)
 
         Thread-safe for reads (no lock needed as we only read bits).
+        Uses inline double-hashing with early exit to avoid allocating
+        the full positions list and skip remaining hash computations
+        on first miss (negative lookups dominate in practice).
         """
-        positions = self._hash_values(item)
-        for pos in positions:
-            if not self._get_bit(pos):
+        item_bytes = item.encode()
+
+        if self._use_xxhash:
+            h = xxhash.xxh3_128_digest(item_bytes)
+            h1 = int.from_bytes(h[:8], "little")
+            h2 = int.from_bytes(h[8:16], "little")
+        else:
+            h = hashlib.sha256(item_bytes).digest()
+            h1 = int.from_bytes(h[:8], "big")
+            h2 = int.from_bytes(h[8:16], "big")
+
+        size = self._size
+        for i in range(self._hash_count):
+            if not self._bit_array[(h1 + i * h2) % size]:
                 return False  # Definitely not in set
         return True  # Might be in set
 
