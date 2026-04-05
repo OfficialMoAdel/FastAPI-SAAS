@@ -20,8 +20,11 @@ class FeatureFlagsService:
 
     async def _load_tenant_flags(self, tenant_id: str) -> dict[str, Any]:
         """Load feature flags from database."""
+        from src.app.core.db.rls import bypass_rls
+
         async with self._session_maker() as session:
-            result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+            async with bypass_rls(session, reason="Feature flags service needs cross-tenant access"):
+                result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
             tenant = result.scalar_one_or_none()
 
             if not tenant:
@@ -76,8 +79,11 @@ class FeatureFlagsService:
         -------
             True if successful
         """
+        from src.app.core.db.rls import bypass_rls
+
         async with self._session_maker() as session:
-            result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
+            async with bypass_rls(session, reason="Feature flags service needs cross-tenant access"):
+                result = await session.execute(select(Tenant).where(Tenant.id == tenant_id))
             tenant = result.scalar_one_or_none()
 
             if not tenant:
@@ -86,7 +92,10 @@ class FeatureFlagsService:
             if not tenant.feature_flags:
                 tenant.feature_flags = {}
 
-            tenant.feature_flags[flag_name] = value
+            # Create a new dict to ensure SQLAlchemy detects the change for JSONB columns
+            updated_flags = dict(tenant.feature_flags)
+            updated_flags[flag_name] = value
+            tenant.feature_flags = updated_flags
 
             await session.commit()
 

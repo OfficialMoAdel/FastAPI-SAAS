@@ -104,7 +104,7 @@ class RateLimitService(BaseService[RateLimit]):
 
         if not rate_limit_dict.get("name"):
             rate_limit_dict["name"] = (
-                f"{rate_limit_dict['path']}:{rate_limit_dict['limit']}:{rate_limit_dict['period']}"
+                f"{tier_name}:{rate_limit_dict['path']}:{rate_limit_dict['limit']}:{rate_limit_dict['period']}"
             )
 
         rate_limit_exists = await crud_rate_limits.exists(db=self.db, name=rate_limit_dict["name"])

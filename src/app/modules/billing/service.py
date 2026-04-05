@@ -752,6 +752,16 @@ class CheckoutService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
             )
 
+        import stripe
+        try:
+            # Lightweight API call to validate the key
+            stripe.api_key = api_key
+            stripe.Account.retrieve()
+        except stripe.error.AuthenticationError:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid Stripe API key configured"
+            )
+
         # Get Plan
         plan_service = SubscriptionPlanService(self.db)
         plan = await plan_service.get_plan(data.plan_id)

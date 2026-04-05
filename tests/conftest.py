@@ -944,6 +944,12 @@ class FakeRedisPipeline:
         self._commands.append(("lpush", key, value))
         return self
 
+    def rpush(self, key, *values):
+        """Queue a rpush command."""
+        for value in values:
+            self._commands.append(("rpush", key, value))
+        return self
+
     def ltrim(self, key, start, end):
         """Queue a ltrim command."""
         self._commands.append(("ltrim", key, start, end))
@@ -982,6 +988,9 @@ class FakeRedisPipeline:
                 results.append(result)
             elif cmd[0] == "lpush":
                 result = await self.redis.lpush(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "rpush":
+                result = await self.redis.rpush(cmd[1], cmd[2])
                 results.append(result)
             elif cmd[0] == "ltrim":
                 result = await self.redis.ltrim(cmd[1], cmd[2], cmd[3])
@@ -1079,6 +1088,18 @@ class FakeRedis:
             self.store[key] = []
 
         self.store[key].insert(0, value)
+        return len(self.store[key])
+
+    async def rpush(self, key, *values):
+        """Push values to the right end of a list (used by audit log buffering)."""
+        key = self._get_key(key)
+        if key not in self.store:
+            self.store[key] = []
+        if not isinstance(self.store[key], list):
+            self.store[key] = []
+
+        for value in values:
+            self.store[key].append(value)
         return len(self.store[key])
 
     async def lrange(self, key, start, end):

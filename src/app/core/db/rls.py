@@ -3,6 +3,10 @@ RLS (Row Level Security) helper module for context management.
 
 Provides helper functions and context managers for setting/clearing RLS session
 variables in PostgreSQL connections to enforce tenant isolation at the database level.
+
+SQLite Compatibility:
+    All functions detect SQLite dialect and skip set_config calls gracefully.
+    RLS is a PostgreSQL-only feature; SQLite tests run without RLS enforcement.
 """
 
 from collections.abc import AsyncGenerator, Callable
@@ -27,6 +31,14 @@ RLS_BYPASS_VAR = "app.bypass_rls"
 F = TypeVar("F", bound=Callable[..., Any])
 
 
+def _is_sqlite(connection: Any) -> bool:
+    """Check if the connection is using SQLite dialect."""
+    try:
+        return bool(connection.dialect.name == "sqlite")
+    except Exception:
+        return False
+
+
 def restore_rls_context(dbapi_connection: Any, connection_record: Any, connection_proxy: Any) -> None:
     """Restores RLS context when a connection is acquired from the pool.
 
@@ -44,10 +56,7 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
             # When the connection is returned to the pool and checked out by another request,
             # this event will fire again and overwrite it.
             if tenant_id:
-                await conn.execute(
-                    f"SELECT set_config('{RLS_TENANT_VAR}', $1, false)",
-                    tenant_id
-                )
+                await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', $1, false)", tenant_id)
             else:
                 await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '', false)")
                 await conn.execute(f"SELECT set_config('{RLS_USER_VAR}', '', false)")
@@ -85,6 +94,11 @@ async def set_rls_context(
     Raises:
         Exception: If setting context fails (fail-closed)
     """
+    # SQLite does not support set_config - skip silently
+    if _is_sqlite(connection):
+        logger.debug("Skipping RLS context set (SQLite)")
+        return
+
     try:
         # P2-2: Single roundtrip for all context variables using COALESCE
         if user_id:
@@ -126,6 +140,11 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
     Note:
         Fails open - logs warnings but doesn't raise exceptions
     """
+    # SQLite does not support set_config - skip silently
+    if _is_sqlite(connection):
+        logger.debug("Skipping RLS context clear (SQLite)")
+        return
+
     try:
         # P2-2: Single roundtrip to reset all RLS variables
         await connection.execute(
@@ -226,6 +245,12 @@ async def bypass_rls(
         raise ValueError("Reason is required for RLS bypass (audit trail)")
 
     connection = await session.connection()
+
+    # SQLite does not support set_config - skip bypass silently
+    if _is_sqlite(connection):
+        logger.debug("Skipping RLS bypass (SQLite)")
+        yield session
+        return
 
     try:
         # Store in session info for restoration upon new transactions
@@ -340,6 +365,9 @@ async def get_current_tenant_id(connection: AsyncConnection) -> str | None:
     Returns:
         Current tenant ID or None if not set
     """
+    # SQLite does not support current_setting
+    if _is_sqlite(connection):
+        return None
     try:
         result = await connection.execute(text(f"SELECT current_setting('{RLS_TENANT_VAR}', true)"))
         tenant_id = result.scalar()

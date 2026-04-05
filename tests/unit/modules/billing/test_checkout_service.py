@@ -16,6 +16,9 @@ async def test_create_session_success(db_session, tenant):
         service = CheckoutService(db_session)
 
         # Mock dependencies
+        mock_stripe_session = MagicMock(
+            url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890
+        )
         with (
             patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(
@@ -26,7 +29,8 @@ async def test_create_session_success(db_session, tenant):
                 "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
                 return_value={"stripe_price_id_monthly": "price_123"},
             ),
-            patch("stripe.checkout.Session.create") as mock_stripe_create,
+            patch("stripe.checkout.Session.create", return_value=mock_stripe_session) as mock_stripe_create,
+            patch("stripe.Account.retrieve", return_value=MagicMock()),
         ):
             mock_stripe_create.return_value = MagicMock(
                 url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890
@@ -101,6 +105,9 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
         service = CheckoutService(db_session)
 
         # Mock dependencies
+        mock_stripe_session = MagicMock(
+            url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890
+        )
         with (
             patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(
@@ -111,7 +118,8 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
                 "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
                 return_value={"stripe_price_id_monthly": "price_123"},
             ),
-            patch("stripe.checkout.Session.create") as mock_stripe_create,
+            patch("stripe.checkout.Session.create", return_value=mock_stripe_session) as mock_stripe_create,
+            patch("stripe.Account.retrieve", return_value=MagicMock()),
         ):
             mock_stripe_create.return_value = MagicMock(
                 url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890

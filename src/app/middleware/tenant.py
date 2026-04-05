@@ -42,14 +42,12 @@ _TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=60)
 
 
 def _get_tenant_lock(slug: str) -> asyncio.Lock:
-    """Get or create an asyncio.Lock for the given slug, bound to current event loop."""
-    loop = asyncio.get_running_loop()
-    key = f"{id(loop)}:{slug}"
+    """Get or create an asyncio.Lock for the given slug."""
     try:
-        return _TENANT_LOCKS[key]
+        return _TENANT_LOCKS[slug]
     except KeyError:
         lock = asyncio.Lock()
-        _TENANT_LOCKS[key] = lock
+        _TENANT_LOCKS[slug] = lock
         return lock
 
 
@@ -177,8 +175,10 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             # L3: Database
             async with local_session() as session:
+                from src.app.core.db.rls import bypass_rls
                 stmt = select(Tenant).where(Tenant.slug == slug)
-                result = await session.execute(stmt)
+                async with bypass_rls(session, reason="Tenant resolution via middleware"):
+                    result = await session.execute(stmt)
                 tenant = result.scalar_one_or_none()
 
                 cache_data: dict | None = None

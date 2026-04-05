@@ -317,9 +317,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             # Multiple concurrent requests may fetch from DB, but only first wins cache write
             if redis_client:
                 try:
-                    # SET without nx=True ensures we always write the latest version from DB
-                    # (overwriting any stale cached version). Atomic with EX.
-                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300)
+                    # SET with nx=True ensures we only write if not already cached
+                    # preventing overwrite with stale data. Atomic with EX.
+                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300, nx=True)
                 except Exception as e:
                     _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
 

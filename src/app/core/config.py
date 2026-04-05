@@ -544,17 +544,15 @@ class CORSSettings(BaseSettings):
 
         Warns if wildcard '*' is used in non-local environments.
         """
-        import logging
 
         env = os.getenv("ENVIRONMENT", "local")
         has_wildcard = "*" in self.CORS_ORIGINS
 
         if has_wildcard and env != "local":
-            logging.getLogger(__name__).warning(
-                "SECURITY WARNING: CORS_ORIGINS contains '*' wildcard in %s environment. "
+            raise ValueError(
+                f"SECURITY ERROR: CORS_ORIGINS contains '*' wildcard in {env} environment. "
                 "This allows any website to access your API. "
-                "Consider specifying explicit origins for production.",
-                env,
+                "Specify explicit origins for production."
             )
 
         return self

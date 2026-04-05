@@ -114,10 +114,9 @@ class TestStartupLatencyReduced:
         # (In real Redis, pipeline would be much faster due to reduced network roundtrips)
         # But in mocks, pipeline has more overhead. Just verify it's not excessively slow.
         # NOTE: Timing tests are inherently flaky in CI/coverage environments.
-        # We skip this assertion when running under coverage or on slow systems.
-        import os
+        import sys
 
-        if not os.environ.get("PYTEST_CURRENT_TEST") or os.environ.get("SKIP_TIMING_TESTS") != "1":
+        if sys.gettrace() is None:  # Only check timing when not under coverage
             assert pipeline_time <= sequential_time * 10  # Very relaxed for CI/coverage
 
     @pytest.mark.asyncio

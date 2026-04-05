@@ -851,6 +851,7 @@ return new_attempts
         # SECURITY FIX: Use generic message for deleted/inactive accounts
         # Prevents account enumeration attacks - attackers cannot determine account status
         if user.get("is_deleted", False) or not user.get("is_active", False):
+            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
             raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
 
         # Mark token as used FIRST (before password change)

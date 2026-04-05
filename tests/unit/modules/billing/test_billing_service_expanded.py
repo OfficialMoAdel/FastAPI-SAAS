@@ -99,9 +99,17 @@ async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, moc
 @patch("src.app.modules.billing.service.SubscriptionPlanService.get_plan")
 @patch("src.app.modules.billing.service.settings")
 @patch("asyncio.to_thread")
+@patch("stripe.Account.retrieve")
 async def test_checkout_service_create_session(
-    mock_to_thread, mock_settings, mock_get_plan, mock_get_settings, mock_get_tenant, mock_db, mock_tenant
-):  # noqa: E501
+    mock_stripe_retrieve,
+    mock_to_thread,
+    mock_settings,
+    mock_get_plan,
+    mock_get_settings,
+    mock_get_tenant,
+    mock_db,
+    mock_tenant,
+):
     mock_get_tenant.return_value = mock_tenant
 
     # Mock settings.STRIPE_SECRET_KEY
@@ -124,7 +132,8 @@ async def test_checkout_service_create_session(
 
     service = CheckoutService(mock_db)
     from src.app.core.config import settings as app_settings
-    frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+
+    frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
     data = CheckoutCreate(
         plan_id=1, billing_interval="monthly", success_url=f"{frontend}/success", cancel_url=f"{frontend}/cancel"
     )

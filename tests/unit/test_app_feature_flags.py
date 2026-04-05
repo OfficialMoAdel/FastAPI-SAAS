@@ -35,6 +35,12 @@ class TestIsEnabled:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -55,6 +61,12 @@ class TestIsEnabled:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
@@ -77,6 +89,12 @@ class TestIsEnabled:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -94,6 +112,12 @@ class TestIsEnabled:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -127,6 +151,12 @@ class TestIsEnabled:
             mock_session.__aenter__ = AsyncMock(return_value=mock_session)
             mock_session.__aexit__ = AsyncMock(return_value=None)
 
+            # Add mock for connection() used by bypass_rls
+            mock_connection = MagicMock()
+            mock_connection.info = {}
+            mock_connection.execute = AsyncMock()
+            mock_session.connection = AsyncMock(return_value=mock_connection)
+
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = mock_tenant
             mock_session.execute = AsyncMock(return_value=mock_result)
@@ -151,6 +181,12 @@ class TestGetFlag:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -172,6 +208,12 @@ class TestGetFlag:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -189,6 +231,12 @@ class TestGetFlag:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -214,6 +262,12 @@ class TestSetFlag:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
         mock_session.commit = AsyncMock()
 
         mock_result = MagicMock()
@@ -236,6 +290,12 @@ class TestSetFlag:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -256,6 +316,12 @@ class TestSetFlag:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
         mock_session.commit = AsyncMock()
 
         mock_result = MagicMock()
@@ -284,6 +350,12 @@ class TestGetAllFlags:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -305,6 +377,12 @@ class TestGetAllFlags:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -322,6 +400,12 @@ class TestGetAllFlags:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -348,6 +432,12 @@ class TestLoadTenantFlags:
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
 
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
+
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant
         mock_session.execute = AsyncMock(return_value=mock_result)
@@ -365,6 +455,12 @@ class TestLoadTenantFlags:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = None
@@ -386,6 +482,12 @@ class TestLoadTenantFlags:
         mock_session = MagicMock()
         mock_session.__aenter__ = AsyncMock(return_value=mock_session)
         mock_session.__aexit__ = AsyncMock(return_value=None)
+
+        # Add mock for connection() used by bypass_rls
+        mock_connection = MagicMock()
+        mock_connection.info = {}
+        mock_connection.execute = AsyncMock()
+        mock_session.connection = AsyncMock(return_value=mock_connection)
 
         mock_result = MagicMock()
         mock_result.scalar_one_or_none.return_value = mock_tenant

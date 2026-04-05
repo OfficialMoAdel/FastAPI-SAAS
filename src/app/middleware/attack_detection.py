@@ -83,7 +83,6 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
 # Compiled as bytes pattern for zero-copy scanning of request body.
 COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"(?P<sql_union>\bunion\b.*?\bselect\b)"
-    rb"|(?P<sql_or>\bor\b\s+1\s*=\s*1)"
     rb"|(?P<sql_drop>\bdrop\b.*?\btable\b)"
     rb"|(?P<sql_delete>\bdelete\b.*?\bfrom\b)"
     rb"|(?P<sql_comment>--\s*$)"
