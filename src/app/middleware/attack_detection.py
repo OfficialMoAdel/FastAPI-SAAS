@@ -46,6 +46,8 @@ class AttackType(str, Enum):
     SQL_INJECTION = "sql_injection"
     XSS = "xss"
     PATH_TRAVERSAL = "path_traversal"
+    COMMAND_INJECTION = "command_injection"
+    SSRF = "ssrf"
 
 
 # Paths exempt from attack detection (health checks, metrics, etc.)
@@ -78,6 +80,8 @@ _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
     "path_dotdot": ("path_dotdot_slash", AttackType.PATH_TRAVERSAL),
     "path_enc": ("path_encoded", AttackType.PATH_TRAVERSAL),
     "path_penc": ("path_partial_encoded", AttackType.PATH_TRAVERSAL),
+    "cmd_inj": ("command_injection", AttackType.COMMAND_INJECTION),
+    "ssrf_cloud": ("ssrf_cloud_metadata", AttackType.SSRF),
 }
 
 # Combined bytes regex: single search() replaces 16 sequential pattern checks.
@@ -97,7 +101,9 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
     rb"|(?P<xss_object_tag><object[\s>])"
     rb"|(?P<path_dotdot>\.\.\/)"
     rb"|(?P<path_enc>%2e%2e%2f)"
-    rb"|(?P<path_penc>%2e%2e\/)",
+    rb"|(?P<path_penc>%2e%2e\/)"
+    rb"|(?P<cmd_inj>(?:;|\|\||&&)\s*(?:cat|ls|id|whoami|ping|curl|wget)\b)"
+    rb"|(?P<ssrf_cloud>169\.254\.169\.254)",
     re.IGNORECASE | re.MULTILINE,
 )
 
@@ -222,11 +228,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Check request body if it's a POST/PUT/PATCH with content
         if request.method in ("POST", "PUT", "PATCH"):
-            # Skip multipart/form-data body scanning - the "--" in boundary strings
-            # triggers false positive SQL comment detection (e.g. ------WebKitFormBoundary)
-            content_type = request.headers.get("content-type", "")
-            if "multipart/form-data" in content_type:
-                return detected_attacks
+            # Removed early return for multipart/form-data to actually apply the BUG FIX.
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
@@ -288,6 +290,15 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             group_name = match.lastgroup
             if group_name and group_name in _GROUP_TO_ATTACK:
                 pattern_name, attack_type = _GROUP_TO_ATTACK[group_name]
+
+                # False positive mitigation for multipart/form-data boundaries
+                if pattern_name == "sql_comment_end":
+                    match_start = match.start()
+                    line_start = content.rfind(b'\n', 0, match_start) + 1
+                    line = content[line_start:match.end()]
+                    if line.startswith(b'--') and len(line.strip()) > 4:
+                        continue
+
                 attacks.append(
                     {
                         "attack_type": attack_type.value,

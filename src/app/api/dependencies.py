@@ -45,7 +45,7 @@ async def get_current_user(
         # This unified extraction prevents mismatches between JTI-based and token-based lookup.
         cache_result = await is_token_blacklisted(token)
         if cache_result is True:
-            raise UnauthorizedException("User not authenticated.")
+            raise UnauthorizedException("Token has been revoked.")
         elif cache_result is None:
             # Redis unavailable, fall back to DB check
             jti_in_payload = cached_payload.get("jti")
@@ -55,7 +55,7 @@ async def get_current_user(
             if not is_blacklisted:
                 is_blacklisted = await crud_token_blacklist.exists(db, token=token)
             if is_blacklisted:
-                raise UnauthorizedException("User not authenticated.")
+                raise UnauthorizedException("Token has been revoked.")
 
         # Validate token type
         token_type = cached_payload.get("token_type")

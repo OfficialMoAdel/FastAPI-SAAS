@@ -71,7 +71,7 @@ async def stripe_webhook(
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
         raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Webhook secret not configured",
         )
 

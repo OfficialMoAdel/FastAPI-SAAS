@@ -109,6 +109,13 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         flag = await self.update(flag_id, **data.model_dump(exclude_unset=True))
         if not flag:
             raise ModelNotFoundError("FeatureFlag", flag_id)
+
+        if redis_client:
+            try:
+                await redis_client.delete(f"feature_flag:{flag.key}")
+            except Exception as e:
+                logger.debug("Feature flag cache invalidation failed", error=str(e))
+
         return flag
 
     async def delete_flag(self, flag_id: int) -> None:
@@ -118,6 +125,14 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Args:
             flag_id: ID of the flag to delete
         """
+        result = await self.crud.get(db=self.db, id=flag_id)
+        if result:
+            flag: FeatureFlag = result  # type: ignore[assignment]
+            if redis_client:
+                try:
+                    await redis_client.delete(f"feature_flag:{flag.key}")
+                except Exception as e:
+                    logger.debug("Feature flag cache invalidation failed", error=str(e))
         await self.delete(flag_id)
 
     # =========================================================================
@@ -379,6 +394,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         # Invalidate cache for all updated flags
         await self._invalidate_cache(tenant_id)
+        for flag_name in flags.keys():
+            await self._invalidate_cache(tenant_id, feature_name=flag_name)
 
         return tenant
 

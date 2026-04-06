@@ -97,7 +97,7 @@ async def test_token_blacklist_full_flow(authenticated_user: dict, client: Async
 
     error_detail = response.json().get("detail", "")
     log_step("Error detail", detail=error_detail)
-    assert any(term in error_detail.lower() for term in ["blacklist", "invalid", "not authenticated"])
+    assert any(term in error_detail.lower() for term in ["blacklist", "invalid", "not authenticated", "revoked"])
 
     log_step("Token blacklist E2E test completed successfully")
 

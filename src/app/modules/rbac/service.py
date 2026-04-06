@@ -36,7 +36,7 @@ import asyncio
 
 # L1 In-Memory Cache for RBAC permissions (R2-HYBRID MED-2)
 # - maxsize: 500 role-permission sets (covers most deployments)
-# - ttl: 5 seconds (balance between freshness and performance)
+# - ttl: 30 seconds (balance between freshness and performance)
 # - Thread-safe: Access protected by _L1_RBAC_CACHE_LOCK to prevent dictionary iteration bugs
 # - Key format: "{tenant_id}:{role_id}" -> list of permission dicts
 _L1_RBAC_CACHE: TTLCache[str, list[dict[str, Any]]] = TTLCache(maxsize=500, ttl=30.0)
@@ -590,12 +590,8 @@ class RoleService:
         user_role = result.scalar_one_or_none()
         if user_role:
             await self.db.delete(user_role)
-            await self.db.commit()
 
-            # Invalidate user permissions cache
-            await invalidate_user_permissions_cache(user_id, self.tenant_id)
-
-            # SECURITY FIX: Increment token_version to invalidate active JWTs on role change
+            # SECURITY FIX: Increment token_version atomicaly to invalidate active JWTs on role change
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
@@ -604,6 +600,9 @@ class RoleService:
                 sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
             )
             await self.db.commit()
+
+            # Invalidate user permissions cache
+            await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:
         """Get all roles for a user within the current tenant."""

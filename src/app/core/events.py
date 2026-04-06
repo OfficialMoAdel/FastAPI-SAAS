@@ -714,7 +714,8 @@ class EventBus:
         if not self._redis_client:
             return None
 
-        entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
+        # Changed to lpop (LIFO) to ensure we pop entries that aren't being trimmed by LTRIM
+        entry = await self._redis_client.lpop(self.DLQ_REDIS_KEY)
         if entry:
             return json_loads(entry)
         return None
@@ -855,8 +856,15 @@ async def process_event_handler(
             tenant_context_set = True
             logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
         except Exception as e:
-            logger.error("Failed to restore tenant context in worker", error=str(e))
-            raise RuntimeError(f"Failed to restore tenant context in worker: {e}") from e
+            logger.error("Failed to restore tenant context in worker - moving to DLQ", error=str(e))
+            await event_bus.add_to_dlq(
+                event_name=event_name,
+                handler_name=f"{handler_module}.{handler_name}",
+                data=data,
+                error=f"Malformed tenant context: {e}",
+                attempt_count=job_try,
+            )
+            return
 
     try:
         # Dynamically import and execute handler

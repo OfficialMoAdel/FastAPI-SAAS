@@ -1,4 +1,5 @@
 import os
+import re
 from enum import Enum
 from typing import Any, Literal
 
@@ -276,7 +277,6 @@ class FirstUserSettings(BaseSettings):
     def validate_password_complexity(cls, v: SecretStr | None) -> SecretStr | None:
         if v is None:
             return v
-        import re
         password = v.get_secret_value()
         if not re.search(r"[a-z]", password):
             raise ValueError("Password must contain at least one lowercase letter")
@@ -767,21 +767,38 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    @property
+    def _delegation_map(self) -> dict[str, str]:
+        if "_delegation_map" not in self.__dict__:
+            dmap = {}
+            for field_name in self.model_fields:
+                if field_name == "model_config":
+                    continue
+                try:
+                    component = super().__getattribute__(field_name)
+                    # Use model_fields and __pydantic_computed_fields__ to avoid hasattr
+                    for key in component.model_fields:
+                        dmap[key] = field_name
+                    computed = getattr(type(component), "__pydantic_computed_fields__", {})
+                    for key in computed:
+                        dmap[key] = field_name
+                except Exception:
+                    pass
+            self.__dict__["_delegation_map"] = dmap
+
+        result: dict[str, str] = self.__dict__["_delegation_map"]
+        return result
+
     def __getattr__(self, name: str) -> Any:
         try:
             return super().__getattribute__(name)
         except AttributeError:
             pass
 
-        for field_name in self.model_fields:
-            if field_name == "model_config":
-                continue
-            try:
-                component = super().__getattribute__(field_name)
-                if hasattr(component, name):
-                    return getattr(component, name)
-            except AttributeError:
-                pass
+        target_component = self._delegation_map.get(name)
+        if target_component:
+            component = super().__getattribute__(target_component)
+            return getattr(component, name)
 
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
@@ -790,18 +807,13 @@ class Settings(BaseSettings):
             super().__setattr__(name, value)
             return
 
-        for field_name in self.model_fields:
-            if field_name == "model_config":
-                continue
-            try:
-                component = super().__getattribute__(field_name)
-                if hasattr(component, name):
-                    setattr(component, name, value)
-                    return
-            except AttributeError:
-                pass
+        target_component = self._delegation_map.get(name)
+        if target_component:
+            component = super().__getattribute__(target_component)
+            setattr(component, name, value)
+            return
 
-        super().__setattr__(name, value)
+        raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")
 
 
 # Initialize settings without arguments - Pydantic will populate from env

@@ -141,8 +141,7 @@ async def test_transaction_retry_has_jitter(mock_db_session, reset_circuit, monk
     assert results == ["Success"]
     assert len(recorded_waits) == 2  # Two retries before success
 
-    # Attempt 1: base = 2^1 = 2, jitter = 0..0.5 → range [2.0, 2.5]
-    assert 2.0 <= recorded_waits[0] <= 2.5, f"Wait 1 out of bounds: {recorded_waits[0]}"
-    # Attempt 2: base = 2^2 = 4, jitter = 0..0.5 → range [4.0, 4.5]
-    assert 4.0 <= recorded_waits[1] <= 4.5, f"Wait 2 out of bounds: {recorded_waits[1]}"
-
+    # Attempt 1: base = 2^1 = 2, jitter = 0.5..1.5 → range [1.0, 3.0]
+    assert 1.0 <= recorded_waits[0] <= 3.0, f"Wait 1 out of bounds: {recorded_waits[0]}"
+    # Attempt 2: base = 2^2 = 4, jitter = 0.5..1.5 → range [2.0, 6.0]
+    assert 2.0 <= recorded_waits[1] <= 6.0, f"Wait 2 out of bounds: {recorded_waits[1]}"

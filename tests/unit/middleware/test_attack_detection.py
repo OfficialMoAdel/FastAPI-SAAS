@@ -312,7 +312,7 @@ class TestUnicodeSanitization:
     def test_zero_width_injection_stripped(self) -> None:
         """Zero-width chars inserted into 'union select' must be stripped."""
         # "u\u200Bnion s\u200Belect" → "union select" after sanitization
-        payload = "u\u200Bnion s\u200Belect".encode()
+        payload = "u\u200bnion s\u200belect".encode()
         sanitized = AttackDetectionMiddleware._sanitize_input(payload)
         # After sanitization, the regex should detect 'union select'
         match = COMBINED_ATTACK_RE.search(sanitized)
@@ -321,14 +321,14 @@ class TestUnicodeSanitization:
 
     def test_bom_stripped(self) -> None:
         """BOM (U+FEFF) must be stripped before regex scanning."""
-        payload = "\uFEFFunion select * from users".encode()
+        payload = "\ufeffunion select * from users".encode()
         sanitized = AttackDetectionMiddleware._sanitize_input(payload)
         match = COMBINED_ATTACK_RE.search(sanitized)
         assert match is not None
 
     def test_directional_override_stripped(self) -> None:
         """Directional override chars (U+202A-U+202E) must be stripped."""
-        payload = "uni\u202Aon sel\u202Bect".encode()
+        payload = "uni\u202aon sel\u202bect".encode()
         sanitized = AttackDetectionMiddleware._sanitize_input(payload)
         match = COMBINED_ATTACK_RE.search(sanitized)
         assert match is not None
@@ -379,6 +379,5 @@ class TestExpandedHeaderCoverage:
         assert not dead, f"Dead code mappings: {dead} exist in _GROUP_TO_ATTACK but not in regex"
 
     def test_combined_regex_group_count(self) -> None:
-        """COMBINED_ATTACK_RE should have exactly 15 named groups (14 original + sql_or)."""
-        assert len(COMBINED_ATTACK_RE.groupindex) == 15
-
+        """COMBINED_ATTACK_RE should have exactly 17 named groups (14 original + sql_or + cmd_inj + ssrf_cloud)."""
+        assert len(COMBINED_ATTACK_RE.groupindex) == 17

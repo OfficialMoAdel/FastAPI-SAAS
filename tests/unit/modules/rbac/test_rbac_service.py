@@ -206,9 +206,7 @@ class TestRoleServiceDelete:
         mock_affected_result.scalars.return_value.all.return_value = []  # No users with this role
         mock_db.execute = AsyncMock(return_value=mock_affected_result)
 
-        with patch(
-            "src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock
-        ):
+        with patch("src.app.modules.rbac.service.invalidate_user_permissions_cache", new_callable=AsyncMock):
             await role_service.delete_role(1)
 
         mock_db.delete.assert_called_once_with(mock_role)
@@ -454,6 +452,6 @@ class TestRoleServiceUserAssignment:
             await role_service.remove_role_from_user(user_id=123, role_id=1)
 
             mock_db.delete.assert_called_once_with(mock_user_role)
-            # Two commits: one for delete, one for token_version update
-            assert mock_db.commit.call_count == 2
+            # Single commit after both delete and token_version update
+            assert mock_db.commit.call_count == 1
             mock_cache.assert_called_once()

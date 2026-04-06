@@ -33,13 +33,13 @@ async def test_async_get_db_yields_session():
         gen = async_get_db()
         db = await anext(gen)
         assert db is mock_session
-        
+
         # Cleanup
         try:
             await anext(gen)
         except StopAsyncIteration:
             pass
-        
+
         # Verify session closed
         mock_session.close.assert_awaited_once()
 
@@ -61,7 +61,7 @@ async def test_async_get_db_rollback_on_exception():
         # Inject exception
         with pytest.raises(ValueError):
             await gen.athrow(ValueError("Test exception"))
-            
+
         # Verify session rollback and closed
         mock_session.rollback.assert_awaited_once()
         mock_session.close.assert_awaited_once()
