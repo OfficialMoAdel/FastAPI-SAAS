@@ -55,7 +55,7 @@ async def test_token_blacklist_fail_open():
     with patch("src.app.core.utils.cache.client", None):
         result = await token_blacklist_cache.is_token_blacklisted("token")
 
-        assert result is None
+        assert result is True
         assert metrics.get_counter("r1_security_fail_open_total") == 1
 
 

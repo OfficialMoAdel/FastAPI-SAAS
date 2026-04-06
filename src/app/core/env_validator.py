@@ -38,7 +38,7 @@ class EnvironmentValidator:
 
     VALIDATION_RULES: dict[str, dict[str, Any]] = {
         "ADMIN_PASSWORD": {
-            "min_length": 12,
+            "min_length": 16,
             "description": "Admin password should be very strong",
         },
         "POSTGRES_PASSWORD": {

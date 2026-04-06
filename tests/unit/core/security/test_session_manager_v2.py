@@ -485,17 +485,28 @@ class TestSessionManagerDegradedMode:
     """Test degraded mode when Redis is unavailable but JWT exp is provided."""
 
     @pytest.mark.asyncio
-    async def test_degraded_mode_accepts_valid_jwt(self):
-        """When Redis is down and JWT is still valid, accept the session."""
+    @patch("src.app.core.config.settings")
+    async def test_degraded_mode_accepts_valid_jwt(self, mock_settings):
+        """When Redis is down and JWT is still valid, accept the session ONLY IF fail_open is configured."""
+        import time
+
+        mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_open"
+        manager = SessionManager(redis_client=None)
+        future_exp = time.time() + 3600  # 1 hour from now
+
+        is_valid = await manager.is_session_valid("user123", "session_abc", jwt_exp=future_exp)
+        assert is_valid is True
+
+    @pytest.mark.asyncio
+    async def test_degraded_mode_rejects_valid_jwt_when_fail_closed(self):
+        """When Redis is down and JWT is valid, reject the session if configured to fail closed (default)."""
         import time
 
         manager = SessionManager(redis_client=None)
         future_exp = time.time() + 3600  # 1 hour from now
 
-        is_valid = await manager.is_session_valid(
-            "user123", "session_abc", jwt_exp=future_exp
-        )
-        assert is_valid is True
+        is_valid = await manager.is_session_valid("user123", "session_abc", jwt_exp=future_exp)
+        assert is_valid is False
 
     @pytest.mark.asyncio
     async def test_degraded_mode_rejects_expired_jwt(self):
@@ -505,9 +516,7 @@ class TestSessionManagerDegradedMode:
         manager = SessionManager(redis_client=None)
         past_exp = time.time() - 60  # 1 minute ago
 
-        is_valid = await manager.is_session_valid(
-            "user123", "session_abc", jwt_exp=past_exp
-        )
+        is_valid = await manager.is_session_valid("user123", "session_abc", jwt_exp=past_exp)
         assert is_valid is False
 
     @pytest.mark.asyncio
@@ -526,9 +535,6 @@ class TestSessionManagerDegradedMode:
         mock_redis.hexists.return_value = True
         future_exp = time.time() + 3600
 
-        is_valid = await session_manager.is_session_valid(
-            "user123", "session_abc", jwt_exp=future_exp
-        )
+        is_valid = await session_manager.is_session_valid("user123", "session_abc", jwt_exp=future_exp)
         assert is_valid is True
         mock_redis.hexists.assert_called_once()
-

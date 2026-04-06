@@ -9,7 +9,7 @@ class LoadTestConfig(BaseSettings):
 
     # Test User Credentials (Admin/Superuser for setup)
     ADMIN_EMAIL: str = "premium_e2e@example.com"
-    ADMIN_PASSWORD: str = "Str1ngst!"
+    ADMIN_PASSWORD: str = "SuperS3cretP@ssw0rd!123"
 
     # Default Test Tenant
     TEST_TENANT_ID: str | None = "test-tenant-e2e"  # Can be overridden or fetched dynamically

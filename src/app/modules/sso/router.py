@@ -105,7 +105,7 @@ async def handle_callback(
     state: Annotated[str, Query],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
-) -> AuthTokenResponse:
+) -> AuthTokenResponse | dict[str, str]:
     """Handle OAuth callback and return authentication tokens."""
     # Login CSRF Protection Constraint
     cookie_state = request.cookies.get("sso_state")
@@ -149,7 +149,7 @@ async def handle_post_callback(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
     user: Annotated[str | None, Form()] = None,
-) -> AuthTokenResponse:
+) -> AuthTokenResponse | dict[str, str]:
     """Handle OAuth POST callback (for Apple Sign-In which uses response_mode=form_post).
 
     Apple sends the callback as a POST request with form data instead of GET query params.

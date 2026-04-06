@@ -27,6 +27,12 @@ RLS_TENANT_VAR = "app.current_tenant_id"
 RLS_USER_VAR = "app.current_user_id"
 RLS_BYPASS_VAR = "app.bypass_rls"
 
+import re
+
+for _var in [RLS_TENANT_VAR, RLS_USER_VAR, RLS_BYPASS_VAR]:
+    if not re.match(r"^[a-zA-Z0-9_.]+$", _var):
+        raise ValueError(f"Invalid RLS variable name (potential SQLi vector): {_var}")
+
 # Type variable for decorator
 F = TypeVar("F", bound=Callable[..., Any])
 

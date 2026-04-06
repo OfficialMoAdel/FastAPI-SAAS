@@ -77,7 +77,7 @@ def _get_salt() -> bytes:
     global _FALLBACK_SALT
 
     if settings.ENCRYPTION_SALT:
-        return settings.ENCRYPTION_SALT.get_secret_value().encode()
+        return bytes(settings.ENCRYPTION_SALT.get_secret_value().encode())
 
     # SECURITY: Fail fast in production if salt not configured
     if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
@@ -99,7 +99,7 @@ def _derive_key(secret: str, salt: bytes) -> bytes:
         algorithm=hashes.SHA256(),
         length=32,
         salt=salt,
-        iterations=600000,
+        iterations=1300000,
     )
     return base64.urlsafe_b64encode(kdf.derive(secret.encode()))
 

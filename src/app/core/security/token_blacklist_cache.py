@@ -216,6 +216,12 @@ async def is_token_blacklisted(token: str) -> bool | None:
         from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
         record_fail_open("token_blacklist")
+
+        # SECURITY FIX: Fail closed during infrastructure disruptions
+        from src.app.core.config import settings
+        if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+            return True  # Treat as blacklisted to fail closed
+
         return None  # Redis not configured, fall back to DB
 
     # Resolve the member key that blacklist_tokens used when storing this token.
@@ -286,7 +292,11 @@ async def is_token_blacklisted(token: str) -> bool | None:
             raise  # Re-raise if not a NOSCRIPT error
 
     except Exception as e:
-        logger.warning("Redis blacklist check failed, falling back to DB", error=e)
+        logger.warning("Redis blacklist check failed", error=e)
+        # SECURITY FIX: Fail closed if configured
+        from src.app.core.config import settings
+        if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+            return True
         return None  # Fail open - let DB check handle it
 
 

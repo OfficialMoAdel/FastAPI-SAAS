@@ -274,11 +274,6 @@ async def get_optional_user(
         # JWT validation errors - return None for optional authentication
         return None
 
-    except Exception as exc:
-        # Log unexpected errors but don't break the request for optional auth
-        logger.error("Unexpected error in get_optional_user:", exc=exc)
-        return None
-
 
 async def get_current_superuser(
     current_user: Annotated[dict[str, Any], Depends(get_current_user)],

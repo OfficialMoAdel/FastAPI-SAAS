@@ -96,10 +96,11 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
     default_lifespan = lifespan_factory(settings, create_tables_on_start=settings.CREATE_TABLES_ON_STARTUP)
 
     async with default_lifespan(app):
-        from src.app.core.db.database import async_engine
+        from src.app.core.db.database import get_async_engine
         from src.app.core.utils.pool_metrics import setup_pool_metrics
 
         try:
+            async_engine = get_async_engine()
             setup_pool_metrics(async_engine)
         except Exception as e:
             logger.warning("Pool metrics setup failed: %s", e)
@@ -178,9 +179,12 @@ app = create_application(
 @app.exception_handler(CacheException)
 async def cache_exception_handler(request, exc):
     """Handle custom cache exceptions."""
+    from src.app.core.logger import get_logger
+    logger = get_logger(__name__)
+    logger.error("Cache error", error=str(exc), exc_info=True)
     return ORJSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": str(exc), "error_type": "cache_error"},
+        content={"detail": "Internal Server Error", "error_type": "cache_error"},
     )
 
 

@@ -253,8 +253,12 @@ class MFAService:
             UnauthorizedException: If user is locked out.
         """
         if cache.client is None:
-            # Redis unavailable - log warning and continue without lockout (fail open)
-            logger.warning("Redis unavailable - MFA lockout disabled | user_id=%s", user_id)
+            # SECURITY FIX: Fail closed during infrastructure disruptions
+            from src.app.core.config import settings
+            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+                logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
+                raise UnauthorizedException("Authentication temporarily unavailable. Please try again later.")
+            logger.warning("Redis unavailable - MFA lockout disabled (fail open) | user_id=%s", user_id)
             return
 
         mfa_attempts_key = f"mfa_attempts:{user_id}"
@@ -269,6 +273,10 @@ class MFAService:
             # Handle potential bytes return from redis.eval
             result = int(raw_result) if raw_result is not None else 0
         except (TypeError, ValueError, Exception) as e:
+            from src.app.core.config import settings
+            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+                logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
+                raise UnauthorizedException("Authentication temporarily unavailable.")
             logger.error("MFA lockout check failed", user_id=user_id, error=str(e))
             return  # Fail open
 

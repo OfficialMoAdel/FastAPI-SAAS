@@ -367,7 +367,22 @@ class SessionManager:
             True if session is valid, False otherwise
         """
         if not self._redis_client:
+            from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
+
+            # SECURITY FIX: Fail closed if configured for high-security environments
+            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+                record_fail_open("session_validation_failed_closed")
+                logger.critical(
+                    "redis_unavailable_session_rejected_fail_closed",
+                    extra={
+                        "user_id": user_id,
+                        "session_id": session_id,
+                        "severity": "high",
+                        "action": "session_validation_rejected_fail_closed",
+                    },
+                )
+                return False
 
             # Degraded mode: accept session if JWT is still within expiry
             if jwt_exp is not None:

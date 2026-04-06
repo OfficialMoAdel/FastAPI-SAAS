@@ -151,6 +151,8 @@ def lifespan_factory(
         finally:
             # Dispose database engine to release connection pool
             await engine.dispose()
+            import src.app.core.db.database as db_module
+            db_module._async_engine = None
 
             if redis_cache_enabled:
                 await close_redis_cache_pool()

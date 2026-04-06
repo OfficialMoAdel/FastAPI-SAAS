@@ -105,12 +105,12 @@ COMBINED_ATTACK_RE: re.Pattern[bytes] = re.compile(
 # Zero-width joiners/non-joiners, directional overrides, BOM, etc.
 _ZERO_WIDTH_RE = re.compile(
     "["
-    "\u200B-\u200F"  # Zero-width space, ZWNJ, ZWJ, LRM, RLM
-    "\u202A-\u202E"  # Directional overrides
+    "\u200b-\u200f"  # Zero-width space, ZWNJ, ZWJ, LRM, RLM
+    "\u202a-\u202e"  # Directional overrides
     "\u2060-\u2064"  # Word joiner, invisible separators
     "\u2066-\u2069"  # Directional isolates
-    "\uFEFF"  # BOM / zero-width no-break space
-    "\uFFF9-\uFFFB"  # Interlinear annotation anchors
+    "\ufeff"  # BOM / zero-width no-break space
+    "\ufff9-\ufffb"  # Interlinear annotation anchors
     "]"
 )
 
@@ -222,6 +222,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Check request body if it's a POST/PUT/PATCH with content
         if request.method in ("POST", "PUT", "PATCH"):
+            # Skip multipart/form-data body scanning - the "--" in boundary strings
+            # triggers false positive SQL comment detection (e.g. ------WebKitFormBoundary)
+            content_type = request.headers.get("content-type", "")
+            if "multipart/form-data" in content_type:
+                return detected_attacks
+
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
             content_length_str = request.headers.get("content-length")
@@ -257,9 +263,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             raise BodyScanError("Failed to reinject request body") from e
 
                         # Sanitize then scan — NFKC + zero-width stripping
-                        self._check_for_patterns(
-                            self._sanitize_input(body), "request_body", detected_attacks
-                        )
+                        self._check_for_patterns(self._sanitize_input(body), "request_body", detected_attacks)
                 except Exception as e:
                     logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error

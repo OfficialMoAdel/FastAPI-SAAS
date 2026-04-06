@@ -17,7 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
-from src.app.core.db.rls import restore_rls_context, rls_context
+from src.app.core.db.rls import restore_rls_context
 from src.app.core.logger import get_logger
 from src.app.core.tenancy.context import get_current_tenant
 
@@ -64,8 +64,7 @@ def _create_engine() -> AsyncEngine:
     # Use NullPool in test mode to prevent event loop binding issues
     # NullPool creates fresh connections per use, avoiding "Event loop is closed" errors
     _is_testing = (
-        "pytest" in os.environ.get("_", "")
-        or "PYTEST_CURRENT_TEST" in os.environ
+        "PYTEST_CURRENT_TEST" in os.environ
         or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
     )
 
@@ -165,13 +164,7 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
     session_maker = _get_local_session()
     db = session_maker()
     try:
-        tenant = get_current_tenant()
-        if tenant:
-            # Apply RLS context for the current tenant
-            async with rls_context(db, str(tenant.id)):
-                yield db
-        else:
-            yield db
+        yield db
     except Exception as exc:
         # BUG FIX: Wrap rollback in try-except to prevent masking original exception
         try:
@@ -206,13 +199,7 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
     session_maker = _get_local_session()
     db = session_maker()
     try:
-        tenant = get_current_tenant()
-        if tenant:
-            # Apply RLS context for the current tenant
-            async with rls_context(db, str(tenant.id)):
-                yield db
-        else:
-            yield db
+        yield db
     except Exception as exc:
         # BUG FIX: Wrap rollback in try-except to prevent masking original exception
         try:

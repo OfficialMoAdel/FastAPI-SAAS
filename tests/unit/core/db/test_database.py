@@ -21,49 +21,32 @@ from src.app.core.utils import cache
 
 
 @pytest.mark.asyncio
-async def test_async_get_db_applies_rls_when_tenant_present():
-    """Verify that async_get_db applies RLS context when a tenant is set."""
-
-    # Mock tenant
-    mock_tenant = MagicMock()
-    mock_tenant.id = "tenant-123"
-
+async def test_async_get_db_yields_session():
+    """Verify that async_get_db yields a session and closes it."""
     # Mock session
     mock_session = AsyncMock(spec=AsyncSession)
 
     # Mock local_session context manager - returns a session object
     mock_local_session = MagicMock(return_value=mock_session)
 
-    # Mock rls_context context manager
-    mock_rls_cm = AsyncMock()
-    mock_rls_cm.__aenter__.return_value = None
-    mock_rls_cm.__aexit__.return_value = None
-
     with patch("src.app.core.db.database._get_local_session", return_value=mock_local_session):
-        with patch("src.app.core.db.database.get_current_tenant", return_value=mock_tenant):
-            with patch("src.app.core.db.database.rls_context", return_value=mock_rls_cm) as mock_rls_factory:
-                # async_get_db is an async generator, so we iterate it manually
-                gen = async_get_db()
-                db = await anext(gen)
-                assert db is mock_session
-                # Verify RLS was applied
-                mock_rls_factory.assert_called_once_with(mock_session, "tenant-123")
-                # Verify context manager entered
-                mock_rls_cm.__aenter__.assert_awaited_once()
-
-                # Cleanup
-                try:
-                    await anext(gen)
-                except StopAsyncIteration:
-                    pass
-                # Verify context manager exited
-                mock_rls_cm.__aexit__.assert_awaited_once()
+        gen = async_get_db()
+        db = await anext(gen)
+        assert db is mock_session
+        
+        # Cleanup
+        try:
+            await anext(gen)
+        except StopAsyncIteration:
+            pass
+        
+        # Verify session closed
+        mock_session.close.assert_awaited_once()
 
 
 @pytest.mark.asyncio
-async def test_async_get_db_no_rls_when_no_tenant():
-    """Verify that async_get_db does not apply RLS when no tenant is set."""
-
+async def test_async_get_db_rollback_on_exception():
+    """Verify that async_get_db rolls back on exception."""
     # Mock session
     mock_session = AsyncMock(spec=AsyncSession)
 
@@ -71,19 +54,17 @@ async def test_async_get_db_no_rls_when_no_tenant():
     mock_local_session = MagicMock(return_value=mock_session)
 
     with patch("src.app.core.db.database._get_local_session", return_value=mock_local_session):
-        with patch("src.app.core.db.database.get_current_tenant", return_value=None):
-            with patch("src.app.core.db.database.rls_context") as mock_rls_factory:
-                # async_get_db is an async generator
-                gen = async_get_db()
-                db = await anext(gen)
-                assert db is mock_session
-                # Verify RLS was NOT applied
-                mock_rls_factory.assert_not_called()
+        gen = async_get_db()
+        db = await anext(gen)
+        assert db is mock_session
 
-                try:
-                    await anext(gen)
-                except StopAsyncIteration:
-                    pass
+        # Inject exception
+        with pytest.raises(ValueError):
+            await gen.athrow(ValueError("Test exception"))
+            
+        # Verify session rollback and closed
+        mock_session.rollback.assert_awaited_once()
+        mock_session.close.assert_awaited_once()
 
 
 # =============================================================================

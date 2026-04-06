@@ -13,6 +13,7 @@ Usage:
     crud_users = CRUDUser(User)
 """
 
+import uuid
 from typing import Any, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
@@ -82,8 +83,6 @@ class TenantAwareCRUD(
                 tenant_id = tenant.id
                 # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
                 if isinstance(tenant_id, str):
-                    import uuid
-
                     try:
                         tenant_id = uuid.UUID(tenant_id)
                     except (ValueError, TypeError):
@@ -117,7 +116,6 @@ class TenantAwareCRUD(
             tenant_id = tenant.id
             # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
             if isinstance(tenant_id, str):
-                import uuid
 
                 try:
                     tenant_id = uuid.UUID(tenant_id)

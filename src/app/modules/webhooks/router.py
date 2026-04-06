@@ -106,7 +106,7 @@ async def create_webhook_endpoint(
         tenant_id=current_tenant.id,
         url=str(request.url),
         event_type=request.event_type,
-        secret=request.secret,
+        signing_secret=request.secret,
     )
 
     return WebhookEndpointCreateResponse.model_validate(endpoint)

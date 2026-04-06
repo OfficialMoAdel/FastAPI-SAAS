@@ -30,7 +30,7 @@ See Also:
 from __future__ import annotations
 
 from functools import lru_cache
-from typing import TYPE_CHECKING, Any, Union
+from typing import TYPE_CHECKING, Any, Union, cast
 
 import jwt
 from cryptography.hazmat.primitives.asymmetric.ec import EllipticCurvePublicKey
@@ -93,9 +93,9 @@ def _get_verification_key() -> str:
     """
     if settings.JWT_PRIVATE_KEY:
         # RS256: Use public key for verification
-        return settings.JWT_PUBLIC_KEY or ""
+        return str(settings.JWT_PUBLIC_KEY or "")
     # HS256: Use symmetric secret
-    return settings.SECRET_KEY.get_secret_value()
+    return cast(str, settings.SECRET_KEY.get_secret_value())
 
 
 @lru_cache(maxsize=1)
@@ -135,7 +135,7 @@ def _get_parsed_verification_key() -> JWTPublicKey | str:
         # Fallback: return empty string (will fail validation, as expected)
         return ""
     # HS256: Return symmetric secret directly (no parsing needed)
-    return settings.SECRET_KEY.get_secret_value()
+    return str(settings.SECRET_KEY.get_secret_value())
 
 
 def clear_jwt_key_cache() -> None:

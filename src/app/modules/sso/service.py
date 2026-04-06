@@ -1,3 +1,4 @@
+import uuid
 from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
@@ -129,7 +130,7 @@ class SSOService:
         code: str,
         state: str,
         user_data: dict[str, Any] | None = None,
-    ) -> AuthTokenResponse:
+    ) -> AuthTokenResponse | dict[str, str]:
         """Handle OAuth2 callback, verify state, and authenticate user.
 
         Args:
@@ -262,7 +263,12 @@ class SSOService:
                         raise BadRequestException("Email required from provider")
 
                     is_verified = getattr(user_info, "email_verified", False)
-                    if str(is_verified).lower() not in ("true", "1", "yes"):
+                    if isinstance(is_verified, bool):
+                        verified = is_verified
+                    else:
+                        verified = str(is_verified).lower() in ("true", "1", "yes")
+
+                    if not verified:
                         raise BadRequestException("Unverified provider emails are not permitted for security reasons")
 
                     user_by_email = await get_service("user", db).get_by_email(user_info.email)
@@ -275,8 +281,6 @@ class SSOService:
                         current_tenant = get_tenant_context()
                         if not current_tenant:
                             # Auto-create a personal tenant for organic SSO signups
-                            import uuid
-
                             from src.app.modules.tenants.models import Tenant as TenantModel
                             from src.app.modules.tenants.schemas import TenantCreate
                             from src.app.modules.tenants.service import get_tenant_service
@@ -331,6 +335,26 @@ class SSOService:
             tier = normalized_user.get("tier")
             tier_name = tier.get("name") if tier else None
 
+            # SECURITY FIX: Check if MFA is enabled before issuing access token
+            from src.app.modules.mfa.service import get_mfa_service
+            mfa_service = get_mfa_service()
+            mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
+
+            if mfa_enabled:
+                from src.app.core.security import MFA_PENDING_EXPIRY_SECONDS, MFAPendingTokenManager
+                from src.app.core.utils.cache import client as mfa_redis_client
+                mfa_token_manager = MFAPendingTokenManager(mfa_redis_client)
+                mfa_token = await mfa_token_manager.create_token(
+                    user_id=normalized_user["id"],
+                    username=normalized_user.get("username") or normalized_user.get("email"),
+                )
+                return {
+                    "mfa_required": "true",
+                    "mfa_token": mfa_token,
+                    "expires_in": str(MFA_PENDING_EXPIRY_SECONDS),
+                    "message": "MFA verification required",
+                }
+
             token_data = {
                 "sub": normalized_user.get("username") or normalized_user.get("email"),
                 "id": normalized_user.get("id"),
@@ -367,7 +391,7 @@ class SSOService:
                 device_info_str = json.dumps({"user_agent": "SSO Login", "ip": "Unknown"})
 
                 await global_session_manager.register_session(
-                    user_id=normalized_user["id"],
+                    user_id=str(normalized_user.get("id")),
                     session_id=session_id,
                     device_info=device_info_str,
                 )
@@ -582,6 +606,9 @@ class SSOService:
         Returns:
             True if user can safely disconnect a provider
         """
+        if tenant_id is None:
+            raise BadRequestException("Tenant context required")
+
         # Check if user has a password
         user = await get_service("user", db).get(user_id)
         if user:

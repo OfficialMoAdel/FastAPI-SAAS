@@ -506,7 +506,6 @@ class PricingService(BaseService[Pricing]):
             setattr(pricing, key, value)
 
         await self.db.commit()
-        await self.db.refresh(pricing)
 
         return PricingRead.model_validate(pricing).model_dump()
 

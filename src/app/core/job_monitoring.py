@@ -202,7 +202,7 @@ class JobMonitoringService:
                 else:
                     parsed_items.append({"raw": item_str, "error": "parse_error"})
             except Exception as e:
-                logger.error("Failed to parse DLQ item: , error:", item_str=item_str, error=e)
+                logger.error("Failed to parse DLQ item. Item: %s | Error: %s", item_str, e)
                 parsed_items.append({"raw": item_str, "error": str(e)})
 
         return parsed_items

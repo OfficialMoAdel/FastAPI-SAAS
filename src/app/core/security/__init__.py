@@ -65,16 +65,16 @@ atexit.register(_bcrypt_executor.shutdown, wait=True)
 def _get_signing_key() -> str:
     """Get the key for signing tokens (private key for RS256, secret for HS256)."""
     if ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
-        return settings.JWT_PRIVATE_KEY.get_secret_value()
-    return SECRET_KEY.get_secret_value()
+        return str(settings.JWT_PRIVATE_KEY.get_secret_value())
+    return str(SECRET_KEY.get_secret_value())
 
 
 @lru_cache(maxsize=1)
 def _get_verification_key() -> str:
     """Get the key for verifying tokens (public key for RS256, secret for HS256)."""
     if ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
-        return settings.JWT_PUBLIC_KEY
-    return SECRET_KEY.get_secret_value()
+        return str(settings.JWT_PUBLIC_KEY)
+    return str(SECRET_KEY.get_secret_value())
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
@@ -379,7 +379,8 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                         else:
                             # Fallback for system tokens or tokens without tenant_id
                             # This should be rare if all tokens are correctly issued
-                            tenant_id = "00000000-0000-0000-0000-000000000000"
+                            import uuid
+                            tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
                     # Store full token in DB for backward compatibility
                     await crud_token_blacklist.create(

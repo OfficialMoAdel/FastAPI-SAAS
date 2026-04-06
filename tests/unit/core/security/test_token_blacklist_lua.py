@@ -239,8 +239,8 @@ class TestRedisUnavailable:
     """Test behavior when Redis is unavailable."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_redis_unavailable(self):
-        """Verify fail-open behavior when Redis is unavailable."""
+    async def test_returns_true_when_redis_unavailable_fail_closed(self):
+        """Verify fail-closed behavior when Redis is unavailable."""
         # Arrange
         token = "test_token_123"
 
@@ -249,7 +249,7 @@ class TestRedisUnavailable:
             result = await is_token_blacklisted(token)
 
             # Assert
-            assert result is None  # Fail open
+            assert result is True  # Fail closed
 
     @pytest.mark.asyncio
     async def test_script_load_returns_none_when_redis_unavailable(self):

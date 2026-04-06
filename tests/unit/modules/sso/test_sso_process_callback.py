@@ -30,6 +30,15 @@ def mock_request():
     return request
 
 
+@pytest.fixture(autouse=True)
+def mock_mfa_service_dependency():
+    with patch("src.app.modules.mfa.service.get_mfa_service") as mock_get_mfa:
+        mock_mfa = AsyncMock()
+        mock_mfa.is_mfa_enabled = AsyncMock(return_value=False)
+        mock_get_mfa.return_value = mock_mfa
+        yield mock_get_mfa
+
+
 @pytest.mark.asyncio
 @patch("src.app.modules.sso.service.get_sso_state_manager")
 @patch("src.app.core.utils.cache.client")

@@ -32,7 +32,7 @@ if not _loaded:
     os.environ.setdefault("SECRET_KEY", "test-secret-key-for-testing-only-32chars")
     os.environ.setdefault("POSTGRES_USER", "test")
     os.environ.setdefault("POSTGRES_PASSWORD", "test")
-    os.environ.setdefault("ADMIN_PASSWORD", "test")
+    os.environ.setdefault("ADMIN_PASSWORD", "SuperS3cretP@ssw0rd!123")
 
 os.environ.setdefault("ENVIRONMENT", "local")
 

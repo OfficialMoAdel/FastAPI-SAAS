@@ -164,8 +164,10 @@ async def ban_ip(
     # Calculate duration with escalation if enabled
     base_duration = duration or settings.AUTO_BAN_DURATION
     if settings.AUTO_BAN_ESCALATION and ban_info.ban_count > 0:
-        # Double duration for each previous ban
-        actual_duration = base_duration * (2**ban_info.ban_count)
+        # Double duration for each previous ban, safely capped to prevent Redis TTL overflow
+        # and Python memory issues from massive exponents. Max cap 1 year (31536000 seconds).
+        capped_ban_count = min(ban_info.ban_count, 30)
+        actual_duration = min(base_duration * (2**capped_ban_count), 31536000)
         logger.info(
             "Escalating ban for %s: previous_bans=%d, base_duration=%d, actual_duration=%d",
             client_ip,

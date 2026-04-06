@@ -20,8 +20,13 @@ from src.app.core.security.token_blacklist_cache import (
 
 def _acm(pipe):
     """Make pipeline mock support 'async with' by returning itself on __aenter__."""
-    async def __aenter__(*a): return pipe
-    async def __aexit__(*a): return False
+
+    async def __aenter__(*a):
+        return pipe
+
+    async def __aexit__(*a):
+        return False
+
     pipe.__aenter__ = __aenter__
     pipe.__aexit__ = __aexit__
     return pipe
@@ -33,7 +38,10 @@ class TestIsTokenBlacklisted:
     @pytest.mark.asyncio
     async def test_returns_none_when_redis_unavailable(self) -> None:
         """Should fail open (return None) when Redis is not configured."""
-        with patch("src.app.core.utils.cache.client", None):
+        with (
+            patch("src.app.core.utils.cache.client", None),
+            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_open"),
+        ):
             result = await is_token_blacklisted("some-token")
             assert result is None
 
@@ -86,8 +94,8 @@ class TestIsTokenBlacklisted:
             mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_fails_open_on_redis_error(self) -> None:
-        """Should return None (fail open) on Redis errors."""
+    async def test_fails_closed_on_redis_error(self) -> None:
+        """Should return True (fail closed) on Redis errors."""
         mock_redis = AsyncMock()
         # Error on evalsha (Lua script execution)
         mock_redis.evalsha = AsyncMock(side_effect=Exception("Connection error"))
@@ -97,7 +105,7 @@ class TestIsTokenBlacklisted:
             patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"),
         ):
             result = await is_token_blacklisted("any-token")
-            assert result is None
+            assert result is True
 
 
 class TestAddTokenToBlacklist:

@@ -125,7 +125,7 @@ class TestEnvironmentValidator:
     def test_validate_and_log_success(self, mock_logger, mock_env):
         """Test logging and success return."""
         env_vars = {
-            "ADMIN_PASSWORD": "StrongPassword123!",
+            "ADMIN_PASSWORD": "SuperS3cretP@ssw0rd!123",
             "POSTGRES_PASSWORD": "StrongDBPassword123!",
             "ENVIRONMENT": "production",
             "DEBUG": "false",

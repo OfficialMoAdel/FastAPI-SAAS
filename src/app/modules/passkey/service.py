@@ -508,7 +508,7 @@ class PasskeyService:
         if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
             return "http://localhost:3000"  # Default frontend port
         # In production, use configured frontend URL
-        return settings.FRONTEND_URL
+        return str(settings.FRONTEND_URL)
 
     async def _count_user_passkeys(self, db: AsyncSession, user_id: int) -> int:
         """Count user passkeys."""
