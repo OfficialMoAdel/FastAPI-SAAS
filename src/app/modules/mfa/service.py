@@ -506,6 +506,7 @@ class MFAService:
         user_id: int,
         password: str,
         totp_token: str | None,
+        backup_code: str | None,
         db: AsyncSession,
     ) -> dict[str, str]:
         """Disable MFA for a user.
@@ -539,28 +540,14 @@ class MFAService:
         if not mfa_method_dict:
             raise BadRequestException("MFA is not enabled for this user")
 
-        # If TOTP token provided, verify it as well
-        if totp_token:
-            # SECURITY FIX: Check and increment MFA lockout before verification
-            await self._check_mfa_lockout(user_id)
-
-            try:
-                secret = await self._decrypt_secret(mfa_method_dict["secret"])
-                totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
-
-                if not totp.verify(totp_token, valid_window=TOTP_SKEW):
-                    raise UnauthorizedException("Invalid MFA token")
-
-                # Clear lockout counter on successful verification
-                await self._reset_mfa_lockout(user_id)
-            except UnauthorizedException:
-                # BUG FIX: Re-raise auth exceptions explicitly so they aren't swallowed.
-                # The broad `except Exception` below would re-wrap them with a different
-                # message, losing the original context. Always re-raise first.
-                raise
-            except Exception:
-                # Only catch unexpected decryption or pyotp errors here.
-                raise UnauthorizedException("Invalid MFA token")
+        # SECURITY FIX: Enforce cryptographic MFA verification before stripping MFA state.
+        # This replaces the optional check to prevent an MFA bypass where someone with
+        # just an active token could unbind MFA without the second factor.
+        verify_req = MFAVerifyRequest(
+            totp_token=totp_token,
+            backup_code=backup_code,
+        )
+        await self.verify_totp_token(user_id=user_id, request=verify_req, db=db)
 
         # Delete MFA method
         await crud_mfa_methods.delete(db=db, id=mfa_method_dict["id"])
@@ -644,6 +631,7 @@ class MFAService:
         user_id: int,
         password: str,
         totp_token: str | None,
+        backup_code: str | None,
         db: AsyncSession,
     ) -> dict[str, Any]:
         """Generate new backup codes for a user.
@@ -677,25 +665,14 @@ class MFAService:
         if not mfa_method_dict:
             raise BadRequestException("MFA is not enabled for this user")
 
-        # If TOTP token provided, verify it as well
-        if totp_token:
-            # SECURITY FIX: Check and increment MFA lockout before verification
-            await self._check_mfa_lockout(user_id)
-
-            try:
-                secret = await self._decrypt_secret(mfa_method_dict["secret"])
-                totp = pyotp.TOTP(secret, interval=TOTP_INTERVAL, digits=TOTP_DIGITS)
-
-                if not totp.verify(totp_token, valid_window=TOTP_SKEW):
-                    raise UnauthorizedException("Invalid MFA token")
-
-                # Clear lockout counter on successful verification
-                await self._reset_mfa_lockout(user_id)
-            except UnauthorizedException:
-                # BUG FIX: Re-raise auth exceptions before the broad except catches them.
-                raise
-            except Exception:
-                raise UnauthorizedException("Invalid MFA token")
+        # SECURITY FIX: Enforce cryptographic MFA verification before changing state.
+        # This inherently handles check_mfa_lockout + increments, checking TOTP ranges,
+        # fallback backup code validation with DB locks, and structured logging.
+        verify_req = MFAVerifyRequest(
+            totp_token=totp_token,
+            backup_code=backup_code,
+        )
+        await self.verify_totp_token(user_id=user_id, request=verify_req, db=db)
 
         # Generate new backup codes and hash them concurrently
         backup_codes = await self._generate_backup_codes()

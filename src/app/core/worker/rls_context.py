@@ -7,7 +7,6 @@ Provides context managers for setting RLS context in background jobs:
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import cast
 from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -96,36 +95,10 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                 reason,
             )
 
-            # SECURITY: Implement application-level audit logging for job RLS bypass
-            # This is done in a separate asynchronous task to not block the job and
-            # to ensure the audit log is stored even if the main transaction rolls back.
-            try:
-                from src.app.modules.audit_logs.models import AuditLog
-
-                async def _log_rls_bypass() -> None:
-                    async with local_session() as audit_db:
-                        audit_record = AuditLog(
-                            # In a system job we don't have a real tenant ID. We can use a sentinel or None if nullable.
-                            # Since tenant_id is likely a required ForeignKey in audit_logs,
-                            # we use the system tenant if possible.
-                            # But AuditLog requires a valid tenant_id. We skip logging for purely system operations
-                            # if no tenant is associated, to avoid FK violations.
-                            # For now, we will log a warning instead of failing if we can't create it.
-                            tenant_id=cast(UUID, None),  # Or avoid creating this log if it requires tenant_id
-                            user_id=None,
-                            action="security.rls_bypass",
-                            entity_type="system",
-                            entity_id="job",
-                            details={"reason": reason},
-                            ip_address="127.0.0.1",
-                            user_agent="system_worker",
-                        )
-                        audit_db.add(audit_record)
-                        await audit_db.commit()
-
-                await _log_rls_bypass()
-            except Exception as audit_e:
-                logger.error("Failed to write RLS bypass to audit_logs table: %s", audit_e)
+            # SECURITY: App-level audit logging for job RLS bypass is handled
+            # by the structlog warning emitted above. Writing to the audit_logs
+            # DB table requires a valid tenant_id which system jobs do not have,
+            # so we avoid executing a failing DB insert here.
 
             yield session
 

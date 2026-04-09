@@ -37,10 +37,10 @@ class TestIsTokenBlacklisted:
 
     @pytest.mark.asyncio
     async def test_returns_none_when_redis_unavailable(self) -> None:
-        """Should fail open (return None) when Redis is not configured."""
+        """Should fail open (return None) when Redis is not configured and fail_open mode set."""
         with (
             patch("src.app.core.utils.cache.client", None),
-            patch("src.app.core.config.settings.auth.AUDIT_LOG_FAILURE_MODE", "fail_open"),
+            patch("src.app.core.config.settings.auth.TOKEN_CACHE_FAILURE_MODE", "fail_open"),
         ):
             result = await is_token_blacklisted("some-token")
             assert result is None

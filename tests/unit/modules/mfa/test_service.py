@@ -389,6 +389,7 @@ class TestDisableMFA:
                             user_id=mock_user_id,
                             password="valid_password",
                             totp_token="123456",
+                            backup_code=None,
                             db=mock_db,
                         )
 
@@ -422,6 +423,7 @@ class TestDisableMFA:
                                     user_id=mock_user_id,
                                     password="valid_password",
                                     totp_token="000000",
+                                    backup_code=None,
                                     db=mock_db,
                                 )
 
@@ -454,6 +456,7 @@ class TestDisableMFA:
                                     user_id=mock_user_id,
                                     password="valid_password",
                                     totp_token="123456",
+                                    backup_code=None,
                                     db=mock_db,
                                 )
 

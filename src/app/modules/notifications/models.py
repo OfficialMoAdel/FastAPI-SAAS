@@ -58,10 +58,10 @@ class Notification(Base, UUIDMixin):
     )
 
     # Foreign Keys
-    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+    tenant_id: Mapped[uuid_pkg.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         ForeignKey("tenants.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
         index=True,
     )
     user_id: Mapped[int | None] = mapped_column(
@@ -111,7 +111,7 @@ class Notification(Base, UUIDMixin):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(  # type: ignore
+    tenant: Mapped[Optional["Tenant"]] = relationship(  # type: ignore
         "Tenant",
         back_populates="notifications",
         init=False,

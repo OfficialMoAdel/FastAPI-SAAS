@@ -43,7 +43,7 @@ class NotificationService:
 
     async def get_template_content(
         self,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         template_name: str,
     ) -> tuple[str, str]:
         """Get email template content (subject and body).
@@ -69,12 +69,14 @@ class NotificationService:
                 logger.debug("Cache get failed", error=e)
 
         # Check for tenant override
-        query = select(EmailTemplateOverride).where(
-            EmailTemplateOverride.tenant_id == tenant_id,
-            EmailTemplateOverride.template_name == template_name,
-        )
-        result = await self.db.execute(query)
-        override = result.scalar_one_or_none()
+        override = None
+        if tenant_id:
+            query = select(EmailTemplateOverride).where(
+                EmailTemplateOverride.tenant_id == tenant_id,
+                EmailTemplateOverride.template_name == template_name,
+            )
+            result = await self.db.execute(query)
+            override = result.scalar_one_or_none()
 
         if override:
             logger.info(
@@ -121,7 +123,7 @@ class NotificationService:
 
     async def render_template(
         self,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         template_name: str,
         context: dict[str, Any],
     ) -> tuple[str, str]:
@@ -147,7 +149,7 @@ class NotificationService:
 
     async def send_email(
         self,
-        tenant_id: UUID,
+        tenant_id: UUID | None,
         to_email: str,
         template_name: str,
         context: dict[str, Any],
@@ -196,13 +198,15 @@ class NotificationService:
 
         # Rate limiting check (T105)
         # 100 emails/minute per tenant
-        is_limited_min, _ = await rate_limiter.check_rate_limit(f"notif:min:{tenant_id}", 100, 60)
+        rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
+        is_limited_min, _ = await rate_limiter.check_rate_limit(rate_limit_key_min, 100, 60)
         if is_limited_min:
             logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
             raise ValueError("Rate limit exceeded: 100 emails per minute")
 
         # 1000 emails/hour per tenant
-        is_limited_hour, _ = await rate_limiter.check_rate_limit(f"notif:hour:{tenant_id}", 1000, 3600)
+        rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
+        is_limited_hour, _ = await rate_limiter.check_rate_limit(rate_limit_key_hour, 1000, 3600)
         if is_limited_hour:
             logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
             raise ValueError("Rate limit exceeded: 1000 emails per hour")
@@ -231,7 +235,7 @@ class NotificationService:
                 "to_email": to_email,
                 "subject": subject,
                 "html_content": html_content,
-                "tenant_id": str(tenant_id),
+                "tenant_id": str(tenant_id) if tenant_id else None,
             },
             priority=EventPriority.NORMAL,
         )

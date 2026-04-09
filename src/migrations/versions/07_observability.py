@@ -79,7 +79,7 @@ def upgrade() -> None:
     op.create_table(
         "notifications",
         sa.Column("id", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
-        sa.Column("tenant_id", sa.UUID(), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=True),
         sa.Column("user_id", sa.Integer(), nullable=True),
         sa.Column("template_name", sa.String(length=100), nullable=False),
         sa.Column("to_email", sa.String(length=255), nullable=False),

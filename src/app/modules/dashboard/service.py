@@ -6,11 +6,11 @@ Business logic for generating dashboard metrics and analytics.
 
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import case, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.modules.audit_logs.models import AuditLog
-from src.app.modules.billing.models import BillingRecord, UserSubscription
+from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
 from src.app.modules.dashboard.schemas import (
     ActivityMetrics,
     DashboardMetricsResponse,
@@ -174,18 +174,36 @@ class DashboardService:
             .scalar_subquery()
         )
 
-        query = select(total_rev_sub, subs_count_sub)
+        # Calculate Monthly Recurring Revenue (MRR)
+        mrr_sub = (
+            select(
+                func.sum(
+                    case(
+                        (UserSubscription.billing_interval == "monthly", SubscriptionPlan.price_monthly_cents / 100.0),
+                        (UserSubscription.billing_interval == "yearly", SubscriptionPlan.price_yearly_cents / 1200.0),
+                        else_=0.0,
+                    )
+                )
+            )
+            .select_from(UserSubscription)
+            .join(SubscriptionPlan, UserSubscription.subscription_plan_id == SubscriptionPlan.id)
+            .where(UserSubscription.tenant_id == tenant_id, UserSubscription.status == "active")
+            .scalar_subquery()
+        )
+
+        query = select(total_rev_sub, subs_count_sub, mrr_sub)
         result = await db.execute(query)
         row = result.one()
 
         total_cents = row[0] or 0
         total_revenue = total_cents / 100.0
         total_subs = row[1] or 0
+        mrr = float(row[2] or 0.0)
         avg_revenue = (total_revenue / total_subs) if total_subs > 0 else 0.0
 
         return RevenueMetrics(
             total_revenue=total_revenue,
-            recurring_revenue=0.0,  # Placeholder until MRR specific query is built
+            recurring_revenue=mrr,
             average_revenue_per_user=avg_revenue,
             total_subscriptions=total_subs,
         )

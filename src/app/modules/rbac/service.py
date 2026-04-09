@@ -170,7 +170,19 @@ class RoleService:
         # Invalidate cache for the deleted role
         await self._invalidate_role_cache(role_id)
 
-        # BUG FIX: Also invalidate permission caches for all affected users
+        # BUG FIX: Also invalidate permission caches and bump token_version for all affected users
+        if affected_user_ids:
+            from sqlalchemy import update as sa_update
+
+            from src.app.modules.users.models import User
+
+            await self.db.execute(
+                sa_update(User)
+                .where(User.id.in_(affected_user_ids))
+                .values(token_version=User.token_version + 1)
+            )
+            await self.db.commit()
+
         for user_id in affected_user_ids:
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
@@ -470,12 +482,26 @@ class RoleService:
         # Invalidate cache for this role
         await self._invalidate_role_cache(role_id)
 
-        # Invalidate user permission caches for affected users
+        # Invalidate user permission caches and bump token_version for affected users
         affected_users_stmt = select(UserRole.user_id).where(
             and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
         )
         affected_users_result = await self.db.execute(affected_users_stmt)
-        for user_id in affected_users_result.scalars().all():
+        affected_user_ids = list(affected_users_result.scalars().all())
+
+        if affected_user_ids:
+            from sqlalchemy import update as sa_update
+
+            from src.app.modules.users.models import User
+
+            await self.db.execute(
+                sa_update(User)
+                .where(User.id.in_(affected_user_ids))
+                .values(token_version=User.token_version + 1)
+            )
+            await self.db.commit()
+
+        for user_id in affected_user_ids:
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
@@ -508,12 +534,26 @@ class RoleService:
             # Invalidate cache for this role
             await self._invalidate_role_cache(role_id)
 
-            # Invalidate user permission caches for affected users
+            # Invalidate user permission caches and bump token_version for affected users
             affected_users_stmt = select(UserRole.user_id).where(
                 and_(UserRole.role_id == role_id, UserRole.tenant_id == self.tenant_id)
             )
             affected_users_result = await self.db.execute(affected_users_stmt)
-            for user_id in affected_users_result.scalars().all():
+            affected_user_ids = list(affected_users_result.scalars().all())
+
+            if affected_user_ids:
+                from sqlalchemy import update as sa_update
+
+                from src.app.modules.users.models import User
+
+                await self.db.execute(
+                    sa_update(User)
+                    .where(User.id.in_(affected_user_ids))
+                    .values(token_version=User.token_version + 1)
+                )
+                await self.db.commit()
+
+            for user_id in affected_user_ids:
                 await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:

@@ -218,10 +218,53 @@ class MFADisableRequest(BaseModel):
             min_length=6,
             max_length=6,
             pattern=r"^\d{6}$",
-            description="Optional 6-digit TOTP code for additional verification",
+            description="6-digit TOTP code for MFA verification",
             examples=["123456"],
         ),
     ]
+    backup_code: Annotated[
+        str | None,
+        Field(
+            default=None,
+            min_length=11,
+            max_length=14,
+            description="Backup code (format: BC-XXXXX-XXXXX or XXXXX-XXXXX)",
+            examples=["BC-ABCDE-FGHIJ", "ABCDE-FGHIJ"],
+        ),
+    ]
+
+    @field_validator("backup_code")
+    @classmethod
+    def normalize_backup_code(cls, v: str | None) -> str | None:
+        """Normalize backup code to uppercase and validate format."""
+        if v is None:
+            return None
+
+        normalized = v.upper().strip()
+        if not _BACKUP_CODE_PATTERN.match(normalized):
+            raise ValueError("Invalid backup code format. Expected: BC-XXXXX-XXXXX or XXXXX-XXXXX")
+
+        if not normalized.startswith("BC-"):
+            normalized = f"BC-{normalized}"
+        return normalized
+
+    @field_validator("totp_token")
+    @classmethod
+    def validate_totp_token_format(cls, v: str | None) -> str | None:
+        """Validate TOTP token format."""
+        if v is None:
+            return None
+
+        if not _TOTP_TOKEN_PATTERN.match(v):
+            raise ValueError("TOTP token must be exactly 6 digits")
+        return v
+
+    def model_post_init(self, __context):
+        """Validate that exactly one of totp_token or backup_code is provided."""
+        if self.totp_token is None and self.backup_code is None:
+            raise ValueError("Either totp_token or backup_code must be provided")
+        if self.totp_token is not None and self.backup_code is not None:
+            raise ValueError("Only one of totp_token or backup_code should be provided, not both")
 
 
 # =============================================================================

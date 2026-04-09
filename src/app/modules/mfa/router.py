@@ -196,6 +196,7 @@ async def disable_mfa(
         user_id=current_user["id"],
         password=request.password,
         totp_token=request.totp_token,
+        backup_code=request.backup_code,
         db=db,
     )
 
@@ -248,6 +249,7 @@ async def regenerate_backup_codes(
         user_id=current_user["id"],
         password=request.password,
         totp_token=request.totp_token,
+        backup_code=request.backup_code,
         db=db,
     )
     return MFABackupCodesResponse(**result)

@@ -307,6 +307,13 @@ class AuthSettings(BaseSettings):
     MFA_PENDING_EXPIRY_SECONDS: int = Field(
         default=300, ge=60, le=3600, description="MFA pending token TTL in seconds (default: 5 minutes)"
     )
+    # Token blacklist cache failure mode - fail_closed by default for security
+    # "fail_open": Return None when Redis unavailable (allow auth to continue)
+    # "fail_closed": Return True when Redis unavailable (treat as blacklisted, block auth)
+    TOKEN_CACHE_FAILURE_MODE: Literal["fail_open", "fail_closed"] = Field(
+        default="fail_closed",
+        description="How to handle token blacklist cache failures: 'fail_open' (allow) or 'fail_closed' (block)",
+    )
 
 
 class TestSettings(BaseSettings): ...
@@ -818,5 +825,3 @@ class Settings(BaseSettings):
 
 # Initialize settings without arguments - Pydantic will populate from env
 settings = Settings()  # type: ignore[call-arg]
-
-

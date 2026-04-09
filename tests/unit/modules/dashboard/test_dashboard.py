@@ -326,8 +326,8 @@ class TestRevenueMetrics:
 
         db_mock = AsyncMock()
         mock_result = MagicMock()
-        # Return tuple: (total_cents, subscription_count)
-        mock_result.one.return_value = (100000, 50)  # $1000, 50 subs
+        # Return tuple: (total_cents, subscription_count, mrr)
+        mock_result.one.return_value = (100000, 50, 500.0)  # $1000, 50 subs, $500 MRR
         db_mock.execute = AsyncMock(return_value=mock_result)
 
         start = datetime.now(UTC) - timedelta(days=30)
@@ -337,6 +337,7 @@ class TestRevenueMetrics:
 
         assert result.total_revenue == 1000.0  # cents / 100
         assert result.total_subscriptions == 50
+        assert result.recurring_revenue == 500.0
 
     @pytest.mark.asyncio
     async def test_get_revenue_metrics_zero_subs(self):
@@ -345,7 +346,7 @@ class TestRevenueMetrics:
 
         db_mock = AsyncMock()
         mock_result = MagicMock()
-        mock_result.one.return_value = (0, 0)  # No revenue, no subs
+        mock_result.one.return_value = (0, 0, 0.0)  # No revenue, no subs, no MRR
         db_mock.execute = AsyncMock(return_value=mock_result)
 
         start = datetime.now(UTC) - timedelta(days=30)
@@ -356,6 +357,7 @@ class TestRevenueMetrics:
         assert result.total_revenue == 0.0
         assert result.total_subscriptions == 0
         assert result.average_revenue_per_user == 0.0
+        assert result.recurring_revenue == 0.0
 
 
 class TestActivityMetrics:

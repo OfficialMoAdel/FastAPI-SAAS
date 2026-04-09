@@ -219,7 +219,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
 
         # SECURITY FIX: Fail closed during infrastructure disruptions
         from src.app.core.config import settings
-        if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+        if getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
             return True  # Treat as blacklisted to fail closed
 
         return None  # Redis not configured, fall back to DB
@@ -295,7 +295,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
         logger.warning("Redis blacklist check failed", error=e)
         # SECURITY FIX: Fail closed if configured
         from src.app.core.config import settings
-        if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+        if getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
             return True
         return None  # Fail open - let DB check handle it
 

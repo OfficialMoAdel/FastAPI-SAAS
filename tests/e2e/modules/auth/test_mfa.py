@@ -10,7 +10,6 @@ Tests the complete MFA flow from setup through verification, including:
 6. Regenerate backup codes
 """
 
-
 import uuid
 
 import pytest
@@ -94,12 +93,15 @@ class TestMFASetupFlow:
         enable_data = enable_response.json()
 
         assert enable_data["message"] == "MFA enabled successfully"
+        assert "backup_codes" in enable_data
 
-        # [STEP 3] Get backup codes (requires POST to regenerate)
+        # [STEP 3] Get backup codes (requires MFA verification after enabling)
+        # Use TOTP token for verification since MFA is now enabled
+        totp = pyotp.TOTP(secret)
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
             headers={**headers, **ip_headers()},
-            json={"password": test_password, "totp_token": None},
+            json={"password": test_password, "totp_token": totp.now()},
         )
         assert backup_codes_response.status_code == 200
         backup_codes_data = backup_codes_response.json()
@@ -119,8 +121,9 @@ class TestMFASetupFlow:
         status_data = status_response.json()
 
         assert status_data["is_enabled"] is True
+        # After regenerating backup codes, last_used is set from the TOTP verification
         assert status_data["backup_codes_remaining"] == 10
-        assert status_data["last_used"] is None
+        assert status_data["last_used"] is not None  # Used during backup codes regeneration
 
         # Cleanup: Disable MFA and delete user
         disable_response = await async_client.post(
@@ -292,11 +295,12 @@ class TestMFALoginWithBackupCode:
         )
         assert enable_response.status_code == 200
 
-        # Get backup codes (requires POST with password verification)
+        # Get backup codes (requires MFA verification after enabling)
+        totp = pyotp.TOTP(secret)
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
             headers={**headers, **ip_headers()},
-            json={"password": test_password, "totp_token": None},
+            json={"password": test_password, "totp_token": totp.now()},
         )
         assert backup_codes_response.status_code == 200
         backup_codes = backup_codes_response.json()["backup_codes"]
@@ -421,6 +425,7 @@ class TestMFALockoutFlow:
         # Clear rate limits before looping to avoid 429 on login endpoint
         from src.app.core.utils import cache
         from src.app.core.utils.rate_limit import reset_rate_limiter
+
         reset_rate_limiter()
         if cache.client:
             await cache.client.flushdb()
@@ -429,15 +434,15 @@ class TestMFALockoutFlow:
         for i in range(5):
             login_response = await async_client.post(
                 "/api/v1/account/login",
-            headers=ip_headers(),
-            data={"username": test_user_email, "password": test_password},
+                headers=ip_headers(),
+                data={"username": test_user_email, "password": test_password},
             )
             mfa_token = login_response.json()["mfa_token"]
 
             complete_response = await async_client.post(
                 "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
-            json={
+                headers=ip_headers(),
+                json={
                     "mfa_token": mfa_token,
                     "totp_token": "000000",
                     "backup_code": None,
@@ -613,11 +618,11 @@ class TestMFARegenerateBackupCodes:
         )
         assert enable_response.status_code == 200
 
-        # Get backup codes
+        # Get backup codes (need TOTP since MFA is enabled)
         backup_codes_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
             headers={**headers, **ip_headers()},
-            json={"password": test_password, "totp_token": None},
+            json={"password": test_password, "totp_token": totp.now()},
         )
         old_backup_codes = backup_codes_response.json()["backup_codes"]
 
@@ -650,11 +655,11 @@ class TestMFARegenerateBackupCodes:
         # Note: backup_codes_remaining may not be returned in status endpoint
         # We'll verify by checking if the code can't be reused
 
-        # [STEP 1] Regenerate backup codes
+        # [STEP 1] Regenerate backup codes (needs TOTP since MFA is enabled)
         regenerate_response = await async_client.post(
             "/api/v1/mfa/backup-codes",
             headers=new_headers,
-            json={"password": test_password, "totp_token": None},
+            json={"password": test_password, "totp_token": totp.now()},
         )
         assert regenerate_response.status_code == 200
         new_backup_codes = regenerate_response.json()["backup_codes"]

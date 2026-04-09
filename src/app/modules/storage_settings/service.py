@@ -20,6 +20,7 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.modules.storage.azure_storage import AzureBlobStorage
 from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
+from src.app.modules.storage.s3_storage import S3Storage
 from src.app.modules.storage_settings.models import StorageProviderType, StorageSettings
 from src.app.modules.storage_settings.schemas import (
     StorageProviderType as SchemaProviderType,
@@ -369,8 +370,12 @@ class StorageSettingsService:
             StorageProvider instance.
         """
         if provider == StorageProviderType.S3:
-            # S3 would need boto3 implementation
-            raise NotImplementedError("S3 provider not yet implemented")
+            return S3Storage(
+                bucket=credentials.get("bucket_name", credentials.get("bucket", "default-bucket")),
+                region=credentials.get("region", "us-east-1"),
+                aws_access_key_id=credentials.get("aws_access_key_id"),
+                aws_secret_access_key=credentials.get("aws_secret_access_key"),
+            )
 
         if provider == StorageProviderType.AZURE:
             return AzureBlobStorage(

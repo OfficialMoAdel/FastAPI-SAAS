@@ -311,7 +311,7 @@ return new_attempts
             key="refresh_token",
             value=refresh_token,
             httponly=True,
-            secure=is_production,
+            secure=True,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -383,9 +383,6 @@ return new_attempts
                     "Session expired. Please log in again.",
                 )
 
-        # Blacklist the used refresh token (Rotation)
-        await blacklist_token(token=refresh_token, db=db)
-
         # Fetch user with tier for Zero-DB rate limiting
         # Use UserService to benefit from auth info caching
         user_service = get_user_service(db)
@@ -421,6 +418,9 @@ return new_attempts
             create_refresh_token(data=token_data),
         )
 
+        # Blacklist the used refresh token (Rotation) ONLY AFTER new tokens are successfully generated
+        await blacklist_token(token=refresh_token, db=db)
+
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
         is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
@@ -431,7 +431,7 @@ return new_attempts
             key="refresh_token",
             value=new_refresh_token,
             httponly=True,
-            secure=is_production,
+            secure=True,
             samesite="strict" if is_production else "lax",
             max_age=max_age,
         )
@@ -770,7 +770,7 @@ return new_attempts
 
             notification_service = NotificationService(db)
             await notification_service.send_email(
-                tenant_id=_UUID(str(user["tenant_id"])),
+                tenant_id=_UUID(str(user["tenant_id"])) if user.get("tenant_id") else None,
                 to_email=email,
                 template_name="password_reset",
                 context={
@@ -926,7 +926,7 @@ return new_attempts
 
             notification_service = NotificationService(db)
             await notification_service.send_email(
-                tenant_id=_UUID(str(user["tenant_id"])),
+                tenant_id=_UUID(str(user["tenant_id"])) if user.get("tenant_id") else None,
                 to_email=email,
                 template_name="email_verification",
                 context={
