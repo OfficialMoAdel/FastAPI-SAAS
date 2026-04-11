@@ -1030,6 +1030,8 @@ def cache(
                         # This allows progressive migration to O(1) without breaking changes
                         await invalidate_by_pattern(formatted_pattern)
 
+            return result
+
         return inner
 
     return wrapper

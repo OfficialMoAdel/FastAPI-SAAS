@@ -150,8 +150,13 @@ def lifespan_factory(
 
         finally:
             # Dispose database engine to release connection pool
-            await engine.dispose()
             import src.app.core.db.database as db_module
+
+            try:
+                engine = db_module.get_async_engine()
+                await engine.dispose()
+            except Exception:
+                pass  # Engine may not have been created if startup failed
             db_module._async_engine = None
 
             if redis_cache_enabled:
@@ -224,8 +229,21 @@ def create_application(
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=allow_credentials,
-            allow_methods=getattr(settings, "CORS_METHODS", ["*"]),
-            allow_headers=getattr(settings, "CORS_HEADERS", ["*"]),
+            allow_methods=getattr(settings, "CORS_METHODS", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]),
+            allow_headers=getattr(
+                settings,
+                "CORS_HEADERS",
+                [
+                    "Content-Type",
+                    "Authorization",
+                    "X-Request-ID",
+                    "X-Webhook-Signature",
+                    "X-Webhook-Event",
+                    "X-Webhook-ID",
+                    "X-Webhook-Timestamp",
+                    "X-Tenant-ID",
+                ],
+            ),
         )
 
     if environment != EnvironmentOption.PRODUCTION:

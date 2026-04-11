@@ -109,8 +109,8 @@ def _get_key_from_settings() -> bytes:
     key_str = settings.ENCRYPTION_KEY.get_secret_value() if settings.ENCRYPTION_KEY else None
 
     if not key_str:
-        # Fallback: derive from SECRET_KEY (not recommended for prod rotation but safe functionality)
-        return _derive_key(settings.SECRET_KEY.get_secret_value(), _get_salt())
+        # SECURITY FIX: Removed fallback to SECRET_KEY. Fail if missing.
+        raise ValueError("ENCRYPTION_KEY must be set in the environment.")
 
     # Ensure it's bytes
     try:

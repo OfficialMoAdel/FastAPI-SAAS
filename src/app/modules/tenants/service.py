@@ -7,7 +7,6 @@ from uuid import UUID
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.feature_flags import FEATURE_TENANT_DICT_OPTIMIZATION
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
@@ -78,11 +77,11 @@ class TenantService(BaseService[Tenant]):
         try:
             tenant_data = _tenant_to_dict(tenant)
             cache_key = _get_cache_key(tenant.id)
-            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL, nx=True)
+            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
             # Also cache by slug for slug-based lookups
             slug_key = _get_slug_cache_key(tenant.slug)
-            await redis_client.set(slug_key, str(tenant.id), ex=TENANT_CACHE_TTL, nx=True)
+            await redis_client.set(slug_key, str(tenant.id), ex=TENANT_CACHE_TTL)
         except Exception as e:
             logger.debug("Failed to cache tenant", error=str(e))
 
@@ -97,13 +96,13 @@ class TenantService(BaseService[Tenant]):
 
         try:
             cache_key = _get_cache_key(tenant_id)
-            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL, nx=True)
+            await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
             # Also cache by slug for slug-based lookups
             slug = tenant_data.get("slug")
             if slug:
                 slug_key = _get_slug_cache_key(slug)
-                await redis_client.set(slug_key, str(tenant_id), ex=TENANT_CACHE_TTL, nx=True)
+                await redis_client.set(slug_key, str(tenant_id), ex=TENANT_CACHE_TTL)
         except Exception as e:
             logger.debug("Failed to cache tenant dict", error=str(e))
 
@@ -140,20 +139,22 @@ class TenantService(BaseService[Tenant]):
             return None
 
         try:
-            # First check if we have the tenant ID cached for this slug
             slug_key = _get_slug_cache_key(slug)
-            tenant_id = await redis_client.get(slug_key)
+            cached = await redis_client.get(slug_key)
 
-            if tenant_id:
-                # Now get the full tenant data by ID.
-                # BUG FIX: cache.client is configured with decode_responses=True,
-                # so Redis already returns str, not bytes. Calling .decode() on a
-                # str raises AttributeError, silently breaking all slug cache hits
-                # and forcing every slug lookup to fall through to the database.
-                cached = await redis_client.get(_get_cache_key(str(tenant_id)))
-                if cached:
+            if cached:
+                try:
                     result: dict[str, Any] = json_loads(cached)
-                    return result
+                    if isinstance(result, dict) and "id" in result:
+                        return result
+                except Exception:
+                    pass
+
+                # Fallback for old cache entries (UUID string)
+                cached_full = await redis_client.get(_get_cache_key(str(cached)))
+                if cached_full:
+                    result_fallback: dict[str, Any] = json_loads(cached_full)
+                    return result_fallback
         except Exception as e:
             logger.debug("Failed to get cached tenant by slug", error=str(e))
 
@@ -201,12 +202,8 @@ class TenantService(BaseService[Tenant]):
             )
             raise DuplicateError("slug", tenant.slug)
 
-        # P2-1: Use optimized dict construction if feature flag is enabled
-        if FEATURE_TENANT_DICT_OPTIMIZATION:
-            # Type ignore: optimized path assumes ORM object is compatible with _tenant_to_dict
-            result = _tenant_to_dict(created_tenant)  # type: ignore[arg-type]
-        else:
-            result = TenantResponse.model_validate(created_tenant).model_dump()
+        # P2-5: Always use optimized dict construction
+        result = _tenant_to_dict(created_tenant)  # type: ignore[arg-type]
 
         # FIXED: Cache the newly created tenant for immediate lookup
         await self._cache_tenant(created_tenant)

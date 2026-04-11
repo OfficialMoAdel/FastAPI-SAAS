@@ -14,6 +14,8 @@ from typing import Any
 
 import pyotp
 from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
@@ -749,8 +751,6 @@ class MFAService:
         """
         # FIXED: Use proper PBKDF2HMAC key derivation with salt
         # instead of simple truncation + null padding (security vulnerability)
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 
         # Use a consistent salt derived from application name (not random, for reproducibility)
         salt = b"fastapi_saas_mfa_v1"

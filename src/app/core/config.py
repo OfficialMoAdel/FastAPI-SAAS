@@ -127,18 +127,10 @@ class CryptSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "CryptSettings":
         """Validate encryption keys are set to prevent runtime failures."""
-        import logging
 
         # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
         if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
-            import os
-
-            if os.getenv("ENVIRONMENT", "development").lower() == "production":
-                raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in production.")
-            logging.getLogger("app.core.config").warning(
-                "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing. "
-                "Features relying on encryption (e.g., webhooks, sensitive data) may fail."
-            )
+            raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in the environment.")
 
         return self
 
@@ -797,11 +789,6 @@ class Settings(BaseSettings):
         return result
 
     def __getattr__(self, name: str) -> Any:
-        try:
-            return super().__getattribute__(name)
-        except AttributeError:
-            pass
-
         target_component = self._delegation_map.get(name)
         if target_component:
             component = super().__getattribute__(target_component)

@@ -76,7 +76,7 @@ async def initiate_sso(
         state,
         max_age=600,  # 10 minutes to match Redis TTL
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=True,
         samesite="lax",
     )
     return response
@@ -240,7 +240,7 @@ async def connect_provider(
         state,
         max_age=600,  # 10 minutes to match Redis TTL
         httponly=True,
-        secure=request.url.scheme == "https",
+        secure=True,
         samesite="lax",
     )
     return response

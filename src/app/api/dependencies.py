@@ -1,7 +1,9 @@
 from typing import Annotated, Any
+from uuid import UUID
 
 import jwt
 from fastapi import Depends, HTTPException, Request, status
+from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
@@ -17,6 +19,34 @@ from src.app.modules.rate_limits.schemas import RateLimitRead, sanitize_path
 from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
+
+
+class AuthenticatedUser(BaseModel):
+    """Strict typed user model for request dependencies.
+
+    Provides IDE autocomplete while maintaining backward compatibility
+    with dict-based access via __getitem__.
+    """
+
+    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+
+    id: int
+    uuid: UUID | str | None = None
+    email: str
+    username: str | None = None
+    is_superuser: bool = False
+    is_active: bool = True
+    is_deleted: bool = False
+    tier_id: int | None = None
+    tenant_id: UUID | str | None = None
+    profile_image_url: str | None = None
+    token_version: int = 0
+
+    def __getitem__(self, item: str) -> Any:
+        return getattr(self, item)
+
+    def get(self, item: str, default: Any = None) -> Any:
+        return getattr(self, item, default)
 
 
 async def get_current_user(
@@ -113,7 +143,7 @@ async def get_user_by_api_key(
     api_key: Annotated[str | None, Depends(api_key_scheme)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     request: Request,
-) -> dict[str, Any] | None:
+) -> AuthenticatedUser | None:
     """Validate API key and return user info.
 
     This dependency allows authentication using 'X-API-Key' header.
@@ -132,10 +162,12 @@ async def get_user_by_api_key(
 
     # ISSUE 5 FIX: Verify tenant from API key matches the requested tenant context.
     # Prevents an attacker from using a valid API key for Tenant A to access Tenant B.
-    requested_tenant_id = request.headers.get("X-Tenant-ID")
-    if requested_tenant_id:
+    from src.app.core.tenancy.context import get_current_tenant
+
+    current_tenant = get_current_tenant()
+    if current_tenant:
         key_tenant_id = key_info.get("tenant_id")
-        if not key_tenant_id or str(key_tenant_id) != str(requested_tenant_id):
+        if not key_tenant_id or str(key_tenant_id) != str(current_tenant.tenant_id):
             from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
             raise UnauthorizedException("API key does not match the requested tenant context.")
@@ -167,7 +199,7 @@ async def get_user_by_api_key(
         # Attach API key specific info to the user object
         user_dict["api_key_scopes"] = key_info.get("scopes", [])
         user_dict["api_key_id"] = key_info.get("key_id")
-        return user_dict
+        return AuthenticatedUser(**user_dict)  # type: ignore[arg-type]
 
     return None
 
@@ -175,8 +207,8 @@ async def get_user_by_api_key(
 async def get_optional_user(
     request: Request,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    api_key_user: Annotated[dict | None, Depends(get_user_by_api_key)] = None,
-) -> dict | None:
+    api_key_user: Annotated[AuthenticatedUser | None, Depends(get_user_by_api_key)] = None,
+) -> AuthenticatedUser | None:
     """Get optional user from Bearer token or API Key.
 
     Try API key first (via api_key_user dependency), then fall back to Bearer token.
@@ -263,7 +295,7 @@ async def get_optional_user(
             if str(user.get("tenant_id")) != str(current_tenant.id):
                 return None
 
-        return user
+        return AuthenticatedUser(**user)  # type: ignore[arg-type]
 
     except HTTPException as http_exc:
         if http_exc.status_code != 401:
@@ -276,8 +308,8 @@ async def get_optional_user(
 
 
 async def get_current_superuser(
-    current_user: Annotated[dict[str, Any], Depends(get_current_user)],
-) -> dict[str, Any]:
+    current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
+) -> AuthenticatedUser:
     if not current_user.get("is_active", False):
         raise ForbiddenException("User account is no longer active.")
     if not current_user.get("is_superuser", False):

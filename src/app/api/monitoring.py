@@ -20,7 +20,7 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_engine
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 
-router = APIRouter(dependencies=[Depends(get_current_superuser)])
+router = APIRouter()
 
 
 class HealthCheckResponse(BaseModel):

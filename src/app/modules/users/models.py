@@ -91,37 +91,37 @@ class User(Base, kw_only=True):
         back_populates="users",
         init=False,
         viewonly=True,
-        lazy="selectin",
+        lazy="raise",
     )
     notifications: Mapped[list["Notification"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     files: Mapped[list["File"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     api_keys: Mapped[list["APIKey"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     mfa_methods: Mapped[list["MFAMethod"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     # Billing & AI relationships (Phase 3/5)
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     billing_records: Mapped[list["BillingRecord"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     ai_settings: Mapped["AISettings | None"] = relationship(
         back_populates="user", uselist=False, init=False, cascade="all, delete-orphan"
     )
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
     tier: Mapped["Tier | None"] = relationship(lazy="joined", init=False)  # OPT-6: Eager load tier
     audit_logs: Mapped[list["AuditLog"]] = relationship(
-        back_populates="user", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )

@@ -65,10 +65,11 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
                 await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', $1, false)", tenant_id)
             else:
                 await conn.execute(f"SELECT set_config('{RLS_TENANT_VAR}', '', false)")
-                await conn.execute(f"SELECT set_config('{RLS_USER_VAR}', '', false)")
-                await conn.execute(f"SELECT set_config('{RLS_BYPASS_VAR}', '', false)")
+
+            await conn.execute(f"SELECT set_config('{RLS_USER_VAR}', '', false)")
+            await conn.execute(f"SELECT set_config('{RLS_BYPASS_VAR}', '', false)")
         except Exception as e:
-            # SECURITY FIX: Log heavily but do not raise.
+            # SECURITY FIX: Log heavily and raise.
             # SQLite does not support set_config and will fail here safely.
             if "set_config" not in str(e).lower() and "syntax error" not in str(e).lower():
                 logger.critical(
@@ -77,6 +78,7 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
                     tenant_id=tenant_id,
                     exc_info=True,
                 )
+                raise
 
     # Invoke the async function in the synchronous checkout event
     dbapi_connection.run_async(_do_restore)

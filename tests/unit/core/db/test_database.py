@@ -163,10 +163,12 @@ async def test_restore_rls_context_with_tenant():
     mock_conn = AsyncMock()
     await async_func(mock_conn)
 
-    mock_conn.execute.assert_called_once()
-    sql_text = mock_conn.execute.call_args[0][0]
-    assert "$1" in str(sql_text)
-    assert mock_conn.execute.call_args[0][1] == "123"
+    # RLS now always sets tenant, user, and bypass variables (3 calls)
+    assert mock_conn.execute.call_count == 3
+    # First call sets the tenant ID with parameterized query
+    first_call = mock_conn.execute.call_args_list[0]
+    assert "$1" in str(first_call[0][0])
+    assert first_call[0][1] == "123"
 
 
 @pytest.mark.asyncio
@@ -188,7 +190,7 @@ async def test_restore_rls_context_without_tenant():
 
 @pytest.mark.asyncio
 async def test_restore_rls_context_exception_handling():
-    """Test that restore_rls_context logs heavily but doesn't raise."""
+    """Test that restore_rls_context logs heavily and raises on non-SQLite errors."""
     mock_dbapi_connection = MagicMock()
     mock_tenant = MagicMock()
     mock_tenant.id = "123"
@@ -201,6 +203,7 @@ async def test_restore_rls_context_exception_handling():
     mock_conn.execute.side_effect = Exception("DB error")
 
     with patch("src.app.core.db.rls.logger.critical") as mock_logger:
-        # Should not raise
-        await async_func(mock_conn)
+        # Non-SQLite errors now raise
+        with pytest.raises(Exception, match="DB error"):
+            await async_func(mock_conn)
         mock_logger.assert_called_once()

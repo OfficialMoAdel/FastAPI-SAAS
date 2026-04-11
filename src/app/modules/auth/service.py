@@ -412,14 +412,14 @@ return new_attempts
 
         access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
 
+        # Blacklist the used refresh token (Rotation) BEFORE new tokens are successfully generated
+        await blacklist_token(token=refresh_token, db=db)
+
         # Create new tokens
         new_access_token, new_refresh_token = await asyncio.gather(
             create_access_token(data=token_data, expires_delta=access_token_expires),
             create_refresh_token(data=token_data),
         )
-
-        # Blacklist the used refresh token (Rotation) ONLY AFTER new tokens are successfully generated
-        await blacklist_token(token=refresh_token, db=db)
 
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
@@ -849,12 +849,7 @@ return new_attempts
             await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
             raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
 
-        # Mark token as used FIRST (before password change)
-        # SECURITY FIX: Prevents token reuse if password change fails
-        reset_token.used = True
-        await db.flush()  # Ensure token is marked as used before proceeding
-
-        # SECURITY FIX: Enforce password complexity
+        # SECURITY FIX: Enforce password complexity BEFORE marking token as used
         try:
             from src.app.modules.users.schemas import UserCreate
 
@@ -863,6 +858,11 @@ return new_attempts
             from src.app.core.exceptions.http_exceptions import BadRequestException
 
             raise BadRequestException(str(e))
+
+        # Mark token as used AFTER successful validation
+        # SECURITY FIX: Prevents token reuse if password change fails later, but avoids burning on bad input
+        reset_token.used = True
+        await db.flush()  # Ensure token is marked as used before proceeding
 
         # Update password
         new_hashed = await get_password_hash(new_password)

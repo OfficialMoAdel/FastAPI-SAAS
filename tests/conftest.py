@@ -1,3 +1,4 @@
+import base64
 import os
 import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
@@ -86,6 +87,11 @@ _test_encryption_key = os.getenv("TEST_ENCRYPTION_KEY")
 if not _test_encryption_key:
     _test_encryption_key = Fernet.generate_key().decode()
 settings.crypt.ENCRYPTION_KEY = SecretStr(_test_encryption_key)
+
+_test_encryption_salt = os.getenv("TEST_ENCRYPTION_SALT")
+if not _test_encryption_salt:
+    _test_encryption_salt = base64.urlsafe_b64encode(os.urandom(16)).decode()
+settings.crypt.ENCRYPTION_SALT = SecretStr(_test_encryption_salt)
 
 # Use SQLite for tests - fresh database each run, no data conflicts
 # We use a file-based DB to allow sharing between sync engine (setup) and async engine (app)

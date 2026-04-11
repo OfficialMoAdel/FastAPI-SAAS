@@ -94,7 +94,17 @@ class RateLimiter:
 
     async def is_rate_limited(self, db: AsyncSession, user_id: int | str, path: str, limit: int, period: int) -> bool:
         sanitized_path = sanitize_path(path)
-        key = f"{user_id}:{sanitized_path}"
+
+        # P2-7: Incorporate tenant isolation in rate limit key
+        from src.app.core.tenancy.context import get_current_tenant
+        tenant = get_current_tenant()
+        tenant_id = tenant.tenant_id if tenant else None
+
+        if tenant_id:
+            key = f"t:{tenant_id}:{user_id}:{sanitized_path}"
+        else:
+            key = f"{user_id}:{sanitized_path}"
+
         is_limited, _ = await self.check_rate_limit(key, limit, period)
         return is_limited
 

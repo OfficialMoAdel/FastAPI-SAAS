@@ -21,16 +21,12 @@ def test_rbac_cache_ttl_default():
 # ==================== Config Secrets ====================
 
 
-def test_encryption_keys_missing_warning(caplog):
-    """Verify warning is logged when encryption keys are missing."""
-    import logging
+def test_encryption_keys_missing_warning():
+    """Verify ValueError is raised when encryption keys are missing."""
+    import pytest
 
-    caplog.set_level(logging.WARNING)
-
-    # Create settings with valid SECRET_KEY but missing encryption keys
-    CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
-
-    assert "SECURITY: Encryption keys (ENCRYPTION_KEY, ENCRYPTION_SALT) are missing" in caplog.text
+    with pytest.raises(ValueError, match="ENCRYPTION_KEY and ENCRYPTION_SALT must be set"):
+        CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
 
 
 def test_encryption_keys_present_no_warning(caplog):

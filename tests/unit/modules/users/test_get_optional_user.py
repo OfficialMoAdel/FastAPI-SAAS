@@ -10,7 +10,7 @@ import pytest
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_optional_user
+from src.app.api.dependencies import get_optional_user, AuthenticatedUser
 from tests.conftest import MockUser
 
 
@@ -50,7 +50,7 @@ class TestGetOptionalUserWithValidToken:
 
     @pytest.mark.asyncio
     async def test_returns_user_dict_with_valid_token(self, mock_request, mock_db, mock_user_dict):
-        """Test that get_optional_user returns user dict when token is valid."""
+        """Test that get_optional_user returns AuthenticatedUser when token is valid."""
         # Arrange
         mock_request.headers = {"Authorization": "Bearer valid_token_123"}
 
@@ -72,7 +72,10 @@ class TestGetOptionalUserWithValidToken:
                     result = await get_optional_user(mock_request, mock_db)
 
                     # Assert
-                    assert result == mock_user_dict
+                    assert isinstance(result, AuthenticatedUser)
+                    assert result.id == mock_user_dict["id"]
+                    assert result.email == mock_user_dict["email"]
+                    assert result["tier_id"] == mock_user_dict["tier_id"]
                     mock_verify.assert_called_once()
 
     @pytest.mark.asyncio
@@ -98,7 +101,8 @@ class TestGetOptionalUserWithValidToken:
                     result = await get_optional_user(mock_request, mock_db)
 
                     # Assert
-                    assert result == mock_user_dict
+                    assert isinstance(result, AuthenticatedUser)
+                    assert result.email == "test@example.com"
 
 
 class TestGetOptionalUserWithNoToken:

@@ -85,8 +85,8 @@ class SessionCountResponse(BaseModel):
 class PasswordChangeRequest(BaseModel):
     """Password change request schema."""
 
-    current_password: str
-    new_password: str
+    current_password: str = Field(..., max_length=128)
+    new_password: str = Field(..., max_length=128)
 
 
 class PasswordResetRequest(BaseModel):
@@ -105,7 +105,7 @@ class PasswordResetConfirm(BaseModel):
 class EmailVerificationRequest(BaseModel):
     """Schema for requesting email verification (resend)."""
 
-    email: str
+    email: str = Field(..., max_length=255)
 
 
 class EmailVerificationConfirm(BaseModel):

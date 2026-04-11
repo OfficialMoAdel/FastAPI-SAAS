@@ -14,7 +14,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant
@@ -164,6 +163,24 @@ class StripeSettingsService(BaseService[StripeSettings]):
             return dict(update_result) if update_result else {}
 
 
+def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:
+    """Convert SubscriptionPlan ORM object to response dict directly."""
+    return {
+        "id": plan.id,
+        "tenant_id": plan.tenant_id,
+        "name": plan.name,
+        "description": plan.description,
+        "tier_name": getattr(plan, "tier_name", None),
+        "sort_order": plan.sort_order,
+        "stripe_price_id_monthly": plan.stripe_price_id_monthly,
+        "stripe_price_id_yearly": plan.stripe_price_id_yearly,
+        "features": plan.features,
+        "is_active": plan.is_active,
+        "created_at": plan.created_at,
+        "updated_at": plan.updated_at,
+    }
+
+
 class SubscriptionPlanService(BaseService[SubscriptionPlan]):
     """Service for managing subscription plans."""
 
@@ -241,7 +258,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         await self.db.commit()
         await self.db.refresh(plan)
 
-        return SubscriptionPlanRead.model_validate(plan).model_dump()
+        return _subscription_plan_to_dict(plan)
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
@@ -360,36 +377,8 @@ class ProductService(BaseService[Product]):
         if tenant and product.tenant_id != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
-        # P2-5: Use optimized dict construction if feature flag is enabled
-        if FEATURE_BILLING_DICT_OPTIMIZATION:
-            return _product_to_dict(product, product.pricing_tiers)
-
-        return {
-            "id": product.id,
-            "tenant_id": product.tenant_id,
-            "name": product.name,
-            "description": product.description,
-            "stripe_product_id": product.stripe_product_id,
-            "is_active": product.is_active,
-            "created_at": product.created_at,
-            "updated_at": product.updated_at,
-            "pricing_tiers": [
-                {
-                    "id": p.id,
-                    "product_id": p.product_id,
-                    "name": p.name,
-                    "amount_cents": p.amount_cents,
-                    "interval": p.interval,
-                    "stripe_price_id": p.stripe_price_id,
-                    "currency": p.currency,
-                    "features": p.features,
-                    "is_active": p.is_active,
-                    "created_at": p.created_at,
-                    "updated_at": p.updated_at,
-                }
-                for p in product.pricing_tiers
-            ],
-        }
+        # P2-5: Always use optimized dict construction
+        return _product_to_dict(product, product.pricing_tiers)
 
     async def add_pricing(
         self,
@@ -556,15 +545,20 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         return await crud_user_subscriptions.get_multi(db=self.db, schema_to_select=UserSubscriptionRead, **filters)
 
-    async def update_subscription(self, subscription_id: int, data: UserSubscriptionUpdate) -> dict[str, Any]:
+    async def update_subscription(
+        self, subscription_id: int, data: UserSubscriptionUpdate, user_id: int | None = None
+    ) -> dict[str, Any]:
         """Update a subscription."""
         subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # SECURITY FIX: Enforce tenant isolation
+        # SECURITY FIX: Enforce tenant and user isolation
         tenant = get_current_tenant()
         if tenant and subscription.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        if user_id is not None and subscription.get("user_id") != user_id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -573,7 +567,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
 
-    async def cancel_subscription(self, subscription_id: int) -> dict[str, Any]:
+    async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
         """Cancel a subscription at period end.
 
         This method:
@@ -583,6 +577,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         Args:
             subscription_id: The subscription ID to cancel
+            user_id: Optional user ID to enforce ownership validation
 
         Returns:
             Updated subscription record
@@ -596,9 +591,12 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # SECURITY FIX: Enforce tenant isolation
+        # SECURITY FIX: Enforce tenant and user isolation
         tenant = get_current_tenant()
         if tenant and subscription.get("tenant_id") != tenant.id:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        if user_id is not None and subscription.get("user_id") != user_id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         # T109: Call Stripe API to cancel subscription at period end
@@ -754,8 +752,7 @@ class CheckoutService:
         import stripe
         try:
             # Lightweight API call to validate the key
-            stripe.api_key = api_key
-            stripe.Account.retrieve()
+            stripe.Account.retrieve(api_key=api_key)
         except stripe.error.AuthenticationError:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid Stripe API key configured"
@@ -814,7 +811,8 @@ class CheckoutService:
             )
 
         except stripe.error.StripeError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
+            logger.error("Stripe portal error", error=str(e))
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to initialize customer portal.")
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
@@ -879,7 +877,8 @@ class CheckoutService:
             )
             return session.url
         except stripe.error.StripeError as e:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Stripe error: {str(e)}")
+            logger.error("Stripe portal error", error=str(e))
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to initialize customer portal.")
 
 
 def get_stripe_settings_service(db: AsyncSession) -> StripeSettingsService:
@@ -915,3 +914,6 @@ def get_billing_record_service(db: AsyncSession) -> BillingRecordService:
 def get_checkout_service(db: AsyncSession) -> CheckoutService:
     """Get checkout service instance."""
     return CheckoutService(db)
+
+
+
