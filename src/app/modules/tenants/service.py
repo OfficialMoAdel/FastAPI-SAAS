@@ -366,8 +366,16 @@ class TenantService(BaseService[Tenant]):
         for key, value in update_data.items():
             setattr(tenant, key, value)
 
-        await self.db.commit()
-        await self.db.refresh(tenant)
+        try:
+            await self.db.commit()
+            await self.db.refresh(tenant)
+        except IntegrityError:
+            await self.db.rollback()
+            logger.warning(
+                "Tenant update failed: duplicate_slug | slug=%s",
+                tenant.slug,
+            )
+            raise DuplicateError("slug", tenant.slug)
 
         # FIXED: Invalidate tenant cache after update to prevent stale data
         await self._invalidate_tenant_cache(tenant_id, tenant.slug)

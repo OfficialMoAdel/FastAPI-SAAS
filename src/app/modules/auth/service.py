@@ -866,7 +866,7 @@ return new_attempts
 
         # Update password
         new_hashed = await get_password_hash(new_password)
-        await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed})
+        await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed}, commit=False)
 
         # Invalidate ALL user sessions after password reset
         await self._invalidate_all_user_sessions(user, db)
@@ -993,7 +993,7 @@ return new_attempts
             raise UnauthorizedException("This account is inactive. Please contact support.")
 
         # Update user status
-        await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True})
+        await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True}, commit=False)
 
         # Invalidate auth cache
         user_service = get_user_service(db)

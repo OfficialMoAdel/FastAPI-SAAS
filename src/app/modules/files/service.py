@@ -533,7 +533,8 @@ class FileService:
         row = result.one_or_none()
         if not row:
             return 0, 0
-        return row.file_count, row.storage_usage_bytes
+        # BUG FIX: Handle None values safely
+        return row.file_count or 0, row.storage_usage_bytes or 0
 
     async def _increment_quota_counters(
         self,
@@ -562,12 +563,12 @@ class FileService:
                 update(Tenant)
                 .where(
                     Tenant.id == tenant_id,
-                    Tenant.file_count + 1 <= max_file_count,
-                    Tenant.storage_usage_bytes + size_bytes <= max_storage_bytes,
+                    func.coalesce(Tenant.file_count, 0) + 1 <= max_file_count,
+                    func.coalesce(Tenant.storage_usage_bytes, 0) + size_bytes <= max_storage_bytes,
                 )
                 .values(
-                    file_count=Tenant.file_count + 1,
-                    storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+                    file_count=func.coalesce(Tenant.file_count, 0) + 1,
+                    storage_usage_bytes=func.coalesce(Tenant.storage_usage_bytes, 0) + size_bytes,
                 )
             )
             result = await self.db.execute(stmt)
@@ -579,8 +580,8 @@ class FileService:
                 update(Tenant)
                 .where(Tenant.id == tenant_id)
                 .values(
-                    file_count=Tenant.file_count + 1,
-                    storage_usage_bytes=Tenant.storage_usage_bytes + size_bytes,
+                    file_count=func.coalesce(Tenant.file_count, 0) + 1,
+                    storage_usage_bytes=func.coalesce(Tenant.storage_usage_bytes, 0) + size_bytes,
                 )
             )
             await self.db.execute(stmt)
@@ -590,17 +591,19 @@ class FileService:
         """Atomically decrement tenant storage counters after file deletion.
 
         Uses UPDATE with arithmetic operations for atomic decrement without race conditions.
+        Prevents negative values by using func.greatest.
 
         Args:
             tenant_id: Tenant UUID
             size_bytes: File size to subtract from storage usage
         """
+        # BUG FIX: Use func.greatest to prevent negative quotas and coalesce for None values
         stmt = (
             update(Tenant)
             .where(Tenant.id == tenant_id)
             .values(
-                file_count=Tenant.file_count - 1,
-                storage_usage_bytes=Tenant.storage_usage_bytes - size_bytes,
+                file_count=func.greatest(0, func.coalesce(Tenant.file_count, 0) - 1),
+                storage_usage_bytes=func.greatest(0, func.coalesce(Tenant.storage_usage_bytes, 0) - size_bytes),
             )
         )
         await self.db.execute(stmt)

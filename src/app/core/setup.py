@@ -64,7 +64,7 @@ async def create_redis_cache_pool() -> None:
 
 
 async def close_redis_cache_pool() -> None:
-    """Close Redis cache client and pool."""
+    """Close Redis cache client."""
     if cache.client is not None:
         # Use aclose() for proper async cleanup if available (redis-py 5.0+)
         if hasattr(cache.client, "aclose"):
@@ -72,10 +72,6 @@ async def close_redis_cache_pool() -> None:
         else:
             await cache.client.close()
         cache.client = None
-
-    # We close the shared pool separately via factory
-    # This ensures all clients using the pool are shut down before the pool itself
-    await redis_factory.close_redis_pool()
     cache.pool = None
 
 
@@ -164,6 +160,9 @@ def lifespan_factory(
 
             if redis_queue_enabled:
                 await close_redis_queue_pool()
+
+            # Close the shared Redis connection pool AFTER clients are closed
+            await redis_factory.close_redis_pool()
 
             # Close SSO HTTP client pool
             from src.app.modules.sso.http_client import close_sso_http_client

@@ -321,6 +321,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         db=db,
                         stripe_subscription_id=stripe_subscription_id,
                         object=update_data,
+                        commit=False,
                     )
                     await db.commit()
                 else:
@@ -329,6 +330,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         await crud_user_subscriptions.create(
                             db=db,
                             object=subscription_data,
+                            commit=False,
                         )
                         logger.info(
                             "Created subscription | stripe_sub_id=%s | user=%s | tenant=%s",
@@ -364,6 +366,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                             db=db,
                             stripe_subscription_id=stripe_subscription_id,
                             object=race_update_data,
+                            commit=False,
                         )
                         await db.commit()
 
@@ -655,13 +658,14 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
         amount_cents=invoice["amount_due"],
         currency=invoice["currency"],
         status="failed",
-        description=f"Payment failed: {invoice.get('last_finalization_error', {}).get('message', 'Unknown error')}",
+        description=f"Payment failed: {(invoice.get('last_finalization_error') or {}).get('message', 'Unknown error')}",
     )
 
     async with job_tenant_context(tenant_id) as db:
         await crud_billing_records.create(
             db=db,
             object=billing_record,
+            commit=False,
         )
 
         # Update subscription to past_due
@@ -670,6 +674,7 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
             db=db,
             object=update_data,
             id=subscription_id,
+            commit=False,
         )
         await db.commit()
 

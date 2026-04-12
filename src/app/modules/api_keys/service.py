@@ -555,6 +555,7 @@ class APIKeyService(BaseService[APIKey]):
             db=self.db,
             id=api_key_id,
             object={"expires_at": grace_expires_at},
+            commit=False,
         )
 
         await self.db.commit()

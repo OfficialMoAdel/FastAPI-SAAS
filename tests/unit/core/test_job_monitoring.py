@@ -250,7 +250,9 @@ async def test_record_job_failure(service, mock_redis_client):
     assert len(mock_redis_client.lists[dlq_key]) == 1
 
     item = mock_redis_client.lists[dlq_key][0]
-    assert "job1|my_func|ValueError" in item
+    assert '"job_id": "job1"' in item
+    assert '"function": "my_func"' in item
+    assert '"error": "ValueError"' in item
 
 
 @pytest.mark.asyncio
@@ -276,17 +278,21 @@ async def test_get_job_metrics(service, mock_redis_client):
 
 @pytest.mark.asyncio
 async def test_get_dead_letter_queue(service, mock_redis_client):
+    import json
     dlq_key = "arq:dlq"
     # Add items directly
     ts = time.time()
-    mock_redis_client.lists[dlq_key] = [f"job1|func1|err1|{ts}", f"job2|func2|err2|{ts}", "malformed_item"]
+    json_item = json.dumps({"job_id": "job_new", "function": "func3", "error": "json_error", "timestamp": ts})
+    mock_redis_client.lists[dlq_key] = [f"job1|func1|err1|{ts}", f"job2|func2|err2|{ts}", json_item, "malformed_item"]
 
     items = await service.get_dead_letter_queue(limit=10)
-    assert len(items) == 3
+    assert len(items) == 4
 
     assert items[0]["job_id"] == "job1"
     assert items[1]["function"] == "func2"
-    assert items[2]["error"] == "parse_error"
+    assert items[2]["error"] == "json_error"
+    assert items[2]["job_id"] == "job_new"
+    assert items[3]["error"] == "parse_error"
 
 
 @pytest.mark.asyncio

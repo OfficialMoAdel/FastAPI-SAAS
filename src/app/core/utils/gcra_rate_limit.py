@@ -65,12 +65,15 @@ if allow_at_ms > now_ms then
 else
     -- Request allowed, update TAT
     redis.call('SET', key, new_tat_ms)
-    -- Expire key after period + emission_interval (cleanup)
-    redis.call('PEXPIRE', key, period_ms + emission_interval_ms)
+    -- Expire key after period + emission_interval (cleanup). PEXPIRE requires an integer.
+    redis.call('PEXPIRE', key, math.ceil(period_ms + emission_interval_ms))
 
     -- Calculate remaining requests
     -- remaining = how many more requests fit before new_tat > now + burst_tolerance
-    local remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+    local remaining = 0
+    if emission_interval_ms > 0 then
+        remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+    end
     remaining = math.max(0, math.min(remaining, limit - 1))
 
     return {1, remaining, 0, new_tat_ms}
@@ -103,10 +106,10 @@ class GCRARateLimiter:
     async def _execute_gcra_script(
         self,
         rate_limit_key: str,
-        now_ms: int,
-        emission_interval_ms: int,
+        now_ms: float,
+        emission_interval_ms: float,
         limit: int,
-        period_ms: int,
+        period_ms: float,
     ) -> tuple:
         """Execute GCRA script with automatic script reload on failure.
 
@@ -123,10 +126,10 @@ class GCRARateLimiter:
                 script_sha,
                 1,  # Number of keys
                 rate_limit_key,
-                str(int(now_ms)),
-                str(int(emission_interval_ms)),
-                str(limit),
-                str(period_ms),
+                str(float(now_ms)),
+                str(float(emission_interval_ms)),
+                str(int(limit)),
+                str(float(period_ms)),
             )
             # Ensure result is a tuple/list
             if not isinstance(result, list | tuple):
@@ -146,10 +149,10 @@ class GCRARateLimiter:
                     script_sha,
                     1,
                     rate_limit_key,
-                    str(int(now_ms)),
-                    str(int(emission_interval_ms)),
-                    str(limit),
-                    str(period_ms),
+                    str(float(now_ms)),
+                    str(float(emission_interval_ms)),
+                    str(int(limit)),
+                    str(float(period_ms)),
                 )
                 if not isinstance(result, list | tuple):
                     raise TypeError(f"Unexpected result type after reload: {type(result)}")

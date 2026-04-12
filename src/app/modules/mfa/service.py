@@ -740,6 +740,8 @@ class MFAService:
         salt = settings.SECRET_KEY.get_secret_value().encode()
         return hashlib.sha256(salt + code.encode()).hexdigest()
 
+    _fernet_instance: Fernet | None = None
+
     def _get_fernet(self) -> Fernet:
         """Get Fernet instance for encryption/decryption.
 
@@ -749,6 +751,9 @@ class MFAService:
         Returns:
             Fernet instance.
         """
+        if MFAService._fernet_instance is not None:
+            return MFAService._fernet_instance
+
         # FIXED: Use proper PBKDF2HMAC key derivation with salt
         # instead of simple truncation + null padding (security vulnerability)
 
@@ -762,7 +767,8 @@ class MFAService:
         )
         secret = settings.SECRET_KEY.get_secret_value().encode()
         key = base64.urlsafe_b64encode(kdf.derive(secret))
-        return Fernet(key)
+        MFAService._fernet_instance = Fernet(key)
+        return MFAService._fernet_instance
 
     async def _encrypt_secret(self, secret: str) -> str:
         """Encrypt TOTP secret for storage using Fernet.
