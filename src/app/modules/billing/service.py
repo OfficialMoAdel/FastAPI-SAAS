@@ -751,8 +751,9 @@ class CheckoutService:
 
         import stripe
         try:
+            import asyncio
             # Lightweight API call to validate the key
-            stripe.Account.retrieve(api_key=api_key)
+            await asyncio.to_thread(stripe.Account.retrieve, api_key=api_key)
         except stripe.error.AuthenticationError:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid Stripe API key configured"

@@ -72,13 +72,14 @@ class WebhookService:
 
         # Generate signing_secret if not provided (64 chars = 256 bits)
         actual_signing_secret = signing_secret if signing_secret else secrets_module.token_hex(32)
+        encrypted_signing_secret = encrypt_data(actual_signing_secret)
 
         endpoint = WebhookEndpoint(
             tenant_id=tenant_id,
             url=url,
             event_type=event_type,
             secret=encrypted_secret,
-            signing_secret=actual_signing_secret,
+            signing_secret=encrypted_signing_secret,
             is_active=is_active,
         )
 

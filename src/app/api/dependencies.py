@@ -133,6 +133,8 @@ async def get_current_user(
 
         if not user.get("is_active", False):
             raise UnauthorizedException("User account is no longer active.")
+        if user.get("is_deleted", False):
+            raise UnauthorizedException("User account has been deleted.")
 
         return user
 

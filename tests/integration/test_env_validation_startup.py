@@ -27,7 +27,8 @@ class TestEnvValidationStartup:
         app = FastAPI()
 
         # Simulate Production Environment
-        with patch.object(settings.env, "ENVIRONMENT", "production"):
+        from src.app.core.config import EnvironmentOption
+        with patch.object(settings.env, "ENVIRONMENT", EnvironmentOption.PRODUCTION):
             # Mock validation to fail
             with patch.object(EnvironmentValidator, "validate_and_log", return_value=False):
                 # Verify RuntimeError is raised
@@ -43,7 +44,8 @@ class TestEnvValidationStartup:
         app = FastAPI()
 
         # Simulate Development Environment
-        with patch.object(settings.env, "ENVIRONMENT", "development"):
+        from src.app.core.config import EnvironmentOption
+        with patch.object(settings.env, "ENVIRONMENT", EnvironmentOption.LOCAL):
             # Mock validation to fail
             with patch.object(EnvironmentValidator, "validate_and_log", return_value=False):
                 # Should NOT raise exception

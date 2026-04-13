@@ -510,7 +510,9 @@ class MFAPendingTokenManager:
         }
 
         # Store in Redis with expiration
-        key = f"mfa_pending:{token}"
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode()).hexdigest()
+        key = f"mfa_pending:{hashed_token}"
         await self._redis.setex(
             key,
             MFA_PENDING_EXPIRY_SECONDS,
@@ -528,7 +530,9 @@ class MFAPendingTokenManager:
         Returns:
             Token metadata dict if valid, None if expired/used/invalid.
         """
-        key = f"mfa_pending:{token}"
+        import hashlib
+        hashed_token = hashlib.sha256(token.encode()).hexdigest()
+        key = f"mfa_pending:{hashed_token}"
 
         # Get and delete token data atomically to prevent race conditions
         data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]

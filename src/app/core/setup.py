@@ -17,8 +17,7 @@ from src.app.core.config import (
     EnvironmentOption,
     Settings,
 )
-from src.app.core.db.database import Base
-from src.app.core.db.database import async_engine as engine
+from src.app.core.db.database import Base, get_async_engine
 from src.app.core.utils import cache, queue
 from src.app.middleware.client_cache_middleware import ClientCacheMiddleware
 
@@ -45,6 +44,7 @@ from src.app.models import (  # noqa: F401
 
 # -------------- database --------------
 async def create_tables() -> None:
+    engine = get_async_engine()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 

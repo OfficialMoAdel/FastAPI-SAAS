@@ -148,7 +148,7 @@ class AuditLogService:
         query = query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
 
         result = await self.db.execute(query)
-        return list(result.scalars().all())
+        return list(result.unique().scalars().all())
 
     async def count_logs(
         self,

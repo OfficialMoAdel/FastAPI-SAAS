@@ -371,7 +371,7 @@ class SessionManager:
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
             # SECURITY FIX: Fail closed if configured for high-security environments
-            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+            if getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "") == "fail_closed":
                 record_fail_open("session_validation_failed_closed")
                 logger.critical(
                     "redis_unavailable_session_rejected_fail_closed",

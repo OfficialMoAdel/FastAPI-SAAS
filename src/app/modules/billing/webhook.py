@@ -348,8 +348,20 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         )
 
                         # Re-fetch and update
+                        status_map = {
+                            "active": "active",
+                            "past_due": "past_due",
+                            "unpaid": "past_due",
+                            "canceled": "canceled",
+                            "incomplete": "pending",
+                            "incomplete_expired": "canceled",
+                            "trialing": "trialing",
+                        }
+                        raw_status = stripe_sub.get("status", "")
+                        mapped_status = status_map.get(raw_status, "active")
+
                         race_update_data: dict[str, Any] = {
-                            "status": stripe_sub.get("status"),
+                            "status": mapped_status,
                             "current_period_start": datetime.fromtimestamp(
                                 stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
                             ),

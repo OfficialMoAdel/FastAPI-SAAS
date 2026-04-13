@@ -184,12 +184,14 @@ def _extract_blacklist_member(token: str) -> str:
     try:
         import jwt as _jwt
 
-        from src.app.core.security.jwt_utils import validate_jwt_length
+        from src.app.core.security.jwt_utils import _get_algorithm, _get_parsed_verification_key, validate_jwt_length
 
         if not validate_jwt_length(token):
             return token
 
-        payload = _jwt.decode(token, options={"verify_signature": False})
+        alg = _get_algorithm()
+        key = _get_parsed_verification_key()
+        payload = _jwt.decode(token, key, algorithms=[alg], options={"verify_exp": False, "verify_aud": False})
         jti = payload.get("jti")
         if jti:
             return f"jti:{jti}"

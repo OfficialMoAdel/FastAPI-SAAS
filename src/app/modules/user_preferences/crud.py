@@ -109,7 +109,10 @@ class CRUDUserPreferences(
         current_prefs = prefs.preferences.copy() if prefs.preferences else {}
         for key, value in updates.items():
             if value is not None:
-                current_prefs[key] = value
+                if hasattr(prefs, key) and key != "preferences":
+                    setattr(prefs, key, value)
+                else:
+                    current_prefs[key] = value
 
         # Update the preferences column
         prefs.preferences = current_prefs

@@ -379,16 +379,23 @@ class SSOService:
 
                 import jwt
 
-                from src.app.core.security.jwt_utils import validate_jwt_length
-                from src.app.core.security.session_manager import session_manager as global_session_manager
+                from src.app.core.security.jwt_utils import (
+                    _get_algorithm,
+                    _get_parsed_verification_key,
+                    validate_jwt_length,
+                )
 
                 if not validate_jwt_length(access_token):
                     decoded_token = {}
                 else:
-                    decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+                    alg = _get_algorithm()
+                    key = _get_parsed_verification_key()
+                    decoded_token = jwt.decode(access_token, key, algorithms=[alg])
                 session_id = decoded_token.get("jti", access_token[:32])
 
                 device_info_str = json.dumps({"user_agent": "SSO Login", "ip": "Unknown"})
+
+                from src.app.core.security.session_manager import session_manager as global_session_manager
 
                 await global_session_manager.register_session(
                     user_id=str(normalized_user.get("id")),

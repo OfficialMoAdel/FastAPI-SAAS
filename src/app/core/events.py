@@ -714,8 +714,8 @@ class EventBus:
         if not self._redis_client:
             return None
 
-        # Changed to lpop (LIFO) to ensure we pop entries that aren't being trimmed by LTRIM
-        entry = await self._redis_client.lpop(self.DLQ_REDIS_KEY)
+        # Use rpop (FIFO) to ensure we retry oldest entries
+        entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
         if entry:
             return json_loads(entry)
         return None
