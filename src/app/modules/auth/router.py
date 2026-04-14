@@ -114,7 +114,7 @@ async def refresh_access_token(
         from fastapi import HTTPException, status
 
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Refresh token missing")
-    return await auth_service.refresh_access_token(refresh_token, response, db)
+    return await auth_service.refresh_access_token(refresh_token, response, db, request)
 
 
 @router.post("/logout", response_model=LogoutResponse, responses={401: {"description": "Unauthorized"}})

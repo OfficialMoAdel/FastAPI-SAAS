@@ -57,6 +57,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     """
     # Mock Redis manually since integration tests might skip the global mock
     from unittest.mock import AsyncMock, MagicMock
+    from src.app.api.dependencies import async_get_db
 
     fake_redis = AsyncMock()
     fake_redis.exists.return_value = False  # Not blacklisted
@@ -66,8 +67,27 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
 
     from src.app.core.utils import cache
 
+    # Use dependency override approach (like conftest.py) instead of patching
+    # This ensures our session is used by all code paths
+    async def override_get_db():
+        yield db_session
+
+    # Create dict-based mock users to avoid lazy loading issues
+    # These simulate what get_current_user returns
+    alpha_user_dict = {
+        "id": user_alpha.id,
+        "username": user_alpha.username,
+        "email": user_alpha.email,
+        "tenant_id": user_alpha.tenant_id,
+    }
+    beta_user_dict = {
+        "id": user_beta.id,
+        "username": user_beta.username,
+        "email": user_beta.email,
+        "tenant_id": user_beta.tenant_id,
+    }
+
     # Patch local_session in middleware to use our test db_session
-    # This ensures the middleware sees the tenants we created in SQLite
     mock_session_factory = MagicMock()
     mock_session_factory.return_value.__aenter__.return_value = db_session
     mock_session_factory.return_value.__aexit__.return_value = None
@@ -76,14 +96,18 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     with (
         patch.object(cache, "client", fake_redis),
         patch("src.app.middleware.tenant.local_session", mock_session_factory),
-    ):        # Set User-Agent to avoid Bad Bot detection
+    ):
+        # Set User-Agent to avoid Bad Bot detection
         headers = {"User-Agent": "E2ETest/1.0"}
+
+        # Use dependency_overrides like conftest.py does
+        app.dependency_overrides[async_get_db] = override_get_db
+
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:
             from src.app.api.dependencies import get_current_user
 
-            # 1. Login as Alpha
-            # Override for User Alpha
-            app.dependency_overrides[get_current_user] = lambda: user_alpha
+            # 1. Login as Alpha - use dict for current_user
+            app.dependency_overrides[get_current_user] = lambda: alpha_user_dict
 
             # Request
             response = await ac.get("/api/v1/users/me", headers={"X-Tenant-ID": tenant_alpha.slug})
@@ -92,8 +116,8 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert data["email"] == user_alpha.email
             assert data["tenant_id"] == str(tenant_alpha.id)  # Compare as string
 
-            # 2. Login as Beta
-            app.dependency_overrides[get_current_user] = lambda: user_beta
+            # 2. Login as Beta - use dict for current_user
+            app.dependency_overrides[get_current_user] = lambda: beta_user_dict
 
             # Request
             response = await ac.get("/api/v1/users/me", headers={"X-Tenant-ID": tenant_beta.slug})
@@ -103,4 +127,4 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert data["tenant_id"] == str(tenant_beta.id)  # Compare as string
 
             # Clean up
-            app.dependency_overrides = {}
+            app.dependency_overrides.clear()

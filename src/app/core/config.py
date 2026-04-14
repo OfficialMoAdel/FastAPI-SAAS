@@ -285,8 +285,8 @@ class AuthSettings(BaseSettings):
     """Authentication security settings."""
 
     # Account lockout configuration
-    AUTH_MAX_LOGIN_ATTEMPTS: int = 5
-    AUTH_LOCKOUT_DURATION_SECONDS: int = 900  # 15 minutes
+    AUTH_MAX_LOGIN_ATTEMPTS: int = Field(default=5, ge=1, le=50)
+    AUTH_LOCKOUT_DURATION_SECONDS: int = Field(default=900, ge=60, le=86400)  # 15 minutes
     # SECURITY FIX: Make audit log failure mode configurable
     # "fail_open": Log error but allow operation (default, availability focused)
     # "fail_closed": Raise exception and block operation (security focused, compliance)
@@ -479,8 +479,8 @@ class CRUDAdminSettings(BaseSettings):
 
     CRUD_ADMIN_ALLOWED_IPS_LIST: list[str] | None = None
     CRUD_ADMIN_ALLOWED_NETWORKS_LIST: list[str] | None = None
-    CRUD_ADMIN_MAX_SESSIONS: int = 10
-    CRUD_ADMIN_SESSION_TIMEOUT: int = 1440
+    CRUD_ADMIN_MAX_SESSIONS: int = Field(default=10, ge=1, le=100)
+    CRUD_ADMIN_SESSION_TIMEOUT: int = Field(default=1440, ge=1, le=43200)
     SESSION_SECURE_COOKIES: bool = True
 
     CRUD_ADMIN_TRACK_EVENTS: bool = True
@@ -499,7 +499,7 @@ class EmailSettings(BaseSettings):
     EMAIL_FROM_ADDRESS: str = "noreply@fastapi.local"
     EMAIL_REPLY_TO: str | None = None
     SMTP_HOST: str = "smtp.gmail.com"
-    SMTP_PORT: int = 587
+    SMTP_PORT: int = Field(default=587, ge=1, le=65535)
     SMTP_USER: str | None = None
     SMTP_PASSWORD: SecretStr | None = None
     SMTP_USE_TLS: bool = True
@@ -576,6 +576,7 @@ class BillingSettings(BaseSettings):
     STRIPE_SECRET_KEY: SecretStr | None = None
     STRIPE_PUBLISHABLE_KEY: str | None = None
     STRIPE_WEBHOOK_SECRET: SecretStr | None = None
+    DEFAULT_FREE_TIER_NAME: str = Field(default="free", description="Default tier name for free accounts")
 
 
 class AISettings(BaseSettings):

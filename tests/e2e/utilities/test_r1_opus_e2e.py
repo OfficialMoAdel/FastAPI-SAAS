@@ -569,11 +569,66 @@ class TestFullOptimizationFlow:
         async def hget(key, field):
             return hashes.get(key, {}).get(field)
 
+        async def eval_lua(script, numkeys, *args):
+            """Simulate the Lua script for register_session atomically."""
+            # Parse args: zset_key, hash_key, max_sessions, session_id, session_data, timestamp, ttl, max_batch
+            if len(args) < 6:
+                return [b"success", b"0"]
+
+            zset_key_val = args[0]
+            hash_key_val = args[1]
+            max_sess = int(args[2])
+            sess_id = args[3]
+            sess_data = args[4]
+
+            # Check if already exists
+            if hash_key_val in hashes and sess_id in hashes[hash_key_val]:
+                return [b"already_exists"]
+
+            # Count current sessions
+            current_count = len(zsets.get(zset_key_val, {}))
+            if current_count == 0:
+                current_count = len(hashes.get(hash_key_val, {}))
+
+            evicted_data = []
+            final_count = current_count + 1
+
+            # Evict oldest if over limit
+            if current_count >= max_sess:
+                sessions_to_remove = current_count - max_sess + 1
+                if zset_key_val in zsets and zsets[zset_key_val]:
+                    sorted_sessions = sorted(zsets[zset_key_val].items(), key=lambda x: x[1])
+                    for member, _ in sorted_sessions[:sessions_to_remove]:
+                        if hash_key_val in hashes and member in hashes[hash_key_val]:
+                            evicted_data.append(
+                                hashes[hash_key_val][member].encode()
+                                if isinstance(hashes[hash_key_val][member], str)
+                                else hashes[hash_key_val][member]
+                            )
+                            del hashes[hash_key_val][member]
+                        if member in zsets[zset_key_val]:
+                            del zsets[zset_key_val][member]
+                final_count = final_count - sessions_to_remove
+
+            # Add new session
+            timestamp = float(args[5])
+            if zset_key_val not in zsets:
+                zsets[zset_key_val] = {}
+            zsets[zset_key_val][sess_id] = timestamp
+            if hash_key_val not in hashes:
+                hashes[hash_key_val] = {}
+            hashes[hash_key_val][sess_id] = sess_data
+
+            result = [b"success", str(final_count).encode()]
+            result.extend(evicted_data)
+            return result
+
         redis.hexists = hexists
         redis.zcard = zcard
         redis.hlen = hlen
         redis.zpopmin = zpopmin
         redis.hget = hget
+        redis.eval = eval_lua
 
         def pipeline():
             pipe = MagicMock()

@@ -382,14 +382,19 @@ class TenantService(BaseService[Tenant]):
         if old_slug and old_slug != tenant.slug:
             await self._invalidate_tenant_cache(tenant_id, old_slug)
 
+        # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
+        updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
+
+        # Write back to cache immediately
+        await self._cache_tenant_dict(tenant_id, updated_dict)
+
         logger.info(
             "Tenant updated | id=%s | fields=%s",
             tenant_id,
             list(update_data.keys()),
         )
 
-        # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
+        return updated_dict
 
     async def deactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Deactivate a tenant (soft delete).
@@ -428,7 +433,9 @@ class TenantService(BaseService[Tenant]):
         logger.info("Tenant deactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
+        updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
+        await self._cache_tenant_dict(tenant_id, updated_dict)
+        return updated_dict
 
     async def reactivate_tenant(self, tenant_id: UUID) -> dict[str, Any]:
         """Reactivate a deactivated tenant.
@@ -467,7 +474,9 @@ class TenantService(BaseService[Tenant]):
         logger.info("Tenant reactivated | id=%s | slug=%s", tenant_id, tenant.slug)
 
         # P2-1: Direct dict construction bypasses Pydantic for ~3x speedup
-        return _tenant_to_dict(tenant)  # type: ignore[arg-type]
+        updated_dict = _tenant_to_dict(tenant)  # type: ignore[arg-type]
+        await self._cache_tenant_dict(tenant_id, updated_dict)
+        return updated_dict
 
 
 def get_tenant_service(db: AsyncSession) -> TenantService:

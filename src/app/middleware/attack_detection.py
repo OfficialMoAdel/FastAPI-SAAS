@@ -247,16 +247,43 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             if not skip_body:
                 try:
-                    body = await request.body()
-                    if body:
-                        # Re-inject body into a new receive channel so downstream handlers can read it.
-                        # This is necessary because await request.body() consumes the stream.
-                        async def receive():
-                            return {"type": "http.request", "body": body, "more_body": False}
+                    MAX_SCAN_SIZE = 128 * 1024
+                    receive_ = request.receive
+
+                    body_chunks: list[bytes] = []
+                    body_size = 0
+                    more_body = True
+
+                    while more_body and body_size < MAX_SCAN_SIZE:
+                        message = await receive_()
+                        if message["type"] == "http.request":
+                            chunk = message.get("body", b"")
+                            body_chunks.append(chunk)
+                            body_size += len(chunk)
+                            more_body = message.get("more_body", False)
+                        elif message["type"] == "http.disconnect":
+                            more_body = False
+                            break
+
+                    body_to_scan = b"".join(body_chunks)
+
+                    if body_to_scan:
+                        buffered_messages = []
+                        for i, chunk in enumerate(body_chunks):
+                            is_last_chunk = (i == len(body_chunks) - 1)
+                            has_more = True if not is_last_chunk else more_body
+                            buffered_messages.append({"type": "http.request", "body": chunk, "more_body": has_more})
+
+                        async def receive_proxy():
+                            if buffered_messages:
+                                return buffered_messages.pop(0)
+                            if more_body:
+                                return await receive_()
+                            return {"type": "http.request", "body": b"", "more_body": False}
 
                         # Using request._receive (private API) as no public alternative exists.
                         try:
-                            request._receive = receive
+                            request._receive = receive_proxy
                         except AttributeError as e:
                             # BUG FIX: This is an internal server error (private API not available),
                             # NOT an attack. Raise BodyScanError to forcefully return 500
@@ -265,7 +292,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                             raise BodyScanError("Failed to reinject request body") from e
 
                         # Sanitize then scan — NFKC + zero-width stripping
-                        self._check_for_patterns(self._sanitize_input(body), "request_body", detected_attacks)
+                        self._check_for_patterns(self._sanitize_input(body_to_scan), "request_body", detected_attacks)
                 except Exception as e:
                     logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error

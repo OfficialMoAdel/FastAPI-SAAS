@@ -130,9 +130,15 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 except Exception as e:
                     logger.warning("GCRA rate limit check failed: %s", e)
                     # Fallback to fixed window
-                    is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
-                    remaining = max(0, limit - current_count)
-                    retry_after = 0
+                    try:
+                        is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
+                        remaining = max(0, limit - current_count)
+                        retry_after = 0
+                    except Exception as fallback_e:
+                        logger.error("Rate limit fallback check failed: %s", fallback_e)
+                        is_limited = not getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
+                        remaining = 0 if is_limited else limit
+                        retry_after = 0
             else:
                 # GCRA not initialized, fall back to fixed window
                 is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)

@@ -90,9 +90,8 @@ async def read_users_me(
         user_id = current_user.get("id")
         username = current_user.get("username")
     else:
-        # Assume it's an ORM object - return directly (already full profile)
-        # This handles test fixtures that override get_current_user with User objects
-        return current_user
+        user_id = getattr(current_user, "id", None)
+        username = getattr(current_user, "username", None)
 
     try:
         if user_id is not None:

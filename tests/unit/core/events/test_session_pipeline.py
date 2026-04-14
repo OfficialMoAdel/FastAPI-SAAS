@@ -1,4 +1,8 @@
-"""Unit tests for P2-1: Session Pipeline Eviction Optimization."""
+"""Unit tests for P2-1: Session Pipeline Eviction Optimization.
+
+Updated for the atomic Lua script implementation that handles all
+session registration atomically in a single Redis roundtrip.
+"""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,12 +13,24 @@ from src.app.core.security.session_manager import SessionManager
 
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
-    async def __aenter__(*a): return pipe
-    async def __aexit__(*a): return False
+
+    async def __aenter__(*a):
+        return pipe
+
+    async def __aexit__(*a):
+        return False
+
     pipe.__aenter__ = __aenter__
     pipe.__aexit__ = __aexit__
     return pipe
 
+
+def _mock_eval_success(final_count: int = 1, evicted_data: list[bytes] | None = None) -> AsyncMock:
+    """Create a mock eval that returns Lua success result."""
+    result = [b"success", str(final_count).encode()]
+    if evicted_data:
+        result.extend(evicted_data)
+    return AsyncMock(return_value=result)
 
 
 @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
@@ -49,43 +65,21 @@ async def test_pipeline_eviction_reduces_roundtrips(mock_redis_client, mock_sett
 
 
 @pytest.mark.asyncio
-async def test_legacy_eviction_uses_more_roundtrips(mock_redis_client, mock_settings):
-    """Test that legacy eviction uses more roundtrips (ZPOPMIN loop)."""
+async def test_lua_eviction_is_atomic(mock_redis_client, mock_settings):
+    """Test that Lua script eviction is atomic (single roundtrip)."""
     session_manager = SessionManager(redis_client=mock_redis_client, max_sessions=3)
 
-    # Mock ZCARD to return 3 (at limit)
-    mock_redis_client.zcard = AsyncMock(return_value=3)
-    mock_redis_client.hexists = AsyncMock(return_value=False)
-
-    # Mock ZPOPMIN to return oldest session
-    mock_redis_client.zpopmin = AsyncMock(return_value=[(b"old-session-1", 1000.0)])
-
-    # Mock HGET for session data
-    mock_redis_client.hget = AsyncMock(
-        return_value=b'{"session_id":"old-session-1","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}'
-    )
-
-    # Mock pipeline
-    mock_pipeline = MagicMock()
-    _acm(mock_pipeline)
-    mock_pipeline.hdel = MagicMock()
-    mock_pipeline.zadd = MagicMock()
-    mock_pipeline.hset = MagicMock()
-    mock_pipeline.expire = MagicMock()
-    mock_pipeline.execute = AsyncMock(return_value=[1, 1, 1, 1])
-    mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
-
-    # Disable pipeline optimization
-    mock_settings.SESSION_USE_PIPELINE_EVICTION = False
+    # Mock Lua eval to return evicted session data
+    evicted_data = [b'{"session_id":"old-session-1","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}']
+    mock_redis_client.eval = _mock_eval_success(final_count=3, evicted_data=evicted_data)
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(user_id=1, session_id="new-session", device_info="Firefox")
 
-    # Legacy path should use 3 roundtrips: ZPOPMIN + HGET + pipeline execute
+    # Lua script is atomic: single eval call
     assert result["registered"] is True
     assert len(result["invalidated_sessions"]) == 1
-    mock_redis_client.zpopmin.assert_called_once()
-    mock_redis_client.hget.assert_called_once()
+    mock_redis_client.eval.assert_called_once()
 
 
 @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
@@ -273,53 +267,11 @@ async def test_corrupted_session_data_handling(mock_redis_client, mock_settings)
 
 @pytest.mark.asyncio
 async def test_no_sessions_to_evict(mock_redis_client, mock_settings):
-    """Test that pipeline handles case with no sessions to evict."""
+    """Test that Lua handles case with no sessions to evict."""
     session_manager = SessionManager(redis_client=mock_redis_client, max_sessions=5)
 
-    # Mock ZCARD to return 2 (under limit)
-    mock_redis_client.zcard = AsyncMock(return_value=2)
-    mock_redis_client.hexists = AsyncMock(return_value=False)
-
-    # Mock pipeline for adding new session
-    mock_pipeline = MagicMock()
-    _acm(mock_pipeline)
-    mock_pipeline.zadd = MagicMock()
-    mock_pipeline.hset = MagicMock()
-    mock_pipeline.expire = MagicMock()
-    mock_pipeline.execute = AsyncMock(return_value=[1, 1, 1, 1])
-    mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
-
-    with patch("src.app.core.security.session_manager.settings", mock_settings):
-        result = await session_manager.register_session(user_id=1, session_id="new-session", device_info="Firefox")
-
-    # Should add session without eviction
-    assert result["registered"] is True
-    assert len(result["invalidated_sessions"]) == 0
-
-    # ZRANGE should not be called (under limit)
-    mock_redis_client.zrange.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_empty_zrange_result(mock_redis_client, mock_settings):
-    """Test that empty ZRANGE result is handled gracefully."""
-    session_manager = SessionManager(redis_client=mock_redis_client, max_sessions=3)
-
-    # Mock ZCARD to return 3 (at limit)
-    mock_redis_client.zcard = AsyncMock(return_value=3)
-    mock_redis_client.hexists = AsyncMock(return_value=False)
-
-    # Mock ZRANGE to return empty list (edge case)
-    mock_redis_client.zrange = AsyncMock(return_value=[])
-
-    # Mock pipeline for adding new session
-    mock_pipeline = MagicMock()
-    _acm(mock_pipeline)
-    mock_pipeline.zadd = MagicMock()
-    mock_pipeline.hset = MagicMock()
-    mock_pipeline.expire = MagicMock()
-    mock_pipeline.execute = AsyncMock(return_value=[1, 1, 1, 1])
-    mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
+    # Mock Lua eval: under limit, no evictions
+    mock_redis_client.eval = _mock_eval_success(final_count=3)
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(user_id=1, session_id="new-session", device_info="Firefox")
@@ -330,45 +282,38 @@ async def test_empty_zrange_result(mock_redis_client, mock_settings):
 
 
 @pytest.mark.asyncio
-async def test_feature_flag_controls_optimization(mock_redis_client, mock_settings):
-    """Test that feature flag controls pipeline vs legacy path."""
+async def test_empty_eviction_result(mock_redis_client, mock_settings):
+    """Test that empty eviction result is handled gracefully."""
     session_manager = SessionManager(redis_client=mock_redis_client, max_sessions=3)
 
-    # Mock ZCARD to return 3 (at limit)
-    mock_redis_client.zcard = AsyncMock(return_value=3)
-    mock_redis_client.hexists = AsyncMock(return_value=False)
+    # Mock Lua eval: at limit but no sessions to evict (edge case)
+    mock_redis_client.eval = _mock_eval_success(final_count=3)
 
-    # Mock ZPOPMIN for legacy path
-    mock_redis_client.zpopmin = AsyncMock(return_value=[(b"old-session-1", 1000.0)])
+    with patch("src.app.core.security.session_manager.settings", mock_settings):
+        result = await session_manager.register_session(user_id=1, session_id="new-session", device_info="Firefox")
 
-    # Mock HGET for legacy path
-    mock_redis_client.hget = AsyncMock(
-        return_value=b'{"session_id":"old-session-1","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}'
-    )
+    # Should add session without eviction
+    assert result["registered"] is True
+    assert len(result["invalidated_sessions"]) == 0
 
-    # Mock ZRANGE for pipeline path (should not be called)
-    mock_redis_client.zrange = AsyncMock()
 
-    # Mock pipeline
-    mock_pipeline = MagicMock()
-    _acm(mock_pipeline)
-    mock_pipeline.hdel = MagicMock()
-    mock_pipeline.zadd = MagicMock()
-    mock_pipeline.hset = MagicMock()
-    mock_pipeline.expire = MagicMock()
-    mock_pipeline.execute = AsyncMock(return_value=[1, 1, 1, 1])
-    mock_redis_client.pipeline = MagicMock(return_value=mock_pipeline)
+@pytest.mark.asyncio
+async def test_eval_is_used_regardless_of_feature_flag(mock_redis_client, mock_settings):
+    """Test that Lua eval is used regardless of feature flag setting."""
+    session_manager = SessionManager(redis_client=mock_redis_client, max_sessions=3)
 
-    # Disable pipeline optimization
+    evicted_data = [b'{"session_id":"old-session-1","device_info":"Chrome","created_at":"2024-01-01T00:00:00+00:00"}']
+    mock_redis_client.eval = _mock_eval_success(final_count=3, evicted_data=evicted_data)
+
+    # Disable pipeline optimization flag (should still use eval)
     mock_settings.SESSION_USE_PIPELINE_EVICTION = False
 
     with patch("src.app.core.security.session_manager.settings", mock_settings):
         result = await session_manager.register_session(user_id=1, session_id="new-session", device_info="Firefox")
 
-    # Should use legacy path (ZPOPMIN)
+    # Should still use Lua eval regardless of feature flag
     assert result["registered"] is True
-    mock_redis_client.zpopmin.assert_called_once()
-    mock_redis_client.zrange.assert_not_called()
+    mock_redis_client.eval.assert_called_once()
 
 
 @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")

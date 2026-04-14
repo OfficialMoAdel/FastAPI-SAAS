@@ -211,7 +211,7 @@ return new_attempts
         try:
             result = int(result)
         except (TypeError, ValueError):
-            result = 0  # Default: allow login attempt if coercion fails
+            result = -1  # Fail-closed: default to locked on Redis error
 
         if result == -1:
             # Fetch user to get tenant and user ID for audit log
@@ -357,7 +357,7 @@ return new_attempts
         return {"access_token": access_token, "token_type": "bearer"}
 
     async def refresh_access_token(
-        self, refresh_token: str | None, response: Response, db: AsyncSession
+        self, refresh_token: str | None, response: Response, db: AsyncSession, request: Request | None = None
     ) -> dict[str, str]:
         """Refresh access token using refresh token.
 
@@ -451,9 +451,11 @@ return new_attempts
 
             session_id = decoded_token.get("jti", new_access_token[:32])
 
+            client_ip = request.client.host if request and request.client else "Unknown"
+
             device_info_str = json.dumps({
-                "user_agent": "Token Refresh",
-                "ip": "Unknown"
+                "user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown",
+                "ip": client_ip
             })
 
             await global_session_manager.register_session(

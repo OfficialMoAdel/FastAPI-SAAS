@@ -623,7 +623,7 @@ class WebhookService:
         # Update endpoint with new secret
         # NOTE: functional grace period requires DB support for old_signing_secret,
         # but we now correctly return the expiration time in the response.
-        endpoint.signing_secret = new_secret
+        endpoint.signing_secret = encrypt_data(new_secret)
 
         await self.db.commit()
         await self.db.refresh(endpoint)

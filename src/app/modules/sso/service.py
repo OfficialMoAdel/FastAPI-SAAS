@@ -398,7 +398,7 @@ class SSOService:
                 from src.app.core.security.session_manager import session_manager as global_session_manager
 
                 await global_session_manager.register_session(
-                    user_id=str(normalized_user.get("id")),
+                    user_id=normalized_user["id"],
                     session_id=session_id,
                     device_info=device_info_str,
                 )

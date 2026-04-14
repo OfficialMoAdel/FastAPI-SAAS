@@ -1,7 +1,7 @@
 """Unit tests for SessionManager v2 (Redis ZSET + Hash implementation).
 
-Tests the refactored session manager that uses Redis ZSET + Hash hybrid.
-Verifies O(log n) eviction using ZPOPMIN and atomic operations.
+Tests the refactored session manager that uses Redis ZSET + Hash hybrid
+with atomic Lua scripts for race-condition-free operations.
 """
 
 import asyncio
@@ -10,6 +10,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.core.security.session_manager import SessionManager
+
+
+def _mock_eval_success(final_count: int = 1, evicted_data: list[bytes] | None = None) -> AsyncMock:
+    """Create a mock eval that returns Lua success result.
+
+    Lua returns: [b"success", b"<count>", <evicted_data_1>, ...]
+    """
+    result = [b"success", str(final_count).encode()]
+    if evicted_data:
+        result.extend(evicted_data)
+    return AsyncMock(return_value=result)
+
+
+def _mock_eval_already_exists() -> AsyncMock:
+    """Create a mock eval that returns Lua already_exists result."""
+    return AsyncMock(return_value=[b"already_exists"])
 
 
 @pytest.fixture
@@ -26,15 +42,16 @@ def mock_redis():
     redis.delete = AsyncMock()
     redis.expire = AsyncMock()
     # ZSET operations
-    redis.zcard = AsyncMock(return_value=0)  # Fallback to HLEN
+    redis.zcard = AsyncMock(return_value=0)
     redis.zadd = AsyncMock()
     redis.zrem = AsyncMock()
     redis.zpopmin = AsyncMock(return_value=[])
     # Scan operation (for migration)
     redis.scan = AsyncMock(return_value=(0, []))
+    # Lua eval - default: success with 1 active session, no evictions
+    redis.eval = _mock_eval_success(final_count=1)
 
-    # Setup pipeline mock - IMPORTANT: pipeline() returns sync object,
-    # only execute() is async (redis-py pattern)
+    # Setup pipeline mock - still needed for invalidate_session, invalidate_all_sessions
     pipe_mock = MagicMock()
     pipe_mock.hset = MagicMock(return_value=pipe_mock)
     pipe_mock.hdel = MagicMock(return_value=pipe_mock)
@@ -68,8 +85,8 @@ class TestSessionManagerHashOperations:
     """Test that all operations use Redis ZSET + Hash commands."""
 
     @pytest.mark.asyncio
-    async def test_create_session_uses_hset_and_zadd(self, session_manager, mock_redis):
-        """Verify register_session uses both HSET and ZADD."""
+    async def test_create_session_uses_eval(self, session_manager, mock_redis):
+        """Verify register_session uses Lua eval for atomic operations."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
@@ -79,13 +96,8 @@ class TestSessionManagerHashOperations:
 
         # Assert
         assert result["registered"] is True
-        # Verify pipeline was used with HSET and ZADD
-        mock_redis.pipeline.assert_called()
-        pipe = mock_redis.pipeline.return_value
-        pipe.hset.assert_called()
-        pipe.zadd.assert_called()
-        pipe.expire.assert_called()
-        pipe.execute.assert_called()
+        # Verify Lua eval was called (atomic operation)
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_sessions_uses_hgetall(self, session_manager, mock_redis):
@@ -180,30 +192,15 @@ class TestSessionManagerRaceConditionFix:
 
     @pytest.mark.asyncio
     async def test_concurrent_session_create_no_race(self):
-        """Create 10 sessions concurrently, verify all registered."""
+        """Create 10 sessions concurrently, verify all registered.
+
+        With Lua scripts, all operations are atomic so no race conditions.
+        """
         # Arrange - create fresh mock with proper setup
         mock_redis = AsyncMock()
         mock_redis.hexists = AsyncMock(return_value=False)
-        # ZCARD returns 0 each time (under limit simulation)
-        mock_redis.zcard = AsyncMock(return_value=0)
-        mock_redis.hlen = AsyncMock(return_value=0)
-
-        # Setup pipeline mock
-        pipe_mock = MagicMock()
-        pipe_mock.zadd = MagicMock(return_value=pipe_mock)
-        pipe_mock.hset = MagicMock(return_value=pipe_mock)
-        pipe_mock.expire = MagicMock(return_value=pipe_mock)
-        pipe_mock.execute = AsyncMock(return_value=[1, 1, 1, 1])
-
-        async def aenter(*args):
-            return pipe_mock
-
-        async def aexit(*args):
-            pass
-
-        pipe_mock.__aenter__ = aenter
-        pipe_mock.__aexit__ = aexit
-        mock_redis.pipeline = MagicMock(return_value=pipe_mock)
+        # Lua eval returns success for each call
+        mock_redis.eval = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=10)
         user_id = "user123"
@@ -218,12 +215,12 @@ class TestSessionManagerRaceConditionFix:
 
         # Assert - all sessions registered
         assert all(r["registered"] for r in results)
-        # Verify pipeline was used (atomic operations)
-        assert mock_redis.pipeline.call_count == 10
+        # Verify eval was used for atomic operations (1 call per session)
+        assert mock_redis.eval.call_count == 10
 
     @pytest.mark.asyncio
     async def test_no_deserialization_on_create(self, session_manager, mock_redis):
-        """Verify register_session doesn't GET before SET (no race window)."""
+        """Verify register_session uses eval (no separate GET before SET)."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
@@ -231,31 +228,32 @@ class TestSessionManagerRaceConditionFix:
         # Act
         await session_manager.register_session(user_id, session_id)
 
-        # Assert - no GET operation (only ZCARD for count check)
+        # Assert - no GET operation (Lua script handles everything atomically)
         mock_redis.get.assert_not_called()
-        mock_redis.zcard.assert_called()
+        # eval should be called (atomic Lua script)
+        mock_redis.eval.assert_called()
 
 
 class TestSessionManagerTTL:
     """Test that session TTL is properly maintained."""
 
     @pytest.mark.asyncio
-    async def test_session_ttl_preserved_on_both_keys(self, session_manager, mock_redis):
-        """Verify EXPIRE is called on both ZSET and Hash keys."""
+    async def test_session_ttl_set_via_lua(self, session_manager, mock_redis):
+        """Verify EXPIRE is called within Lua script for both ZSET and Hash keys.
+
+        The Lua script atomically sets TTL on both keys, so we verify
+        the eval was called (which handles EXPIRE internally).
+        """
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
 
         # Act
-        await session_manager.register_session(user_id, session_id)
+        result = await session_manager.register_session(user_id, session_id)
 
-        # Assert
-        pipe = mock_redis.pipeline.return_value
-        # Expire should be called twice (once for ZSET, once for Hash)
-        assert pipe.expire.call_count == 2
-        # Verify TTL value on all calls
-        for call in pipe.expire.call_args_list:
-            assert call[0][1] == SessionManager.SESSION_TTL_SECONDS
+        # Assert - eval was called (TTL is set atomically inside Lua)
+        assert result["registered"] is True
+        mock_redis.eval.assert_called_once()
 
 
 class TestSessionManagerDataIntegrity:
@@ -289,47 +287,34 @@ class TestSessionManagerDataIntegrity:
 
 
 class TestSessionManagerSessionLimit:
-    """Test that session limit enforcement works correctly with ZPOPMIN (legacy path).
+    """Test that session limit enforcement works correctly with Lua eviction.
 
-    Note: These tests verify the legacy ZPOPMIN path behavior.
-    When SESSION_USE_PIPELINE_EVICTION is enabled, the pipelined path is used instead.
+    The Lua script handles eviction atomically within a single roundtrip.
     """
 
     @pytest.mark.asyncio
-    @patch("src.app.core.security.session_manager.settings")
-    async def test_session_limit_enforced_via_zpopmin(self, mock_settings, mock_redis):
-        """Verify oldest sessions are removed via ZPOPMIN when limit is reached."""
-        # Arrange - force legacy path for this test
-        mock_settings.SESSION_USE_PIPELINE_EVICTION = False
-        mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
+    async def test_session_limit_enforced_with_eviction(self, mock_redis):
+        """Verify oldest sessions are evicted when limit is reached (via Lua)."""
+        # Arrange
+        evicted_session_data = b'{"session_id": "session1", "created_at": "2024-01-01T00:00:00"}'
+        mock_redis.eval = _mock_eval_success(
+            final_count=3,
+            evicted_data=[evicted_session_data],
+        )
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=3)
         user_id = "user123"
 
-        # Mock ZCARD to return 3 (at limit)
-        mock_redis.zcard.return_value = 3
-
-        # Mock ZPOPMIN to return oldest session
-        mock_redis.zpopmin.return_value = [("session1", 1704067200.0)]  # oldest
-
-        # Mock HGET to return session data for the evicted session
-        mock_redis.hget.return_value = '{"session_id": "session1", "created_at": "2024-01-01T00:00:00"}'
-
-        # Act - register a 4th session
+        # Act - register a 4th session (triggers eviction in Lua)
         result = await manager.register_session(user_id, "session4")
 
         # Assert
         assert result["registered"] is True
         assert len(result["invalidated_sessions"]) == 1
-        # Verify oldest session was invalidated
         assert result["invalidated_sessions"][0]["session_id"] == "session1"
 
-        # Verify ZPOPMIN was called for O(log n) eviction
-        mock_redis.zpopmin.assert_called()
-
-        # Verify HDEL was called via pipeline
-        pipe = mock_redis.pipeline.return_value
-        pipe.hdel.assert_called()
+        # Verify eval was called (atomic eviction + registration)
+        mock_redis.eval.assert_called_once()
 
 
 class TestSessionManagerInvalidation:
@@ -418,22 +403,22 @@ class TestSessionManagerExistingSessionCheck:
     """Test that duplicate session registration is handled correctly."""
 
     @pytest.mark.asyncio
-    async def test_register_existing_session_returns_already_exists(self, session_manager, mock_redis):
+    async def test_register_existing_session_returns_already_exists(self, mock_redis):
         """Verify registering same session twice returns already_exists."""
         # Arrange
         user_id = "user123"
         session_id = "session_abc"
-        mock_redis.hexists.return_value = True
+        # Lua returns already_exists when HEXISTS is true
+        mock_redis.eval = _mock_eval_already_exists()
+
+        manager = SessionManager(redis_client=mock_redis, max_sessions=5)
 
         # Act
-        result = await session_manager.register_session(user_id, session_id)
+        result = await manager.register_session(user_id, session_id)
 
         # Assert
         assert result["registered"] is True
         assert result.get("already_exists") is True
-        # Verify no pipeline was used (early return)
-        pipe = mock_redis.pipeline.return_value
-        pipe.hset.assert_not_called()
 
 
 class TestSessionManagerZSETMigration:

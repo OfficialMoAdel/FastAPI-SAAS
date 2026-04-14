@@ -9,6 +9,7 @@ Provides:
 """
 
 import re
+import threading
 import time
 from collections import defaultdict
 from contextvars import ContextVar
@@ -25,6 +26,7 @@ logger = get_logger(__name__)
 
 # Track repeated queries for N+1 detection (global across all requests)
 _query_tracker: dict[str, dict[str, Any]] = {}
+_query_tracker_lock = threading.Lock()
 
 # Per-request query tracking using ContextVar for async safety
 _request_queries: ContextVar[dict[str, int] | None] = ContextVar("request_queries", default=None)
@@ -188,7 +190,8 @@ def reset_query_tracker() -> None:
 
     Call this periodically (e.g., between requests) to clear old tracking state.
     """
-    _query_tracker.clear()
+    with _query_tracker_lock:
+        _query_tracker.clear()
     logger.debug("Query tracker reset")
 
 
@@ -204,6 +207,7 @@ def _evict_stale_tracker_entries() -> None:
     Called opportunistically from _track_query to bound memory growth without
     requiring an explicit periodic reset from the request lifecycle.
     """
+    # Note: assumed to be called within _query_tracker_lock
     cutoff = time.perf_counter() - _QUERY_TRACKER_MAX_AGE_SECONDS
     stale_keys = [k for k, v in _query_tracker.items() if v.get("last_seen", 0) < cutoff]
     for k in stale_keys:
@@ -218,10 +222,12 @@ def get_query_stats() -> dict[str, dict[str, Any]]:
     Returns:
         Dictionary of normalized queries to their execution counts
     """
-    return {
-        statement: {"count": data["count"], "first_seen": data["first_seen_at"]}
-        for statement, data in _query_tracker.items()
-    }
+    with _query_tracker_lock:
+        return {
+            statement: {"count": data["count"], "first_seen": data["first_seen_at"]}
+            for statement, data in _query_tracker.items()
+        }
+
 
 
 def is_profiler_enabled(environment: str) -> bool:
@@ -342,6 +348,13 @@ __all__ = [
     "setup_query_profiler",
     "reset_query_tracker",
     "get_query_stats",
+    "is_profiler_enabled",
+    "start_request_tracking",
+    "end_request_tracking",
+    "get_request_query_stats",
+]
+
+stats= [
     "is_profiler_enabled",
     "start_request_tracking",
     "end_request_tracking",

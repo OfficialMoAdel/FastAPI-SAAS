@@ -309,6 +309,23 @@ async def get_optional_user(
         return None
 
 
+def requires_api_key_scope(required_scope: str) -> Any:
+    """Dependency to check if the current API key has the required scope.
+
+    If the user authenticated via Bearer token (not API key), they bypass this check.
+    If they authenticated via API key, the key must have the requested scope.
+    """
+    def dependency(current_user: Annotated[AuthenticatedUser, Depends(get_current_user)]) -> AuthenticatedUser:
+        key_id = current_user.get("api_key_id")
+        scopes = current_user.get("api_key_scopes", [])
+
+        if key_id and required_scope not in scopes:
+            raise ForbiddenException(f"API key missing required scope: {required_scope}")
+
+        return current_user
+    return dependency
+
+
 async def get_current_superuser(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> AuthenticatedUser:

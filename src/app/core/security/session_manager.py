@@ -100,11 +100,6 @@ class SessionManager:
         hash_key = f"{self.SESSION_HASH_PREFIX}{user_id}"
         zset_key = f"{self.SESSION_ORDER_PREFIX}{user_id}"
 
-        # Check if session already exists - O(1) with HEXISTS
-        exists = await self._redis_client.hexists(hash_key, session_id)
-        if exists:
-            return {"registered": True, "already_exists": True}
-
         # Create timestamp for ordering (Unix timestamp as float for precision)
         now = datetime.now(UTC)
         timestamp = now.timestamp()
@@ -117,60 +112,92 @@ class SessionManager:
             "last_accessed": now.isoformat(),
         }
 
+        # Atomic Lua script to enforce max_sessions and avoid race conditions
+        lua_script = """
+        local zset_key = KEYS[1]
+        local hash_key = KEYS[2]
+        local max_sessions = tonumber(ARGV[1])
+        local session_id = ARGV[2]
+        local session_data = ARGV[3]
+        local timestamp = ARGV[4]
+        local ttl = tonumber(ARGV[5])
+        local max_batch = tonumber(ARGV[6])
+
+        if redis.call('HEXISTS', hash_key, session_id) == 1 then
+            return {"already_exists"}
+        end
+
+        local current_count = redis.call('ZCARD', zset_key)
+        if current_count == 0 then
+            current_count = redis.call('HLEN', hash_key)
+        end
+
+        local evicted_data = {}
+        local final_count = current_count + 1
+
+        if current_count >= max_sessions then
+            local sessions_to_remove = current_count - max_sessions + 1
+            if sessions_to_remove > max_batch then
+                sessions_to_remove = max_batch
+            end
+
+            local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
+            for i, sid in ipairs(session_ids) do
+                local data = redis.call('HGET', hash_key, sid)
+                if data then
+                    table.insert(evicted_data, data)
+                end
+                redis.call('HDEL', hash_key, sid)
+                redis.call('ZREM', zset_key, sid)
+            end
+            final_count = final_count - #session_ids
+        end
+
+        redis.call('ZADD', zset_key, timestamp, session_id)
+        redis.call('HSET', hash_key, session_id, session_data)
+        redis.call('EXPIRE', zset_key, ttl)
+        redis.call('EXPIRE', hash_key, ttl)
+
+        local result = {"success", tostring(final_count)}
+        for _, d in ipairs(evicted_data) do
+            table.insert(result, d)
+        end
+        return result
+        """
+
         invalidated_sessions: list[dict[str, Any]] = []
+        try:
+            result = await self._redis_client.eval(
+                lua_script,
+                2,
+                zset_key,
+                hash_key,
+                self._max_sessions,
+                session_id,
+                json_dumps(new_session, as_str=True),
+                timestamp,
+                self.SESSION_TTL_SECONDS,
+                settings.SESSION_MAX_EVICTION_BATCH_SIZE,
+            )
 
-        # Get current session count - O(1) with ZCARD (use ZSET as source of truth for count)
-        current_count = await self._redis_client.zcard(zset_key)
+            if result and result[0] == b"already_exists":
+                return {"registered": True, "already_exists": True}
 
-        # Fallback to HLEN if ZSET doesn't exist yet (migration case)
-        if current_count == 0:
-            current_count = await self._redis_client.hlen(hash_key)
-
-        # If at limit, evict oldest sessions using optimized pipeline
-        if current_count >= self._max_sessions:
-            sessions_to_remove = current_count - self._max_sessions + 1
-
-            # Cap batch size to prevent memory exhaustion
-            max_batch = settings.SESSION_MAX_EVICTION_BATCH_SIZE
-            sessions_to_remove = min(sessions_to_remove, max_batch)
-
-            if settings.SESSION_USE_PIPELINE_EVICTION:
-                # Optimized path: Use ZRANGE + Pipeline (P2-1 optimization)
-                roundtrips = await self._evict_sessions_pipelined(
-                    hash_key=hash_key,
-                    zset_key=zset_key,
-                    sessions_to_remove=sessions_to_remove,
-                    new_session_id=session_id,
-                    new_session_data=new_session,
-                    timestamp=timestamp,
-                    invalidated_sessions=invalidated_sessions,
-                    user_id=user_id,
-                )
-                record_session_eviction(roundtrips)
+            if result and result[0] == b"success":
+                final_count = int(result[1])
+                if len(result) > 2:
+                    # Sessions were evicted
+                    for i in range(2, len(result)):
+                        data = result[i]
+                        if isinstance(data, bytes):
+                            data = data.decode('utf-8')
+                        invalidated_sessions.append(json_loads(data))
+                    record_session_eviction(1)  # 1 Lua roundtrip
             else:
-                # Original path: ZPOPMIN loop (kept for fallback)
-                roundtrips = await self._evict_sessions_legacy(
-                    hash_key=hash_key,
-                    zset_key=zset_key,
-                    sessions_to_remove=sessions_to_remove,
-                    new_session_id=session_id,
-                    new_session_data=new_session,
-                    timestamp=timestamp,
-                    invalidated_sessions=invalidated_sessions,
-                    user_id=user_id,
-                )
-                record_session_eviction(roundtrips)
-        else:
-            # Under limit, just add new session to both structures
-            async with self._redis_client.pipeline() as pipe:
-                pipe.zadd(zset_key, {session_id: timestamp})
-                pipe.hset(hash_key, session_id, json_dumps(new_session, as_str=True))
-                pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-                pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-                await pipe.execute()
-
-        # Get final count from ZSET
-        final_count = await self._redis_client.zcard(zset_key)
+                final_count = 0
+        except Exception as e:
+            logger.error("Session registration failed", user_id=user_id, error=str(e))
+            return {"registered": False, "reason": "lua_error"}
 
         logger.info(
             "Session registered",

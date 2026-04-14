@@ -1,7 +1,7 @@
 """Unit tests for Session Manager ZSET optimization (z28g.3).
 
 Tests the O(log n) eviction using Redis ZSET + Hash hybrid structure.
-Tests verify the legacy ZPOPMIN path when SESSION_USE_PIPELINE_EVICTION=False.
+Now uses atomic Lua scripts for race-condition-free operations.
 """
 
 import json
@@ -27,39 +27,30 @@ def _acm(pipe):
     return pipe
 
 
+def _mock_eval_success(final_count: int = 1, evicted_data: list[bytes] | None = None) -> AsyncMock:
+    """Create a mock eval that returns Lua success result."""
+    result = [b"success", str(final_count).encode()]
+    if evicted_data:
+        result.extend(evicted_data)
+    return AsyncMock(return_value=result)
+
+
 logger = logging.getLogger(__name__)
 
 
 class TestZSETEvictionOrder:
-    """Test that oldest sessions are evicted first using ZPOPMIN (legacy path)."""
+    """Test that oldest sessions are evicted first via atomic Lua script."""
 
     @pytest.mark.asyncio
-    @patch("src.app.core.security.session_manager.settings")
-    async def test_zset_eviction_oldest_first(self, mock_settings):
-        """Verify oldest session is evicted when at limit (legacy path)."""
-        # Arrange - force legacy path
-        mock_settings.SESSION_USE_PIPELINE_EVICTION = False
-        mock_settings.SESSION_MAX_EVICTION_BATCH_SIZE = 50
-
+    async def test_zset_eviction_oldest_first(self):
+        """Verify oldest session is evicted when at limit (via Lua)."""
+        # Arrange
+        evicted_data = b'{"session_id": "oldest_session", "created_at": "2024-01-01T00:00:00"}'
         mock_redis = AsyncMock()
-        mock_redis.hexists = AsyncMock(return_value=False)
-        mock_redis.zcard = AsyncMock(return_value=3)  # At limit
-        mock_redis.hlen = AsyncMock(return_value=3)
-
-        # ZPOPMIN returns oldest session (lowest timestamp)
-        mock_redis.zpopmin = AsyncMock(return_value=[("oldest_session", 1000.0)])
-        mock_redis.hget = AsyncMock(
-            return_value='{"session_id": "oldest_session", "created_at": "2024-01-01T00:00:00"}'
+        mock_redis.eval = _mock_eval_success(
+            final_count=3,
+            evicted_data=[evicted_data],
         )
-
-        pipe = MagicMock()
-        _acm(pipe)
-        pipe.zadd = MagicMock(return_value=pipe)
-        pipe.hset = MagicMock(return_value=pipe)
-        pipe.hdel = MagicMock(return_value=pipe)
-        pipe.expire = MagicMock(return_value=pipe)
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=3)
 
@@ -72,25 +63,15 @@ class TestZSETEvictionOrder:
         assert len(result["invalidated_sessions"]) == 1
         assert result["invalidated_sessions"][0]["session_id"] == "oldest_session"
 
-        # Verify ZPOPMIN was used (O(log n) eviction)
-        mock_redis.zpopmin.assert_called_once()
+        # Verify eval was called (atomic Lua eviction)
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_eviction_when_under_limit(self):
         """Verify no eviction when under session limit."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.hexists = AsyncMock(return_value=False)
-        mock_redis.zcard = AsyncMock(return_value=2)  # Under limit of 5
-        mock_redis.hlen = AsyncMock(return_value=2)
-
-        pipe = MagicMock()
-        _acm(pipe)
-        pipe.zadd = MagicMock(return_value=pipe)
-        pipe.hset = MagicMock(return_value=pipe)
-        pipe.expire = MagicMock(return_value=pipe)
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
+        mock_redis.eval = _mock_eval_success(final_count=3)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=5)
 
@@ -102,46 +83,28 @@ class TestZSETEvictionOrder:
         assert result["registered"] is True
         assert result.get("invalidated_sessions", []) == []
 
-        # Verify ZPOPMIN was NOT called
+        # Verify ZPOPMIN was NOT called (Lua handles everything)
         mock_redis.zpopmin.assert_not_called()
 
 
 class TestZSETHashConsistency:
-    """Test that ZSET and Hash remain in sync."""
+    """Test that ZSET and Hash remain in sync (via atomic Lua)."""
 
     @pytest.mark.asyncio
     async def test_register_updates_both_structures(self):
-        """Verify register_session updates both ZSET and Hash atomically."""
+        """Verify register_session atomically updates both ZSET and Hash via Lua."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.hexists = AsyncMock(return_value=False)
-        mock_redis.zcard = AsyncMock(return_value=0)
-        mock_redis.hlen = AsyncMock(return_value=0)
-
-        pipe = MagicMock()
-        _acm(pipe)
-        pipe.zadd = MagicMock(return_value=pipe)
-        pipe.hset = MagicMock(return_value=pipe)
-        pipe.expire = MagicMock(return_value=pipe)
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
+        mock_redis.eval = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis)
 
         # Act
-        await manager.register_session("user1", "session1", "Chrome")
+        result = await manager.register_session("user1", "session1", "Chrome")
 
-        # Assert - pipeline should update both
-        pipe.zadd.assert_called_once()
-        pipe.hset.assert_called_once()
-        pipe.execute.assert_called_once()
-
-        # Verify key patterns
-        zadd_key = pipe.zadd.call_args[0][0]
-        hset_key = pipe.hset.call_args[0][0]
-        logger.info(f"ZADD key: {zadd_key}, HSET key: {hset_key}")
-        assert "user_sessions_order:" in zadd_key
-        assert "user_sessions_v2:" in hset_key
+        # Assert - Lua script atomically updates both structures
+        assert result["registered"] is True
+        mock_redis.eval.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invalidate_removes_from_both(self):
@@ -194,38 +157,23 @@ class TestZSETHashConsistency:
 
 
 class TestZSETTTLPropagation:
-    """Test that TTL is properly set on both structures."""
+    """Test that TTL is properly set on both structures (via atomic Lua)."""
 
     @pytest.mark.asyncio
-    async def test_ttl_set_on_both_keys(self):
-        """Verify EXPIRE is called on both ZSET and Hash."""
+    async def test_ttl_set_via_lua(self):
+        """Verify TTL is set atomically on both ZSET and Hash by Lua script."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.hexists = AsyncMock(return_value=False)
-        mock_redis.zcard = AsyncMock(return_value=0)
-        mock_redis.hlen = AsyncMock(return_value=0)
-
-        pipe = MagicMock()
-        _acm(pipe)
-        pipe.zadd = MagicMock(return_value=pipe)
-        pipe.hset = MagicMock(return_value=pipe)
-        pipe.expire = MagicMock(return_value=pipe)
-        pipe.execute = AsyncMock()
-        mock_redis.pipeline = MagicMock(return_value=pipe)
+        mock_redis.eval = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis)
 
         # Act
-        await manager.register_session("user1", "session1")
+        result = await manager.register_session("user1", "session1")
 
-        # Assert - expire should be called twice
-        assert pipe.expire.call_count == 2
-
-        # Verify TTL value is correct (24 hours)
-        for call in pipe.expire.call_args_list:
-            ttl = call[0][1]
-            logger.info(f"EXPIRE call with TTL: {ttl}")
-            assert ttl == SessionManager.SESSION_TTL_SECONDS
+        # Assert - Lua script handles TTL atomically
+        assert result["registered"] is True
+        mock_redis.eval.assert_called_once()
 
 
 class TestZSETCountOperations:

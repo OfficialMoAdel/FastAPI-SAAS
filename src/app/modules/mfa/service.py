@@ -68,9 +68,7 @@ _MFA_CHECK_LUA = """
     end
 
     local new_count = redis.call('INCR', key)
-    if new_count == 1 then
-        redis.call('EXPIRE', key, lockout_duration)
-    end
+    redis.call('EXPIRE', key, lockout_duration)
     return new_count
 """
 

@@ -345,6 +345,10 @@ def setup_exception_handlers(app: FastAPI) -> None:
         """Catch-all handler for unexpected exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
+        import traceback
+        print(f"!!! ORIGINAL UNHANDLED EXCEPTION !!!: {repr(exc)}")
+        traceback.print_exception(type(exc), exc, exc.__traceback__)
+
         # Log full exception for debugging
         logger.exception(
             "Unhandled exception",

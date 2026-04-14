@@ -177,12 +177,19 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
             # L3: Database
             async with local_session() as session:
-                from src.app.core.db.rls import bypass_rls
+                from src.app.core.db.rls import bypass_rls, clear_rls_context
 
                 stmt = select(Tenant).where(Tenant.slug == slug)
                 async with bypass_rls(session, reason="Tenant resolution via middleware"):
                     result = await session.execute(stmt)
                 tenant = result.scalar_one_or_none()
+
+                # SECURITY FIX: Explicitly clear RLS context before returning connection to pool
+                try:
+                    conn = await session.connection()
+                    await clear_rls_context(conn)
+                except Exception as e:
+                    logger.warning("Failed to clear RLS context in tenant middleware: %s", e)
 
                 cache_data: dict | None = None
                 if tenant:
