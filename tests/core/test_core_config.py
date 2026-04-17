@@ -23,10 +23,12 @@ def test_rbac_cache_ttl_default():
 
 def test_encryption_keys_missing_warning():
     """Verify ValueError is raised when encryption keys are missing."""
+    import os
     import pytest
 
-    with pytest.raises(ValueError, match="ENCRYPTION_KEY and ENCRYPTION_SALT must be set"):
-        CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
+    with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
+        with pytest.raises(ValueError, match="ENCRYPTION_KEY and ENCRYPTION_SALT must be set"):
+            CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
 
 
 def test_encryption_keys_present_no_warning(caplog):

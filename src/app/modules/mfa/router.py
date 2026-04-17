@@ -20,7 +20,6 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
 from src.app.core.security import (
-    ACCESS_TOKEN_EXPIRE_MINUTES,
     MFAPendingTokenManager,
     create_access_token,
     create_refresh_token,
@@ -333,7 +332,7 @@ async def complete_mfa_login(
     }
 
     # Generate tokens
-    access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
     access_token, refresh_token = await asyncio.gather(
         create_access_token(data=token_data_payload, expires_delta=access_token_expires),
         create_refresh_token(data=token_data_payload),

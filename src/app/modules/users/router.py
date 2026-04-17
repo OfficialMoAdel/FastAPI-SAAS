@@ -28,11 +28,11 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 async def _get_username_from_id(service: UserService, user_id: str) -> str:
-    """Helper to get username from ID, handling both ORM objects and cached dicts."""
+    """Helper to get username from ID from cached dicts."""
     user = await service.get(int(user_id))
     if not user:
         raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
-    return user["username"] if isinstance(user, dict) else user.username
+    return str(user["username"])
 
 
 async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:

@@ -170,7 +170,6 @@ specs
 claudedocs
 geminidocs
 .serena
-sql_app.db*
 # Auto Claude data directory
 .auto-claude/
 test.db-journal
@@ -190,9 +189,7 @@ CONTRIBUTING.md
 SECURITY.md
 Phase*
 coverage_report*
-final_failed*
-*REVIEW_ISSUES.md
-unique_failed*
+*failed*
 baseline*
 storage_test/tenants/1/files/*.txt*
 auto_test_from_report.py

@@ -180,7 +180,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         return text.encode("utf-8", errors="replace")
 
-    async def _detect_attack_patterns(self, request: Request) -> list[dict]:
+    async def _detect_attack_patterns(self, request: Request) -> tuple[list[dict[str, str]], Request]:
         """Scan request for attack patterns using zero-copy bytes scanning.
 
         Checks:
@@ -192,7 +192,8 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         character stripping before regex matching to prevent bypass attacks.
 
         Returns:
-            List of detected attacks, each with pattern_type and location
+            Tuple of (detected attacks list, possibly modified request).
+            The request may be replaced with a new one if body needs buffering.
         """
         detected_attacks: list[dict] = []
 
@@ -248,51 +249,29 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             if not skip_body:
                 try:
                     MAX_SCAN_SIZE = 128 * 1024
-                    receive_ = request.receive
 
                     body_chunks: list[bytes] = []
                     body_size = 0
-                    more_body = True
 
-                    while more_body and body_size < MAX_SCAN_SIZE:
-                        message = await receive_()
-                        if message["type"] == "http.request":
-                            chunk = message.get("body", b"")
-                            body_chunks.append(chunk)
-                            body_size += len(chunk)
-                            more_body = message.get("more_body", False)
-                        elif message["type"] == "http.disconnect":
-                            more_body = False
-                            break
+                    async for chunk in request.stream():
+                        body_chunks.append(chunk)
+                        body_size += len(chunk)
+                        if body_size > MAX_SCAN_SIZE:
+                            # SECURITY FIX: If the body exceeds the maximum scan size, we must reject it.
+                            logger.warning("Request body exceeded maximum scan size of %d bytes", MAX_SCAN_SIZE)
+                            raise BodyScanError(f"Request body exceeded maximum scan size of {MAX_SCAN_SIZE} bytes")
 
                     body_to_scan = b"".join(body_chunks)
 
                     if body_to_scan:
-                        buffered_messages = []
-                        for i, chunk in enumerate(body_chunks):
-                            is_last_chunk = (i == len(body_chunks) - 1)
-                            has_more = True if not is_last_chunk else more_body
-                            buffered_messages.append({"type": "http.request", "body": chunk, "more_body": has_more})
-
-                        async def receive_proxy():
-                            if buffered_messages:
-                                return buffered_messages.pop(0)
-                            if more_body:
-                                return await receive_()
-                            return {"type": "http.request", "body": b"", "more_body": False}
-
-                        # Using request._receive (private API) as no public alternative exists.
-                        try:
-                            request._receive = receive_proxy
-                        except AttributeError as e:
-                            # BUG FIX: This is an internal server error (private API not available),
-                            # NOT an attack. Raise BodyScanError to forcefully return 500
-                            # instead of failing open and allowing a malicious payload through.
-                            logger.error("Failed to reinject request body - request._receive not available")
-                            raise BodyScanError("Failed to reinject request body") from e
+                        # Store the body so it can be read by the rest of the application
+                        # This works correctly with Starlette's _CachedRequest
+                        request._body = body_to_scan
 
                         # Sanitize then scan — NFKC + zero-width stripping
                         self._check_for_patterns(self._sanitize_input(body_to_scan), "request_body", detected_attacks)
+                except BodyScanError:
+                    raise
                 except Exception as e:
                     logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error
@@ -305,7 +284,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         }
                     )
 
-        return detected_attacks
+        return detected_attacks, request  # type: ignore[return-value]
 
     def _check_for_patterns(self, content: bytes, location: str, attacks: list[dict]) -> None:
         """Check content against all attack patterns using combined bytes regex.
@@ -321,9 +300,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 # False positive mitigation for multipart/form-data boundaries
                 if pattern_name == "sql_comment_end":
                     match_start = match.start()
-                    line_start = content.rfind(b'\n', 0, match_start) + 1
-                    line = content[line_start:match.end()]
-                    if line.startswith(b'--') and len(line.strip()) > 4:
+                    line_start = content.rfind(b"\n", 0, match_start) + 1
+                    line = content[line_start : match.end()]
+                    if line.startswith(b"--") and len(line.strip()) > 4:
                         continue
 
                 attacks.append(
@@ -440,7 +419,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Detect attack patterns
         try:
-            detected_attacks = await self._detect_attack_patterns(request)
+            detected_attacks, request = await self._detect_attack_patterns(request)
+            if isinstance(detected_attacks, Response):
+                return detected_attacks
         except BodyScanError as e:
             logger.error("Body scan failed: %s", str(e))
             return Response(

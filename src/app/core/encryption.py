@@ -30,10 +30,11 @@ def get_encryption_key() -> bytes:
     Raises:
         ValueError: If ENCRYPTION_KEY is not set.
     """
-    key = os.getenv("ENCRYPTION_KEY")
-    if not key:
+    from src.app.core.config import settings
+
+    if not settings.crypt.ENCRYPTION_KEY:
         raise ValueError("ENCRYPTION_KEY environment variable is not set")
-    return key.encode() if isinstance(key, str) else key
+    return settings.crypt.ENCRYPTION_KEY.get_secret_value().encode()
 
 
 def get_old_encryption_key() -> bytes | None:

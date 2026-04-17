@@ -123,7 +123,27 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                         media_type="application/json",
                     )
 
-        # Check whitelist first (if enabled)
+        # Check blacklist first (override whitelist)
+        if settings.IP_BLACKLIST_ENABLED:
+            is_blacklisted = await self._filter_service.is_blacklisted(client_ip)
+
+            if is_blacklisted:
+                event = create_security_event(
+                    event_type=SecurityEventType.IP_BLOCKED,
+                    client_ip=client_ip,
+                    request_path=path,
+                    reason="IP is blacklisted",
+                )
+                log_security_event(event)
+
+                logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
+                return Response(
+                    content='{"detail":"Forbidden - IP is blacklisted"}',
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    media_type="application/json",
+                )
+
+        # Check whitelist (if enabled and not blacklisted)
         if settings.IP_WHITELIST_ENABLED:
             is_whitelisted = await self._filter_service.is_whitelisted(client_ip)
 
@@ -143,26 +163,6 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 logger.debug("IP allowed via whitelist for", client_ip=client_ip, path=path)
                 response = await call_next(request)
                 return cast(Response, response)
-
-        # Check blacklist (if enabled and whitelist not enforced)
-        if settings.IP_BLACKLIST_ENABLED:
-            is_blacklisted = await self._filter_service.is_blacklisted(client_ip)
-
-            if is_blacklisted:
-                event = create_security_event(
-                    event_type=SecurityEventType.IP_BLOCKED,
-                    client_ip=client_ip,
-                    request_path=path,
-                    reason="IP is blacklisted",
-                )
-                log_security_event(event)
-
-                logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
-                return Response(
-                    content='{"detail":"Forbidden - IP is blacklisted"}',
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    media_type="application/json",
-                )
 
         # IP is allowed through
         request.state.ip_whitelisted = False

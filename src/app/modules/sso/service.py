@@ -341,7 +341,7 @@ class SSOService:
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
             if mfa_enabled:
-                from src.app.core.security import MFA_PENDING_EXPIRY_SECONDS, MFAPendingTokenManager
+                from src.app.core.security import MFAPendingTokenManager
                 from src.app.core.utils.cache import client as mfa_redis_client
                 mfa_token_manager = MFAPendingTokenManager(mfa_redis_client)
                 mfa_token = await mfa_token_manager.create_token(
@@ -351,7 +351,7 @@ class SSOService:
                 return {
                     "mfa_required": "true",
                     "mfa_token": mfa_token,
-                    "expires_in": str(MFA_PENDING_EXPIRY_SECONDS),
+                    "expires_in": str(settings.MFA_PENDING_EXPIRY_SECONDS),
                     "message": "MFA verification required",
                 }
 

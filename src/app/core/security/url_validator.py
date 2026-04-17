@@ -33,6 +33,7 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("::1/128"),  # IPv6 loopback
     ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
     ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
+    ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IPv6 metadata
 ]
 
 # Specific blocked hostnames (cloud metadata endpoints)
@@ -40,6 +41,9 @@ BLOCKED_HOSTNAMES = {
     "metadata.google.internal",
     "metadata.goog",
     "metadata",
+    "169.254.169.254",
+    "metadata.azure.com",
+    "metadata.nova.openstack.org",
 }
 
 

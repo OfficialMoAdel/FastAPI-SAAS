@@ -47,7 +47,8 @@ NEGATIVE_CACHE_KEY = "token:verified:"
 from src.app.core.config import settings
 
 # R2 #11b: Module-level constant avoids repeated settings access per call
-NEGATIVE_CACHE_TTL: int = settings.TOKEN_NEGATIVE_CACHE_TTL
+# Use getattr with fallback to handle initialization edge cases in test environments
+NEGATIVE_CACHE_TTL: int = getattr(settings.r1_unified, "TOKEN_NEGATIVE_CACHE_TTL", 60)
 
 # Lock for preventing concurrent Lua script reloads during NOSCRIPT errors
 # Use dict keyed by event loop ID to support pytest-asyncio's per-test event loops
@@ -213,6 +214,8 @@ async def is_token_blacklisted(token: str) -> bool | None:
     Returns:
         True if blacklisted, False if not, None if Redis unavailable (fail open)
     """
+    from src.app.core.config import settings
+
     redis_client = _get_redis_client()
     if redis_client is None:
         from src.app.core.monitoring.r1_unified_metrics import record_fail_open
@@ -220,8 +223,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
         record_fail_open("token_blacklist")
 
         # SECURITY FIX: Fail closed during infrastructure disruptions
-        from src.app.core.config import settings
-        if getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
+        if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
             return True  # Treat as blacklisted to fail closed
 
         return None  # Redis not configured, fall back to DB
@@ -251,7 +253,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                 BLACKLIST_KEY,
                 blacklist_member,
                 str(now),
-                str(NEGATIVE_CACHE_TTL),
+                str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
             )
             return bool(int(result))
         except Exception as script_error:
@@ -271,7 +273,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             BLACKLIST_KEY,
                             blacklist_member,
                             str(now),
-                            str(NEGATIVE_CACHE_TTL),
+                            str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
                         )
                         return bool(int(retry_result))
 
@@ -286,7 +288,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             BLACKLIST_KEY,
                             blacklist_member,
                             str(now),
-                            str(NEGATIVE_CACHE_TTL),
+                            str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
                         )
                         return bool(int(retry_result))
                 finally:
@@ -296,8 +298,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
     except Exception as e:
         logger.warning("Redis blacklist check failed", error=e)
         # SECURITY FIX: Fail closed if configured
-        from src.app.core.config import settings
-        if getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
+        if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
             return True
         return None  # Fail open - let DB check handle it
 
@@ -307,6 +308,8 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
 
     Used when Lua script loading fails.
     """
+    from src.app.core.config import settings
+
     redis_client = _get_redis_client()
     if redis_client is None:
         from src.app.core.monitoring.r1_unified_metrics import record_fail_open
@@ -314,20 +317,16 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         record_fail_open("token_blacklist_fallback")
         return None
 
-    # Use the same member key that blacklist_tokens used during storage.
     blacklist_member = _extract_blacklist_member(token)
 
     try:
-        # Check negative cache first (token recently verified as not blacklisted)
         negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
         if await redis_client.exists(negative_key):
             return False
 
-        # ZSCORE returns the score if member exists, None otherwise
         score = await redis_client.zscore(BLACKLIST_KEY, blacklist_member)
         if score is None:
-            # Cache the negative result to avoid repeated lookups
-            await redis_client.set(negative_key, "1", ex=NEGATIVE_CACHE_TTL)
+            await redis_client.set(negative_key, "1", ex=settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL)
             return False
 
         # Check if token has expired (score is expiry timestamp)

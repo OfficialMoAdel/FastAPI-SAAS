@@ -15,6 +15,8 @@ class AppSettings(BaseSettings):
     CONTACT_NAME: str | None = None
     CONTACT_EMAIL: str | None = None
     FRONTEND_URL: str = "http://localhost:3000"  # Frontend URL for magic links, etc.
+    CACHE_WARMING_ENABLED: bool = True
+    CACHE_WARMING_DELAY_SECONDS: int = 2
     # DATABASE: Control table creation (set to False in production)
     CREATE_TABLES_ON_STARTUP: bool = True
 
@@ -128,9 +130,14 @@ class CryptSettings(BaseSettings):
     def validate_production_secrets(self) -> "CryptSettings":
         """Validate encryption keys are set to prevent runtime failures."""
 
-        # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated if using features that require them
-        if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
-            raise ValueError("SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in the environment.")
+        env = os.getenv("ENVIRONMENT", "local").lower()
+        if env in ("production", "staging"):
+            # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated in production/staging
+            if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
+                raise ValueError(
+                    "SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set "
+                    "in the production/staging environment."
+                )
 
         return self
 
@@ -140,6 +147,7 @@ class DatabaseConfigMixin(BaseModel):
     DB_MAX_OVERFLOW: int = Field(default=10, ge=0, le=50, description="Max overflow connections")
     DB_POOL_TIMEOUT: int = Field(default=30, ge=5, le=120)
     POSTGRES_MAX_CONNECTIONS: int = Field(default=100, ge=20, le=500, description="PostgreSQL max_connections limit")
+    DB_STATEMENT_CACHE_SIZE: int = Field(default=100, ge=0, description="Size of asyncpg statement cache")
     # DB_POOL_SIZE must be declared AFTER DB_WORKERS, DB_MAX_OVERFLOW, POSTGRES_MAX_CONNECTIONS
     DB_POOL_SIZE: int = Field(default=20, ge=5, le=200, description="Base pool size (calculated as workers × 10)")
 
@@ -298,6 +306,12 @@ class AuthSettings(BaseSettings):
     # Configurable MFA pending token expiry (was previously a hardcoded magic number)
     MFA_PENDING_EXPIRY_SECONDS: int = Field(
         default=300, ge=60, le=3600, description="MFA pending token TTL in seconds (default: 5 minutes)"
+    )
+    AUTH_MAX_SESSIONS: int = Field(
+        default=5, ge=1, le=50, description="Max concurrent sessions per user"
+    )
+    AUTH_SESSION_TTL_SECONDS: int = Field(
+        default=86400 * 7, ge=3600, le=86400 * 30, description="Session TTL in seconds"
     )
     # Token blacklist cache failure mode - fail_closed by default for security
     # "fail_open": Return None when Redis unavailable (allow auth to continue)
@@ -550,25 +564,6 @@ class CORSSettings(BaseSettings):
         "X-Tenant-ID",
     ]
 
-    @model_validator(mode="after")
-    def validate_cors_origins(self) -> "CORSSettings":
-        """Validate CORS origins for production safety.
-
-        Warns if wildcard '*' is used in non-local environments.
-        """
-
-        env = os.getenv("ENVIRONMENT", "local")
-        has_wildcard = "*" in self.CORS_ORIGINS
-
-        if has_wildcard and env != "local":
-            raise ValueError(
-                f"SECURITY ERROR: CORS_ORIGINS contains '*' wildcard in {env} environment. "
-                "This allows any website to access your API. "
-                "Specify explicit origins for production."
-            )
-
-        return self
-
 
 class BillingSettings(BaseSettings):
     """Stripe and Billing settings."""
@@ -766,6 +761,24 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+    @model_validator(mode="after")
+    def validate_cors_origins(self) -> "Settings":
+        """Validate CORS origins for production safety.
+
+        Warns if wildcard '*' is used in non-local environments.
+        """
+        env = getattr(self.env.ENVIRONMENT, "value", self.env.ENVIRONMENT)
+        has_wildcard = "*" in self.cors.CORS_ORIGINS
+
+        if has_wildcard and env != "local":
+            raise ValueError(
+                f"SECURITY ERROR: CORS_ORIGINS contains '*' wildcard in {env} environment. "
+                "This allows any website to access your API. "
+                "Specify explicit origins for production."
+            )
+
+        return self
 
     @property
     def _delegation_map(self) -> dict[str, str]:

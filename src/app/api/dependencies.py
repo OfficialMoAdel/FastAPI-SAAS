@@ -53,7 +53,7 @@ async def get_current_user(
     request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict[str, Any]:
+) -> AuthenticatedUser:
     """Get current authenticated user with tier eager-loaded.
 
     Uses joinedload to fetch user and tier in single query,
@@ -136,7 +136,7 @@ async def get_current_user(
         if user.get("is_deleted", False):
             raise UnauthorizedException("User account has been deleted.")
 
-        return user
+        return AuthenticatedUser(**user)
 
     raise UnauthorizedException("User not authenticated.")
 
@@ -362,7 +362,9 @@ def get_current_tenant() -> Any:
 
 
 async def rate_limiter_dependency(
-    request: Request, db: Annotated[AsyncSession, Depends(async_get_db)], user: dict | None = Depends(get_optional_user)
+    request: Request,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    user: AuthenticatedUser | None = Depends(get_optional_user),
 ) -> None:
     if hasattr(request.app.state, "initialization_complete"):
         await request.app.state.initialization_complete.wait()

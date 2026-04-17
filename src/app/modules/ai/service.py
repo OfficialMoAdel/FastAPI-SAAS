@@ -478,22 +478,39 @@ class ChatCompletionService:
             if full_response:
 
                 async def _save_response(resp_content: str, resp_tokens: int | None) -> None:
-                    try:
-                        async with local_session() as fresh_db:
-                            message_service = ChatMessageService(fresh_db)
-                            await message_service.add_message(
-                                session_id=session_id,
-                                data=ChatMessageCreate(role="assistant", content=resp_content),
-                                token_count=resp_tokens,
-                            )
-                            await crud_chat_sessions.update(
-                                db=fresh_db,
-                                object={"updated_at": datetime.now(UTC)},
-                                id=session_id,
-                            )
-                            await fresh_db.commit()
-                    except Exception as e:
-                        logger.error("Failed to save AI chat response in background task", error=e)
+                    import asyncio
+
+                    max_retries = 3
+                    for attempt in range(max_retries):
+                        try:
+                            async with local_session() as fresh_db:
+                                message_service = ChatMessageService(fresh_db)
+                                await message_service.add_message(
+                                    session_id=session_id,
+                                    data=ChatMessageCreate(role="assistant", content=resp_content),
+                                    token_count=resp_tokens,
+                                )
+                                await crud_chat_sessions.update(
+                                    db=fresh_db,
+                                    object={"updated_at": datetime.now(UTC)},
+                                    id=session_id,
+                                )
+                                await fresh_db.commit()
+                            break
+                        except Exception as e:
+                            if attempt < max_retries - 1:
+                                logger.warning(
+                                    "Failed to save AI chat response in background task, retrying",
+                                    attempt=attempt + 1,
+                                    max_retries=max_retries,
+                                    error=str(e)
+                                )
+                                await asyncio.sleep(2 * (attempt + 1))
+                            else:
+                                logger.error(
+                                    "Failed to save AI chat response in background task after all retries",
+                                    error=str(e)
+                                )
 
                 # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream
                 from src.app.core.utils.background_task import create_safe_task

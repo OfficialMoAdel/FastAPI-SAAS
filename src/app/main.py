@@ -2,7 +2,6 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from datetime import timedelta
 from typing import Any
 
 from fastapi import FastAPI, status
@@ -29,9 +28,6 @@ from src.app.middleware.tenant import TenantMiddleware
 admin: Any = create_admin_interface()
 logger = get_logger(__name__)
 
-CACHE_WARMING_ENABLED = True
-CACHE_WARMING_DELAY = timedelta(seconds=2)
-
 
 async def _warm_token_blacklist_cache() -> None:
     """Warm the token blacklist Redis cache from database on startup."""
@@ -57,7 +53,7 @@ async def _warm_application_caches() -> None:
     - Tiers
     - SSO settings
     """
-    if not CACHE_WARMING_ENABLED:
+    if not settings.app.CACHE_WARMING_ENABLED:
         logger.info("Cache warming is disabled")
         return
 
@@ -103,7 +99,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
             async_engine = get_async_engine()
             setup_pool_metrics(async_engine)
         except Exception as e:
-            logger.warning("Pool metrics setup failed: %s", e)
+            logger.warning("Pool metrics setup failed", error=str(e))
 
         from src.app.core.events import event_bus
         from src.app.core.utils.cache import client as redis_client
@@ -151,14 +147,14 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Starting application cache warming...")
         await _warm_application_caches()
 
-        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION and CACHE_WARMING_DELAY.total_seconds() > 0:
+        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION and settings.app.CACHE_WARMING_DELAY_SECONDS > 0:
             logger.info(
                 "Cache warming completed, sleeping before ready in production",
-                total_seconds=CACHE_WARMING_DELAY.total_seconds(),
+                total_seconds=settings.app.CACHE_WARMING_DELAY_SECONDS,
             )
             import asyncio
 
-            await asyncio.sleep(CACHE_WARMING_DELAY.total_seconds())
+            await asyncio.sleep(settings.app.CACHE_WARMING_DELAY_SECONDS)
 
         # Initialize admin interface if it exists
         if admin:

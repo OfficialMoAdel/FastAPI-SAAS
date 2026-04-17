@@ -18,8 +18,6 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security import (
-    ACCESS_TOKEN_EXPIRE_MINUTES,
-    MFA_PENDING_EXPIRY_SECONDS,
     MFAPendingTokenManager,
     TokenType,
     blacklist_token,
@@ -225,12 +223,7 @@ return new_attempts
             user_id = db_user.get("id") if db_user else None
 
             await self._publish_login_audit(
-                request,
-                username,
-                False,
-                user_id=user_id,
-                tenant_id=tenant_id,
-                reason="account_locked"
+                request, username, False, user_id=user_id, tenant_id=tenant_id, reason="account_locked"
             )
             raise UnauthorizedException("Wrong username, email or password.")
 
@@ -276,7 +269,7 @@ return new_attempts
             return {
                 "mfa_required": "true",
                 "mfa_token": mfa_token,
-                "expires_in": str(MFA_PENDING_EXPIRY_SECONDS),
+                "expires_in": str(settings.MFA_PENDING_EXPIRY_SECONDS),
                 "message": "MFA verification required",
             }
 
@@ -294,7 +287,7 @@ return new_attempts
             "token_version": user.get("token_version", 0),
         }
 
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         # Generate both tokens in parallel using asyncio.gather for better performance
         access_token, refresh_token = await asyncio.gather(
             create_access_token(data=token_data, expires_delta=access_token_expires),
@@ -410,7 +403,7 @@ return new_attempts
             "token_version": db_user.get("token_version", 0) if db_user else 0,
         }
 
-        access_token_expires = timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
         # Blacklist the used refresh token (Rotation) BEFORE new tokens are successfully generated
         await blacklist_token(token=refresh_token, db=db)
@@ -453,10 +446,9 @@ return new_attempts
 
             client_ip = request.client.host if request and request.client else "Unknown"
 
-            device_info_str = json.dumps({
-                "user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown",
-                "ip": client_ip
-            })
+            device_info_str = json.dumps(
+                {"user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown", "ip": client_ip}
+            )
 
             await global_session_manager.register_session(
                 user_id=db_user["id"],
@@ -697,6 +689,16 @@ return new_attempts
         Should be called AFTER DB commit to ensure next reads get the new version.
         """
         user_id = user.get("id")
+
+        # Invalidate all active Redis sessions
+        try:
+            from src.app.core.security.session_manager import session_manager as global_session_manager
+
+            if user_id is not None:
+                await global_session_manager.invalidate_all_sessions(str(user_id))
+        except Exception as e:
+            logger.error("failed_to_invalidate_redis_sessions", user_id=user_id, error=str(e))
+
         try:
             from src.app.core.utils.cache import client as redis_client
 

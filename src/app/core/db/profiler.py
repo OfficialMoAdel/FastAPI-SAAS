@@ -26,7 +26,7 @@ logger = get_logger(__name__)
 
 # Track repeated queries for N+1 detection (global across all requests)
 _query_tracker: dict[str, dict[str, Any]] = {}
-_query_tracker_lock = threading.Lock()
+_query_tracker_lock = threading.RLock()
 
 # Per-request query tracking using ContextVar for async safety
 _request_queries: ContextVar[dict[str, int] | None] = ContextVar("request_queries", default=None)
@@ -151,38 +151,39 @@ def _track_query(
     """
     now = time.perf_counter()
 
-    # BUG FIX: Opportunistically evict stale entries every ~1000 queries.
-    # Prevents unbounded memory growth in long-running processes where
-    # reset_query_tracker() was never called from the request lifecycle.
-    if len(_query_tracker) % 1000 == 0 and _query_tracker:
-        _evict_stale_tracker_entries()
+    with _query_tracker_lock:
+        # BUG FIX: Opportunistically evict stale entries every ~1000 queries.
+        # Prevents unbounded memory growth in long-running processes where
+        # reset_query_tracker() was never called from the request lifecycle.
+        if len(_query_tracker) % 1000 == 0 and _query_tracker:
+            _evict_stale_tracker_entries()
 
-    if normalized_statement in _query_tracker:
-        tracker = _query_tracker[normalized_statement]
-        tracker["count"] += 1
-        tracker["last_seen"] = now
+        if normalized_statement in _query_tracker:
+            tracker = _query_tracker[normalized_statement]
+            tracker["count"] += 1
+            tracker["last_seen"] = now
 
-        # Check if we've hit the N+1 threshold
-        if tracker["count"] == n_plus_1_threshold:
-            logger.warning(
-                "N+1 QUERY DETECTED: Same query pattern executed %d times.\n  Pattern: %s\n  First seen: %s",
-                tracker["count"],
-                normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
-                tracker["first_seen_at"],
-            )
-        elif tracker["count"] > n_plus_1_threshold and detailed_logs:
-            logger.info(
-                "N+1 CONTINUED: Same query pattern executed %d times total.\n  Pattern: %s",
-                tracker["count"],
-                normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
-            )
-    else:
-        # First time seeing this query pattern
-        _query_tracker[normalized_statement] = {
-            "count": 1,
-            "first_seen_at": datetime.now(UTC).isoformat(),
-            "last_seen": now,
-        }
+            # Check if we've hit the N+1 threshold
+            if tracker["count"] == n_plus_1_threshold:
+                logger.warning(
+                    "N+1 QUERY DETECTED: Same query pattern executed %d times.\n  Pattern: %s\n  First seen: %s",
+                    tracker["count"],
+                    normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
+                    tracker["first_seen_at"],
+                )
+            elif tracker["count"] > n_plus_1_threshold and detailed_logs:
+                logger.info(
+                    "N+1 CONTINUED: Same query pattern executed %d times total.\n  Pattern: %s",
+                    tracker["count"],
+                    normalized_statement[:200] + ("..." if len(normalized_statement) > 200 else ""),
+                )
+        else:
+            # First time seeing this query pattern
+            _query_tracker[normalized_statement] = {
+                "count": 1,
+                "first_seen_at": datetime.now(UTC).isoformat(),
+                "last_seen": now,
+            }
 
 
 def reset_query_tracker() -> None:

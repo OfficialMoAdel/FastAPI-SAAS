@@ -303,6 +303,7 @@ class TestAuthServiceTokenRefresh:
 
             mock_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
+            mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
@@ -631,6 +632,7 @@ class TestAuthServiceSecurityBugFixes:
 
             mock_settings.ENVIRONMENT = EnvironmentOption.LOCAL
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
+            mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
             mock_create_refresh.return_value = "new_refresh_token"

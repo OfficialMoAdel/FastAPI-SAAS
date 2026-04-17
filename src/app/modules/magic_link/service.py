@@ -14,7 +14,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security import (
-    ACCESS_TOKEN_EXPIRE_MINUTES,
     create_access_token,
     create_refresh_token,
 )
@@ -213,7 +212,7 @@ class MagicLinkService:
             logger.error("Failed to mark magic link used in DB", exc_info=True)
 
         if mfa_enabled:
-            from src.app.core.security import MFA_PENDING_EXPIRY_SECONDS, MFAPendingTokenManager
+            from src.app.core.security import MFAPendingTokenManager
 
             # Generate MFA pending token
             mfa_token_manager = MFAPendingTokenManager(self.redis)
@@ -233,7 +232,7 @@ class MagicLinkService:
             return LoginMFAResponse(
                 mfa_required="true",
                 mfa_token=mfa_token,
-                expires_in=str(MFA_PENDING_EXPIRY_SECONDS),
+                expires_in=str(settings.MFA_PENDING_EXPIRY_SECONDS),
                 message="MFA verification required",
             )
 
@@ -392,7 +391,7 @@ class MagicLinkService:
             "access_token": access_token,
             "refresh_token": refresh_token,
             "token_type": "bearer",
-            "expires_in": ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
         }
 
 

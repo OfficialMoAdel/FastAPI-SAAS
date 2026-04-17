@@ -265,13 +265,15 @@ class TestUserServiceGet:
         with (
             patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
         ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
+            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
 
             result = await user_service.get_by_username("testuser")
 
-            assert result.username == "testuser"
+            assert result["username"] == "testuser"
             mock_get.assert_called_once()
 
     @pytest.mark.asyncio
@@ -290,12 +292,16 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_success(self, user_service, mock_existing_user):
         """Test get user by ID."""
-        with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
+        with (
+            patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
+        ):
             mock_get.return_value = mock_existing_user
+            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
 
             result = await user_service.get(1)
 
-            assert result.id == 1
+            assert result["id"] == 1
 
     @pytest.mark.asyncio
     async def test_get_by_email_success(self, user_service, mock_existing_user):
@@ -303,13 +309,15 @@ class TestUserServiceGet:
         with (
             patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
+            patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
         ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
+            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
 
             result = await user_service.get_by_email("test@example.com")
 
-            assert result.email == "test@example.com"
+            assert result["email"] == "test@example.com"
 
 
 class TestUserServiceUpdate:

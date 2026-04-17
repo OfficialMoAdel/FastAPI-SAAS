@@ -49,9 +49,9 @@ def receive_before_update(mapper: Any, connection: Any, target: Any) -> None:
         target.updated_at = datetime.now(UTC)
 
 
-DATABASE_URI = settings.POSTGRES_URI
-DATABASE_PREFIX = settings.POSTGRES_ASYNC_PREFIX
-DATABASE_URL = f"{DATABASE_PREFIX}{DATABASE_URI}"
+def get_database_url() -> str:
+    """Get the database URL dynamically to support test patching."""
+    return f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
 
 # Internal state for lazy initialization
 _async_engine = None
@@ -70,14 +70,14 @@ def _create_engine() -> AsyncEngine:
 
     if _is_testing:
         engine = create_async_engine(
-            DATABASE_URL,
+            get_database_url(),
             echo=False,
             future=True,
             poolclass=NullPool,
         )
     else:
         engine = create_async_engine(
-            DATABASE_URL,
+            get_database_url(),
             echo=False,
             future=True,
             pool_size=settings.DB_POOL_SIZE,

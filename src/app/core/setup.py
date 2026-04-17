@@ -145,6 +145,9 @@ def lifespan_factory(
             yield
 
         finally:
+            if hasattr(app.state, "initialization_complete"):
+                delattr(app.state, "initialization_complete")
+
             # Dispose database engine to release connection pool
             import src.app.core.db.database as db_module
 

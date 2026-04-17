@@ -16,7 +16,7 @@ Performance Optimization (P2-1):
 """
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from structlog import get_logger
 
@@ -167,23 +167,26 @@ class SessionManager:
 
         invalidated_sessions: list[dict[str, Any]] = []
         try:
-            result = await self._redis_client.eval(
-                lua_script,
-                2,
-                zset_key,
-                hash_key,
-                self._max_sessions,
-                session_id,
-                json_dumps(new_session, as_str=True),
-                timestamp,
-                self.SESSION_TTL_SECONDS,
-                settings.SESSION_MAX_EVICTION_BATCH_SIZE,
+            result = cast(
+                Any,
+                await self._redis_client.eval(
+                    lua_script,
+                    2,
+                    zset_key,
+                    hash_key,
+                    self._max_sessions,
+                    session_id,
+                    json_dumps(new_session, as_str=True),
+                    timestamp,
+                    self.SESSION_TTL_SECONDS,
+                    settings.SESSION_MAX_EVICTION_BATCH_SIZE,
+                )
             )
 
-            if result and result[0] == b"already_exists":
+            if result and result[0] in (b"already_exists", "already_exists"):
                 return {"registered": True, "already_exists": True}
 
-            if result and result[0] == b"success":
+            if result and result[0] in (b"success", "success"):
                 final_count = int(result[1])
                 if len(result) > 2:
                     # Sessions were evicted
@@ -213,161 +216,6 @@ class SessionManager:
             "invalidated_sessions": invalidated_sessions,
         }
 
-    async def _evict_sessions_pipelined(
-        self,
-        hash_key: str,
-        zset_key: str,
-        sessions_to_remove: int,
-        new_session_id: str,
-        new_session_data: dict[str, Any],
-        timestamp: float,
-        invalidated_sessions: list[dict[str, Any]],
-        user_id: int | str,
-    ) -> int:
-        """Evict oldest sessions using optimized Redis pipeline.
-
-        Uses ZRANGE (non-destructive) + pipeline for batch operations.
-        Reduces roundtrips from O(n) to O(1).
-
-        Args:
-            hash_key: Redis hash key for session data
-            zset_key: Redis sorted set key for ordering
-            sessions_to_remove: Number of sessions to evict
-            new_session_id: ID of new session to add
-            new_session_data: Data for new session
-            timestamp: Timestamp for new session ordering
-            invalidated_sessions: List to append invalidated session data
-            user_id: User ID for logging
-
-        Returns:
-            Number of Redis roundtrips used (for metrics)
-        """
-        roundtrips = 0
-
-        # M9: Atomic Lua script for eviction and addition
-        lua_script = """
-        local zset_key = KEYS[1]
-        local hash_key = KEYS[2]
-        local sessions_to_remove = tonumber(ARGV[1])
-        local new_session_id = ARGV[2]
-        local new_session_data = ARGV[3]
-        local timestamp = ARGV[4]
-        local ttl = tonumber(ARGV[5])
-
-        local evicted_data = {}
-
-        if sessions_to_remove > 0 then
-            local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
-            for i, sid in ipairs(session_ids) do
-                local data = redis.call('HGET', hash_key, sid)
-                if data then
-                    table.insert(evicted_data, data)
-                end
-                redis.call('HDEL', hash_key, sid)
-                redis.call('ZREM', zset_key, sid)
-            end
-        end
-
-        redis.call('ZADD', zset_key, timestamp, new_session_id)
-        redis.call('HSET', hash_key, new_session_id, new_session_data)
-        redis.call('EXPIRE', zset_key, ttl)
-        redis.call('EXPIRE', hash_key, ttl)
-
-        return evicted_data
-        """
-
-        try:
-            evicted = await self._redis_client.eval(
-                lua_script,
-                2,
-                zset_key,
-                hash_key,
-                sessions_to_remove,
-                new_session_id,
-                json_dumps(new_session_data, as_str=True),
-                timestamp,
-                self.SESSION_TTL_SECONDS,
-            )
-            roundtrips += 1
-
-            if evicted:
-                for data in evicted:
-                    try:
-                        if isinstance(data, bytes):
-                            data = data.decode('utf-8')
-                        invalidated_sessions.append(json_loads(data))
-                    except Exception as e:
-                        logger.error(
-                            "Failed to parse session data",
-                            user_id=user_id,
-                            error=str(e),
-                        )
-
-            return roundtrips
-
-        except Exception as e:
-            logger.error("Failed to execute lua script for session eviction", error=str(e))
-            raise
-
-    async def _evict_sessions_legacy(
-        self,
-        hash_key: str,
-        zset_key: str,
-        sessions_to_remove: int,
-        new_session_id: str,
-        new_session_data: dict[str, Any],
-        timestamp: float,
-        invalidated_sessions: list[dict[str, Any]],
-        user_id: int | str,
-    ) -> int:
-        """Evict oldest sessions using legacy ZPOPMIN loop.
-
-        Original implementation kept for fallback and comparison.
-
-        Returns:
-            Number of Redis roundtrips used (for metrics)
-        """
-        roundtrips = 0
-
-        async with self._redis_client.pipeline() as pipe:
-            for _ in range(sessions_to_remove):
-                # ZPOPMIN returns [(member, score)] - O(log n)
-                oldest = await self._redis_client.zpopmin(zset_key, count=1)
-                roundtrips += 1
-
-                if oldest:
-                    oldest_session_id = oldest[0][0]
-                    if isinstance(oldest_session_id, bytes):
-                        oldest_session_id = oldest_session_id.decode("utf-8")
-
-                    # Get session data before deletion for return value
-                    session_data = await self._redis_client.hget(hash_key, oldest_session_id)
-                    roundtrips += 1
-
-                    if session_data:
-                        invalidated_sessions.append(json_loads(session_data))
-
-                    # Delete from hash - O(1)
-                    pipe.hdel(hash_key, oldest_session_id)
-
-                    logger.info(
-                        "Session invalidated due to limit",
-                        user_id=user_id,
-                        invalidated_session=oldest_session_id,
-                    )
-
-            # Add new session to both ZSET and Hash atomically
-            pipe.zadd(zset_key, {new_session_id: timestamp})
-            pipe.hset(hash_key, new_session_id, json_dumps(new_session_data, as_str=True))
-
-            # Set expiry on both keys
-            pipe.expire(zset_key, self.SESSION_TTL_SECONDS)
-            pipe.expire(hash_key, self.SESSION_TTL_SECONDS)
-
-            await pipe.execute()
-        roundtrips += 1
-
-        return roundtrips
 
     async def is_session_valid(
         self,

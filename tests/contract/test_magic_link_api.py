@@ -15,35 +15,35 @@ from fastapi import status
 class TestMagicLinkSendEndpoint:
     """Contract tests for POST /auth/magic-link/send endpoint."""
 
-    def test_send_magic_link_endpoint_exists(self, client, auth_headers):
+    async def test_send_magic_link_endpoint_exists(self, async_client):
         """Verify endpoint exists and accepts POST requests."""
-        response = client.post(
+        response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={"email": "test@example.com"},
-            headers=auth_headers,
+            
         )
         # Should not return 404 or 405
         assert response.status_code not in [404, 405]
 
-    def test_send_magic_link_requires_email(self, client, auth_headers):
+    async def test_send_magic_link_requires_email(self, async_client):
         """Verify email is required in request body."""
-        response = client.post(
+        response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={},
-            headers=auth_headers,
+            
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    def test_send_magic_link_validates_email_format(self, client, auth_headers):
+    async def test_send_magic_link_validates_email_format(self, async_client):
         """Verify email format is validated."""
-        response = client.post(
+        response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={"email": "not-an-email"},
-            headers=auth_headers,
+            
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    def test_send_magic_link_returns_200_on_success(self, client, auth_headers):
+    async def test_send_magic_link_returns_200_on_success(self, async_client):
         """Verify successful request returns 200."""
         with patch(
             "src.app.modules.magic_link.service.MagicLinkService.send_magic_link",
@@ -54,15 +54,15 @@ class TestMagicLinkSendEndpoint:
                 may_be_delayed=False,
             )
 
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/send",
                 json={"email": "user@example.com"},
-                headers=auth_headers,
+                
             )
 
         assert response.status_code == status.HTTP_200_OK
 
-    def test_send_magic_link_response_format(self, client, auth_headers):
+    async def test_send_magic_link_response_format(self, async_client):
         """Verify response matches MagicLinkSendResponse schema."""
         with patch(
             "src.app.modules.magic_link.service.MagicLinkService.send_magic_link",
@@ -73,17 +73,17 @@ class TestMagicLinkSendEndpoint:
                 may_be_delayed=False,
             )
 
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/send",
                 json={"email": "user@example.com"},
-                headers=auth_headers,
+                
             )
 
         data = response.json()
         assert "message" in data
         assert "may_be_delayed" in data
 
-    def test_send_magic_link_rate_limited(self, client, auth_headers):
+    async def test_send_magic_link_rate_limited(self, async_client):
         """Verify rate limiting returns 429 (3/min per email per spec)."""
         # This test will be properly implemented when rate limiting is added
         # For now, we just verify the endpoint exists
@@ -94,26 +94,26 @@ class TestMagicLinkSendEndpoint:
 class TestMagicLinkVerifyEndpoint:
     """Contract tests for POST /auth/magic-link/verify endpoint."""
 
-    def test_verify_magic_link_endpoint_exists(self, client, auth_headers):
+    async def test_verify_magic_link_endpoint_exists(self, async_client):
         """Verify endpoint exists and accepts POST requests."""
-        response = client.post(
+        response = await async_client.post(
             "/api/v1/auth/magic-link/verify",
             json={"token": "a" * 43},
-            headers=auth_headers,
+            
         )
         # Should not return 404 or 405
         assert response.status_code not in [404, 405]
 
-    def test_verify_magic_link_requires_token(self, client, auth_headers):
+    async def test_verify_magic_link_requires_token(self, async_client):
         """Verify token is required in request body."""
-        response = client.post(
+        response = await async_client.post(
             "/api/v1/auth/magic-link/verify",
             json={},
-            headers=auth_headers,
+            
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
-    def test_verify_magic_link_returns_auth_tokens(self, client, auth_headers):
+    async def test_verify_magic_link_returns_auth_tokens(self, async_client):
         """Verify successful verification returns AuthTokenResponse."""
         with patch(
             "src.app.modules.magic_link.service.MagicLinkService.verify_magic_link",
@@ -126,10 +126,10 @@ class TestMagicLinkVerifyEndpoint:
                 expires_in=3600,
             )
 
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "a" * 43},
-                headers=auth_headers,
+                
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -139,7 +139,7 @@ class TestMagicLinkVerifyEndpoint:
         # refresh_token is set as HttpOnly cookie, not in JSON body
         # expires_in is not part of LoginTokenResponse schema
 
-    def test_verify_magic_link_invalid_token_returns_400(self, client, auth_headers):
+    async def test_verify_magic_link_invalid_token_returns_400(self, async_client):
         """Verify invalid token returns 400 Bad Request."""
         from src.app.modules.magic_link.exceptions import InvalidMagicLinkError
 
@@ -148,15 +148,15 @@ class TestMagicLinkVerifyEndpoint:
             new_callable=AsyncMock,
             side_effect=InvalidMagicLinkError("Invalid or expired token"),
         ):
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "invalid_token_" + "a" * 30},
-                headers=auth_headers,
+                
             )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
 
-    def test_verify_magic_link_used_token_returns_410(self, client, auth_headers):
+    async def test_verify_magic_link_used_token_returns_410(self, async_client):
         """Verify already-used token returns 410 Gone."""
         from src.app.modules.magic_link.exceptions import MagicLinkAlreadyUsedError
 
@@ -165,10 +165,10 @@ class TestMagicLinkVerifyEndpoint:
             new_callable=AsyncMock,
             side_effect=MagicLinkAlreadyUsedError("Token already used"),
         ):
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "used_token_" + "a" * 33},
-                headers=auth_headers,
+                
             )
 
         assert response.status_code == status.HTTP_410_GONE
@@ -177,7 +177,7 @@ class TestMagicLinkVerifyEndpoint:
 class TestMagicLinkErrorResponses:
     """Test error response format matches ErrorResponse schema."""
 
-    def test_error_response_format(self, client, auth_headers):
+    async def test_error_response_format(self, async_client):
         """Verify error responses match ErrorResponse schema."""
         from src.app.modules.magic_link.exceptions import InvalidMagicLinkError
 
@@ -186,10 +186,10 @@ class TestMagicLinkErrorResponses:
             new_callable=AsyncMock,
             side_effect=InvalidMagicLinkError("Invalid token"),
         ):
-            response = client.post(
+            response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "bad_token_" + "a" * 34},
-                headers=auth_headers,
+                
             )
 
         data = response.json()

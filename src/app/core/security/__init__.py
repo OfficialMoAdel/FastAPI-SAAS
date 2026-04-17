@@ -30,15 +30,6 @@ from src.app.core.security.token_blacklist_cache import (
 )
 from src.app.core.security.tokens import TokenGenerator
 
-SECRET_KEY: SecretStr = settings.SECRET_KEY
-ALGORITHM = settings.ALGORITHM
-ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
-REFRESH_TOKEN_EXPIRE_DAYS = settings.REFRESH_TOKEN_EXPIRE_DAYS
-
-# JWT Audience for token validation
-# SECURITY FIX: Made configurable via settings instead of hardcoded
-JWT_AUDIENCE: str = getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api")
-
 _jwt_logger = get_logger(__name__)
 
 # Lua script for atomic GETDEL (get and delete) to prevent race conditions.
@@ -64,21 +55,25 @@ atexit.register(_bcrypt_executor.shutdown, wait=True)
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
     """Get the key for signing tokens (private key for RS256, secret for HS256)."""
-    if ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
+    if settings.ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
         return str(settings.JWT_PRIVATE_KEY.get_secret_value())
-    return str(SECRET_KEY.get_secret_value())
+    return str(settings.SECRET_KEY.get_secret_value())
 
 
 @lru_cache(maxsize=1)
 def _get_verification_key() -> str:
     """Get the key for verifying tokens (public key for RS256, secret for HS256)."""
-    if ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
+    if settings.ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
         return str(settings.JWT_PUBLIC_KEY)
-    return str(SECRET_KEY.get_secret_value())
+    return str(settings.SECRET_KEY.get_secret_value())
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
+
+# Export settings constants for module-level access
+ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
+MFA_PENDING_EXPIRY_SECONDS = settings.auth.MFA_PENDING_EXPIRY_SECONDS
 
 
 class TokenType(str, Enum):
@@ -133,7 +128,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
+        expire = datetime.now(UTC) + timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
     # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
     # SECURITY FIX: Include token_version for session invalidation on password change
@@ -142,7 +137,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         {
             "exp": expire,
             "token_type": TokenType.ACCESS,
-            "aud": JWT_AUDIENCE,
+            "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
@@ -151,10 +146,10 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
 
     # HS256 is fast (~10-50us) — to_thread overhead (~50-200us) exceeds the operation itself.
     # Only use to_thread for CPU-heavy RS256 signing.
-    if ALGORITHM == "RS256":
-        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    if settings.ALGORITHM == "RS256":
+        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
     else:
-        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -170,7 +165,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     if expires_delta:
         expire = datetime.now(UTC) + expires_delta
     else:
-        expire = datetime.now(UTC) + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS)
+        expire = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
     # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
     # SECURITY FIX: Add absolute_exp for maximum session lifetime enforcement
@@ -180,7 +175,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         {
             "exp": expire,
             "token_type": TokenType.REFRESH,
-            "aud": JWT_AUDIENCE,
+            "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
@@ -188,10 +183,10 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         }
     )
 
-    if ALGORITHM == "RS256":
-        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), ALGORITHM)
+    if settings.ALGORITHM == "RS256":
+        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
     else:
-        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), ALGORITHM)
+        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -219,16 +214,21 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     # SECURITY FIX: Decode token FIRST (local operation, no race condition)
     # This eliminates the race condition window between blacklist check and decode
     try:
-        if ALGORITHM == "RS256":
+        if settings.ALGORITHM == "RS256":
             payload = await asyncio.to_thread(
                 jwt.decode,
                 token,
                 _get_verification_key(),
-                algorithms=[ALGORITHM],
-                audience=JWT_AUDIENCE,
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             )
         else:
-            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            payload = jwt.decode(
+                token,
+                _get_verification_key(),
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            )
     except JWTError:
         return None
 
@@ -352,16 +352,21 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
 
     for token in [access_token, refresh_token]:
         try:
-            if ALGORITHM == "RS256":
+            if settings.ALGORITHM == "RS256":
                 payload = await asyncio.to_thread(
                     jwt.decode,
                     token,
                     _get_verification_key(),
-                    algorithms=[ALGORITHM],
-                    audience=JWT_AUDIENCE,
+                    algorithms=[settings.ALGORITHM],
+                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
                 )
             else:
-                payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+                payload = jwt.decode(
+                    token,
+                    _get_verification_key(),
+                    algorithms=[settings.ALGORITHM],
+                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+                )
             exp_timestamp = payload.get("exp")
             jti = payload.get("jti")
             tenant_id = payload.get("tenant_id")
@@ -380,6 +385,7 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                             # Fallback for system tokens or tokens without tenant_id
                             # This should be rare if all tokens are correctly issued
                             import uuid
+
                             tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
                     # Store full token in DB for backward compatibility
@@ -417,16 +423,21 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     Also stores the JTI-prefixed key in DB so the DB fallback can find it during Redis outages.
     """
     try:
-        if ALGORITHM == "RS256":
+        if settings.ALGORITHM == "RS256":
             payload = await asyncio.to_thread(
                 jwt.decode,
                 token,
                 _get_verification_key(),
-                algorithms=[ALGORITHM],
-                audience=JWT_AUDIENCE,
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             )
         else:
-            payload = jwt.decode(token, _get_verification_key(), algorithms=[ALGORITHM], audience=JWT_AUDIENCE)
+            payload = jwt.decode(
+                token,
+                _get_verification_key(),
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            )
         exp_timestamp = payload.get("exp")
         jti = payload.get("jti")
         tenant_id = payload.get("tenant_id")
@@ -444,6 +455,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
                     else:
                         # Fallback for system tokens or tokens without tenant_id
                         import uuid
+
                         tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
                 await crud_token_blacklist.create(
@@ -466,7 +478,6 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
 
 
 # MFA pending token constants (configured via environment)
-MFA_PENDING_EXPIRY_SECONDS = settings.MFA_PENDING_EXPIRY_SECONDS
 
 
 class MFAPendingTokenManager:
@@ -511,11 +522,12 @@ class MFAPendingTokenManager:
 
         # Store in Redis with expiration
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode()).hexdigest()
         key = f"mfa_pending:{hashed_token}"
         await self._redis.setex(
             key,
-            MFA_PENDING_EXPIRY_SECONDS,
+            settings.MFA_PENDING_EXPIRY_SECONDS,
             json_dumps(token_data, as_str=True),
         )
 
@@ -531,6 +543,7 @@ class MFAPendingTokenManager:
             Token metadata dict if valid, None if expired/used/invalid.
         """
         import hashlib
+
         hashed_token = hashlib.sha256(token.encode()).hexdigest()
         key = f"mfa_pending:{hashed_token}"
 
