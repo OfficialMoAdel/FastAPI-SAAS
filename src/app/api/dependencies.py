@@ -337,7 +337,11 @@ async def get_current_superuser(
     return current_user
 
 
-def get_current_tenant() -> Any:
+from src.app.core.tenancy.context import TenantContext
+
+
+def get_current_tenant() -> TenantContext:
+
     """Get the current tenant from context.
 
     This dependency retrieves the tenant that was set by TenantMiddleware.
@@ -345,7 +349,7 @@ def get_current_tenant() -> Any:
 
     Returns
     -------
-        The current tenant.
+        The current tenant context.
 
     Raises
     ------

@@ -238,12 +238,19 @@ class AISettingsService(BaseService[AISettings]):
         super().__init__(AISettings, db)
 
     async def get_settings(self, user_id: int) -> dict[str, Any] | None:
-        """Get AI settings for a user."""
-        return await crud_ai_settings.get(db=self.db, user_id=user_id)
+        """Get AI settings for a user within current tenant."""
+        tenant = get_tenant_context()
+        tenant_id = tenant.id if tenant else None
+        return await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
 
     async def get_or_create_settings(self, user_id: int) -> dict[str, Any]:
         """Get AI settings for a user, creating defaults if needed."""
-        settings = await crud_ai_settings.get(db=self.db, user_id=user_id)
+        tenant = get_tenant_context()
+        if tenant is None:
+             raise ModelNotFoundError("Tenant", "current")
+        tenant_id = tenant.id
+
+        settings = await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
         if settings is None:
             # Create default settings - convert to dict and add user_id
             default_settings = AISettingsUpdate(
@@ -254,14 +261,21 @@ class AISettingsService(BaseService[AISettings]):
             )
             create_data = default_settings.model_dump()
             create_data["user_id"] = user_id
+            create_data["tenant_id"] = tenant_id
             result = await crud_ai_settings.create(db=self.db, object=create_data)  # type: ignore
             settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             settings["user_id"] = user_id
+            settings["tenant_id"] = tenant_id
         return settings
 
     async def update_settings(self, user_id: int, data: AISettingsUpdate) -> dict[str, Any]:
         """Update AI settings for a user."""
-        settings = await crud_ai_settings.get(db=self.db, user_id=user_id)
+        tenant = get_tenant_context()
+        if tenant is None:
+             raise ModelNotFoundError("Tenant", "current")
+        tenant_id = tenant.id
+
+        settings = await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
@@ -274,10 +288,12 @@ class AISettingsService(BaseService[AISettings]):
                 "max_tokens": update_data.get("max_tokens", 2048),
                 "system_prompt": update_data.get("system_prompt"),
                 "user_id": user_id,
+                "tenant_id": tenant_id,
             }
             result = await crud_ai_settings.create(db=self.db, object=create_data_dict)  # type: ignore
             result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             result_dict["user_id"] = user_id
+            result_dict["tenant_id"] = tenant_id
             return result_dict
         else:
             await crud_ai_settings.update(db=self.db, object=update_data, id=settings["id"])

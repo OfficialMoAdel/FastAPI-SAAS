@@ -61,6 +61,9 @@ class AIChatMessage(Base):
     __tablename__ = "ai_chat_messages"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     session_id: Mapped[int] = mapped_column(
         ForeignKey("ai_chat_sessions.id", ondelete="CASCADE"),
         index=True,
@@ -87,13 +90,16 @@ class AIChatMessage(Base):
 class AISettings(Base):
     """User-level AI preferences.
 
-    One record per user. Stores preferred model, temperature, max tokens,
+    One record per user per tenant. Stores preferred model, temperature, max tokens,
     and custom system prompt.
     """
 
     __tablename__ = "ai_settings"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     user_id: Mapped[int] = mapped_column(
         ForeignKey("user.id", ondelete="CASCADE"), index=True, unique=True, nullable=False
     )

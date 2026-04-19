@@ -29,6 +29,61 @@ from src.app.core.logger import get_logger
 from src.app.core.utils import cache
 
 
+class TokenCacheCircuitBreaker:
+    """Circuit breaker for Redis-based token blacklist operations.
+
+    Prevents total authentication outages during infrastructure disruptions
+    by temporarily failing open (bypassing Redis) after repeated failures,
+    even if TOKEN_CACHE_FAILURE_MODE is set to 'fail_closed'.
+    """
+
+    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 30):
+        self.failure_count = 0
+        self.last_failure_time = 0.0
+        self.failure_threshold = failure_threshold
+        self.recovery_timeout = recovery_timeout
+        self.is_open = False
+
+    def record_failure(self, error: Exception) -> None:
+        """Record a Redis operation failure."""
+        self.failure_count += 1
+        self.last_failure_time = time.time()
+        if self.failure_count >= self.failure_threshold:
+            if not self.is_open:
+                import structlog
+
+                structlog.get_logger("app.core.security").error(
+                    "auth_cache_circuit_opened",
+                    error=str(error),
+                    failure_count=self.failure_count,
+                    recovery_timeout=self.recovery_timeout,
+                )
+            self.is_open = True
+
+    def record_success(self) -> None:
+        """Record a successful Redis operation, closing the circuit."""
+        if self.is_open:
+            import structlog
+
+            structlog.get_logger("app.core.security").info("auth_cache_circuit_closed_recovered")
+        self.failure_count = 0
+        self.is_open = False
+
+    def can_attempt(self) -> bool:
+        """Check if a Redis operation should be attempted."""
+        if not self.is_open:
+            return True
+
+        # Check if recovery timeout has passed (half-open state)
+        if time.time() - self.last_failure_time > self.recovery_timeout:
+            return True
+
+        return False
+
+
+_circuit_breaker = TokenCacheCircuitBreaker()
+
+
 def _get_redis_client() -> Redis | None:
     """Get Redis client dynamically to support test fixtures that set cache.client."""
     return cache.client
@@ -216,6 +271,10 @@ async def is_token_blacklisted(token: str) -> bool | None:
     """
     from src.app.core.config import settings
 
+    # Circuit Breaker: Fail open (bypass Redis) if circuit is open to prevent total outage
+    if not _circuit_breaker.can_attempt():
+        return None  # Fail open - fall back to DB check
+
     redis_client = _get_redis_client()
     if redis_client is None:
         from src.app.core.monitoring.r1_unified_metrics import record_fail_open
@@ -255,6 +314,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                 str(now),
                 str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
             )
+            _circuit_breaker.record_success()
             return bool(int(result))
         except Exception as script_error:
             # If script not found (e.g., Redis restart), reload and retry
@@ -275,6 +335,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             str(now),
                             str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
                         )
+                        _circuit_breaker.record_success()
                         return bool(int(retry_result))
 
                     # We need to reload - invalidate old SHA first
@@ -290,12 +351,14 @@ async def is_token_blacklisted(token: str) -> bool | None:
                             str(now),
                             str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
                         )
+                        _circuit_breaker.record_success()
                         return bool(int(retry_result))
                 finally:
                     _release_script_lock(should_release)
             raise  # Re-raise if not a NOSCRIPT error
 
     except Exception as e:
+        _circuit_breaker.record_failure(e)
         logger.warning("Redis blacklist check failed", error=e)
         # SECURITY FIX: Fail closed if configured
         if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":

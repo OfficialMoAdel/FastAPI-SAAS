@@ -149,7 +149,7 @@ return new_attempts
             if getattr(settings, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
                 from fastapi import HTTPException
 
-                raise HTTPException(status_code=503, detail="Service unavailable (Audit logging failed)")
+                raise HTTPException(status_code=503, detail="Service temporarily unavailable")
 
     async def login(
         self,
@@ -317,17 +317,17 @@ return new_attempts
             # Extract jti from access token for session ID
             import json
 
-            import jwt
-
-            from src.app.core.security.jwt_utils import validate_jwt_length
+            from src.app.core.security.jwt_utils import decode_jwt_token, validate_jwt_length
             from src.app.core.security.session_manager import session_manager as global_session_manager
 
-            # SECURITY: Validate token length before unverified decoding
+            # SECURITY: Validate token length and verify signature for session registration
+            # Even if we just created the token, using verified decode prevents session fixation
+            # and ensures we only track tokens we actually signed.
             if not validate_jwt_length(access_token):
-                logger.warning("Unverified JWT decode blocked: token too long")
+                logger.warning("JWT decode blocked: token too long")
                 decoded_token = {}
             else:
-                decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+                decoded_token = await decode_jwt_token(access_token) or {}
             session_id = decoded_token.get("jti", access_token[:32])
             client_ip = request.client.host if request.client else "Unknown"
 
@@ -407,6 +407,14 @@ return new_attempts
 
         # Blacklist the used refresh token (Rotation) BEFORE new tokens are successfully generated
         await blacklist_token(token=refresh_token, db=db)
+
+        # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
+        try:
+            from src.app.core.security.session_manager import session_manager as global_session_manager
+            if user_data.jti:
+                await global_session_manager.invalidate_session(db_user["id"], user_data.jti)
+        except Exception as e:
+            logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
 
         # Create new tokens
         new_access_token, new_refresh_token = await asyncio.gather(
@@ -753,7 +761,11 @@ return new_attempts
             raw_token = generate_reset_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create password reset token (expires in 1 hour)
-            reset_token = PasswordResetToken(user_id=user["id"], token=hashed_token)
+            reset_token = PasswordResetToken(
+                user_id=user["id"],
+                token=hashed_token,
+                tenant_id=user["tenant_id"]
+            )
             db.add(reset_token)
             await db.commit()
             await db.refresh(reset_token)
@@ -916,7 +928,11 @@ return new_attempts
             raw_token = generate_verification_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create verification token
-            token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token)
+            token_model = EmailVerificationToken(
+                user_id=user["id"],
+                token=hashed_token,
+                tenant_id=user["tenant_id"]
+            )
             db.add(token_model)
             await db.commit()
             await db.refresh(token_model)

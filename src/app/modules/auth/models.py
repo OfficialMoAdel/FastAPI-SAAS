@@ -1,10 +1,12 @@
 """Password reset token model for secure password recovery."""
 
 import secrets
+import uuid as uuid_pkg
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, text
+from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
@@ -35,6 +37,7 @@ class PasswordResetToken(Base):
     Attributes
     ----------
         id: Primary key
+        tenant_id: Tenant UUID for RLS
         user_id: Foreign key to user table
         token: Unique secure token string
         expires_at: Token expiration timestamp (default: 1 hour)
@@ -49,6 +52,13 @@ class PasswordResetToken(Base):
         primary_key=True,
         autoincrement=True,
         init=False,
+    )
+
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
     )
 
     user_id: Mapped[int] = mapped_column(
@@ -118,6 +128,7 @@ class EmailVerificationToken(Base):
     Attributes
     ----------
         id: Primary key
+        tenant_id: Tenant UUID for RLS
         user_id: Foreign key to user table
         token: Unique secure token string
         expires_at: Token expiration timestamp (default: 24 hours)
@@ -131,6 +142,13 @@ class EmailVerificationToken(Base):
         primary_key=True,
         autoincrement=True,
         init=False,
+    )
+
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id"),
+        nullable=False,
+        index=True,
     )
 
     user_id: Mapped[int] = mapped_column(

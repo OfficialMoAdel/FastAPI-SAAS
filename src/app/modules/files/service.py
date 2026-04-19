@@ -133,7 +133,13 @@ class FileService:
 
         # Generate unique storage path
         file_uuid = uuid.uuid4()
-        extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        # SECURITY FIX: Sanitize extension and remove potential path traversal characters
+        # Only allow alphanumeric extensions up to 10 chars
+        import re
+
+        raw_extension = filename.rsplit(".", 1)[-1] if "." in filename else ""
+        extension = re.sub(r"[^a-zA-Z0-9]", "", raw_extension)[:10]
+
         base_path = f"tenants/{tenant_id}/files/{file_uuid}"
         storage_path = f"{base_path}.{extension}" if extension else base_path
 

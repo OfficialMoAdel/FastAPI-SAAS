@@ -23,6 +23,7 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_event_idempotency
+from src.app.core.observability.tracing import trace_span
 from src.app.core.utils.circuit_breaker import arq_circuit
 from src.app.core.utils.lua_manager import get_lua_manager
 
@@ -241,67 +242,71 @@ class EventBus:
                 event_id="user-created-12345-abc"
             )
         """
-        # Check for duplicate event if event_id provided
-        if event_id and self._redis_client:
-            is_duplicate = await self._check_idempotency(event_id)
-            if is_duplicate:
-                logger.info(
-                    "Duplicate event skipped",
-                    event_name=event_name,
-                    event_id=event_id,
-                )
+        with trace_span(
+            "event_bus_publish",
+            attributes={"event_name": event_name, "priority": priority, "event_id": event_id or "none"},
+        ):
+            # Check for duplicate event if event_id provided
+            if event_id and self._redis_client:
+                is_duplicate = await self._check_idempotency(event_id)
+                if is_duplicate:
+                    logger.info(
+                        "Duplicate event skipped",
+                        event_name=event_name,
+                        event_id=event_id,
+                    )
+                    return
+
+            handlers = self._handlers.get(event_name, [])
+
+            if not handlers:
+                logger.debug("Event published no handlers", event_name=event_name)
                 return
 
-        handlers = self._handlers.get(event_name, [])
+            # Get sequence number for ordering guarantees
+            sequence = await self.get_next_sequence(event_name)
 
-        if not handlers:
-            logger.debug("Event published no handlers", event_name=event_name)
-            return
+            # SECURITY FIX: Capture tenant context if available to propagate to background tasks
+            # This is critical for RLS-enabled database operations in worker processes.
+            from src.app.core.tenancy.context import get_tenant_context
 
-        # Get sequence number for ordering guarantees
-        sequence = await self.get_next_sequence(event_name)
+            tenant = get_tenant_context()
+            tenant_info = None
+            if tenant:
+                tenant_info = {
+                    "id": str(tenant.id),
+                    "slug": tenant.slug,
+                    "name": tenant.name,
+                    "is_active": tenant.is_active,
+                }
 
-        # SECURITY FIX: Capture tenant context if available to propagate to background tasks
-        # This is critical for RLS-enabled database operations in worker processes.
-        from src.app.core.tenancy.context import get_tenant_context
-
-        tenant = get_tenant_context()
-        tenant_info = None
-        if tenant:
-            tenant_info = {
-                "id": str(tenant.id),
-                "slug": tenant.slug,
-                "name": tenant.name,
-                "is_active": tenant.is_active,
+            # Inject sequence and tenant into event data for consumers
+            enriched_data = {
+                **data,
+                "_event_meta": {
+                    "sequence": sequence,
+                    "event_id": event_id,
+                    "event_name": event_name,
+                    "tenant": tenant_info,
+                },
             }
 
-        # Inject sequence and tenant into event data for consumers
-        enriched_data = {
-            **data,
-            "_event_meta": {
-                "sequence": sequence,
-                "event_id": event_id,
-                "event_name": event_name,
-                "tenant": tenant_info,
-            },
-        }
+            logger.info(
+                "Event published",
+                event_name=event_name,
+                priority=priority,
+                handler_count=len(handlers),
+                event_id=event_id,
+                sequence=sequence,
+                tenant_id=tenant_info["id"] if tenant_info else None,
+            )
 
-        logger.info(
-            "Event published",
-            event_name=event_name,
-            priority=priority,
-            handler_count=len(handlers),
-            event_id=event_id,
-            sequence=sequence,
-            tenant_id=tenant_info["id"] if tenant_info else None,
-        )
-
-        if priority == EventPriority.CRITICAL:
-            # Execute synchronously, fire-and-forget
-            await self._publish_sync(event_name, enriched_data, handlers)
-        else:
-            # Queue for async execution via ARQ
-            await self._publish_async(event_name, enriched_data, handlers, priority)
+            if priority == EventPriority.CRITICAL:
+                # Execute synchronously, fire-and-forget
+                await self._publish_sync(event_name, enriched_data, handlers)
+            else:
+                # Queue for async execution via ARQ
+                await self._publish_async(event_name, enriched_data, handlers, priority)
 
     async def _publish_sync(
         self,
@@ -353,7 +358,18 @@ class EventBus:
             return
 
         # Execute all handlers concurrently and await completion to ensure fully synchronous finish
-        await asyncio.gather(*[_call_handler(handler) for handler in handlers], return_exceptions=True)
+        results = await asyncio.gather(*[_call_handler(handler) for handler in handlers], return_exceptions=True)
+
+        # Inspect results for any exceptions that escaped _call_handler (unlikely but possible)
+        for i, result in enumerate(results):
+            if isinstance(result, Exception):
+                logger.critical(
+                    "Event handler task failed with unhandled exception",
+                    event_name=event_name,
+                    handler=handlers[i].__name__,
+                    error=str(result),
+                    exc_info=True,
+                )
 
     async def _publish_async(
         self,
@@ -829,7 +845,15 @@ async def process_event_handler(
         handler_name: Name of handler function
         data: Event payload
     """
-    job_try = ctx.get("job_try", 1)
+    with trace_span(
+        "process_event_handler",
+        attributes={
+            "event_name": event_name,
+            "handler": f"{handler_module}.{handler_name}",
+            "job_try": ctx.get("job_try", 1),
+        },
+    ):
+        job_try = ctx.get("job_try", 1)
 
     # SECURITY FIX: Restore tenant context from event metadata
     # This ensures RLS-protected operations in background tasks work correctly.

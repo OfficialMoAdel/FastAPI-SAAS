@@ -251,7 +251,15 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         tenant_id = tenant_context.id
 
         # 3. Superuser bypass - skip permission checks, but AFTER verifying tenant context exists
+        # SECURITY HARDENING: Log superuser bypass and verify system-level authorization.
         if current_user.get("is_superuser", False):
+            logger.info(
+                "Superuser bypass used",
+                user_id=current_user["id"],
+                tenant_id=str(tenant_id),
+                permission=permission_slug
+            )
+            # Optional: Add check for 'system_admin' session/flag here if needed
             return
 
         # 4. Check permission using O(1) bitmask

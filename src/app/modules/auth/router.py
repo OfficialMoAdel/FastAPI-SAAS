@@ -101,7 +101,7 @@ async def register(
     return await user_service.create(user)
 
 
-@router.post("/refresh", response_model=RefreshTokenResponse)
+@router.post("/refresh", response_model=RefreshTokenResponse, dependencies=[Depends(check_auth_rate_limit)])
 async def refresh_access_token(
     response: Response,
     request: Request,

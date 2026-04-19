@@ -17,7 +17,7 @@ class TestConcurrentLoad:
     @pytest.mark.asyncio
     async def test_concurrent_http_requests(
         self,
-        async_client,
+        e2e_client,
         perf_metrics: PerformanceMetrics,
         e2e_thresholds: dict,
     ):
@@ -28,7 +28,7 @@ class TestConcurrentLoad:
         async def make_request():
             perf_metrics.start_timer()
             try:
-                response = await async_client.post(
+                response = await e2e_client.post(
                     "/api/v1/account/login",
                     data={
                         "username": "load@example.com",
@@ -132,19 +132,20 @@ class TestMiddlewarePerformance:
     @pytest.mark.asyncio
     async def test_middleware_overhead(
         self,
-        async_client,
+        e2e_client,
         perf_metrics: PerformanceMetrics,
         e2e_thresholds: dict,
     ):
+
         """Test middleware adds minimal overhead to requests."""
         # Warmup
-        await async_client.get("/api/v1/health")
+        await e2e_client.get("/api/v1/health")
 
-        iterations = 15
+        iterations = 30
 
         for _ in range(iterations):
             perf_metrics.start_timer()
-            response = await async_client.get("/api/v1/health")
+            response = await e2e_client.get("/api/v1/health")
             perf_metrics.stop_timer()
             assert response.status_code in (200, 404, 429, 422)
 
@@ -153,19 +154,28 @@ class TestMiddlewarePerformance:
     @pytest.mark.asyncio
     async def test_rate_limit_middleware_performance(
         self,
-        async_client,
+        e2e_client,
         perf_metrics: PerformanceMetrics,
         e2e_thresholds: dict,
     ):
+
         """Test rate limiting middleware performance."""
-        iterations = 15
+        # Warmup: Initialize middleware stack and internal caches
+        await e2e_client.get(
+            "/api/v1/health",
+            headers={"X-Tenant-ID": "test-tenant"},
+        )
+
+        iterations = 30
 
         for _ in range(iterations):
             perf_metrics.start_timer()
-            await async_client.get(
+            response = await e2e_client.get(
                 "/api/v1/health",
                 headers={"X-Tenant-ID": "test-tenant"},
             )
             perf_metrics.stop_timer()
+            # We don't care if it's 200 or 429 here, only that the middleware stack remains fast
+            assert response.status_code in (200, 429, 404)
 
         assert perf_metrics.p95 < e2e_thresholds["middleware_p95"]

@@ -355,9 +355,3 @@ __all__ = [
     "get_request_query_stats",
 ]
 
-stats= [
-    "is_profiler_enabled",
-    "start_request_tracking",
-    "end_request_tracking",
-    "get_request_query_stats",
-]

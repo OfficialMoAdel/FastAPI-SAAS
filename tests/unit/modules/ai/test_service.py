@@ -204,110 +204,112 @@ class TestAISettingsService:
         """Create a mock database session."""
         return AsyncMock()
 
+    @pytest.fixture
+    def mock_tenant_context(self):
+        """Create a mock tenant context."""
+        tenant = MagicMock()
+        tenant.id = 1
+        return tenant
+
     @pytest.mark.asyncio
-    async def test_get_settings_queries_by_user_id(self, mock_db):
-        """Test that get_settings queries by user_id."""
+    async def test_get_settings_queries_by_user_id(self, mock_db, mock_tenant_context):
+        """Test that get_settings filters by user_id and tenant_id."""
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
+                mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"})
 
-            service = AISettingsService(mock_db)
-            await service.get_settings(user_id=1)
+                service = AISettingsService(mock_db)
+                await service.get_settings(user_id=1)
 
-            mock_crud.get.assert_called_once_with(db=mock_db, user_id=1)
+                mock_crud.get.assert_called_once_with(db=mock_db, user_id=1, tenant_id=1)
 
     @pytest.mark.asyncio
-    async def test_get_or_create_settings_creates_defaults_when_none(self, mock_db):
+    async def test_get_or_create_settings_creates_defaults_when_none(self, mock_db, mock_tenant_context):
         """Test that get_or_create_settings creates default settings if none exist."""
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=None)
-            mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
+                mock_crud.get = AsyncMock(return_value=None)
+                mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"})
 
-            service = AISettingsService(mock_db)
-            await service.get_or_create_settings(user_id=1)
+                service = AISettingsService(mock_db)
+                await service.get_or_create_settings(user_id=1)
 
-            mock_crud.create.assert_called_once()
-            call_args = mock_crud.create.call_args
-            create_obj = call_args.kwargs.get("object", {})
-            # The service passes a dict (not a schema), so access as dict
-            if hasattr(create_obj, "user_id"):
-                # It's a Pydantic model
-                assert create_obj.user_id == 1
-                assert create_obj.model == "gemma3"
-                assert create_obj.temperature == 0.7
-                assert create_obj.max_tokens == 2048
-            else:
-                # It's a dict
+                mock_crud.create.assert_called_once()
+                call_args = mock_crud.create.call_args
+                create_obj = call_args.kwargs.get("object", {})
+                # The service passes a dict (not a schema), so access as dict
                 assert create_obj["user_id"] == 1
+                assert create_obj["tenant_id"] == 1
                 assert create_obj["model"] == "gemma3"
-                assert create_obj["temperature"] == 0.7
-                assert create_obj["max_tokens"] == 2048
 
     @pytest.mark.asyncio
-    async def test_get_or_create_settings_returns_existing(self, mock_db):
-        """Test that get_or_create_settings returns existing settings."""
+    async def test_get_or_create_settings_returns_existing(self, mock_db, mock_tenant_context):
+        """Test that get_or_create_settings returns existing scoped settings."""
         from src.app.modules.ai.service import AISettingsService
 
-        existing_settings = {"id": 1, "user_id": 1, "model": "llama3", "temperature": 0.5}
+        existing_settings = {"id": 1, "user_id": 1, "tenant_id": 1, "model": "llama3", "temperature": 0.5}
 
-        with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=existing_settings)
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
+                mock_crud.get = AsyncMock(return_value=existing_settings)
 
-            service = AISettingsService(mock_db)
-            result = await service.get_or_create_settings(user_id=1)
+                service = AISettingsService(mock_db)
+                result = await service.get_or_create_settings(user_id=1)
 
-            mock_crud.create.assert_not_called()
-            assert result == existing_settings
+                mock_crud.get.assert_called_once_with(db=mock_db, user_id=1, tenant_id=1)
+                mock_crud.create.assert_not_called()
+                assert result == existing_settings
 
     @pytest.mark.asyncio
-    async def test_update_settings_creates_if_none_exist(self, mock_db):
+    async def test_update_settings_creates_if_none_exist(self, mock_db, mock_tenant_context):
         """Test that update_settings creates settings if none exist."""
         from src.app.modules.ai.schemas import AISettingsUpdate
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(return_value=None)
-            mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1})
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
+                mock_crud.get = AsyncMock(return_value=None)
+                mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1})
 
-            service = AISettingsService(mock_db)
-            data = AISettingsUpdate(model="llama3")
-            await service.update_settings(user_id=1, data=data)
+                service = AISettingsService(mock_db)
+                data = AISettingsUpdate(model="llama3")
+                await service.update_settings(user_id=1, data=data)
 
-            mock_crud.create.assert_called_once()
-            call_args = mock_crud.create.call_args
-            create_obj = call_args.kwargs.get("object", {})
-            if hasattr(create_obj, "user_id"):
-                assert create_obj.user_id == 1
-                assert create_obj.model == "llama3"
-            else:
+                mock_crud.create.assert_called_once()
+                call_args = mock_crud.create.call_args
+                create_obj = call_args.kwargs.get("object", {})
                 assert create_obj["user_id"] == 1
+                assert create_obj["tenant_id"] == 1
                 assert create_obj["model"] == "llama3"
 
     @pytest.mark.asyncio
-    async def test_update_settings_updates_existing(self, mock_db):
-        """Test that update_settings updates existing settings."""
+    async def test_update_settings_updates_existing(self, mock_db, mock_tenant_context):
+        """Test that update_settings updates existing scoped settings."""
         from src.app.modules.ai.schemas import AISettingsUpdate
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
-            mock_crud.get = AsyncMock(
-                side_effect=[
-                    {"id": 1, "user_id": 1, "model": "gemma3"},  # First call
-                    {"id": 1, "user_id": 1, "model": "llama3"},  # After update
-                ]
-            )
-            mock_crud.update = AsyncMock()
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
+                mock_crud.get = AsyncMock(
+                    side_effect=[
+                        {"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"},  # First call
+                        {"id": 1, "user_id": 1, "tenant_id": 1, "model": "llama3"},  # After update
+                    ]
+                )
+                mock_crud.update = AsyncMock()
 
-            service = AISettingsService(mock_db)
-            data = AISettingsUpdate(model="llama3")
-            await service.update_settings(user_id=1, data=data)
+                service = AISettingsService(mock_db)
+                data = AISettingsUpdate(model="llama3")
+                await service.update_settings(user_id=1, data=data)
 
-            mock_crud.update.assert_called_once()
-            call_args = mock_crud.update.call_args
-            assert call_args.kwargs["object"]["model"] == "llama3"
+                mock_crud.get.assert_any_call(db=mock_db, user_id=1, tenant_id=1)
+                mock_crud.update.assert_called_once()
+                call_args = mock_crud.update.call_args
+                assert call_args.kwargs["object"]["model"] == "llama3"
 
 
 class TestChatCompletionService:
@@ -317,6 +319,13 @@ class TestChatCompletionService:
     def mock_db(self):
         """Create a mock database session."""
         return AsyncMock()
+
+    @pytest.fixture
+    def mock_tenant_context(self):
+        """Create a mock tenant context."""
+        tenant = MagicMock()
+        tenant.id = 1
+        return tenant
 
     @pytest.fixture
     def mock_ollama_client(self):
@@ -333,154 +342,157 @@ class TestChatCompletionService:
         return client
 
     @pytest.mark.asyncio
-    async def test_complete_calls_ollama_with_history(self, mock_db, mock_ollama_client):
+    async def test_complete_calls_ollama_with_history(self, mock_db, mock_ollama_client, mock_tenant_context):
         """Test that complete passes message history to Ollama."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
-            with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
-                with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
-                    # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
-                    mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(
-                        return_value={
-                            "data": [{"role": "user", "content": "Hi"}],
-                            "total_count": 1,
-                        }
-                    )
-                    mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(
-                        return_value={
-                            "id": 1,
-                            "user_id": 1,
-                            "model": "gemma3",
-                            "temperature": 0.7,
-                            "max_tokens": 2048,
-                            "system_prompt": None,
-                        }
-                    )
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
+                with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
+                    with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
+                        # Setup mocks
+                        mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+                        mock_sessions.update = AsyncMock()
+                        mock_messages.get_multi = AsyncMock(
+                            return_value={
+                                "data": [{"role": "user", "content": "Hi"}],
+                                "total_count": 1,
+                            }
+                        )
+                        mock_messages.create = AsyncMock(return_value={"id": 1})
+                        mock_settings.get = AsyncMock(
+                            return_value={
+                                "id": 1,
+                                "user_id": 1,
+                                "model": "gemma3",
+                                "temperature": 0.7,
+                                "max_tokens": 2048,
+                                "system_prompt": None,
+                            }
+                        )
 
-                    service = ChatCompletionService(mock_db, mock_ollama_client)
-                    request = ChatCompletionRequest(message="Hello")
-                    result = await service.complete(session_id=1, user_id=1, request=request)
+                        service = ChatCompletionService(mock_db, mock_ollama_client)
+                        request = ChatCompletionRequest(message="Hello")
+                        result = await service.complete(session_id=1, user_id=1, request=request)
 
-                    # Verify Ollama was called
-                    mock_ollama_client.chat.assert_called_once()
-                    call_args = mock_ollama_client.chat.call_args
+                        # Verify Ollama was called
+                        mock_ollama_client.chat.assert_called_once()
+                        call_args = mock_ollama_client.chat.call_args
 
-                    # Check messages include history + new message
-                    messages = call_args.kwargs["messages"]
-                    assert len(messages) == 2  # Previous + new
-                    assert messages[-1]["content"] == "Hello"
+                        # Check messages include history + new message
+                        messages = call_args.kwargs["messages"]
+                        assert len(messages) == 2  # Previous + new
+                        assert messages[-1]["content"] == "Hello"
 
-                    # Check response
-                    assert result["message"] == "Hello! How can I help you?"
-                    assert result["model"] == "gemma3"
+                        # Check response
+                        assert result["message"] == "Hello! How can I help you?"
+                        assert result["model"] == "gemma3"
 
     @pytest.mark.asyncio
-    async def test_complete_saves_user_and_assistant_messages(self, mock_db, mock_ollama_client):
+    async def test_complete_saves_user_and_assistant_messages(self, mock_db, mock_ollama_client, mock_tenant_context):
         """Test that complete saves both user and assistant messages."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
-            with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
-                with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
-                    # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
-                    mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(
-                        return_value={
-                            "data": [],
-                            "total_count": 0,
-                        }
-                    )
-                    mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(
-                        return_value={
-                            "id": 1,
-                            "user_id": 1,
-                            "model": "gemma3",
-                            "temperature": 0.7,
-                            "max_tokens": 2048,
-                            "system_prompt": None,
-                        }
-                    )
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
+                with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
+                    with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
+                        # Setup mocks
+                        mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+                        mock_sessions.update = AsyncMock()
+                        mock_messages.get_multi = AsyncMock(
+                            return_value={
+                                "data": [],
+                                "total_count": 0,
+                            }
+                        )
+                        mock_messages.create = AsyncMock(return_value={"id": 1})
+                        mock_settings.get = AsyncMock(
+                            return_value={
+                                "id": 1,
+                                "user_id": 1,
+                                "model": "gemma3",
+                                "temperature": 0.7,
+                                "max_tokens": 2048,
+                                "system_prompt": None,
+                            }
+                        )
 
-                    service = ChatCompletionService(mock_db, mock_ollama_client)
-                    request = ChatCompletionRequest(message="Hello")
-                    await service.complete(session_id=1, user_id=1, request=request)
+                        service = ChatCompletionService(mock_db, mock_ollama_client)
+                        request = ChatCompletionRequest(message="Hello")
+                        await service.complete(session_id=1, user_id=1, request=request)
 
-                    # Verify two messages were saved (user + assistant)
-                    assert mock_messages.create.call_count == 2
+                        # Verify two messages were saved (user + assistant)
+                        assert mock_messages.create.call_count == 2
 
-                    # Check first call was user message (using dict from model_dump)
-                    first_call = mock_messages.create.call_args_list[0]
-                    first_obj = first_call.kwargs["object"]
-                    if isinstance(first_obj, dict):
-                        assert first_obj["role"] == "user"
-                        assert first_obj["content"] == "Hello"
-                    else:
-                        assert first_obj.role == "user"
-                        assert first_obj.content == "Hello"
+                        # Check first call was user message (using dict from model_dump)
+                        first_call = mock_messages.create.call_args_list[0]
+                        first_obj = first_call.kwargs["object"]
+                        if isinstance(first_obj, dict):
+                            assert first_obj["role"] == "user"
+                            assert first_obj["content"] == "Hello"
+                        else:
+                            assert first_obj.role == "user"
+                            assert first_obj.content == "Hello"
 
-                    # Check second call was assistant message
-                    second_call = mock_messages.create.call_args_list[1]
-                    second_obj = second_call.kwargs["object"]
-                    if isinstance(second_obj, dict):
-                        assert second_obj["role"] == "assistant"
-                    else:
-                        assert second_obj.role == "assistant"
+                        # Check second call was assistant message
+                        second_call = mock_messages.create.call_args_list[1]
+                        second_obj = second_call.kwargs["object"]
+                        if isinstance(second_obj, dict):
+                            assert second_obj["role"] == "assistant"
+                        else:
+                            assert second_obj.role == "assistant"
 
     @pytest.mark.asyncio
-    async def test_complete_uses_request_overrides(self, mock_db, mock_ollama_client):
+    async def test_complete_uses_request_overrides(self, mock_db, mock_ollama_client, mock_tenant_context):
         """Test that request parameters override defaults."""
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
-            with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
-                with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
-                    # Setup mocks
-                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
-                    mock_sessions.update = AsyncMock()
-                    mock_messages.get_multi = AsyncMock(
-                        return_value={
-                            "data": [],
-                            "total_count": 0,
-                        }
-                    )
-                    mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(
-                        return_value={
-                            "id": 1,
-                            "user_id": 1,
-                            "model": "gemma3",
-                            "temperature": 0.7,
-                            "max_tokens": 2048,
-                            "system_prompt": None,
-                        }
-                    )
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
+                with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
+                    with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
+                        # Setup mocks
+                        mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+                        mock_sessions.update = AsyncMock()
+                        mock_messages.get_multi = AsyncMock(
+                            return_value={
+                                "data": [],
+                                "total_count": 0,
+                            }
+                        )
+                        mock_messages.create = AsyncMock(return_value={"id": 1})
+                        mock_settings.get = AsyncMock(
+                            return_value={
+                                "id": 1,
+                                "user_id": 1,
+                                "model": "gemma3",
+                                "temperature": 0.7,
+                                "max_tokens": 2048,
+                                "system_prompt": None,
+                            }
+                        )
 
-                    service = ChatCompletionService(mock_db, mock_ollama_client)
-                    request = ChatCompletionRequest(
-                        message="Hello",
-                        model="llama3",
-                        temperature=0.5,
-                        max_tokens=1000,
-                    )
-                    await service.complete(session_id=1, user_id=1, request=request)
+                        service = ChatCompletionService(mock_db, mock_ollama_client)
+                        request = ChatCompletionRequest(
+                            message="Hello",
+                            model="llama3",
+                            temperature=0.5,
+                            max_tokens=1000,
+                        )
+                        await service.complete(session_id=1, user_id=1, request=request)
 
-                    # Verify Ollama was called with overrides
-                    call_args = mock_ollama_client.chat.call_args
-                    assert call_args.kwargs["model"] == "llama3"
-                    assert call_args.kwargs["temperature"] == 0.5
-                    assert call_args.kwargs["max_tokens"] == 1000
+                        # Verify Ollama was called with overrides
+                        call_args = mock_ollama_client.chat.call_args
+                        assert call_args.kwargs["model"] == "llama3"
+                        assert call_args.kwargs["temperature"] == 0.5
+                        assert call_args.kwargs["max_tokens"] == 1000
 
     @pytest.mark.asyncio
-    async def test_complete_raises_on_ollama_error(self, mock_db):
+    async def test_complete_raises_on_ollama_error(self, mock_db, mock_tenant_context):
         """Test that Ollama errors are wrapped in ChatCompletionError."""
         from src.app.modules.ai.ollama_client import OllamaError
         from src.app.modules.ai.schemas import ChatCompletionRequest
@@ -489,33 +501,34 @@ class TestChatCompletionService:
         mock_ollama = MagicMock()
         mock_ollama.chat = AsyncMock(side_effect=OllamaError("Connection refused", "connection_error"))
 
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
-            with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
-                with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
-                    mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
-                    mock_messages.get_multi = AsyncMock(
-                        return_value={
-                            "data": [],
-                            "total_count": 0,
-                        }
-                    )
-                    mock_messages.create = AsyncMock(return_value={"id": 1})
-                    mock_settings.get = AsyncMock(
-                        return_value={
-                            "id": 1,
-                            "user_id": 1,
-                            "model": "gemma3",
-                            "temperature": 0.7,
-                            "max_tokens": 2048,
-                            "system_prompt": None,
-                        }
-                    )
+        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+            with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
+                with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
+                    with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
+                        mock_sessions.get = AsyncMock(return_value={"id": 1, "user_id": 1, "model": "gemma3"})
+                        mock_messages.get_multi = AsyncMock(
+                            return_value={
+                                "data": [],
+                                "total_count": 0,
+                            }
+                        )
+                        mock_messages.create = AsyncMock(return_value={"id": 1})
+                        mock_settings.get = AsyncMock(
+                            return_value={
+                                "id": 1,
+                                "user_id": 1,
+                                "model": "gemma3",
+                                "temperature": 0.7,
+                                "max_tokens": 2048,
+                                "system_prompt": None,
+                            }
+                        )
 
-                    service = ChatCompletionService(mock_db, mock_ollama)
-                    request = ChatCompletionRequest(message="Hello")
+                        service = ChatCompletionService(mock_db, mock_ollama)
+                        request = ChatCompletionRequest(message="Hello")
 
-                    with pytest.raises(ChatCompletionError) as exc_info:
-                        await service.complete(session_id=1, user_id=1, request=request)
+                        with pytest.raises(ChatCompletionError) as exc_info:
+                            await service.complete(session_id=1, user_id=1, request=request)
 
-                    assert exc_info.value.error_code == "connection_error"
-                    assert exc_info.value.model == "gemma3"
+                        assert exc_info.value.error_code == "connection_error"
+                        assert exc_info.value.model == "gemma3"

@@ -476,6 +476,21 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
 
     async with job_tenant_context(tenant_id) as db:
+        # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
+        lock_result = await db.execute(
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.id == subscription_id)
+            .with_for_update()
+        )
+        db_subscription_locked = lock_result.scalar_one_or_none()
+
+        if not db_subscription_locked:
+            logger.warning(
+                "Subscription deleted in race condition gap, skipping update",
+                stripe_subscription_id=stripe_subscription_id,
+            )
+            return
+
         await crud_user_subscriptions.update(
             db=db,
             object=update_data,
@@ -553,6 +568,21 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
     )
 
     async with job_tenant_context(tenant_id) as db:
+        # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
+        lock_result = await db.execute(
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.id == subscription_id)
+            .with_for_update()
+        )
+        db_subscription_locked = lock_result.scalar_one_or_none()
+
+        if not db_subscription_locked:
+            logger.warning(
+                "Subscription deleted in race condition gap, skipping update",
+                stripe_subscription_id=stripe_subscription_id,
+            )
+            return
+
         await crud_user_subscriptions.update(
             db=db,
             object=update_data,
@@ -697,6 +727,21 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
     )
 
     async with job_tenant_context(tenant_id) as db:
+        # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
+        lock_result = await db.execute(
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.id == subscription_id)
+            .with_for_update()
+        )
+        db_subscription_locked = lock_result.scalar_one_or_none()
+
+        if not db_subscription_locked:
+            logger.warning(
+                "Subscription deleted in race condition gap, skipping update",
+                stripe_subscription_id=stripe_subscription_id,
+            )
+            return
+
         await crud_billing_records.create(
             db=db,
             object=billing_record,

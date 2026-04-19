@@ -328,8 +328,10 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
 
     return TokenData(
         username_or_email=username_or_email,
+        jti=jti,
         tier_id=tier_id,
         absolute_exp=absolute_exp,
+        token_version=token_version or 0,
     )
 
 

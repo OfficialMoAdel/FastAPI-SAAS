@@ -417,7 +417,7 @@ class UserService(BaseService[User]):
         if cached:
             return cached
         from fastapi.encoders import jsonable_encoder
-        return jsonable_encoder(db_user)
+        return cast(dict[str, Any], jsonable_encoder(db_user))
 
     async def get(self, user_id: Any) -> dict[str, Any] | None:  # type: ignore[override]
         """Get a user by ID with Redis caching.
@@ -445,7 +445,7 @@ class UserService(BaseService[User]):
             if cached:
                 return cached
             from fastapi.encoders import jsonable_encoder
-            return jsonable_encoder(user)
+            return cast(dict[str, Any], jsonable_encoder(user))
         return None
 
     async def get_by_email(self, email: str) -> dict[str, Any] | None:
@@ -474,7 +474,7 @@ class UserService(BaseService[User]):
             if cached:
                 return cached
             from fastapi.encoders import jsonable_encoder
-            return jsonable_encoder(user)
+            return cast(dict[str, Any], jsonable_encoder(user))
         return None
 
     async def update(  # type: ignore[override]

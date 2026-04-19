@@ -75,6 +75,7 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username_or_email: str
+    jti: str | None = None  # Unique token identifier for session tracking
     tier_id: int | None = None  # For Zero-DB rate limiting
     absolute_exp: float | None = None  # Absolute session expiration timestamp
     token_version: int = 0

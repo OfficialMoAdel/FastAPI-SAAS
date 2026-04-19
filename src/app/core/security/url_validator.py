@@ -34,6 +34,10 @@ BLOCKED_NETWORKS = [
     ipaddress.ip_network("fc00::/7"),  # IPv6 unique local
     ipaddress.ip_network("fe80::/10"),  # IPv6 link-local
     ipaddress.ip_network("fd00:ec2::254/128"),  # AWS IPv6 metadata
+    # Container / Orchestration networks (Phase 1 Fix)
+    ipaddress.ip_network("10.244.0.0/14"),  # Kubernetes pods (Flannel)
+    ipaddress.ip_network("172.17.0.0/16"),  # Docker default bridge
+    ipaddress.ip_network("192.168.99.0/24"),  # Minikube
 ]
 
 # Specific blocked hostnames (cloud metadata endpoints)

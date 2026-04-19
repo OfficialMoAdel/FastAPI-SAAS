@@ -19,6 +19,7 @@ from src.app.core.config import settings
 from src.app.core.db.profiler import is_profiler_enabled, setup_query_profiler
 from src.app.core.db.rls import restore_rls_context
 from src.app.core.logger import get_logger
+from src.app.core.observability.tracing import trace_span
 from src.app.core.tenancy.context import get_current_tenant
 
 logger = get_logger(__name__)
@@ -107,7 +108,11 @@ def _create_engine() -> AsyncEngine:
         if not event.contains(engine.sync_engine, "checkout", restore_rls_context):
             event.listen(engine.sync_engine, "checkout", restore_rls_context)
     except Exception as e:
-        logger.warning("Failed to check or register RLS event listener", error=e)
+        logger.critical(
+            "CRITICAL: Failed to register RLS event listener. Application cannot start without tenant isolation.",
+            error=e
+        )
+        raise RuntimeError("RLS event listener registration failed") from e
 
     return engine
 
@@ -161,24 +166,25 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
         >>> async def get_user(db: AsyncSession = Depends(async_get_db)):
         ...     return await crud_users.get(db, id=1)
     """
-    session_maker = _get_local_session()
-    db = session_maker()
-    try:
-        yield db
-    except Exception as exc:
-        # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+    with trace_span("database_session"):
+        session_maker = _get_local_session()
+        db = session_maker()
         try:
-            await db.rollback()
-        except Exception as rb_exc:
-            logger.error("Database rollback failed", exc_info=rb_exc)
+            yield db
+        except Exception as exc:
+            # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+            try:
+                await db.rollback()
+            except Exception as rb_exc:
+                logger.error("Database rollback failed", exc_info=rb_exc)
 
-        tenant = get_current_tenant()
-        tenant_context = str(tenant.id) if tenant else "None"
-        logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
-        raise
-    finally:
-        # Always close session to prevent connection pool exhaustion
-        await db.close()
+            tenant = get_current_tenant()
+            tenant_context = str(tenant.id) if tenant else "None"
+            logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
+            raise
+        finally:
+            # Always close session to prevent connection pool exhaustion
+            await db.close()
 
 
 @asynccontextmanager
@@ -196,21 +202,22 @@ async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
         ...     result = await db.execute(select(User))
         ...     return result.scalars().all()
     """
-    session_maker = _get_local_session()
-    db = session_maker()
-    try:
-        yield db
-    except Exception as exc:
-        # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+    with trace_span("database_session_context"):
+        session_maker = _get_local_session()
+        db = session_maker()
         try:
-            await db.rollback()
-        except Exception as rb_exc:
-            logger.error("Database rollback failed", exc_info=rb_exc)
+            yield db
+        except Exception as exc:
+            # BUG FIX: Wrap rollback in try-except to prevent masking original exception
+            try:
+                await db.rollback()
+            except Exception as rb_exc:
+                logger.error("Database rollback failed", exc_info=rb_exc)
 
-        tenant = get_current_tenant()
-        tenant_context = str(tenant.id) if tenant else "None"
-        logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
-        raise
-    finally:
-        # Always close session to prevent connection pool exhaustion
-        await db.close()
+            tenant = get_current_tenant()
+            tenant_context = str(tenant.id) if tenant else "None"
+            logger.error("Database transaction failed, rolling back", tenant=tenant_context, exc_info=exc)
+            raise
+        finally:
+            # Always close session to prevent connection pool exhaustion
+            await db.close()

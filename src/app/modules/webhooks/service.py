@@ -370,7 +370,7 @@ class WebhookService:
         circuit_error: Exception | None = None
 
         try:
-            client = get_webhook_http_client()
+            client = await get_webhook_http_client()
             # CRIT-2 FIX: Use content= with pre-serialized bytes instead of json=
             # This ensures the transmitted bytes match what was signed in _generate_signature
             response = await client.post(

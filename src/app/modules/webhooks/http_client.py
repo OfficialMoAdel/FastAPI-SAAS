@@ -68,12 +68,12 @@ class SSRFSafePoolTransport(httpx.AsyncHTTPTransport):
         return await super().handle_async_request(request)
 
 
-import threading
+import asyncio
 
-_client_lock = threading.Lock()
+_client_lock = asyncio.Lock()
 
 
-def get_webhook_http_client() -> httpx.AsyncClient:
+async def get_webhook_http_client() -> httpx.AsyncClient:
     """Get or create the shared webhook HTTP client.
 
     Returns:
@@ -82,7 +82,7 @@ def get_webhook_http_client() -> httpx.AsyncClient:
     global _webhook_http_client
 
     if _webhook_http_client is None or _webhook_http_client.is_closed:
-        with _client_lock:
+        async with _client_lock:
             if _webhook_http_client is None or _webhook_http_client.is_closed:
                 transport = SSRFSafePoolTransport(
                     limits=WEBHOOK_LIMITS,
@@ -105,8 +105,9 @@ async def close_webhook_http_client() -> None:
     """
     global _webhook_http_client
 
-    if _webhook_http_client is not None and not _webhook_http_client.is_closed:
-        await _webhook_http_client.aclose()
+    if _webhook_http_client is not None:
+        if not _webhook_http_client.is_closed:
+            await _webhook_http_client.aclose()
         _webhook_http_client = None
         logger.debug("Closed shared webhook HTTP client")
 
@@ -130,5 +131,5 @@ async def webhook_http_post(
     Raises:
         httpx.HTTPError: On connection/timeout errors
     """
-    client = get_webhook_http_client()
+    client = await get_webhook_http_client()
     return await client.post(url, json=json, headers=headers)

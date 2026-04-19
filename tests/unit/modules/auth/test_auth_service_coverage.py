@@ -151,7 +151,7 @@ class TestPublishLoginAudit:
                         await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")
 
                     assert exc_info.value.status_code == 503
-                    assert "Service unavailable" in str(exc_info.value.detail)
+                    assert "Service temporarily unavailable" in str(exc_info.value.detail)
 
 
 # ============================================================================

@@ -22,11 +22,10 @@ from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
 from src.app.core.rbac.dependencies import invalidate_user_permissions_cache
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
-from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
@@ -662,7 +661,7 @@ class RoleService:
 
 def get_role_service(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    tenant: Annotated[Tenant, Depends(get_current_tenant)],
+    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
 ) -> RoleService:
     """Dependency injection factory for RoleService.
 
@@ -670,8 +669,8 @@ def get_role_service(
     ----------
     db : AsyncSession
         Database session from async_get_db
-    tenant : Tenant
-        Current tenant from get_current_tenant
+    tenant : TenantContext
+        Current tenant context from get_current_tenant
 
     Returns
     -------
