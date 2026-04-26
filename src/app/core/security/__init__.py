@@ -558,7 +558,7 @@ class MFAPendingTokenManager:
         try:
             token_data = cast(dict[str, Any], json_loads(data))
             return token_data
-        except (json.JSONDecodeError, orjson.JSONDecodeError):
+        except orjson.JSONDecodeError:
             return None
 
 

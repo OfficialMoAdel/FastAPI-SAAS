@@ -159,7 +159,7 @@ return new_attempts
         request: Request,
         db: AsyncSession,
         redis: Redis,
-    ) -> dict[str, str]:
+    ) -> dict[str, Any]:
         """Authenticate user and generate tokens.
 
         Parameters
@@ -267,7 +267,7 @@ return new_attempts
             )
 
             return {
-                "mfa_required": "true",
+                "mfa_required": True,
                 "mfa_token": mfa_token,
                 "expires_in": str(settings.MFA_PENDING_EXPIRY_SECONDS),
                 "message": "MFA verification required",

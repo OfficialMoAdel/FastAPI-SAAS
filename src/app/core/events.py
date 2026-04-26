@@ -313,6 +313,7 @@ class EventBus:
         event_name: str,
         data: dict[str, Any],
         handlers: list[Callable[..., Coroutine[Any, Any, None]]],
+        priority: EventPriority = EventPriority.CRITICAL,
     ) -> None:
         """Execute handlers synchronously (for critical events).
 
@@ -343,6 +344,8 @@ class EventBus:
                         handler=handler.__name__,
                         timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
+                    if priority == EventPriority.CRITICAL:
+                        raise
                     # We do not re-raise TimeoutError to prevent blocking other handlers
                     # in the gather group (though return_exceptions=True handles that too).
                 except Exception as e:
@@ -542,7 +545,7 @@ class EventBus:
         if not arq_circuit.is_closed:
             logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
             # Fallback to sync execution for all handlers
-            await self._publish_sync(event_name, data, handlers)
+            await self._publish_sync(event_name, data, handlers, priority=priority)
             return
 
         queue_name = "default" if priority == EventPriority.NORMAL else "low_priority"

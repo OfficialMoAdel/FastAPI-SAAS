@@ -24,6 +24,7 @@ def test_rbac_cache_ttl_default():
 def test_encryption_keys_missing_warning():
     """Verify ValueError is raised when encryption keys are missing."""
     import os
+
     import pytest
 
     with patch.dict(os.environ, {"ENVIRONMENT": "production"}):

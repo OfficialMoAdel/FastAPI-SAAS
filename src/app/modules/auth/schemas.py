@@ -40,7 +40,7 @@ class LoginTokenResponse(BaseModel):
 class LoginMFAResponse(BaseModel):
     """Login MFA required response schema."""
 
-    mfa_required: str
+    mfa_required: bool
     mfa_token: str
     expires_in: str
     message: str

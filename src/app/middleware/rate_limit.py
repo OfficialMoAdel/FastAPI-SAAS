@@ -276,8 +276,8 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 key = f"user:{user_id}"
         else:
             # Unauthenticated - use IP + tenant so different tenants on same IP aren't pooled.
-            limit = settings.DEFAULT_RATE_LIMIT_LIMIT
-            period = settings.DEFAULT_RATE_LIMIT_PERIOD
+            limit = settings.rate_limit.DEFAULT_RATE_LIMIT_LIMIT
+            period = settings.rate_limit.DEFAULT_RATE_LIMIT_PERIOD
             if tenant_id:
                 key = f"tenant:{tenant_id}:ip:{get_client_ip(request)}"
             else:

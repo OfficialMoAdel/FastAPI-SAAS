@@ -690,14 +690,8 @@ def _infer_resource_id(kwargs: dict[str, Any], resource_id_type: type | tuple[ty
     resource_id: int | str | None = None
     for arg_name, arg_value in kwargs.items():
         if isinstance(arg_value, resource_id_type):
-            if (resource_id_type is int) and ("id" in arg_name):
-                resource_id = arg_value
-
-            elif (resource_id_type is int) and ("id" not in arg_name):
-                pass
-
-            elif resource_id_type is str:
-                resource_id = arg_value
+            resource_id = arg_value
+            break
 
     if resource_id is None:
         raise CacheIdentificationInferenceError

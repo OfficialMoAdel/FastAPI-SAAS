@@ -10,7 +10,7 @@ import pytest
 from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_optional_user, AuthenticatedUser
+from src.app.api.dependencies import AuthenticatedUser, get_optional_user
 from tests.conftest import MockUser
 
 

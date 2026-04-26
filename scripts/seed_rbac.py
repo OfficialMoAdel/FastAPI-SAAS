@@ -13,6 +13,7 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent))
 
 from sqlalchemy import select
+
 from src.app.core.db.database import local_session
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.modules.rbac.models import Permission

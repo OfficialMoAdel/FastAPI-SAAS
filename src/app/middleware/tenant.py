@@ -216,7 +216,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                             # Use dedicated negative-cache key instead of sentinel value
                             await redis_client.setex(
                                 f"tenant:negative:{slug}",
-                                settings.TENANT_NEGATIVE_CACHE_TTL,
+                                settings.redis_cache.TENANT_NEGATIVE_CACHE_TTL,
                                 "1",
                             )
                     except Exception as e:

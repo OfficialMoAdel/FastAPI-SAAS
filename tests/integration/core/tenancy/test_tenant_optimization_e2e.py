@@ -57,6 +57,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     """
     # Mock Redis manually since integration tests might skip the global mock
     from unittest.mock import AsyncMock, MagicMock
+
     from src.app.api.dependencies import async_get_db
 
     fake_redis = AsyncMock()

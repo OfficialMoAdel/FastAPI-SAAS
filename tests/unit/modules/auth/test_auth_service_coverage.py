@@ -252,7 +252,7 @@ class TestLogin:
                             "mfauser", "password", mock_response, mock_request, mock_db, mock_redis
                         )
 
-                        assert result["mfa_required"] == "true"
+                        assert result["mfa_required"] is True
                         assert result["mfa_token"] == "mfa_token_123"
 
 

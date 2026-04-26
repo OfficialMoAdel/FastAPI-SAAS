@@ -206,7 +206,7 @@ class TestMFALoginWithTOTP:
 
         assert "mfa_token" in login_data
         assert "mfa_required" in login_data
-        assert login_data["mfa_required"] == "true"
+        assert login_data["mfa_required"] is True
 
         mfa_token = login_data["mfa_token"]
 
