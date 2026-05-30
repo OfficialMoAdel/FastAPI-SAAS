@@ -364,7 +364,8 @@ def reset_registry() -> None:
     global _registry
     if _registry is not None:
         _registry._breakers.clear()
-        _registry._lock = None
+        # Note: We do NOT set _registry._lock = None to prevent stranding
+        # coroutines that are currently waiting on the lock.
     _registry = None
 
 

@@ -460,8 +460,35 @@ def audit_action(action: str, entity_type: str) -> Callable:
 
             # Extract context from result and kwargs
             tenant_id = kwargs.get("tenant_id") or getattr(result, "tenant_id", None)
-            user_id = kwargs.get("current_user_id") or kwargs.get("user_id")
+
+            # Resolve user_id dynamically from various object shapes
+            user_id = None
+            for key in ("current_user_id", "user_id"):
+                val = kwargs.get(key)
+                if val is not None:
+                    user_id = val
+                    break
+            if user_id is None:
+                for key in ("current_user", "user", "db_user"):
+                    val = kwargs.get(key)
+                    if isinstance(val, dict) and "id" in val:
+                        user_id = val["id"]
+                        break
+                    if val is not None and hasattr(val, "id"):
+                        user_id = val.id
+                        break
+            if user_id is None:
+                user_id = getattr(result, "user_id", None)
+
             entity_id = getattr(result, "id", None)
+
+            # Extract request context if present
+            ip_address = None
+            user_agent = None
+            request = kwargs.get("request")
+            if request and hasattr(request, "client"):
+                ip_address = request.client.host if request.client else None
+                user_agent = request.headers.get("user-agent")
 
             # Resolve tenant_id from context if missing
             if not tenant_id:
@@ -488,6 +515,8 @@ def audit_action(action: str, entity_type: str) -> Callable:
                                 "entity_id": str(entity_id) if entity_id else None,
                                 "tenant_id": str(tenant_id),
                                 "user_id": str(user_id) if user_id else None,
+                                "ip_address": ip_address,
+                                "user_agent": user_agent,
                                 "details": {"result_id": str(getattr(result, "id", ""))},
                             },
                             priority=EventPriority.NORMAL,

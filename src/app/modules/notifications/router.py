@@ -61,6 +61,12 @@ async def send_notification(
         context=request.context,
     )
 
+    if notification is None:
+        raise HTTPException(
+            status_code=status.HTTP_202_ACCEPTED,
+            detail="Notification skipped by user preferences.",
+        )
+
     return NotificationResponse.model_validate(notification)
 
 

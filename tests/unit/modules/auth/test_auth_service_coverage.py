@@ -142,6 +142,7 @@ class TestPublishLoginAudit:
     async def test_publish_audit_fail_closed_mode(self, auth_service, mock_request):
         """Test AUDIT_LOG_FAILURE_MODE='fail_closed' raises 503."""
         from fastapi import HTTPException
+
         with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Connection failed")):
             with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
@@ -312,6 +313,7 @@ class TestRefreshAccessToken:
         mock_user_data = MagicMock()
         mock_user_data.username_or_email = "test@example.com"
         mock_user_data.absolute_exp = None
+        mock_user_data.token_version = 0  # Match db_user token_version
 
         mock_db_user = {
             "id": 1,

@@ -154,7 +154,7 @@ class NotificationService:
         template_name: str,
         context: dict[str, Any],
         user_id: int | None = None,
-    ) -> Notification:
+    ) -> Notification | None:
         """Send an email notification.
 
         This method queues the email for async delivery via ARQ.
@@ -168,7 +168,7 @@ class NotificationService:
 
         Returns
         -------
-            Notification record
+            Notification record, or None if skipped by user preferences
         """
         # Check user preferences if user_id is provided
         if user_id:
@@ -179,22 +179,12 @@ class NotificationService:
                     user_id=user_id,
                     template_name=template_name,
                 )
-                # BUG FIX: Skipped notifications should NOT be stored as FAILED.
-                # FAILED implies an error occurred; PENDING is a safer neutral status
-                # that makes the intent clear via the error_message field.
-                notification = Notification(
-                    tenant_id=tenant_id,
-                    user_id=user_id,
-                    template_name=template_name,
-                    to_email=to_email,
-                    subject="",
-                    status=NotificationStatus.PENDING,
-                )
-                notification.error_message = "Skipped: user preference opt-out"
-                self.db.add(notification)
-                await self.db.commit()
-                await self.db.refresh(notification)
-                return notification
+                # BUG FIX: Skipped notifications should NOT be stored as PENDING or FAILED.
+                # FAILED implies an error occurred; PENDING is confusing. Instead,
+                # we use a specific SKIPPED status if available, or just use FAILED but with a clear message.
+                # Since the schema might not have SKIPPED, we will not create a DB record at all
+                # for skipped notifications.
+                return None
 
         # Rate limiting check (T105)
         # 100 emails/minute per tenant

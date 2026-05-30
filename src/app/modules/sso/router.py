@@ -108,8 +108,9 @@ async def handle_callback(
 ) -> AuthTokenResponse | dict[str, str]:
     """Handle OAuth callback and return authentication tokens."""
     # Login CSRF Protection Constraint
+    import hmac
     cookie_state = request.cookies.get("sso_state")
-    if not cookie_state or cookie_state != state:
+    if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="State mismatch or missing session cookie (Login CSRF detection)",
@@ -125,17 +126,22 @@ async def handle_callback(
         )
         response.delete_cookie("sso_state")
         return tokens
-    except HTTPException:
+    except HTTPException as e:
+        e.headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         raise
     except httpx.TimeoutException as e:
+        headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Provider timeout: {str(e)}",
+            headers=headers,
         )
     except httpx.HTTPStatusError as e:
+        headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Provider error: {e.response.status_code}",
+            headers=headers,
         )
 
 
@@ -156,8 +162,9 @@ async def handle_post_callback(
     The `user` field contains JSON with name info on first authorization only.
     """
     # Login CSRF Protection Constraint
+    import hmac
     cookie_state = request.cookies.get("sso_state")
-    if not cookie_state or cookie_state != state:
+    if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="State mismatch or missing session cookie (Login CSRF detection)",
@@ -180,20 +187,25 @@ async def handle_post_callback(
             db=db,
             user_data=user_data,
         )
-        response.delete_cookie("sso_state")
         return tokens
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        e.headers = e.headers or {}
+        e.headers["Set-Cookie"] = 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'
+        raise e
     except httpx.TimeoutException as e:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Provider timeout: {str(e)}",
+            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Provider error: {e.response.status_code}",
+            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         )
+    finally:
+        response.delete_cookie("sso_state")
 
 
 @router.post("/{provider}/connect")

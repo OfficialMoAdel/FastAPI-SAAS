@@ -239,7 +239,7 @@ class TestAuthServiceIntegration:
 
     @pytest.mark.asyncio
     async def test_login_uses_gather(self):
-        """Verify login endpoint uses asyncio.gather for token generation."""
+        """Verify auth service uses asyncio.gather for token generation."""
         # This test verifies the pattern is used in auth service
         # We check that the code structure matches the expected pattern
 
@@ -247,10 +247,10 @@ class TestAuthServiceIntegration:
 
         from src.app.modules.auth.service import AuthService
 
-        # Get the login method source
-        source = inspect.getsource(AuthService.login)
+        # asyncio.gather is in _generate_auth_tokens (called by login)
+        source = inspect.getsource(AuthService._generate_auth_tokens)
 
         # Assert - should use asyncio.gather
-        assert "asyncio.gather" in source, "Login should use asyncio.gather for parallel token generation"
+        assert "asyncio.gather" in source, "Token generation should use asyncio.gather for parallel creation"
         assert "create_access_token" in source
         assert "create_refresh_token" in source

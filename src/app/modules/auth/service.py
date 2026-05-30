@@ -273,13 +273,33 @@ return new_attempts
                 "message": "MFA verification required",
             }
 
+        return await self._generate_auth_tokens(user, response, request, username)
+
+    async def _generate_auth_tokens(
+        self,
+        user: dict[str, Any],
+        response: Response,
+        request: Request,
+        username: str,
+    ) -> dict[str, str]:
+        """Generate access and refresh tokens, set cookies, register session.
+
+        Args:
+            user: Authenticated user data dict.
+            response: FastAPI response object for setting cookies.
+            request: FastAPI request object for session tracking.
+            username: Original username for audit logging.
+
+        Returns:
+            dict with access_token and token_type.
+        """
         # Include tier info in JWT claims for Zero-DB rate limiting
         # tier_name allows middleware to apply correct limits without DB lookup
         # SECURITY FIX: Include token_version for session invalidation on password change
         # SECURITY FIX: Include tenant_id for tenant context validation
         tier = user.get("tier")
         tier_name = tier.get("name") if tier else None
-        token_data = {
+        token_data: dict[str, Any] = {
             "sub": user["username"],
             "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
             "tier_id": user.get("tier_id"),
@@ -297,7 +317,6 @@ return new_attempts
 
         # Cookie security settings based on environment
         is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-        # Cookie security settings
         # SECURITY FIX: Always use secure=True for refresh tokens
         # Prevents transmission over HTTP in any environment
         response.set_cookie(
@@ -325,7 +344,7 @@ return new_attempts
             # and ensures we only track tokens we actually signed.
             if not validate_jwt_length(access_token):
                 logger.warning("JWT decode blocked: token too long")
-                decoded_token = {}
+                decoded_token: dict[str, Any] = {}
             else:
                 decoded_token = await decode_jwt_token(access_token) or {}
             session_id = decoded_token.get("jti", access_token[:32])
@@ -390,6 +409,12 @@ return new_attempts
         if not db_user or db_user.get("is_deleted", False) or not db_user.get("is_active", False):
             raise UnauthorizedException("User account is no longer active.")
 
+        # SECURITY FIX: Check token version to enforce password change/all-session invalidation
+        # `user_data.token_version` is pulled from the refresh token by `verify_token`
+        current_token_version = db_user.get("token_version", 0)
+        if hasattr(user_data, "token_version") and user_data.token_version != current_token_version:
+            raise UnauthorizedException("Session invalidated due to password change or security event.")
+
         # Include tier info in JWT claims for Zero-DB rate limiting
         tier = db_user.get("tier") if db_user else None
         tier_name = tier.get("name") if tier else None
@@ -411,6 +436,7 @@ return new_attempts
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
         try:
             from src.app.core.security.session_manager import session_manager as global_session_manager
+
             if user_data.jti:
                 await global_session_manager.invalidate_session(db_user["id"], user_data.jti)
         except Exception as e:
@@ -761,11 +787,7 @@ return new_attempts
             raw_token = generate_reset_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create password reset token (expires in 1 hour)
-            reset_token = PasswordResetToken(
-                user_id=user["id"],
-                token=hashed_token,
-                tenant_id=user["tenant_id"]
-            )
+            reset_token = PasswordResetToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
             db.add(reset_token)
             await db.commit()
             await db.refresh(reset_token)
@@ -928,11 +950,7 @@ return new_attempts
             raw_token = generate_verification_token()
             hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
             # Create verification token
-            token_model = EmailVerificationToken(
-                user_id=user["id"],
-                token=hashed_token,
-                tenant_id=user["tenant_id"]
-            )
+            token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
             db.add(token_model)
             await db.commit()
             await db.refresh(token_model)

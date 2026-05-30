@@ -36,14 +36,14 @@ class TestIsTokenBlacklisted:
     """Tests for is_token_blacklisted function."""
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_redis_unavailable(self) -> None:
-        """Should fail open (return None) when Redis is not configured and fail_open mode set."""
+    async def test_returns_true_when_redis_unavailable(self) -> None:
+        """Should fail closed (return True) when Redis is not configured, even with fail_open mode."""
         with (
             patch("src.app.core.utils.cache.client", None),
             patch("src.app.core.config.settings.auth.TOKEN_CACHE_FAILURE_MODE", "fail_open"),
         ):
             result = await is_token_blacklisted("some-token")
-            assert result is None
+            assert result is True
 
     @pytest.mark.asyncio
     async def test_returns_false_when_token_not_in_cache(self) -> None:

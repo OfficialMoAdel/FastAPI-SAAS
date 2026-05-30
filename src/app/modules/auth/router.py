@@ -134,6 +134,7 @@ async def logout(
     "/password",
     response_model=PasswordChangeResponse,
     responses={401: {"description": "Unauthorized"}, 403: {"description": "Forbidden"}},
+    dependencies=[Depends(check_auth_rate_limit)],
 )
 async def change_password(
     request: Request,

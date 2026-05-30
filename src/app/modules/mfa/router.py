@@ -340,6 +340,37 @@ async def complete_mfa_login(
 
     # Set refresh token cookie
     max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+
+    try:
+        import json
+
+        import jwt
+
+        from src.app.core.security.jwt_utils import validate_jwt_length
+        from src.app.core.security.session_manager import session_manager as global_session_manager
+
+        if not validate_jwt_length(access_token):
+            decoded_token = {}
+        else:
+            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
+
+        session_id = decoded_token.get("jti", access_token[:32])
+
+        client_ip = fastapi_request.client.host if fastapi_request and fastapi_request.client else "Unknown"
+
+        user_agent = fastapi_request.headers.get("user-agent", "Unknown") if fastapi_request else "Unknown"
+        device_info_str = json.dumps({"user_agent": user_agent, "ip": client_ip})
+
+        await global_session_manager.register_session(
+            user_id=user["id"],
+            session_id=session_id,
+            device_info=device_info_str,
+        )
+    except Exception as e:
+        import structlog
+
+        logger = structlog.get_logger()
+        logger.warning("mfa_session_registration_failed", error=str(e))
     is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
     response.set_cookie(
         key="refresh_token",

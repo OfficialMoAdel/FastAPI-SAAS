@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import DateTime, Index, String
+from sqlalchemy import DateTime, ForeignKey, Index, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from src.app.core.db.database import Base
@@ -17,7 +17,8 @@ class TokenBlacklist(Base):
     # BUG FIX: tenant_id scopes blacklisted tokens to their originating tenant.
     # Without this, cross-tenant token-reuse was possible if RLS was bypassed.
     # Now non-nullable to ensure all blacklisted tokens are scoped.
-    tenant_id: Mapped[UUID] = mapped_column(nullable=False, index=True)
+    # R2-H7: Added ForeignKey to ensure referential integrity
+    tenant_id: Mapped[UUID] = mapped_column(ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False, index=True)
 
     __table_args__ = (
         # Speed up tenant-scoped cleanup queries (e.g. token sweep on tenant deletion)

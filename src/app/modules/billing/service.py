@@ -67,6 +67,20 @@ from src.app.modules.billing.schemas import (
 )
 
 
+def _require_active_tenant():
+    """Get the current active tenant or raise 403.
+
+    Raises:
+        HTTPException: If tenant is not set or not active.
+    """
+    tenant = get_current_tenant()
+    if tenant is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenant context available")
+    if not tenant.is_active:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+    return tenant
+
+
 def _pricing_tier_to_dict(pricing: Pricing) -> dict[str, Any]:
     """Convert Pricing ORM object to response dict directly.
 
@@ -127,11 +141,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
     async def update_settings(self, data: StripeSettingsUpdate) -> dict[str, Any]:
         """Update Stripe settings for the current tenant."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
-        if not tenant.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+        tenant = _require_active_tenant()
 
         stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
 
@@ -189,11 +199,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
-        if not tenant.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+        tenant = _require_active_tenant()
 
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
@@ -287,11 +293,7 @@ class ProductService(BaseService[Product]):
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
-        if not tenant.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+        tenant = _require_active_tenant()
 
         product_data = data.model_dump()
         product_data["tenant_id"] = tenant.id
@@ -750,8 +752,10 @@ class CheckoutService:
             )
 
         import stripe
+
         try:
             import asyncio
+
             # Lightweight API call to validate the key
             await asyncio.to_thread(stripe.Account.retrieve, api_key=api_key)
         except stripe.error.AuthenticationError:
@@ -915,6 +919,3 @@ def get_billing_record_service(db: AsyncSession) -> BillingRecordService:
 def get_checkout_service(db: AsyncSession) -> CheckoutService:
     """Get checkout service instance."""
     return CheckoutService(db)
-
-
-

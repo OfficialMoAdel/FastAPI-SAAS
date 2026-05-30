@@ -89,6 +89,21 @@ def _get_redis_client() -> Redis | None:
     return cache.client
 
 
+def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
+    """Get Redis client for blacklist operations with circuit breaker check.
+
+    Returns:
+        Tuple of (redis_client, fail_closed). If circuit breaker is open and
+        TOKEN_CACHE_FAILURE_MODE is 'fail_closed', returns (None, True).
+        If Redis is unavailable, returns (None, False) for fail-open behavior.
+    """
+    if not _circuit_breaker.can_attempt():
+        if getattr(settings.r1_unified, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
+            return None, True
+        return None, False
+    return _get_redis_client(), False
+
+
 logger = get_logger(__name__)
 
 # Redis key for the blacklist sorted set
@@ -267,25 +282,13 @@ async def is_token_blacklisted(token: str) -> bool | None:
         token: The JWT token to check
 
     Returns:
-        True if blacklisted, False if not, None if Redis unavailable (fail open)
+        True if blacklisted, False if not
     """
-    from src.app.core.config import settings
-
-    # Circuit Breaker: Fail open (bypass Redis) if circuit is open to prevent total outage
-    if not _circuit_breaker.can_attempt():
-        return None  # Fail open - fall back to DB check
-
-    redis_client = _get_redis_client()
+    redis_client, fail_closed = _get_available_redis_client_for_blacklist()
+    if fail_closed:
+        return True
     if redis_client is None:
-        from src.app.core.monitoring.r1_unified_metrics import record_fail_open
-
-        record_fail_open("token_blacklist")
-
-        # SECURITY FIX: Fail closed during infrastructure disruptions
-        if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
-            return True  # Treat as blacklisted to fail closed
-
-        return None  # Redis not configured, fall back to DB
+        return True  # Fail-closed: treat as blacklisted when Redis unavailable
 
     # Resolve the member key that blacklist_tokens used when storing this token.
     # blacklist_tokens stores "jti:{jti}" when a JTI claim is present, so we
@@ -521,9 +524,9 @@ async def warm_cache_from_db(db_tokens: list[tuple[str, datetime]]) -> int:
     if not active_tokens:
         return 0
 
-    count = await add_tokens_to_blacklist(active_tokens)
-    logger.info("Warmed token blacklist cache with tokens", count=count)
-    return count
+    added = await add_tokens_to_blacklist(active_tokens)
+    logger.info("Warmed token blacklist cache with tokens", count=added)
+    return added
 
 
 async def get_cache_stats() -> dict:
@@ -563,5 +566,7 @@ def reset_token_blacklist_cache() -> None:
 
     # Clear the LRU cache for token keys
     _token_cache_key.cache_clear()
+
+    logger.debug("Token blacklist cache state reset")
 
     logger.debug("Token blacklist cache state reset")

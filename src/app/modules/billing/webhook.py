@@ -270,7 +270,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
             user_id=user_id,
             plan_id=plan_id,
         )
-        return
+        raise ValueError(f"Missing metadata: tenant_id={tenant_id}, user_id={user_id}, plan_id={plan_id}")
 
     stripe_subscription_id = session.get("subscription")
     # stripe_customer_id = session.get("customer")  # Unused
@@ -597,7 +597,11 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
 
         # Find the free plan
         # BUG FIX: Use exact match and lower case for case-insensitivity
-        free_plan_stmt = select(crud_tiers.model).where(func.lower(crud_tiers.model.name) == "free").limit(1)
+        free_plan_stmt = (
+            select(crud_tiers.model)
+            .where(func.lower(crud_tiers.model.name) == settings.DEFAULT_FREE_TIER_NAME.lower())
+            .limit(1)
+        )
         free_plan_result = await db.execute(free_plan_stmt)
         free_plan = free_plan_result.scalar_one_or_none()
 

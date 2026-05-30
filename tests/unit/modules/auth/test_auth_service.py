@@ -288,6 +288,7 @@ class TestAuthServiceTokenRefresh:
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "testuser"
         mock_token_data.absolute_exp = None  # Bypass session expiration check
+        mock_token_data.token_version = 0  # Match db_user token_version
 
         # Mock settings to simulate production environment
         with (
@@ -319,6 +320,7 @@ class TestAuthServiceTokenRefresh:
                     "tier": {"name": "basic"},
                     "is_deleted": False,
                     "is_active": True,
+                    "token_version": 0,
                 }
             )
             mock_get_user_service.return_value = mock_user_service
@@ -618,6 +620,7 @@ class TestAuthServiceSecurityBugFixes:
         mock_token_data = MagicMock()
         mock_token_data.username_or_email = "activeuser"
         mock_token_data.absolute_exp = None  # Bypass session expiration check
+        mock_token_data.token_version = 0  # Match db_user token_version
 
         with (
             patch("src.app.modules.auth.service.settings") as mock_settings,
@@ -648,6 +651,7 @@ class TestAuthServiceSecurityBugFixes:
                     "is_active": True,
                     "tier_id": 1,
                     "tier": {"name": "premium"},
+                    "token_version": 0,
                 }
             )
             mock_get_user_service.return_value = mock_user_service

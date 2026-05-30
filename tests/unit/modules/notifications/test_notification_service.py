@@ -149,9 +149,8 @@ async def test_send_email_skipped_by_prefs(service, mock_db):
 
         notification = await service.send_email(t_id, "user@test.com", "welcome", {}, user_id=u_id)
 
-        # BUG FIX: Skipped notifications now use PENDING (not FAILED) and a corrected message.
-        assert notification.status == NotificationStatus.PENDING
-        assert notification.error_message == "Skipped: user preference opt-out"
+        # BUG FIX: Skipped notifications now return None (no DB record created)
+        assert notification is None
 
 
 @pytest.mark.asyncio
