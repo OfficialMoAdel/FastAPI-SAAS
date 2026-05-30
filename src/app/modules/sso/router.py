@@ -127,8 +127,9 @@ async def handle_callback(
         response.delete_cookie("sso_state")
         return tokens
     except HTTPException as e:
-        e.headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
-        raise
+        e.headers = e.headers or {}
+        e.headers["Set-Cookie"] = 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'
+        raise e
     except httpx.TimeoutException as e:
         headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
         raise HTTPException(

@@ -22,7 +22,10 @@ class TestWebhookEndpointSecurity:
 
     async def test_webhook_endpoint_requires_authentication(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test that webhook endpoints require authentication."""
-        response = await async_client.get("/api/v1/webhooks/")
+        response = await async_client.get(
+            "/api/v1/webhooks/",
+            headers={"X-Tenant-ID": test_tenant.slug},
+        )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     async def test_webhook_endpoint_enforces_tenant_isolation(
@@ -411,6 +414,7 @@ class TestAPIKeySecurity:
         response = await async_client.post(
             "/api/v1/api-keys",
             json={"name": "Test Key", "scopes": ["read:users"]},
+            headers={"X-Tenant-ID": test_tenant.slug},
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
@@ -457,7 +461,10 @@ class TestAPIKeySecurity:
 
     async def test_api_key_list_requires_auth(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test API key listing requires authentication."""
-        response = await async_client.get("/api/v1/api-keys")
+        response = await async_client.get(
+            "/api/v1/api-keys",
+            headers={"X-Tenant-ID": test_tenant.slug},
+        )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
 
     async def test_api_key_list_shows_only_own_keys(

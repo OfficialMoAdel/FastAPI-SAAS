@@ -1912,10 +1912,14 @@ async def test_tenant(real_postgres):
 
     Returns the tenant object directly for backward compatibility.
     Tests can access test_tenant.id, test_tenant.slug, etc.
+
+    Commits the tenant so it is visible to the middleware's separate session.
     """
     from tests.factories import TenantFactory
 
-    return await TenantFactory.create_async(real_postgres)
+    tenant = await TenantFactory.create_async(real_postgres)
+    await real_postgres.commit()
+    return tenant
 
 
 @pytest_asyncio.fixture

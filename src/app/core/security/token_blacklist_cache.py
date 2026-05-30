@@ -97,11 +97,10 @@ def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
         TOKEN_CACHE_FAILURE_MODE is 'fail_closed', returns (None, True).
         If Redis is unavailable, returns (None, False) for fail-open behavior.
     """
+    fail_closed = getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed"
     if not _circuit_breaker.can_attempt():
-        if getattr(settings.r1_unified, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed":
-            return None, True
-        return None, False
-    return _get_redis_client(), False
+        return None, fail_closed
+    return _get_redis_client(), fail_closed
 
 
 logger = get_logger(__name__)
@@ -282,13 +281,13 @@ async def is_token_blacklisted(token: str) -> bool | None:
         token: The JWT token to check
 
     Returns:
-        True if blacklisted, False if not
+        True if blacklisted, False if not, None if Redis unavailable (fail open)
     """
     redis_client, fail_closed = _get_available_redis_client_for_blacklist()
-    if fail_closed:
-        return True
     if redis_client is None:
-        return True  # Fail-closed: treat as blacklisted when Redis unavailable
+        if fail_closed:
+            return True
+        return None  # Fail open - fall back to DB check
 
     # Resolve the member key that blacklist_tokens used when storing this token.
     # blacklist_tokens stores "jti:{jti}" when a JTI claim is present, so we

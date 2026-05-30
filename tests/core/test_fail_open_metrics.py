@@ -45,19 +45,41 @@ async def test_session_manager_fail_open():
 
 @pytest.mark.asyncio
 async def test_token_blacklist_fail_open():
-    """Verify token blacklist returns True (fail-closed) when Redis is unavailable."""
+    """Verify token blacklist returns None (fail-open) when Redis is unavailable and fail_open mode set."""
     from src.app.core.security import token_blacklist_cache
 
     reset_r1_metrics()
     metrics = get_r1_metrics()
 
     # Mock cache.client being None (simulates Redis unavailable)
-    with patch("src.app.core.utils.cache.client", None):
+    with (
+        patch("src.app.core.utils.cache.client", None),
+        patch("src.app.core.config.settings.auth.TOKEN_CACHE_FAILURE_MODE", "fail_open"),
+    ):
+        result = await token_blacklist_cache.is_token_blacklisted("token")
+
+        # Fail-open: returns None
+        assert result is None
+        assert metrics.get_counter("r1_security_fail_open_total") == 0
+
+
+@pytest.mark.asyncio
+async def test_token_blacklist_fail_closed():
+    """Verify token blacklist returns True (fail-closed) when Redis is unavailable and fail_closed mode set."""
+    from src.app.core.security import token_blacklist_cache
+
+    reset_r1_metrics()
+    metrics = get_r1_metrics()
+
+    # Mock cache.client being None (simulates Redis unavailable)
+    with (
+        patch("src.app.core.utils.cache.client", None),
+        patch("src.app.core.config.settings.auth.TOKEN_CACHE_FAILURE_MODE", "fail_closed"),
+    ):
         result = await token_blacklist_cache.is_token_blacklisted("token")
 
         # Fail-closed: treat as blacklisted for security
         assert result is True
-        # No fail-open metric since we fail-closed
         assert metrics.get_counter("r1_security_fail_open_total") == 0
 
 

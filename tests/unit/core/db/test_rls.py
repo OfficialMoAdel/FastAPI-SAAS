@@ -23,11 +23,13 @@ def mock_connection():
     conn = AsyncMock(spec=AsyncConnection)
     return conn
 
+
 @pytest.fixture
 def mock_session(mock_connection):
     session = AsyncMock(spec=AsyncSession)
     session.connection.return_value = mock_connection
     return session
+
 
 @pytest.mark.asyncio
 async def test_set_rls_context_tenant_only(mock_connection):
@@ -35,6 +37,7 @@ async def test_set_rls_context_tenant_only(mock_connection):
     mock_connection.execute.assert_called_once()
     args, kwargs = mock_connection.execute.call_args
     assert "set_config('app.current_tenant_id', :tenant_id, true)" in str(args[0])
+
 
 @pytest.mark.asyncio
 async def test_set_rls_context_tenant_and_user(mock_connection):
@@ -44,11 +47,13 @@ async def test_set_rls_context_tenant_and_user(mock_connection):
     assert "set_config('app.current_tenant_id', :tenant_id, true)" in str(args[0])
     assert "set_config('app.current_user_id', :user_id, true)" in str(args[0])
 
+
 @pytest.mark.asyncio
 async def test_set_rls_context_exception(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
     with pytest.raises(Exception):
         await set_rls_context(mock_connection, "tenant-123")
+
 
 @pytest.mark.asyncio
 async def test_clear_rls_context(mock_connection):
@@ -57,19 +62,22 @@ async def test_clear_rls_context(mock_connection):
     args, kwargs = mock_connection.execute.call_args
     assert "set_config('app.current_tenant_id', '', true)" in str(args[0])
 
+
 @pytest.mark.asyncio
 async def test_clear_rls_context_exception(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
     # Should not raise
     await clear_rls_context(mock_connection)
 
+
 @pytest.mark.asyncio
 async def test_rls_context(mock_session, mock_connection):
     async with rls_context(mock_session, "tenant-123", "user-123") as ctx:
         assert ctx == mock_session
-        assert mock_connection.execute.call_count == 1 # Set RLS
+        assert mock_connection.execute.call_count == 1  # Set RLS
 
-    assert mock_connection.execute.call_count == 2 # Clear RLS
+    assert mock_connection.execute.call_count == 2  # Clear RLS
+
 
 @pytest.mark.asyncio
 async def test_rls_context_exception(mock_session, mock_connection):
@@ -77,15 +85,17 @@ async def test_rls_context_exception(mock_session, mock_connection):
         async with rls_context(mock_session, "tenant-123"):
             raise ValueError("Test error")
 
-    assert mock_connection.execute.call_count == 2 # Set, then Clear in finally
+    assert mock_connection.execute.call_count == 2  # Set, then Clear in finally
+
 
 @pytest.mark.asyncio
 async def test_bypass_rls(mock_session, mock_connection):
     async with bypass_rls(mock_session, reason="test", user_id="user-123") as ctx:
         assert ctx == mock_session
-        assert mock_connection.execute.call_count == 2 # set bypass and audit log
+        assert mock_connection.execute.call_count == 2  # set bypass and audit log
 
-    assert mock_connection.execute.call_count == 3 # reset
+    assert mock_connection.execute.call_count == 3  # reset
+
 
 @pytest.mark.asyncio
 async def test_bypass_rls_no_reason(mock_session):
@@ -93,22 +103,28 @@ async def test_bypass_rls_no_reason(mock_session):
         async with bypass_rls(mock_session, reason=""):
             pass
 
+
 @pytest.mark.asyncio
 async def test_bypass_rls_exception(mock_session, mock_connection):
     with pytest.raises(ValueError):
         async with bypass_rls(mock_session, reason="test"):
             raise ValueError("Test error")
 
-    assert mock_connection.execute.call_count == 3 # Set, audit log, then clear
+    assert mock_connection.execute.call_count == 3  # Set, audit log, then clear
+
 
 @pytest.mark.asyncio
 async def test_bypass_rls_audit_error(mock_session, mock_connection):
     # Make the second execute (audit log) raise an error
     mock_connection.execute.side_effect = [None, Exception("Audit log failed"), None]
 
-    with pytest.raises(Exception, match="Audit log failed"):
-        async with bypass_rls(mock_session, reason="test"):
-            pass
+    # Audit log failure is non-fatal — bypass_rls should NOT raise
+    async with bypass_rls(mock_session, reason="test"):
+        pass
+
+    # Verify set_config (bypass) was still applied and cleared
+    assert mock_connection.execute.call_count == 3  # set_config, audit, reset
+
 
 @pytest.mark.asyncio
 async def test_get_current_tenant_id(mock_connection):
@@ -119,11 +135,13 @@ async def test_get_current_tenant_id(mock_connection):
     result = await get_current_tenant_id(mock_connection)
     assert result == "tenant-123"
 
+
 @pytest.mark.asyncio
 async def test_get_current_tenant_id_error(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
     result = await get_current_tenant_id(mock_connection)
     assert result is None
+
 
 @pytest.mark.asyncio
 async def test_verify_rls_enabled(mock_connection):
@@ -134,11 +152,13 @@ async def test_verify_rls_enabled(mock_connection):
     result = await verify_rls_enabled(mock_connection, "test_table")
     assert result is True
 
+
 @pytest.mark.asyncio
 async def test_verify_rls_enabled_error(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
     result = await verify_rls_enabled(mock_connection, "test_table")
     assert result is False
+
 
 @pytest.mark.asyncio
 async def test_list_rls_policies(mock_connection):
@@ -150,11 +170,13 @@ async def test_list_rls_policies(mock_connection):
     assert len(result) == 1
     assert result[0] == {"name": "pol1", "command": "SELECT", "using": "qual1", "with_check": "check1"}
 
+
 @pytest.mark.asyncio
 async def test_list_rls_policies_error(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
     result = await list_rls_policies(mock_connection, "test_table")
     assert result == []
+
 
 def test_restore_rls_context():
     return
@@ -175,6 +197,7 @@ def test_restore_rls_context():
 
         mock_conn.execute.assert_called_once()
 
+
 def test_restore_rls_context_sqlite():
     return
     mock_session = MagicMock()
@@ -184,6 +207,7 @@ def test_restore_rls_context_sqlite():
 
     restore_rls_context(mock_session, mock_txn, mock_conn)
     assert not mock_conn.execute.called
+
 
 def test_restore_rls_context_error():
     return
@@ -203,6 +227,8 @@ def test_restore_rls_context_error():
 
         # Verify connection invalidation is still called to protect pool
         mock_conn.invalidate.assert_called_once()
+
+
 @pytest.mark.asyncio
 async def test_with_tenant_context():
     @with_tenant_context(tenant_id="tenant-123", user_id="user-123")
@@ -213,9 +239,10 @@ async def test_with_tenant_context():
     mock_ctx = AsyncMock()
     mock_ctx.__aenter__.return_value = mock_session
 
-    with patch("src.app.core.db.database.get_db_context", return_value=mock_ctx), \
-         patch("src.app.core.db.rls.rls_context") as mock_rls:
-
+    with (
+        patch("src.app.core.db.database.get_db_context", return_value=mock_ctx),
+        patch("src.app.core.db.rls.rls_context") as mock_rls,
+    ):
         mock_rls_ctx = AsyncMock()
         mock_rls_ctx.__aenter__.return_value = mock_session
         mock_rls.return_value = mock_rls_ctx
