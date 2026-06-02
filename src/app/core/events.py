@@ -360,8 +360,14 @@ class EventBus:
         if not handlers:
             return
 
-        # Execute all handlers concurrently and await completion to ensure fully synchronous finish
-        results = await asyncio.gather(*[_call_handler(handler) for handler in handlers], return_exceptions=True)
+        # Execute all handlers sequentially to ensure strict ordering
+        results: list[Exception | None] = []
+        for handler in handlers:
+            try:
+                await _call_handler(handler)
+                results.append(None)
+            except Exception as e:
+                results.append(e)
 
         # Inspect results for any exceptions that escaped _call_handler (unlikely but possible)
         for i, result in enumerate(results):

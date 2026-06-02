@@ -5,7 +5,7 @@ to avoid async database connection contention.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -15,12 +15,14 @@ from src.app.main import app
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"
 
+MOCK_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
+
 
 @pytest.fixture
 def mock_tenant():
     """Mock tenant object."""
     tenant = MagicMock()
-    tenant.id = 1
+    tenant.id = MOCK_TENANT_ID
     tenant.name = "Test Tenant"
     tenant.slug = "test-tenant"
     tenant.is_active = True
@@ -35,7 +37,7 @@ def mock_superuser():
         "username": "admin",
         "email": "admin@test.com",
         "is_superuser": True,
-        "tenant_id": str(uuid4()),
+        "tenant_id": MOCK_TENANT_ID,
     }
 
 
@@ -47,7 +49,7 @@ def mock_regular_user():
         "username": "user",
         "email": "user@test.com",
         "is_superuser": False,
-        "tenant_id": str(uuid4()),
+        "tenant_id": MOCK_TENANT_ID,
     }
 
 
@@ -58,7 +60,7 @@ def mock_role():
     role.id = 1
     role.name = "Test Role"
     role.description = "A test role"
-    role.tenant_id = 1
+    role.tenant_id = MOCK_TENANT_ID
     role.is_system = False
     return role
 
@@ -97,6 +99,11 @@ class TestRBACRolesAccess:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 new_callable=AsyncMock,
                 return_value=mock_superuser,
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.get_roles",
@@ -165,7 +172,7 @@ class TestRBACRolesCRUD:
         created_role.id = 10
         created_role.name = "New Role"
         created_role.description = "New role description"
-        created_role.tenant_id = 1
+        created_role.tenant_id = MOCK_TENANT_ID
         created_role.is_system = False
 
         with (
@@ -178,6 +185,11 @@ class TestRBACRolesCRUD:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 new_callable=AsyncMock,
                 return_value=mock_superuser,
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.create_role",
@@ -218,6 +230,11 @@ class TestRBACRolesCRUD:
                 return_value=mock_superuser,
             ),
             patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
                 "src.app.modules.rbac.service.RoleService.get_role",
                 new_callable=AsyncMock,
                 return_value=mock_role,
@@ -255,6 +272,11 @@ class TestRBACRolesCRUD:
                 return_value=mock_superuser,
             ),
             patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
                 "src.app.modules.rbac.service.RoleService.get_role",
                 new_callable=AsyncMock,
                 return_value=None,
@@ -281,7 +303,7 @@ class TestRBACRolesCRUD:
         updated_role.id = 1
         updated_role.name = "Updated Role"
         updated_role.description = "Updated description"
-        updated_role.tenant_id = 1
+        updated_role.tenant_id = MOCK_TENANT_ID
         updated_role.is_system = False
 
         with (
@@ -294,6 +316,11 @@ class TestRBACRolesCRUD:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 new_callable=AsyncMock,
                 return_value=mock_superuser,
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.update_role",
@@ -333,6 +360,11 @@ class TestRBACRolesCRUD:
                 return_value=mock_superuser,
             ),
             patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
                 "src.app.modules.rbac.service.RoleService.delete_role",
                 new_callable=AsyncMock,
                 return_value=True,
@@ -369,6 +401,11 @@ class TestRBACRolesValidation:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 new_callable=AsyncMock,
                 return_value=mock_superuser,
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
         ):
             async with AsyncClient(

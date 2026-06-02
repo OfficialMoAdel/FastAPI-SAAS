@@ -6,7 +6,7 @@ import random
 from collections.abc import Callable
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import Executable, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -29,7 +29,7 @@ db_circuit = create_circuit_breaker(
 
 async def execute_query_with_circuit_breaker(
     db: AsyncSession,
-    query: str,
+    query: str | Executable,
     params: dict | None = None,
     cache_key: str | None = None,
     cache_ttl: int = 300,
@@ -40,7 +40,7 @@ async def execute_query_with_circuit_breaker(
 
     Args:
         db: Database session
-        query: SQL query
+        query: SQL query string or SQLAlchemy Executable
         params: Query parameters
         cache_key: Redis cache key for fallback
         cache_ttl: Cache TTL in seconds
@@ -67,7 +67,9 @@ async def execute_query_with_circuit_breaker(
 
         # Use static fallback if provided
         if fallback_data is not None:
-            logger.warning("Using fallback data for query", query_snippet=query[:100])
+            # SECURITY WARNING: if query is Executable, slicing [:100] on str() is safe.
+            query_str = str(query)[:100]
+            logger.warning("Using fallback data for query", query_snippet=query_str)
             return fallback_data
 
         # No fallback available
@@ -83,7 +85,13 @@ async def execute_query_with_circuit_breaker(
 
     # Execute query
     try:
-        result = await db.execute(text(query), params or {})
+        compiled_query: Executable
+        if isinstance(query, str):
+            compiled_query = text(query)
+        else:
+            compiled_query = query
+
+        result = await db.execute(compiled_query, params or {})
 
         # Convert result to list of dicts for consistency
         # SQLAlchemy returns Row objects, convert to dicts

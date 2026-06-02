@@ -264,9 +264,18 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                     body_to_scan = b"".join(body_chunks)
 
                     if body_to_scan:
-                        # Store the body so it can be read by the rest of the application
-                        # This works correctly with Starlette's _CachedRequest
-                        request._body = body_to_scan
+                        # SECURITY FIX: Avoid mutating private framework attributes like request._body.
+                        # Instead, create a new receive callable that yields the buffered body.
+                        body_returned = False
+
+                        async def receive() -> dict:
+                            nonlocal body_returned
+                            if not body_returned:
+                                body_returned = True
+                                return {"type": "http.request", "body": body_to_scan, "more_body": False}
+                            return {"type": "http.disconnect"}
+
+                        request = Request(request.scope, receive=receive)
 
                         # Sanitize then scan — NFKC + zero-width stripping
                         self._check_for_patterns(self._sanitize_input(body_to_scan), "request_body", detected_attacks)

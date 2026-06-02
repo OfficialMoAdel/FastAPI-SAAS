@@ -5,6 +5,7 @@ T024: Ensure 403 Forbidden is returned for all unauthorized access.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
 import pytest_asyncio
@@ -12,6 +13,8 @@ from httpx import ASGITransport, AsyncClient
 
 from src.app.core.rbac.permissions import Permission
 from src.app.main import app
+
+MOCK_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest_asyncio.fixture
@@ -42,8 +45,8 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_missing_permission_returns_403(self, client: AsyncClient) -> None:
         """User without required permission gets 403."""
-        mock_user = {"id": 1, "is_superuser": False, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": False, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
@@ -77,8 +80,8 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_wrong_permission_returns_403(self, client: AsyncClient) -> None:
         """User with different permission than required gets 403."""
-        mock_user = {"id": 1, "is_superuser": False, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": False, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
@@ -111,8 +114,8 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_create_role_without_manage_permission_returns_403(self, client: AsyncClient) -> None:
         """User with ROLES_READ but not ROLES_MANAGE cannot create roles."""
-        mock_user = {"id": 1, "is_superuser": False, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": False, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
@@ -146,8 +149,8 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_delete_role_without_manage_permission_returns_403(self, client: AsyncClient) -> None:
         """User with ROLES_READ but not ROLES_MANAGE cannot delete roles."""
-        mock_user = {"id": 1, "is_superuser": False, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": False, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
@@ -179,8 +182,8 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_assign_user_without_users_manage_returns_403(self, client: AsyncClient) -> None:
         """User without USERS_MANAGE cannot assign roles to users."""
-        mock_user = {"id": 1, "is_superuser": False, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": False, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
@@ -213,14 +216,11 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_superuser_bypasses_permission_check(self, client: AsyncClient) -> None:
         """Superuser can access any endpoint regardless of permissions."""
-        mock_user = {"id": 1, "is_superuser": True, "tenant_id": 1}
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_user = {"id": 1, "is_superuser": True, "tenant_id": MOCK_TENANT_ID}
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
-
-        async def mock_service_get_roles(*args, **kwargs):
-            return []
 
         with (
             patch(
@@ -230,6 +230,10 @@ class TestRBACSecurityContract:
             patch(
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value=mock_user,
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new=AsyncMock(return_value=True),
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.get_roles",
@@ -247,7 +251,7 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_unauthenticated_request_returns_401(self, client: AsyncClient) -> None:
         """Request without auth token returns 401."""
-        mock_tenant = MagicMock(id=1, slug="test-tenant", is_active=True)
+        mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant

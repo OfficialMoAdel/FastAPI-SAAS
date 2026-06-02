@@ -69,8 +69,21 @@ class RequestBodyLimitMiddleware:
         if scope["type"] != "http":
             return await self.app(scope, receive, send)
 
-        # Fast path: Check Content-Length header if present
-        content_length = next((value for name, value in scope.get("headers", []) if name == b"content-length"), b"")
+        # SECURITY FIX: Prevent HTTP Request Smuggling via multiple Content-Length headers
+        content_lengths = [value for name, value in scope.get("headers", []) if name == b"content-length"]
+
+        if len(content_lengths) > 1:
+            if len(set(content_lengths)) > 1:
+                # Multiple Content-Length headers with different values - classic smuggling attempt
+                logger.warning(
+                    "multiple_conflicting_content_length_headers",
+                    path=scope.get("path", ""),
+                    client=scope.get("client", ["unknown"])[0] if scope.get("client") else "unknown",
+                )
+                await self._send_400(send, b"Bad Request - Multiple conflicting Content-Length headers")
+                return
+
+        content_length = content_lengths[0] if content_lengths else b""
 
         if content_length:
             try:
@@ -136,4 +149,17 @@ class RequestBodyLimitMiddleware:
         await send({
             "type": "http.response.body",
             "body": b"Request body too large",
+        })
+
+    async def _send_400(self, send: Send, message: bytes) -> None:
+        await send({
+            "type": "http.response.start",
+            "status": 400,
+            "headers": [
+                (b"content-type", b"text/plain"),
+            ],
+        })
+        await send({
+            "type": "http.response.body",
+            "body": message,
         })

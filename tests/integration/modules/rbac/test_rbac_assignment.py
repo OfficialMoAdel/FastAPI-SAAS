@@ -56,6 +56,11 @@ class TestRoleAssignmentEndpoints:
                 return_value={"USERS_MANAGE"},
             ),
             patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+            patch(
                 "src.app.modules.rbac.service.RoleService.assign_role_to_user",
                 new_callable=AsyncMock,
                 return_value=True,
@@ -89,6 +94,11 @@ class TestRoleAssignmentEndpoints:
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
                 return_value={"USERS_MANAGE"},
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.remove_role_from_user",
@@ -178,6 +188,11 @@ class TestRoleAssignmentEndpoints:
                 "src.app.core.rbac.dependencies.get_user_permissions",
                 new_callable=AsyncMock,
                 return_value=set(),  # No permissions but superuser
+            ),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
             ),
             patch(
                 "src.app.modules.rbac.service.RoleService.assign_role_to_user",

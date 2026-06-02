@@ -5,7 +5,6 @@ Unit tests for bitmask permission system.
 import pytest
 
 from src.app.core.rbac.bitmask import (
-    MAX_PERMISSIONS,
     PermissionBitmask,
     decode_permissions,
     encode_permissions,
@@ -229,10 +228,6 @@ class TestPermissionBitmaskUtilities:
         assert isinstance(mapping, dict)
         assert len(mapping) == len(Permission)
         assert Permission.USERS_READ.value in mapping
-
-    def test_max_permissions_not_exceeded(self) -> None:
-        """Ensure we haven't exceeded 64 permissions."""
-        assert len(Permission) <= MAX_PERMISSIONS
 
 
 class TestPermissionBitmaskDeterminism:

@@ -27,6 +27,8 @@ load_dotenv("src/.env")
 
 # Disable bad bot filter for tests (httpx is used by test clients)
 os.environ["BAD_BOT_FILTER_ENABLED"] = "false"
+# Disable attack detection middleware for tests (BaseHTTPMiddleware body consumption issue)
+os.environ["ATTACK_DETECTION_ENABLED"] = "false"
 # Enable test mode to use NullPool and prevent event loop closed errors
 os.environ["TESTING"] = "1"
 
@@ -446,6 +448,12 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
         ),
+        # Mock has_permission_cached so superuser bypass works without a real DB user
+        patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
             yield _client
@@ -553,6 +561,12 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
         ),
         patch(
             "src.app.core.rbac.dependencies._get_current_user_from_token", side_effect=mock_get_current_user_from_token
+        ),
+        # Mock has_permission_cached so superuser bypass works without a real DB user
+        patch(
+            "src.app.core.rbac.dependencies.has_permission_cached",
+            new_callable=AsyncMock,
+            return_value=True,
         ),
     ):
         with TestClient(app, headers={"User-Agent": "TestClient/1.0"}) as _client:
@@ -855,12 +869,24 @@ async def superuser_token_headers(get_test_app, full_mock_context):
         tier_id=1,
     )
 
+    # Mock has_permission_cached so superuser DB verification fallback succeeds.
+    # The requires_permission dependency queries User.is_superuser from the DB (id=1),
+    # but no real user exists in the test DB. Without this mock, permission checks
+    # fall through to has_permission_cached which also hits the DB → 403.
+    perm_mock = patch(
+        "src.app.core.rbac.dependencies.has_permission_cached",
+        new_callable=AsyncMock,
+        return_value=True,
+    )
+    perm_mock.start()
+
     # Override dependency (updates existing overrides from full_mock_context)
     app.dependency_overrides[get_current_user] = lambda: fake_superuser
-    return {
+    yield {
         "Authorization": "Bearer superuser",
         "X-Tenant-ID": "test-tenant-integration",
     }
+    perm_mock.stop()
 
 
 @pytest.fixture

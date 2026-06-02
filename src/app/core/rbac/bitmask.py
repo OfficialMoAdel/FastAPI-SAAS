@@ -33,21 +33,17 @@ from typing import Final
 
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 
-# Maximum 64 permissions for single BigInt (PostgreSQL BIGINT is 64-bit signed)
-# For more permissions, use array of BigInts or switch to BYTEA
-MAX_PERMISSIONS: Final[int] = 64
-
+# Python handles arbitrarily large integers, and Redis can store large string representations.
+# The previous 64-bit limit was an artificial ceiling since the bitmask is not stored in Postgres BIGINT.
 
 def _build_permission_bit_map() -> dict[str, int]:
     """
     Build a mapping from permission slug to bit position.
 
-    Each permission gets a unique bit (0-63).
+    Each permission gets a unique bit (0-n).
     Sorted alphabetically for deterministic ordering across runs.
     """
     slugs = sorted(p.value for p in PermissionEnum)
-    if len(slugs) > MAX_PERMISSIONS:
-        raise ValueError(f"Too many permissions ({len(slugs)}). Max supported: {MAX_PERMISSIONS}")
     return {slug: i for i, slug in enumerate(slugs)}
 
 

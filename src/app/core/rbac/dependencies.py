@@ -253,14 +253,22 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # 3. Superuser bypass - skip permission checks, but AFTER verifying tenant context exists
         # SECURITY HARDENING: Log superuser bypass and verify system-level authorization.
         if current_user.get("is_superuser", False):
-            logger.info(
-                "Superuser bypass used",
-                user_id=current_user["id"],
-                tenant_id=str(tenant_id),
-                permission=permission_slug
-            )
-            # Optional: Add check for 'system_admin' session/flag here if needed
-            return
+            # SECURITY FIX: Prevent cache persistence window by verifying live DB state for superusers
+            from sqlalchemy import select
+
+            from src.app.modules.users.models import User
+
+            stmt = select(User.is_superuser).where(User.id == current_user["id"])
+            is_really_su = await db.scalar(stmt)
+
+            if is_really_su:
+                logger.info(
+                    "Superuser bypass used",
+                    user_id=current_user["id"],
+                    tenant_id=str(tenant_id),
+                    permission=permission_slug
+                )
+                return
 
         # 4. Check permission using O(1) bitmask
         has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)

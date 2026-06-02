@@ -265,7 +265,14 @@ class TestTenantIsolationE2E:
         app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
         # Mock the internal function used by requires_permission
-        with patch("src.app.core.rbac.dependencies._get_current_user_from_token", return_value=vars(fake_user)):
+        with (
+            patch("src.app.core.rbac.dependencies._get_current_user_from_token", return_value=vars(fake_user)),
+            patch(
+                "src.app.core.rbac.dependencies.has_permission_cached",
+                new_callable=AsyncMock,
+                return_value=True,
+            ),
+        ):
             # CREATE: Create user in tenant A
             logger.info(f"Creating user in Tenant A (slug={tenant_a.slug})")
             create_payload = {

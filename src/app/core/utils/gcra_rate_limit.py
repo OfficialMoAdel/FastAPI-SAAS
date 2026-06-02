@@ -203,10 +203,10 @@ class GCRARateLimiter:
             is_allowed, remaining, retry_after_ms, reset_at_ms = result
 
             return GCRARateLimitResult(
-                is_limited=not bool(is_allowed),
-                remaining=int(remaining),
-                retry_after=retry_after_ms / 1000.0,
-                reset_at=reset_at_ms / 1000.0,
+                is_limited=int(is_allowed) == 0,
+                remaining=int(float(remaining)),
+                retry_after=float(retry_after_ms) / 1000.0,
+                reset_at=float(reset_at_ms) / 1000.0,
             )
 
         except Exception as e:

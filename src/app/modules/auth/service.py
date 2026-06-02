@@ -430,7 +430,13 @@ return new_attempts
 
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
-        # Blacklist the used refresh token (Rotation) BEFORE new tokens are successfully generated
+        # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
+        new_access_token, new_refresh_token = await asyncio.gather(
+            create_access_token(data=token_data, expires_delta=access_token_expires),
+            create_refresh_token(data=token_data),
+        )
+
+        # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
         await blacklist_token(token=refresh_token, db=db)
 
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
@@ -441,12 +447,6 @@ return new_attempts
                 await global_session_manager.invalidate_session(db_user["id"], user_data.jti)
         except Exception as e:
             logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
-
-        # Create new tokens
-        new_access_token, new_refresh_token = await asyncio.gather(
-            create_access_token(data=token_data, expires_delta=access_token_expires),
-            create_refresh_token(data=token_data),
-        )
 
         # Cookie security settings based on environment
         max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
