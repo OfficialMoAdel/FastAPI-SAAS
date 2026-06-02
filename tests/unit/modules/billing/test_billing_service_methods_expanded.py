@@ -82,9 +82,11 @@ async def test_subscription_plan_service_get_and_list(mock_crud, mock_get_tenant
 
 
 @pytest.mark.asyncio
+@patch("src.app.modules.billing.service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_subscription_plans")
-async def test_subscription_plan_service_delete(mock_crud, mock_db):
-    mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro"})
+async def test_subscription_plan_service_delete(mock_crud, mock_get_tenant, mock_db, mock_tenant):
+    mock_get_tenant.return_value = mock_tenant
+    mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro", "tenant_id": mock_tenant.id})
     mock_crud.update = AsyncMock()
 
     service = SubscriptionPlanService(mock_db)
@@ -97,9 +99,11 @@ async def test_subscription_plan_service_delete(mock_crud, mock_db):
 
 
 @pytest.mark.asyncio
+@patch("src.app.modules.billing.service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
-async def test_product_service_operations(mock_crud, mock_db):
-    mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Test"})
+async def test_product_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
+    mock_get_tenant.return_value = mock_tenant
+    mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Test", "tenant_id": mock_tenant.id})
     mock_crud.get_multi = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 1})
     mock_crud.update = AsyncMock()
 
@@ -113,10 +117,10 @@ async def test_product_service_operations(mock_crud, mock_db):
 
     update_data = ProductUpdate(name="Updated")
     updated = await service.update_product(1, update_data)
-    assert updated == {"id": 1, "name": "Test"}
+    assert updated == {"id": 1, "name": "Test", "tenant_id": mock_tenant.id}
 
     deactivated = await service.deactivate_product(1)
-    assert deactivated == {"id": 1, "name": "Test"}
+    assert deactivated == {"id": 1, "name": "Test", "tenant_id": mock_tenant.id}
     assert mock_crud.update.call_count == 2
 
 

@@ -93,6 +93,8 @@ class CryptSettings(BaseSettings):
     ENCRYPTION_KEY: SecretStr | None = None
     # SECURITY: Set unique salt per deployment for key derivation
     ENCRYPTION_SALT: SecretStr | None = None
+    # Old key for key rotation, stored securely
+    ENCRYPTION_KEY_OLD: SecretStr | None = None
     # RS256 asymmetric keys (optional, required if ALGORITHM=RS256)
     JWT_PRIVATE_KEY: SecretStr | None = None  # PEM-encoded private key
     JWT_PUBLIC_KEY: str | None = None  # PEM-encoded public key
@@ -242,6 +244,9 @@ class MySQLSettings(DatabaseConfigMixin, BaseSettings):
     @property
     def MYSQL_URI(self) -> str:
         password = self.MYSQL_PASSWORD.get_secret_value() if self.MYSQL_PASSWORD else ""
+        if password:
+            import urllib.parse
+            password = urllib.parse.quote_plus(password)
         credentials = f"{self.MYSQL_USER}:{password}"
         location = f"{self.MYSQL_SERVER}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
         return f"{credentials}@{location}"
@@ -261,6 +266,9 @@ class PostgresSettings(DatabaseConfigMixin, BaseSettings):
     @property
     def POSTGRES_URI(self) -> str:
         password = self.POSTGRES_PASSWORD.get_secret_value() if self.POSTGRES_PASSWORD else ""
+        if password:
+            import urllib.parse
+            password = urllib.parse.quote_plus(password)
         credentials = f"{self.POSTGRES_USER}:{password}"
         location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
         return f"{credentials}@{location}"

@@ -383,7 +383,8 @@ class TestChatCompletionService:
                         # Check messages include history + new message
                         messages = call_args.kwargs["messages"]
                         assert len(messages) == 2  # Previous + new
-                        assert messages[-1]["content"] == "Hello"
+                        # New user message is wrapped in code block delimiters to prevent prompt injection
+                        assert messages[-1]["content"] == "```\nHello\n```"
 
                         # Check response
                         assert result["message"] == "Hello! How can I help you?"

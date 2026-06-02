@@ -20,9 +20,9 @@ class TestStripeSettingsService:
 
     @pytest.fixture
     def mock_tenant_context(self):
-        """Create a mock tenant context."""
+        """Create a mock tenant context with a UUID to match Pydantic internal schemas."""
         tenant = MagicMock()
-        tenant.id = uuid4()  # FIX: Changed from int to UUID
+        tenant.id = uuid4()
         return tenant
 
     @pytest.mark.asyncio
@@ -109,9 +109,9 @@ class TestSubscriptionPlanService:
 
     @pytest.fixture
     def mock_tenant_context(self):
-        """Create a mock tenant context."""
+        """Create a mock tenant context with a UUID to match Pydantic internal schemas."""
         tenant = MagicMock()
-        tenant.id = uuid4()  # FIX: Changed from int to UUID
+        tenant.id = uuid4()
         return tenant
 
     @pytest.mark.asyncio
@@ -165,12 +165,15 @@ class TestSubscriptionPlanService:
             assert call_args.kwargs["is_active"] is True
 
     @pytest.mark.asyncio
-    async def test_delete_plan_deactivates_instead_of_delete(self, mock_db):
+    async def test_delete_plan_deactivates_instead_of_delete(self, mock_db, mock_tenant_context):
         """Test that delete_plan sets is_active=False (soft delete)."""
         from src.app.modules.billing.service import SubscriptionPlanService
 
-        with patch("src.app.modules.billing.service.crud_subscription_plans") as mock_crud:
-            mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro"})
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.modules.billing.service.crud_subscription_plans") as mock_crud,
+        ):
+            mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro", "tenant_id": mock_tenant_context.id})
             mock_crud.update = AsyncMock()
 
             service = SubscriptionPlanService(mock_db)
@@ -191,9 +194,9 @@ class TestProductService:
 
     @pytest.fixture
     def mock_tenant_context(self):
-        """Create a mock tenant context."""
+        """Create a mock tenant context with a UUID to match Pydantic internal schemas."""
         tenant = MagicMock()
-        tenant.id = uuid4()  # FIX: Changed from int to UUID
+        tenant.id = uuid4()
         return tenant
 
     @pytest.mark.asyncio
@@ -239,18 +242,23 @@ class TestUserSubscriptionService:
 
     @pytest.fixture
     def mock_tenant_context(self):
-        """Create a mock tenant context."""
+        """Create a mock tenant context with a UUID to match Pydantic internal schemas."""
         tenant = MagicMock()
-        tenant.id = uuid4()  # FIX: Changed from int to UUID
+        tenant.id = uuid4()
         return tenant
 
     @pytest.mark.asyncio
-    async def test_cancel_subscription_sets_cancel_at_period_end(self, mock_db):
+    async def test_cancel_subscription_sets_cancel_at_period_end(self, mock_db, mock_tenant_context):
         """Test that cancel_subscription sets cancel_at_period_end=True."""
         from src.app.modules.billing.service import UserSubscriptionService
 
-        with patch("src.app.modules.billing.service.crud_user_subscriptions") as mock_crud:
-            mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 1, "status": "active"})
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant_context),
+            patch("src.app.modules.billing.service.crud_user_subscriptions") as mock_crud,
+        ):
+            mock_crud.get = AsyncMock(
+                return_value={"id": 1, "user_id": 1, "status": "active", "tenant_id": mock_tenant_context.id}
+            )
             mock_crud.update = AsyncMock()
 
             service = UserSubscriptionService(mock_db)
@@ -285,9 +293,9 @@ class TestBillingRecordService:
 
     @pytest.fixture
     def mock_tenant_context(self):
-        """Create a mock tenant context."""
+        """Create a mock tenant context with a UUID to match Pydantic internal schemas."""
         tenant = MagicMock()
-        tenant.id = uuid4()  # FIX: Changed from int to UUID
+        tenant.id = uuid4()
         return tenant
 
     @pytest.mark.asyncio

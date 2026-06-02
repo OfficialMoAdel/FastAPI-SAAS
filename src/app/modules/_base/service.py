@@ -76,9 +76,7 @@ class BaseService(Generic[T]):
         """
         crud = _CRUD_CACHE.get(model)
         if crud is None:
-            crud = FastCRUD(model)
-            _CRUD_CACHE.setdefault(model, crud)
-            crud = _CRUD_CACHE[model]
+            crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
         return crud
 
     async def get(self, id: Any) -> T | None:

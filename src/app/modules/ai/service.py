@@ -364,8 +364,16 @@ class ChatCompletionService:
         max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
-        history.append({"role": "user", "content": request.message})
+        # Prevent prompt injection by wrapping user messages in strict delimiters
+        history = []
+        for m in messages_result.get("data", []):
+            content = m["content"]
+            if m["role"] == "user" and not content.startswith("```"):
+                content = f"```\n{content}\n```"
+            history.append({"role": m["role"], "content": content})
+
+        sanitized_message = request.message.strip()
+        history.append({"role": "user", "content": f"```\n{sanitized_message}\n```"})
 
         history = truncate_context(
             messages=history,

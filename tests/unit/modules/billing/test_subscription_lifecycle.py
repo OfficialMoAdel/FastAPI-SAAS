@@ -22,11 +22,20 @@ def mock_db_session():
     return session
 
 
+@pytest.fixture
+def mock_tenant():
+    """Create a mock tenant context with id=1 matching test data."""
+    tenant = MagicMock()
+    tenant.id = 1
+    tenant.is_active = True
+    return tenant
+
+
 class TestSubscriptionLifecycleStates:
     """Test suite for subscription lifecycle state transitions."""
 
     @pytest.mark.asyncio
-    async def test_new_subscription_starts_active(self, mock_db_session):
+    async def test_new_subscription_starts_active(self, mock_db_session, mock_tenant):
         """Test that new subscriptions start in 'active' status."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -43,17 +52,20 @@ class TestSubscriptionLifecycleStates:
             "canceled_at": None,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-            return_value=mock_subscription,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+                return_value=mock_subscription,
+            ),
         ):
             result = await service.get_subscription(subscription_id=1)
             assert result["status"] == "active"
             assert result["cancel_at_period_end"] is False
 
     @pytest.mark.asyncio
-    async def test_trialing_status(self, mock_db_session):
+    async def test_trialing_status(self, mock_db_session, mock_tenant):
         """Test subscription in trial period."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -67,10 +79,13 @@ class TestSubscriptionLifecycleStates:
             "cancel_at_period_end": False,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-            return_value=mock_subscription,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+                return_value=mock_subscription,
+            ),
         ):
             result = await service.get_subscription(subscription_id=1)
             assert result["status"] == "trialing"
@@ -80,12 +95,13 @@ class TestSubscriptionStateTransitions:
     """Test suite for valid state transitions."""
 
     @pytest.mark.asyncio
-    async def test_active_to_cancel_at_period_end(self, mock_db_session):
+    async def test_active_to_cancel_at_period_end(self, mock_db_session, mock_tenant):
         """Test transition from active to cancel_at_period_end=True."""
         service = UserSubscriptionService(mock_db_session)
 
         mock_subscription = {
             "id": 1,
+            "tenant_id": 1,
             "status": "active",
             "cancel_at_period_end": False,
         }
@@ -96,10 +112,13 @@ class TestSubscriptionStateTransitions:
             "canceled_at": datetime.now(UTC),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.side_effect = [mock_subscription, mock_updated]
 
             with patch(

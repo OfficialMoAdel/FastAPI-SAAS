@@ -217,7 +217,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         # SECURITY FIX (H-08): tenant authorization on plan access
         tenant = get_current_tenant()
-        if tenant and plan.get("tenant_id") != tenant.id:
+        if tenant is None or plan.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         return plan
@@ -251,7 +251,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         # SECURITY FIX (H-08): tenant authorization on plan access
         tenant = get_current_tenant()
-        if tenant and plan.tenant_id != tenant.id:
+        if tenant is None or plan.tenant_id != tenant.id:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -274,7 +274,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
         # SECURITY FIX (H-08): tenant authorization on plan access
         tenant = get_current_tenant()
-        if tenant and plan.get("tenant_id") != tenant.id:
+        if tenant is None or plan.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         await crud_subscription_plans.update(
@@ -312,7 +312,7 @@ class ProductService(BaseService[Product]):
         # Without this check, any authenticated user can read any tenant's product
         # by brute-forcing product IDs (IDOR vulnerability).
         tenant = get_current_tenant()
-        if tenant and product.get("tenant_id") != tenant.id:
+        if tenant is None or product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         return product
@@ -336,7 +336,7 @@ class ProductService(BaseService[Product]):
         # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
         # Mirrors the check already present in get_product().
         tenant = get_current_tenant()
-        if tenant and product.get("tenant_id") != tenant.id:
+        if tenant is None or product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -353,7 +353,7 @@ class ProductService(BaseService[Product]):
 
         # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
         tenant = get_current_tenant()
-        if tenant and product.get("tenant_id") != tenant.id:
+        if tenant is None or product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
@@ -376,7 +376,7 @@ class ProductService(BaseService[Product]):
 
         # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
         tenant = get_current_tenant()
-        if tenant and product.tenant_id != tenant.id:
+        if tenant is None or product.tenant_id != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         # P2-5: Always use optimized dict construction
@@ -394,7 +394,7 @@ class ProductService(BaseService[Product]):
 
         # SECURITY FIX: Verify product belongs to current tenant before adding pricing.
         tenant = get_current_tenant()
-        if tenant and product.get("tenant_id") != tenant.id:
+        if tenant is None or product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         pricing_data = data.model_dump()
@@ -419,7 +419,7 @@ class PricingService(BaseService[Pricing]):
 
         # SECURITY FIX: Verify product belongs to current tenant before creating pricing.
         tenant = get_current_tenant()
-        if tenant and product.get("tenant_id") != tenant.id:
+        if tenant is None or product.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         pricing_data = data.model_dump()
@@ -439,7 +439,7 @@ class PricingService(BaseService[Pricing]):
         if pricing is not None:
             product = await crud_products.get(db=self.db, id=pricing["product_id"])
             tenant = get_current_tenant()
-            if tenant and (product is None or product.get("tenant_id") != tenant.id):
+            if tenant is None or (product is None or product.get("tenant_id") != tenant.id):
                 raise ModelNotFoundError("Pricing", pricing_id)
 
         return pricing
@@ -486,7 +486,7 @@ class PricingService(BaseService[Pricing]):
         # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
         product = await crud_products.get(db=self.db, id=pricing.product_id)
         tenant = get_current_tenant()
-        if tenant and (product is None or product.get("tenant_id") != tenant.id):
+        if tenant is None or (product is None or product.get("tenant_id") != tenant.id):
             raise ModelNotFoundError("Pricing", pricing_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -533,7 +533,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant data leakage.
         tenant = get_current_tenant()
-        if tenant and subscription.get("tenant_id") != tenant.id:
+        if tenant is None or subscription.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         return subscription
@@ -557,7 +557,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         # SECURITY FIX: Enforce tenant and user isolation
         tenant = get_current_tenant()
-        if tenant and subscription.get("tenant_id") != tenant.id:
+        if tenant is None or subscription.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         if user_id is not None and subscription.get("user_id") != user_id:
@@ -595,7 +595,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         # SECURITY FIX: Enforce tenant and user isolation
         tenant = get_current_tenant()
-        if tenant and subscription.get("tenant_id") != tenant.id:
+        if tenant is None or subscription.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         if user_id is not None and subscription.get("user_id") != user_id:
@@ -674,7 +674,7 @@ class BillingRecordService(BaseService[BillingRecord]):
 
         # SECURITY FIX: Enforce tenant isolation
         tenant = get_current_tenant()
-        if tenant and record.get("tenant_id") != tenant.id:
+        if tenant is None or record.get("tenant_id") != tenant.id:
             raise ModelNotFoundError("BillingRecord", record_id)
 
         return record

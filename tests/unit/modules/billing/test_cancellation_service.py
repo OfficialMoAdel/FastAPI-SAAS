@@ -23,11 +23,20 @@ def mock_db_session():
     return session
 
 
+@pytest.fixture
+def mock_tenant():
+    """Create a mock tenant context with id=1 matching test data."""
+    tenant = MagicMock()
+    tenant.id = 1
+    tenant.is_active = True
+    return tenant
+
+
 class TestCancellationService:
     """Test suite for subscription cancellation operations."""
 
     @pytest.mark.asyncio
-    async def test_cancel_subscription_success(self, mock_db_session):
+    async def test_cancel_subscription_success(self, mock_db_session, mock_tenant):
         """Test successful subscription cancellation at period end."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -51,10 +60,13 @@ class TestCancellationService:
             "canceled_at": datetime.now(UTC),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.side_effect = [mock_subscription, mock_updated_subscription]
 
             with patch(
@@ -87,7 +99,7 @@ class TestCancellationService:
                 await service.cancel_subscription(subscription_id=9999)
 
     @pytest.mark.asyncio
-    async def test_cancel_already_canceled_subscription(self, mock_db_session):
+    async def test_cancel_already_canceled_subscription(self, mock_db_session, mock_tenant):
         """Test cancellation of already canceled subscription."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -103,10 +115,13 @@ class TestCancellationService:
             "canceled_at": datetime.now(UTC) - timedelta(days=5),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = mock_subscription
 
             with patch(
@@ -126,7 +141,7 @@ class TestCancellationService:
                         assert result is not None
 
     @pytest.mark.asyncio
-    async def test_cancel_subscription_sets_canceled_at_timestamp(self, mock_db_session):
+    async def test_cancel_subscription_sets_canceled_at_timestamp(self, mock_db_session, mock_tenant):
         """Test that cancellation sets the canceled_at timestamp."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -139,10 +154,13 @@ class TestCancellationService:
             "canceled_at": None,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = mock_subscription
 
             with patch(
@@ -164,7 +182,7 @@ class TestCancellationWithStripe:
     """Test suite for Stripe-integrated cancellation."""
 
     @pytest.mark.asyncio
-    async def test_cancel_subscription_stripe_integration(self, mock_db_session):
+    async def test_cancel_subscription_stripe_integration(self, mock_db_session, mock_tenant):
         """Test cancellation with Stripe API call."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -177,10 +195,13 @@ class TestCancellationWithStripe:
             "cancel_at_period_end": False,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-            return_value=mock_subscription,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+                return_value=mock_subscription,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_stripe_settings.get",
@@ -207,7 +228,7 @@ class TestCancellationAccessControl:
     """Test suite for cancellation access control."""
 
     @pytest.mark.asyncio
-    async def test_cancel_subscription_ownership_check(self, mock_db_session):
+    async def test_cancel_subscription_ownership_check(self, mock_db_session, mock_tenant):
         """Test that ownership is verified before cancellation."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -219,10 +240,13 @@ class TestCancellationAccessControl:
             "status": "active",
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-            return_value=mock_subscription,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+                return_value=mock_subscription,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.update",
@@ -238,7 +262,7 @@ class TestSubscriptionStatusAfterCancellation:
     """Test suite for subscription status transitions after cancellation."""
 
     @pytest.mark.asyncio
-    async def test_subscription_remains_active_until_period_end(self, mock_db_session):
+    async def test_subscription_remains_active_until_period_end(self, mock_db_session, mock_tenant):
         """Test that subscription stays active until period end after cancellation."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -260,10 +284,13 @@ class TestSubscriptionStatusAfterCancellation:
             "status": "active",
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.side_effect = [mock_subscription, mock_updated]
 
             with patch(
@@ -277,7 +304,7 @@ class TestSubscriptionStatusAfterCancellation:
                 assert result["cancel_at_period_end"] is True
 
     @pytest.mark.asyncio
-    async def test_cancellation_preserves_current_period_access(self, mock_db_session):
+    async def test_cancellation_preserves_current_period_access(self, mock_db_session, mock_tenant):
         """Test that user retains access until current_period_end."""
         service = UserSubscriptionService(mock_db_session)
 
@@ -292,10 +319,13 @@ class TestSubscriptionStatusAfterCancellation:
             "cancel_at_period_end": False,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_user_subscriptions.get",
-            new_callable=AsyncMock,
-        ) as mock_get:
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_user_subscriptions.get",
+                new_callable=AsyncMock,
+            ) as mock_get,
+        ):
             mock_get.return_value = mock_subscription
 
             with patch(

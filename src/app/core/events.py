@@ -870,8 +870,8 @@ async def process_event_handler(
 
             from src.app.core.tenancy.context import TenantContext, set_current_tenant
 
-            if not all(k in tenant_info for k in ("id", "slug", "name", "is_active")):
-                raise KeyError(f"Missing required keys in tenant_info: {tenant_info}")
+            if not all(tenant_info.get(k) is not None for k in ("id", "slug", "name", "is_active")):
+                raise KeyError(f"Missing or null required keys in tenant_info: {tenant_info}")
 
             tenant_context = TenantContext(
                 tenant_id=UUID(tenant_info["id"]),

@@ -12,8 +12,6 @@ Usage:
 
 from __future__ import annotations
 
-import os
-
 from cryptography.fernet import Fernet, InvalidToken
 
 from src.app.core.logger import get_logger
@@ -43,10 +41,11 @@ def get_old_encryption_key() -> bytes | None:
     Returns:
         Old encryption key as bytes, or None if not set.
     """
-    key = os.getenv("ENCRYPTION_KEY_OLD")
-    if not key:
+    from src.app.core.config import settings
+
+    if not settings.crypt.ENCRYPTION_KEY_OLD:
         return None
-    return key.encode() if isinstance(key, str) else key
+    return settings.crypt.ENCRYPTION_KEY_OLD.get_secret_value().encode()
 
 
 def generate_encryption_key() -> str:

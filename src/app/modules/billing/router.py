@@ -85,7 +85,7 @@ async def stripe_webhook(
     # Note: verification was originally synchronous (CPU-bound)
     import asyncio
 
-    event = await asyncio.get_event_loop().run_in_executor(
+    event = await asyncio.get_running_loop().run_in_executor(
         None, verify_webhook_signature, payload, sig_header, webhook_secret
     )
 

@@ -3,7 +3,6 @@
 Tests T101: Unit test for BillingHistoryService in tests/unit/billing/test_billing_history_service.py
 """
 
-import uuid
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -27,7 +26,7 @@ def mock_db_session():
 def mock_tenant():
     """Mock tenant context."""
     tenant = MagicMock()
-    tenant.id = uuid.uuid4()
+    tenant.id = 1
     return tenant
 
 
@@ -172,10 +171,13 @@ class TestBillingHistoryService:
             "created_at": datetime.now(UTC),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_billing_records.get",
-            new_callable=AsyncMock,
-            return_value=mock_record,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_billing_records.get",
+                new_callable=AsyncMock,
+                return_value=mock_record,
+            ),
         ):
             result = await service.get_record(record_id=1)
 

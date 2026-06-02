@@ -3,9 +3,9 @@
 Tests T116: Unit test for ProductService in tests/unit/billing/test_product_service.py
 """
 
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 import pytest
 
@@ -50,7 +50,7 @@ def mock_db_session():
 def mock_tenant():
     """Create a mock tenant context."""
     tenant = MagicMock()
-    tenant.id = uuid.uuid4()
+    tenant.id = uuid4()
     return tenant
 
 
@@ -93,22 +93,25 @@ class TestProductService:
                 assert result["is_active"] is True
 
     @pytest.mark.asyncio
-    async def test_get_product(self, mock_db_session, product_data):
+    async def test_get_product(self, mock_db_session, mock_tenant, product_data):
         """Test retrieving a product by ID via service."""
         product_id = 1
 
         mock_product = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": product_data["name"],
             "description": product_data["description"],
             "is_active": True,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_products.get",
-            new_callable=AsyncMock,
-            return_value=mock_product,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_products.get",
+                new_callable=AsyncMock,
+                return_value=mock_product,
+            ),
         ):
             from src.app.modules.billing.service import ProductService
 
@@ -161,7 +164,7 @@ class TestProductService:
             assert result["data"][0]["name"] == "Product 1"
 
     @pytest.mark.asyncio
-    async def test_update_product(self, mock_db_session, product_data):
+    async def test_update_product(self, mock_db_session, mock_tenant, product_data):
         """Test updating a product via service."""
         from src.app.modules.billing.schemas import ProductUpdate
 
@@ -170,23 +173,26 @@ class TestProductService:
 
         mock_existing = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": product_data["name"],
             "is_active": True,
         }
 
         mock_updated = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": new_name,
             "is_active": True,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_products.get",
-            new_callable=AsyncMock,
-            side_effect=[mock_existing, mock_updated],
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_products.get",
+                new_callable=AsyncMock,
+                side_effect=[mock_existing, mock_updated],
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.update",
@@ -201,29 +207,32 @@ class TestProductService:
                 assert result["name"] == new_name
 
     @pytest.mark.asyncio
-    async def test_deactivate_product(self, mock_db_session, product_data):
+    async def test_deactivate_product(self, mock_db_session, mock_tenant, product_data):
         """Test deactivating a product via service."""
         product_id = 1
 
         mock_existing = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": product_data["name"],
             "is_active": True,
         }
 
         mock_updated = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": product_data["name"],
             "is_active": False,
             "updated_at": datetime.now(UTC).isoformat(),
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_products.get",
-            new_callable=AsyncMock,
-            side_effect=[mock_existing, mock_updated],
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_products.get",
+                new_callable=AsyncMock,
+                side_effect=[mock_existing, mock_updated],
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.update",
@@ -241,7 +250,7 @@ class TestProductPricingService:
     """Test suite for Product-Pricing relationship operations."""
 
     @pytest.mark.asyncio
-    async def test_add_pricing_to_product(self, mock_db_session, product_data, pricing_data):
+    async def test_add_pricing_to_product(self, mock_db_session, mock_tenant, product_data, pricing_data):
         """Test adding a pricing tier to a product."""
         from src.app.modules.billing.schemas import PricingCreate
 
@@ -249,7 +258,7 @@ class TestProductPricingService:
 
         mock_product = {
             "id": product_id,
-            "tenant_id": 1,
+            "tenant_id": mock_tenant.id,
             "name": product_data["name"],
             "is_active": True,
         }
@@ -265,10 +274,13 @@ class TestProductPricingService:
             "is_active": True,
         }
 
-        with patch(
-            "src.app.modules.billing.crud.crud_products.get",
-            new_callable=AsyncMock,
-            return_value=mock_product,
+        with (
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch(
+                "src.app.modules.billing.crud.crud_products.get",
+                new_callable=AsyncMock,
+                return_value=mock_product,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_pricing.create",
@@ -307,7 +319,7 @@ class TestProductPricingService:
                 await service.add_pricing(product_id, create_schema)
 
     @pytest.mark.asyncio
-    async def test_get_product_with_pricing(self, mock_db_session, product_data, pricing_data):
+    async def test_get_product_with_pricing(self, mock_db_session, mock_tenant, product_data, pricing_data):
         """Test getting a product with its pricing tiers.
 
         Since get_product_with_pricing uses raw SQLAlchemy with selectinload,
@@ -345,7 +357,7 @@ class TestProductPricingService:
         # Create mock product with pricing_tiers relationship
         mock_product = MagicMock()
         mock_product.id = product_id
-        mock_product.tenant_id = 1
+        mock_product.tenant_id = mock_tenant.id
         mock_product.name = product_data["name"]
         mock_product.description = product_data.get("description")
         mock_product.stripe_product_id = product_data.get("stripe_product_id")
@@ -359,10 +371,11 @@ class TestProductPricingService:
         mock_result.scalar_one_or_none.return_value = mock_product
         mock_db_session.execute = AsyncMock(return_value=mock_result)
 
-        from src.app.modules.billing.service import ProductService
+        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant):
+            from src.app.modules.billing.service import ProductService
 
-        service = ProductService(mock_db_session)
-        result = await service.get_product_with_pricing(product_id)
+            service = ProductService(mock_db_session)
+            result = await service.get_product_with_pricing(product_id)
 
         assert result["id"] == product_id
         assert "pricing_tiers" in result

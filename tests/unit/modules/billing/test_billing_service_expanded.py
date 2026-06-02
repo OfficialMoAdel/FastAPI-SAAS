@@ -80,10 +80,12 @@ async def test_product_service_create(mock_crud, mock_get_tenant, mock_db, mock_
 
 
 @pytest.mark.asyncio
+@patch("src.app.modules.billing.service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_pricing")
 @patch("src.app.modules.billing.service.crud_products")
-async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, mock_db):
-    mock_crud_products.get = AsyncMock(return_value={"id": 1})
+async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, mock_get_tenant, mock_db, mock_tenant):
+    mock_get_tenant.return_value = mock_tenant
+    mock_crud_products.get = AsyncMock(return_value={"id": 1, "tenant_id": mock_tenant.id})
     mock_crud_pricing.create = AsyncMock(return_value={"id": 1, "amount_cents": 1000})
 
     service = PricingService(mock_db)
