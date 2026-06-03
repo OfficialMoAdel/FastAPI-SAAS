@@ -288,8 +288,15 @@ async def complete_mfa_login(
     if not _redis_cache.client:
         raise UnauthorizedException("Authentication service unavailable")
 
+    # Get client IP, handling proxies
+    forwarded = fastapi_request.headers.get("X-Forwarded-For")
+    if forwarded:
+        client_ip = forwarded.split(",")[0].strip()
+    else:
+        client_ip = fastapi_request.client.host if fastapi_request.client else "unknown"
+
     token_manager = MFAPendingTokenManager(_redis_cache.client)
-    token_data = await token_manager.validate_token(request.mfa_token)
+    token_data = await token_manager.validate_token(request.mfa_token, ip_address=client_ip)
 
     if not token_data:
         raise UnauthorizedException("Invalid or expired MFA pending token")

@@ -15,8 +15,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
-from src.app.core.encryption import decrypt_value, encrypt_value
 from src.app.core.json_utils import json_dumps, json_loads
+from src.app.core.security.encryption import get_encryption
 from src.app.modules.storage.azure_storage import AzureBlobStorage
 from src.app.modules.storage.interfaces import StorageProvider
 from src.app.modules.storage.local_storage import LocalStorage
@@ -122,7 +122,8 @@ class StorageSettingsService:
         # Encrypt credentials
         credentials_json = json_dumps(credentials, as_str=True)
         assert isinstance(credentials_json, str)
-        encrypted = encrypt_value(credentials_json)
+        encryption = get_encryption()
+        encrypted = encryption.encrypt_credential(credentials_json.encode())
 
         # Create settings
         settings = StorageSettings(
@@ -187,7 +188,8 @@ class StorageSettingsService:
             # Encrypt with current key (handles rotation automatically)
             credentials_json = json_dumps(new_credentials, as_str=True)
             assert isinstance(credentials_json, str)
-            settings.credentials_encrypted = encrypt_value(credentials_json)
+            encryption = get_encryption()
+            settings.credentials_encrypted = encryption.encrypt_credential(credentials_json.encode())
 
             # Update bucket/container name if changed
             settings.bucket_name = (
@@ -321,7 +323,8 @@ class StorageSettingsService:
         """
         if not settings.credentials_encrypted:
             return {}
-        decrypted = decrypt_value(settings.credentials_encrypted)
+        encryption = get_encryption()
+        decrypted = encryption.decrypt_credential(settings.credentials_encrypted).decode()
         result: dict[str, str] = json_loads(decrypted)
         return result
 

@@ -79,6 +79,7 @@ async def send_magic_link(
     },
 )
 async def verify_magic_link(
+    request: Request,
     body: MagicLinkVerifyRequest,
     response: Response,
     service: Annotated[MagicLinkService, Depends(get_magic_link_service)],
@@ -92,4 +93,6 @@ async def verify_magic_link(
     - 400: Token is invalid or expired
     - 410: Token was already used
     """
-    return await service.verify_magic_link(token=body.token, response=response)
+    from src.app.core.utils.ip_utils import get_client_ip
+    ip_address = get_client_ip(request)
+    return await service.verify_magic_link(token=body.token, ip_address=ip_address, response=response)

@@ -29,7 +29,7 @@ from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
 from src.app.core.db.database import Base
-from src.app.core.encryption import encrypt_value
+from src.app.core.security.encryption import get_encryption
 from src.app.core.utils import cache
 
 # Reset cached bad bot regex so it picks up the disabled setting
@@ -174,7 +174,8 @@ async def ensure_test_tenant(ensure_tiers):
         # Ensure storage settings exist with valid credentials
         os.environ["ENCRYPTION_KEY"] = Fernet.generate_key().decode()
         credentials = {"base_path": "./storage_test"}
-        encrypted = encrypt_value(json.dumps(credentials))
+        encryption = get_encryption()
+        encrypted = encryption.encrypt_credential(json.dumps(credentials).encode())
 
         await session.execute(
             text("""

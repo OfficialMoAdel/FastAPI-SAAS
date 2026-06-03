@@ -180,7 +180,7 @@ class TestMagicLinkService:
                 },
             ),
         ):
-            result = await service.verify_magic_link(token=token)
+            result = await service.verify_magic_link(token=token, ip_address="127.0.0.1")
 
         assert result is not None
         assert result.access_token is not None
@@ -193,7 +193,7 @@ class TestMagicLinkService:
         service = MagicLinkService(db=mock_db, redis=fake_redis)
 
         with pytest.raises(Exception):  # Should raise specific exception
-            await service.verify_magic_link(token="invalid_token_not_in_redis")
+            await service.verify_magic_link(token="invalid_token_not_in_redis", ip_address="127.0.0.1")
 
     @pytest.mark.asyncio
     async def test_verify_magic_link_marks_token_as_used(self, fake_redis, mock_db, mock_user):
@@ -233,7 +233,7 @@ class TestMagicLinkService:
                 },
             ),
         ):
-            await service.verify_magic_link(token=token)
+            await service.verify_magic_link(token=token, ip_address="127.0.0.1")
 
         # Token should be consumed (deleted from redis)
         assert await fake_redis.get(f"magic_link:{hashed_token}") is None
@@ -277,11 +277,11 @@ class TestMagicLinkService:
             ),
         ):
             # First verification should succeed
-            await service.verify_magic_link(token=token)
+            await service.verify_magic_link(token=token, ip_address="127.0.0.1")
 
         # Second verification should fail (token consumed)
         with pytest.raises(Exception):
-            await service.verify_magic_link(token=token)
+            await service.verify_magic_link(token=token, ip_address="127.0.0.1")
 
 
 class TestMagicLinkTokenExpiry:

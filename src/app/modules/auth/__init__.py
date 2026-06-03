@@ -21,7 +21,6 @@ __all__ = [
     "auth_router",
     "AuthService",
     "get_auth_service",
-    "auth_audit",
 ]
 
 
@@ -39,8 +38,4 @@ def __getattr__(name: str):
         from src.app.modules.auth.service import get_auth_service
 
         return get_auth_service
-    if name == "auth_audit":
-        from src.app.modules.auth.audit import auth_audit
-
-        return auth_audit
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

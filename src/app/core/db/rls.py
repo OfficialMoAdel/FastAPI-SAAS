@@ -298,16 +298,16 @@ async def bypass_rls(
             )
             logger.debug("RLS bypass audit log created", user_id=user_id, reason=reason)
         except Exception as audit_error:
-            # Audit log failure is non-fatal: the RLS bypass (set_config) already
-            # succeeded, and blocking the entire request because an audit INSERT
-            # failed (e.g. table missing in test DB) is overly aggressive.
-            # Log a warning so operators can investigate, but let the bypass stand.
-            logger.warning(
-                "Failed to create RLS bypass audit log (non-fatal)",
+            # SECURITY FIX: Audit log failure MUST be fatal. If an attacker can force
+            # the audit log insertion to fail, they could bypass RLS silently.
+            logger.error(
+                "Failed to create RLS bypass audit log (FATAL)",
                 user_id=user_id,
                 reason=reason,
                 error=str(audit_error),
             )
+            # Re-raise to abort the RLS bypass
+            raise RuntimeError(f"RLS bypass aborted due to audit log failure: {audit_error}") from audit_error
 
         yield session
 

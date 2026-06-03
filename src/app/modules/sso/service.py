@@ -343,10 +343,12 @@ class SSOService:
             if mfa_enabled:
                 from src.app.core.security import MFAPendingTokenManager
                 from src.app.core.utils.cache import client as mfa_redis_client
+                from src.app.core.utils.ip_utils import get_client_ip
                 mfa_token_manager = MFAPendingTokenManager(mfa_redis_client)
                 mfa_token = await mfa_token_manager.create_token(
                     user_id=normalized_user["id"],
                     username=normalized_user.get("username") or normalized_user.get("email"),
+                    ip_address=get_client_ip(request),
                 )
                 return {
                     "mfa_required": "true",

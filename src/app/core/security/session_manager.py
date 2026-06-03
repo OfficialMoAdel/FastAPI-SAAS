@@ -123,7 +123,7 @@ class SessionManager:
         local ttl = tonumber(ARGV[5])
         local max_batch = tonumber(ARGV[6])
 
-        if redis.call('HEXISTS', hash_key, session_id) == 1 then
+        if redis.call('HEXISTS', hash_key, session_id) == 1 or redis.call('ZSCORE', zset_key, session_id) then
             return {"already_exists"}
         end
 

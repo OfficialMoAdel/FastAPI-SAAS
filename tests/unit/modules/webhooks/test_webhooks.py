@@ -38,8 +38,8 @@ def webhook_service(mock_db):
 def mock_encryption():
     """Mock encryption to avoid key issues."""
     with (
-        patch("src.app.core.encryption.encrypt_value") as mock_encrypt,
-        patch("src.app.core.encryption.decrypt_value") as mock_decrypt,
+        patch("src.app.core.security.encryption.encrypt_data") as mock_encrypt,
+        patch("src.app.core.security.encryption.decrypt_data") as mock_decrypt,
     ):
         mock_encrypt.return_value = "encrypted_secret"
         mock_decrypt.return_value = b"decrypted_secret"

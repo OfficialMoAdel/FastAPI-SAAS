@@ -1,5 +1,4 @@
 import os
-import threading
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING, Any
@@ -57,7 +56,6 @@ def get_database_url() -> str:
 # Internal state for lazy initialization
 _async_engine = None
 _local_session = None
-_init_lock = threading.RLock()  # RLock: reentrant, prevents deadlock when _get_local_session calls __getattr__
 
 
 def _create_engine() -> AsyncEngine:
@@ -121,21 +119,16 @@ def get_async_engine() -> AsyncEngine:
     """Get or create the async engine."""
     global _async_engine
     if _async_engine is None:
-        with _init_lock:
-            if _async_engine is None:
-                _async_engine = _create_engine()
+        _async_engine = _create_engine()
     return _async_engine
 
 def _get_local_session() -> async_sessionmaker[AsyncSession]:
     """Internal helper to get or create the local session maker."""
     global _local_session
     if _local_session is None:
-        with _init_lock:
-            # Double-check pattern to prevent race condition
-            if _local_session is None:
-                # Ensure engine is created first
-                engine = get_async_engine()
-                _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+        # Ensure engine is created first
+        engine = get_async_engine()
+        _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     return _local_session
 
 def __getattr__(name: str) -> Any:

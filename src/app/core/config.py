@@ -18,7 +18,7 @@ class AppSettings(BaseSettings):
     CACHE_WARMING_ENABLED: bool = True
     CACHE_WARMING_DELAY_SECONDS: int = 2
     # DATABASE: Control table creation (set to False in production)
-    CREATE_TABLES_ON_STARTUP: bool = True
+    CREATE_TABLES_ON_STARTUP: bool = False
 
     # ISSUE 18: Configurable max body size (bytes) - default 10MB
     MAX_BODY_SIZE: int = Field(default=10 * 1024 * 1024, ge=1024 * 1024, le=100 * 1024 * 1024)

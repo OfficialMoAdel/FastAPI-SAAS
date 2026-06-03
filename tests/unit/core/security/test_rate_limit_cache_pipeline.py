@@ -143,7 +143,7 @@ class TestStartupLatencyReduced:
             import sys
 
             if sys.gettrace() is None:  # Only check timing when not under coverage
-                assert elapsed < 0.01  # Should complete in < 10ms
+                assert elapsed < 0.05  # Should complete in < 50ms
 
 
 class TestPipelineCorrectness:

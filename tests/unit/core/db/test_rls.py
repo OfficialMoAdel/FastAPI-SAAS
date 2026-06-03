@@ -118,9 +118,10 @@ async def test_bypass_rls_audit_error(mock_session, mock_connection):
     # Make the second execute (audit log) raise an error
     mock_connection.execute.side_effect = [None, Exception("Audit log failed"), None]
 
-    # Audit log failure is non-fatal — bypass_rls should NOT raise
-    async with bypass_rls(mock_session, reason="test"):
-        pass
+    # Audit log failure is FATAL — bypass_rls MUST raise RuntimeError
+    with pytest.raises(RuntimeError, match="RLS bypass aborted due to audit log failure"):
+        async with bypass_rls(mock_session, reason="test"):
+            pass
 
     # Verify set_config (bypass) was still applied and cleared
     assert mock_connection.execute.call_count == 3  # set_config, audit, reset

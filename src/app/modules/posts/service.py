@@ -30,7 +30,7 @@ class PostService(BaseService[Post]):
     async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
         """Check if current user owns the resource."""
         if current_user_id != target_user_id:
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to delete this post.")
 
     async def create_post(
         self,
@@ -190,12 +190,12 @@ class PostService(BaseService[Post]):
 
         # Ownership check
         if db_post["created_by_user_id"] != current_user["id"]:
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to delete this post.")
 
         # SECURITY FIX: Verify tenant ownership to prevent cross-tenant mutation via known post ID.
         tenant = get_tenant_context()
         if tenant is not None and db_post.get("tenant_id") != tenant.id:
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to modify this post.")
 
         await crud_posts.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
@@ -232,12 +232,12 @@ class PostService(BaseService[Post]):
 
         # Ownership check
         if db_post["created_by_user_id"] != current_user["id"]:
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to manage tags for this post.")
 
         # SECURITY FIX: Verify tenant ownership to prevent cross-tenant deletion via known post ID.
         tenant = get_tenant_context()
         if tenant is not None and db_post.get("tenant_id") != tenant.id:
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to view tags for this post.")
 
         await crud_posts.delete(db=self.db, id=post_id)
         return {"message": "Post deleted"}

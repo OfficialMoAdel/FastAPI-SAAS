@@ -28,19 +28,9 @@ from src.app.core.security.token_blacklist_cache import (
     add_tokens_to_blacklist,
     is_token_blacklisted,
 )
-from src.app.core.security.tokens import TokenGenerator
+from src.app.core.security.tokens import _GETDEL_LUA, TokenGenerator
 
 _jwt_logger = get_logger(__name__)
-
-# Lua script for atomic GETDEL (get and delete) to prevent race conditions.
-# Returns the value if key existed, None otherwise.
-_GETDEL_LUA = """
-    local value = redis.call('GET', KEYS[1])
-    if value then
-        redis.call('DEL', KEYS[1])
-    end
-    return value
-"""
 
 # Dedicated thread pool for bcrypt operations to prevent event loop blocking
 # bcrypt.checkpw takes ~50-100ms depending on rounds, so we use a thread pool
@@ -144,12 +134,8 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         }
     )
 
-    # HS256 is fast (~10-50us) — to_thread overhead (~50-200us) exceeds the operation itself.
-    # Only use to_thread for CPU-heavy RS256 signing.
-    if settings.ALGORITHM == "RS256":
-        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
-    else:
-        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), settings.ALGORITHM)
+    # Use to_thread to prevent blocking the event loop regardless of the algorithm
+    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -183,10 +169,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         }
     )
 
-    if settings.ALGORITHM == "RS256":
-        encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
-    else:
-        encoded_jwt = jwt.encode(to_encode, _get_signing_key(), settings.ALGORITHM)
+    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -214,21 +197,13 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     # SECURITY FIX: Decode token FIRST (local operation, no race condition)
     # This eliminates the race condition window between blacklist check and decode
     try:
-        if settings.ALGORITHM == "RS256":
-            payload = await asyncio.to_thread(
-                jwt.decode,
-                token,
-                _get_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
-        else:
-            payload = jwt.decode(
-                token,
-                _get_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
+        payload = await asyncio.to_thread(
+            jwt.decode,
+            token,
+            _get_verification_key(),
+            algorithms=[settings.ALGORITHM],
+            audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+        )
     except JWTError:
         return None
 
@@ -354,21 +329,13 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
 
     for token in [access_token, refresh_token]:
         try:
-            if settings.ALGORITHM == "RS256":
-                payload = await asyncio.to_thread(
-                    jwt.decode,
-                    token,
-                    _get_verification_key(),
-                    algorithms=[settings.ALGORITHM],
-                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-                )
-            else:
-                payload = jwt.decode(
-                    token,
-                    _get_verification_key(),
-                    algorithms=[settings.ALGORITHM],
-                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-                )
+            payload = await asyncio.to_thread(
+                jwt.decode,
+                token,
+                _get_verification_key(),
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            )
             exp_timestamp = payload.get("exp")
             jti = payload.get("jti")
             tenant_id = payload.get("tenant_id")
@@ -425,21 +392,13 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     Also stores the JTI-prefixed key in DB so the DB fallback can find it during Redis outages.
     """
     try:
-        if settings.ALGORITHM == "RS256":
-            payload = await asyncio.to_thread(
-                jwt.decode,
-                token,
-                _get_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
-        else:
-            payload = jwt.decode(
-                token,
-                _get_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
+        payload = await asyncio.to_thread(
+            jwt.decode,
+            token,
+            _get_verification_key(),
+            algorithms=[settings.ALGORITHM],
+            audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+        )
         exp_timestamp = payload.get("exp")
         jti = payload.get("jti")
         tenant_id = payload.get("tenant_id")
@@ -503,12 +462,13 @@ class MFAPendingTokenManager:
         """
         self._redis = redis
 
-    async def create_token(self, user_id: int, username: str) -> str:
-        """Create MFA pending token.
+    async def create_token(self, user_id: int, username: str, ip_address: str) -> str:
+        """Create and store MFA pending token.
 
         Args:
-            user_id: User ID for the pending login.
+            user_id: ID of the user pending MFA.
             username: Username for the pending login.
+            ip_address: Client IP address to bind to the token.
 
         Returns:
             Generated MFA pending token.
@@ -519,6 +479,7 @@ class MFAPendingTokenManager:
         token_data = {
             "user_id": user_id,
             "username": username,
+            "ip_address": ip_address,
             "scope": "mfa_pending",
         }
 
@@ -535,14 +496,15 @@ class MFAPendingTokenManager:
 
         return token
 
-    async def validate_token(self, token: str) -> dict[str, Any] | None:
-        """Validate MFA pending token (one-time use, 5-min expiry).
+    async def validate_token(self, token: str, ip_address: str) -> dict[str, Any] | None:
+        """Validate MFA pending token (one-time use, 5-min expiry) and IP binding.
 
         Args:
             token: The MFA pending token to validate.
+            ip_address: The client IP address validating the token.
 
         Returns:
-            Token metadata dict if valid, None if expired/used/invalid.
+            Token metadata dict if valid, None if expired/used/invalid/IP mismatch.
         """
         import hashlib
 
@@ -557,6 +519,8 @@ class MFAPendingTokenManager:
 
         try:
             token_data = cast(dict[str, Any], json_loads(data))
+            if token_data.get("ip_address") != ip_address:
+                return None
             return token_data
         except orjson.JSONDecodeError:
             return None

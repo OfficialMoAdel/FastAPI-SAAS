@@ -202,6 +202,7 @@ async def cache_exception_handler(request, exc):
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
@@ -214,7 +215,14 @@ app.add_middleware(
 )  # Configurable limit (runs AFTER AttackDetection in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
-app.add_middleware(GZipMiddleware, minimum_size=500)  # Outermost - compresses all responses
+app.add_middleware(GZipMiddleware, minimum_size=500)  # Compresses all responses
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.CORS_ORIGINS,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)  # Outermost - handles preflight requests early
 
 # Admin mounting moved to lifespan
 
@@ -248,16 +256,21 @@ def custom_openapi():
 
     # Identify paths that explicitly depend on authentication
     protected_paths = set()
+    from fastapi.params import Security
     for route in app.routes:
         if not hasattr(route, "dependencies"):
             continue
         for dep in getattr(route, "dependencies", []):
-            if hasattr(dep, "dependency") and callable(dep.dependency):
+            # Check if it's explicitly a Security dependency or relies on known auth functions
+            is_auth_dep = isinstance(dep, Security)
+            if not is_auth_dep and hasattr(dep, "dependency") and callable(dep.dependency):
                 dep_name = dep.dependency.__name__
-                if dep_name in ("get_current_user", "get_current_superuser"):
-                    if hasattr(route, "path"):
-                        protected_paths.add(route.path)
-                    break
+                if dep_name in ("get_current_user", "get_current_superuser", "get_current_active_user"):
+                    is_auth_dep = True
+
+            if is_auth_dep and hasattr(route, "path"):
+                protected_paths.add(route.path)
+                break
 
     # Apply security only to protected routes
     for path_str, path_item in openapi_schema["paths"].items():

@@ -522,7 +522,7 @@ class UserService(BaseService[User]):
 
         # Ownership check (superusers bypass)
         if db_username != current_user["username"] and not current_user.get("is_superuser"):
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to modify this user's email.")
 
         # Check for duplicate email if changing
         if values.email is not None and values.email != db_email:
@@ -586,7 +586,7 @@ class UserService(BaseService[User]):
             raise ModelNotFoundError("User", username)
 
         if username != current_user["username"] and not current_user.get("is_superuser"):
-            raise ForbiddenException()
+            raise ForbiddenException("You do not have permission to delete this user.")
 
         # BUG FIX: Previously used two separate auto-committing calls:
         #   1. crud.update(token_version + 1)  <- auto-commit

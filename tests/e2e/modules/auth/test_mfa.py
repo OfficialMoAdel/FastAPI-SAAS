@@ -196,9 +196,10 @@ class TestMFALoginWithTOTP:
         assert logout_response.status_code == 200
 
         # [STEP 1] Login again with MFA
+        login_headers = ip_headers()
         login_response = await async_client.post(
             "/api/v1/account/login",
-            headers=ip_headers(),
+            headers=login_headers,
             data={"username": test_user_email, "password": test_password},
         )
         assert login_response.status_code == 200
@@ -213,7 +214,7 @@ class TestMFALoginWithTOTP:
         # [STEP 2] Complete MFA login with valid TOTP
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
+            headers=login_headers,
             json={
                 "mfa_token": mfa_token,
                 "totp_token": totp.now(),
@@ -310,9 +311,10 @@ class TestMFALoginWithBackupCode:
         await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
         # Login to get MFA token
+        login_headers = ip_headers()
         login_response = await async_client.post(
             "/api/v1/account/login",
-            headers=ip_headers(),
+            headers=login_headers,
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
@@ -321,7 +323,7 @@ class TestMFALoginWithBackupCode:
         backup_code = backup_codes[0]
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
+            headers=login_headers,
             json={
                 "mfa_token": mfa_token,
                 "totp_token": None,
@@ -343,16 +345,17 @@ class TestMFALoginWithBackupCode:
         # [STEP 2] Verify backup code cannot be reused
         await async_client.post("/api/v1/account/logout", headers=new_headers)
 
+        login_headers2 = ip_headers()
         login_response2 = await async_client.post(
             "/api/v1/account/login",
-            headers=ip_headers(),
+            headers=login_headers2,
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token2 = login_response2.json()["mfa_token"]
 
         complete_response2 = await async_client.post(
             "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
+            headers=login_headers2,
             json={
                 "mfa_token": mfa_token2,
                 "totp_token": None,
@@ -432,16 +435,17 @@ class TestMFALockoutFlow:
 
         # [STEP 1] Make 5 failed attempts
         for i in range(5):
+            login_headers = ip_headers()
             login_response = await async_client.post(
                 "/api/v1/account/login",
-                headers=ip_headers(),
+                headers=login_headers,
                 data={"username": test_user_email, "password": test_password},
             )
             mfa_token = login_response.json()["mfa_token"]
 
             complete_response = await async_client.post(
                 "/api/v1/mfa/complete-login",
-                headers=ip_headers(),
+                headers=login_headers,
                 json={
                     "mfa_token": mfa_token,
                     "totp_token": "000000",
@@ -452,16 +456,17 @@ class TestMFALockoutFlow:
             print(f"[STEP 1.{i + 1}] Failed attempt {i + 1}: 401 Unauthorized")
 
         # [STEP 2] 6th attempt should be locked out (401)
+        login_headers_6 = ip_headers()
         login_response = await async_client.post(
             "/api/v1/account/login",
-            headers=ip_headers(),
+            headers=login_headers_6,
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
 
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
+            headers=login_headers_6,
             json={
                 "mfa_token": mfa_token,
                 "totp_token": "000000",
@@ -630,16 +635,17 @@ class TestMFARegenerateBackupCodes:
         cookies = {"refresh_token": login_response.cookies.get("refresh_token", "")}
         await async_client.post("/api/v1/account/logout", headers=headers, cookies=cookies)
 
+        login_headers = ip_headers()
         login_response = await async_client.post(
             "/api/v1/account/login",
-            headers=ip_headers(),
+            headers=login_headers,
             data={"username": test_user_email, "password": test_password},
         )
         mfa_token = login_response.json()["mfa_token"]
 
         complete_response = await async_client.post(
             "/api/v1/mfa/complete-login",
-            headers=ip_headers(),
+            headers=login_headers,
             json={
                 "mfa_token": mfa_token,
                 "totp_token": None,

@@ -38,17 +38,15 @@ logger = get_logger(__name__)
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
 
 # Cache stampede protection
-_TENANT_LOCKS: TTLCache[str, asyncio.Lock] = TTLCache(maxsize=10000, ttl=60)
-
+_TENANT_LOCKS: dict[str, asyncio.Lock] = {}
 
 def _get_tenant_lock(slug: str) -> asyncio.Lock:
     """Get or create an asyncio.Lock for the given slug."""
-    try:
-        return _TENANT_LOCKS[slug]
-    except KeyError:
+    lock = _TENANT_LOCKS.get(slug)
+    if lock is None:
         lock = asyncio.Lock()
         _TENANT_LOCKS[slug] = lock
-        return lock
+    return lock
 
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(

@@ -147,7 +147,12 @@ class MagicLinkService:
             may_be_delayed=False,
         )
 
-    async def verify_magic_link(self, token: str, response: Any = None) -> LoginTokenResponse | LoginMFAResponse:
+    async def verify_magic_link(
+        self,
+        token: str,
+        ip_address: str,
+        response: Any = None,
+    ) -> LoginTokenResponse | LoginMFAResponse:
         """Verify a magic link token and return auth tokens.
 
         Args:
@@ -219,6 +224,7 @@ class MagicLinkService:
             mfa_token = await mfa_token_manager.create_token(
                 user_id=user["id"],
                 username=str(user.get("username") or user.get("email") or ""),
+                ip_address=ip_address,
             )
 
             logger.info(

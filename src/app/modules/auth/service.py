@@ -250,11 +250,19 @@ return new_attempts
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
         if mfa_enabled:
+            # Get client IP, handling proxies
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                client_ip = forwarded.split(",")[0].strip()
+            else:
+                client_ip = request.client.host if request.client else "unknown"
+
             # Generate MFA pending token
             mfa_token_manager = MFAPendingTokenManager(redis)
             mfa_token = await mfa_token_manager.create_token(
                 user_id=user["id"],
                 username=user["username"],
+                ip_address=client_ip,
             )
 
             # Return partial authentication response

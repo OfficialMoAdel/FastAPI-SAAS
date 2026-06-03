@@ -50,7 +50,6 @@ _GETDEL_LUA = """
     return value
 """
 
-
 class TokenGenerator:
     """Static utilities for secure token generation.
 
