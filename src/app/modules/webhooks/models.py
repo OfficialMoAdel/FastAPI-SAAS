@@ -73,10 +73,10 @@ class WebhookEndpoint(Base, UUIDMixin):
         comment="Event type pattern (e.g., 'user.*', 'user.created')",
     )
     signing_secret: Mapped[str | None] = mapped_column(
-        String(64),
+        String(255),
         nullable=True,
         default=None,
-        comment="Per-endpoint signing secret for webhook verification (64 chars = 256 bits)",
+        comment="Per-endpoint signing secret for webhook verification (encrypted fernet string)",
     )
     is_active: Mapped[bool] = mapped_column(
         Boolean,

@@ -236,7 +236,7 @@ class PreferencesService:
         new_path = f"users/{user_id}/profile.{file_ext}"
 
         # 5. Check for old image and delete if extension changed
-        old_url = user.profile_image_url
+        old_url = user.get("profile_image_url") if isinstance(user, dict) else getattr(user, "profile_image_url", None)
         if old_url:
             base_url = old_url.split("?")[0]
             marker = f"users/{user_id}/profile."
@@ -308,11 +308,14 @@ class PreferencesService:
         # We need to know the extension to delete the exact file.
         # We can fetch the user to get `profile_image_url` and try to extract key.
         user = await crud_users.get(db=db, id=user_id)
-        if not user or not user.profile_image_url:
+        if not user:
             return  # Nothing to delete
 
+        old_url = user.get("profile_image_url") if isinstance(user, dict) else getattr(user, "profile_image_url", None)
+        if not old_url:
+            return
+
         # Extract precise path from URL to accurately find it (avoid guessing extensions)
-        old_url = user.profile_image_url
         base_url = old_url.split("?")[0]
         marker = f"users/{user_id}/profile."
 

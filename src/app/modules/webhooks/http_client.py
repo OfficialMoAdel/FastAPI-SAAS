@@ -70,7 +70,7 @@ class SSRFSafePoolTransport(httpx.AsyncHTTPTransport):
 
 import asyncio
 
-_client_lock = asyncio.Lock()
+_client_lock: asyncio.Lock | None = None
 
 
 async def get_webhook_http_client() -> httpx.AsyncClient:
@@ -79,7 +79,10 @@ async def get_webhook_http_client() -> httpx.AsyncClient:
     Returns:
         Singleton httpx.AsyncClient configured for webhook delivery.
     """
-    global _webhook_http_client
+    global _webhook_http_client, _client_lock
+
+    if _client_lock is None:
+        _client_lock = asyncio.Lock()
 
     if _webhook_http_client is None or _webhook_http_client.is_closed:
         async with _client_lock:

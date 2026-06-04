@@ -121,8 +121,18 @@ class WebhookService:
 
         for endpoint in endpoints:
             # Prefer signing_secret (per-endpoint) over legacy encrypted secret
-            secret = endpoint.signing_secret or ""
-            if not secret and endpoint.secret:
+            secret = ""
+            if endpoint.signing_secret:
+                try:
+                    secret = decrypt_data(endpoint.signing_secret)
+                except Exception as e:
+                    logger.error(
+                        "webhook_signing_secret_decryption_failed",
+                        endpoint_id=str(endpoint.id),
+                        error=str(e),
+                    )
+                    continue
+            elif endpoint.secret:
                 try:
                     secret = decrypt_data(endpoint.secret)
                 except Exception as e:
@@ -192,8 +202,20 @@ class WebhookService:
     ) -> WebhookDelivery:
         """Trigger a specific webhook endpoint (e.g., for testing)."""
         # Prefer signing_secret (per-endpoint) over legacy encrypted secret
-        secret = endpoint.signing_secret or ""
-        if not secret and endpoint.secret:
+        secret = ""
+        if endpoint.signing_secret:
+            try:
+                secret = decrypt_data(endpoint.signing_secret)
+            except Exception as e:
+                logger.error(
+                    "webhook_signing_secret_decryption_failed",
+                    endpoint_id=str(endpoint.id),
+                    error=str(e),
+                )
+                raise ValueError(
+                    f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}."
+                ) from e
+        elif endpoint.secret:
             try:
                 secret = decrypt_data(endpoint.secret)
             except Exception as e:
@@ -393,7 +415,7 @@ class WebhookService:
         if response is not None:
             delivery.attempt_count += 1
             delivery.response_status = response.status_code
-            delivery.response_body = response.text[:1000]  # Limit to 1KB
+            delivery.response_body = response.text[:10000]  # Limit to 10KB
 
             if 200 <= response.status_code < 300:  # HTTP success range
                 # Success - record with circuit breaker

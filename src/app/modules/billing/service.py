@@ -211,13 +211,12 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
-        plan = await crud_subscription_plans.get(db=self.db, id=plan_id)
-        if plan is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        # SECURITY FIX (H-08): tenant authorization on plan access
-        tenant = get_current_tenant()
-        if tenant is None or plan.get("tenant_id") != tenant.id:
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         return plan
@@ -245,13 +244,12 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         P2-3: Uses session refresh instead of second DB roundtrip.
         """
         # Fetch ORM object directly for in-place update
-        plan = await self.db.get(SubscriptionPlan, plan_id)
-        if plan is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        # SECURITY FIX (H-08): tenant authorization on plan access
-        tenant = get_current_tenant()
-        if tenant is None or plan.tenant_id != tenant.id:
+        plan = await self.db.get(SubscriptionPlan, plan_id)
+        if plan is None or plan.tenant_id != tenant.id:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -268,13 +266,12 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
-        plan = await crud_subscription_plans.get(db=self.db, id=plan_id)
-        if plan is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        # SECURITY FIX (H-08): tenant authorization on plan access
-        tenant = get_current_tenant()
-        if tenant is None or plan.get("tenant_id") != tenant.id:
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
         await crud_subscription_plans.update(
@@ -304,15 +301,12 @@ class ProductService(BaseService[Product]):
 
     async def get_product(self, product_id: int) -> dict[str, Any]:
         """Get a product by ID."""
-        product = await crud_products.get(db=self.db, id=product_id)
-        if product is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
-        # SECURITY FIX: Enforce tenant isolation (same pattern as get_plan).
-        # Without this check, any authenticated user can read any tenant's product
-        # by brute-forcing product IDs (IDOR vulnerability).
-        tenant = get_current_tenant()
-        if tenant is None or product.get("tenant_id") != tenant.id:
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         return product
@@ -329,14 +323,12 @@ class ProductService(BaseService[Product]):
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
         """Update a product."""
-        product = await crud_products.get(db=self.db, id=product_id)
-        if product is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
-        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
-        # Mirrors the check already present in get_product().
-        tenant = get_current_tenant()
-        if tenant is None or product.get("tenant_id") != tenant.id:
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -347,13 +339,12 @@ class ProductService(BaseService[Product]):
 
     async def deactivate_product(self, product_id: int) -> dict[str, Any]:
         """Deactivate a product."""
-        product = await crud_products.get(db=self.db, id=product_id)
-        if product is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
-        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
-        tenant = get_current_tenant()
-        if tenant is None or product.get("tenant_id") != tenant.id:
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
@@ -367,16 +358,19 @@ class ProductService(BaseService[Product]):
         Uses selectinload to fetch product and pricing in a single query,
         avoiding N+1 query issues.
         """
-        stmt = select(Product).options(selectinload(Product.pricing_tiers)).where(Product.id == product_id)
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("Product", product_id)
+
+        stmt = (
+            select(Product)
+            .options(selectinload(Product.pricing_tiers))
+            .where(Product.id == product_id, Product.tenant_id == tenant.id)
+        )
         result = await self.db.execute(stmt)
         product = result.scalar_one_or_none()
 
         if product is None:
-            raise ModelNotFoundError("Product", product_id)
-
-        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant IDOR.
-        tenant = get_current_tenant()
-        if tenant is None or product.tenant_id != tenant.id:
             raise ModelNotFoundError("Product", product_id)
 
         # P2-5: Always use optimized dict construction
@@ -388,13 +382,12 @@ class ProductService(BaseService[Product]):
         data: PricingCreate,
     ) -> dict[str, Any]:
         """Add a pricing tier to a product."""
-        product = await crud_products.get(db=self.db, id=product_id)
-        if product is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
-        # SECURITY FIX: Verify product belongs to current tenant before adding pricing.
-        tenant = get_current_tenant()
-        if tenant is None or product.get("tenant_id") != tenant.id:
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         pricing_data = data.model_dump()
@@ -413,13 +406,12 @@ class PricingService(BaseService[Pricing]):
 
     async def create_pricing(self, product_id: int, data: PricingCreate) -> dict[str, Any]:
         """Create a pricing tier for a product."""
-        product = await crud_products.get(db=self.db, id=product_id)
-        if product is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("Product", product_id)
 
-        # SECURITY FIX: Verify product belongs to current tenant before creating pricing.
-        tenant = get_current_tenant()
-        if tenant is None or product.get("tenant_id") != tenant.id:
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Product", product_id)
 
         pricing_data = data.model_dump()
@@ -437,9 +429,13 @@ class PricingService(BaseService[Pricing]):
 
         # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
         if pricing is not None:
-            product = await crud_products.get(db=self.db, id=pricing["product_id"])
             tenant = get_current_tenant()
-            if tenant is None or (product is None or product.get("tenant_id") != tenant.id):
+            if tenant is None:
+                raise ModelNotFoundError("Pricing", pricing_id)
+            # FastCRUD might return dict or object
+            prod_id = pricing.get("product_id") if isinstance(pricing, dict) else pricing.product_id
+            product = await crud_products.get(db=self.db, id=prod_id, tenant_id=tenant.id)
+            if product is None:
                 raise ModelNotFoundError("Pricing", pricing_id)
 
         return pricing
@@ -484,9 +480,11 @@ class PricingService(BaseService[Pricing]):
             raise ModelNotFoundError("Pricing", pricing_id)
 
         # SECURITY FIX: Verify pricing's parent product belongs to current tenant.
-        product = await crud_products.get(db=self.db, id=pricing.product_id)
         tenant = get_current_tenant()
-        if tenant is None or (product is None or product.get("tenant_id") != tenant.id):
+        if tenant is None:
+            raise ModelNotFoundError("Pricing", pricing_id)
+        product = await crud_products.get(db=self.db, id=pricing.product_id, tenant_id=tenant.id)
+        if product is None:
             raise ModelNotFoundError("Pricing", pricing_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -527,13 +525,12 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Get a subscription by ID."""
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
-        if subscription is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # SECURITY FIX: Enforce tenant isolation to prevent cross-tenant data leakage.
-        tenant = get_current_tenant()
-        if tenant is None or subscription.get("tenant_id") != tenant.id:
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         return subscription
@@ -551,16 +548,23 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         self, subscription_id: int, data: UserSubscriptionUpdate, user_id: int | None = None
     ) -> dict[str, Any]:
         """Update a subscription."""
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # SECURITY FIX: Enforce tenant and user isolation
-        tenant = get_current_tenant()
-        if tenant is None or subscription.get("tenant_id") != tenant.id:
-            raise ModelNotFoundError("UserSubscription", subscription_id)
-
-        if user_id is not None and subscription.get("user_id") != user_id:
+        if (
+            user_id is not None
+            and (
+                subscription.get("user_id")
+                if isinstance(subscription, dict)
+                else getattr(subscription, "user_id", None)
+            )
+            != user_id
+        ):
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         update_data = data.model_dump(exclude_unset=True)
@@ -589,22 +593,37 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             HTTPException: If Stripe API call fails
         """
         logger.info("Cancelling subscription", subscription_id=subscription_id)
-        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("UserSubscription", subscription_id)
+
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # SECURITY FIX: Enforce tenant and user isolation
-        tenant = get_current_tenant()
-        if tenant is None or subscription.get("tenant_id") != tenant.id:
-            raise ModelNotFoundError("UserSubscription", subscription_id)
-
-        if user_id is not None and subscription.get("user_id") != user_id:
+        if (
+            user_id is not None
+            and (
+                subscription.get("user_id")
+                if isinstance(subscription, dict)
+                else getattr(subscription, "user_id", None)
+            )
+            != user_id
+        ):
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         # T109: Call Stripe API to cancel subscription at period end
-        stripe_subscription_id = subscription.get("stripe_subscription_id")
+        stripe_subscription_id = (
+            subscription.get("stripe_subscription_id")
+            if isinstance(subscription, dict)
+            else getattr(subscription, "stripe_subscription_id", None)
+        )
         if stripe_subscription_id:
-            tenant_id = subscription.get("tenant_id")
+            tenant_id = (
+                subscription.get("tenant_id")
+                if isinstance(subscription, dict)
+                else getattr(subscription, "tenant_id", None)
+            )
             stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
             api_key = None
             if stripe_settings_record and stripe_settings_record.get("encrypted_secret_key"):
@@ -668,13 +687,12 @@ class BillingRecordService(BaseService[BillingRecord]):
 
     async def get_record(self, record_id: int) -> dict[str, Any]:
         """Get a billing record by ID."""
-        record = await crud_billing_records.get(db=self.db, id=record_id)
-        if record is None:
+        tenant = get_current_tenant()
+        if tenant is None:
             raise ModelNotFoundError("BillingRecord", record_id)
 
-        # SECURITY FIX: Enforce tenant isolation
-        tenant = get_current_tenant()
-        if tenant is None or record.get("tenant_id") != tenant.id:
+        record = await crud_billing_records.get(db=self.db, id=record_id, tenant_id=tenant.id)
+        if record is None:
             raise ModelNotFoundError("BillingRecord", record_id)
 
         return record

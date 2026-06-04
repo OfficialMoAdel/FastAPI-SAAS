@@ -77,8 +77,27 @@ class TaskService:
         if tenant_id and job_info.kwargs.get("tenant_id") != tenant_id:
             return None
 
-        # Convert ARQ JobResult to dict using vars() for cleaner serialization
-        return vars(job_info)
+        # Get the current status from ARQ
+        status_enum = await job.status()
+        status = status_enum.value if hasattr(status_enum, "value") else str(status_enum)
+
+        # Get result if job is finished
+        result_str = None
+        if status == "complete":
+            try:
+                res_info = await job.result_info()
+                if res_info and res_info.result is not None:
+                    result_str = str(res_info.result)
+            except Exception:
+                pass
+        elif status == "failed":
+            result_str = "Task failed"
+
+        return {
+            "id": job_info.job_id,
+            "status": status,
+            "result": result_str,
+        }
 
 
 # Singleton instance for import convenience

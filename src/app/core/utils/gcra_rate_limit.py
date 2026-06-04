@@ -185,6 +185,14 @@ class GCRARateLimiter:
             )
 
         try:
+            if limit <= 0:
+                return GCRARateLimitResult(
+                    is_limited=True,
+                    remaining=0,
+                    retry_after=float(period),
+                    reset_at=time.time() + period,
+                )
+
             # Calculate emission interval (time between requests)
             period_ms = period * 1000
             emission_interval_ms = period_ms / limit

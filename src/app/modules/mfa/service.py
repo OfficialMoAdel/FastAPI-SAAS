@@ -755,8 +755,8 @@ class MFAService:
         # FIXED: Use proper PBKDF2HMAC key derivation with salt
         # instead of simple truncation + null padding (security vulnerability)
 
-        # Use a consistent salt derived from application name (not random, for reproducibility)
-        salt = b"fastapi_saas_mfa_v1"
+        # Use a consistent salt derived from the secret key (not random, for reproducibility)
+        salt = settings.SECRET_KEY.get_secret_value().encode()[:16]
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,

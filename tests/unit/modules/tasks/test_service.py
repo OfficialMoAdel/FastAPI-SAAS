@@ -104,8 +104,8 @@ class TestTaskServiceGet:
 
             result = await task_service.get_task("test-job-123")
 
-            assert result["job_id"] == "test-job-123"
-            assert result["function"] == "sample_background_task"
+            assert result["id"] == "test-job-123"
+            assert "status" in result
             MockArqJob.assert_called_once_with("test-job-123", mock_pool)
 
     @pytest.mark.asyncio

@@ -110,9 +110,10 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         if not flag:
             raise ModelNotFoundError("FeatureFlag", flag_id)
 
-        if redis_client:
+        flag_key = flag.key if not isinstance(flag, dict) else flag.get("key")
+        if redis_client and flag_key:
             try:
-                await redis_client.delete(f"feature_flag:{flag.key}")
+                await redis_client.delete(f"feature_flag:{flag_key}")
             except Exception as e:
                 logger.debug("Feature flag cache invalidation failed", error=str(e))
 
@@ -127,10 +128,10 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         """
         result = await self.crud.get(db=self.db, id=flag_id)
         if result:
-            flag: FeatureFlag = result  # type: ignore[assignment]
-            if redis_client:
+            flag_key = result.key if not isinstance(result, dict) else result.get("key")
+            if redis_client and flag_key:
                 try:
-                    await redis_client.delete(f"feature_flag:{flag.key}")
+                    await redis_client.delete(f"feature_flag:{flag_key}")
                 except Exception as e:
                     logger.debug("Feature flag cache invalidation failed", error=str(e))
         await self.delete(flag_id)
@@ -158,7 +159,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         if ff_id and t_id:
             flag = await self.db.get(FeatureFlag, ff_id)
-            if flag:
+            if flag and flag.key:
                 await self._invalidate_cache(t_id, flag.key)
 
         return override
@@ -176,7 +177,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         if ff_id and t_id:
             flag = await self.db.get(FeatureFlag, ff_id)
-            if flag:
+            if flag and flag.key:
                 await self._invalidate_cache(t_id, flag.key)
 
         return override
@@ -191,7 +192,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
             if ff_id and t_id:
                 flag = await self.db.get(FeatureFlag, ff_id)
-                if flag:
+                if flag and flag.key:
                     await self._invalidate_cache(t_id, flag.key)
 
         await self.override_crud.delete(db=self.db, id=override_id)
@@ -269,16 +270,27 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         flag = await self.get_flag_by_key_or_none(feature_name)
         if flag:
-            override = await self.get_override(flag.id, tenant_id)
-            if override and override.custom_value is not None:
-                if "value" in override.custom_value:
-                    enabled = bool(override.custom_value["value"])
-                elif "enabled" in override.custom_value:
-                    enabled = bool(override.custom_value["enabled"])
+            flag_id = int(flag.id if not isinstance(flag, dict) else flag.get("id", 0))
+            flag_default = bool(flag.default_value if not isinstance(flag, dict) else flag.get("default_value", False))
+
+            override = await self.get_override(flag_id, tenant_id)
+
+            if override:
+                custom_value = override.custom_value if not isinstance(override, dict) else override.get("custom_value")
+                if custom_value is not None:
+                    if isinstance(custom_value, dict):
+                        if "value" in custom_value:
+                            enabled = bool(custom_value["value"])
+                        elif "enabled" in custom_value:
+                            enabled = bool(custom_value["enabled"])
+                        else:
+                            enabled = bool(custom_value)
+                    else:
+                        enabled = bool(custom_value)
                 else:
-                    enabled = bool(override.custom_value)
+                    enabled = flag_default
             else:
-                enabled = flag.default_value
+                enabled = flag_default
         else:
             tenant = await self.db.get(Tenant, tenant_id)
             if tenant and tenant.feature_flags:

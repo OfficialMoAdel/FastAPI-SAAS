@@ -189,12 +189,16 @@ class PostService(BaseService[Post]):
             raise ModelNotFoundError("Post", post_id)
 
         # Ownership check
-        if db_post["created_by_user_id"] != current_user["id"]:
-            raise ForbiddenException("You do not have permission to delete this post.")
+        created_by_user_id = (
+            db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
+        )
+        if created_by_user_id != current_user["id"]:
+            raise ForbiddenException("You do not have permission to modify this post.")
 
         # SECURITY FIX: Verify tenant ownership to prevent cross-tenant mutation via known post ID.
         tenant = get_tenant_context()
-        if tenant is not None and db_post.get("tenant_id") != tenant.id:
+        tenant_id_val = db_post.get("tenant_id") if isinstance(db_post, dict) else getattr(db_post, "tenant_id", None)
+        if tenant is not None and tenant_id_val != tenant.id:
             raise ForbiddenException("You do not have permission to modify this post.")
 
         await crud_posts.update(db=self.db, object=values, id=post_id)
@@ -231,13 +235,17 @@ class PostService(BaseService[Post]):
             raise ModelNotFoundError("Post", post_id)
 
         # Ownership check
-        if db_post["created_by_user_id"] != current_user["id"]:
-            raise ForbiddenException("You do not have permission to manage tags for this post.")
+        created_by_user_id = (
+            db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
+        )
+        if created_by_user_id != current_user["id"]:
+            raise ForbiddenException("You do not have permission to delete this post.")
 
         # SECURITY FIX: Verify tenant ownership to prevent cross-tenant deletion via known post ID.
         tenant = get_tenant_context()
-        if tenant is not None and db_post.get("tenant_id") != tenant.id:
-            raise ForbiddenException("You do not have permission to view tags for this post.")
+        tenant_id_val = db_post.get("tenant_id") if isinstance(db_post, dict) else getattr(db_post, "tenant_id", None)
+        if tenant is not None and tenant_id_val != tenant.id:
+            raise ForbiddenException("You do not have permission to delete this post.")
 
         await crud_posts.delete(db=self.db, id=post_id)
         return {"message": "Post deleted"}

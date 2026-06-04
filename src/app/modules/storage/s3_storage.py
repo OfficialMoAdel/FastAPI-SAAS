@@ -154,7 +154,7 @@ class S3Storage(StorageProvider):
         body = response["Body"]
 
         while True:
-            chunk = await asyncio.to_thread(body.read, 8192)
+            chunk = await asyncio.to_thread(body.read, 5 * 1024 * 1024)  # 5MB chunks
             if not chunk:
                 break
             yield chunk

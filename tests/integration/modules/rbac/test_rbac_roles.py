@@ -5,7 +5,7 @@ to avoid async database connection contention.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import UUID, uuid4
+from uuid import UUID
 
 import pytest
 from httpx import ASGITransport, AsyncClient
