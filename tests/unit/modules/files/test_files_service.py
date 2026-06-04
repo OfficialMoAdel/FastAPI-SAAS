@@ -35,8 +35,7 @@ def file_service(mock_db, mock_storage_service):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.files.service.cache")
-async def test_upload_file_success(mock_cache, file_service, mock_db, mock_storage_service):
+async def test_upload_file_success(file_service, mock_db, mock_storage_service):
     tenant_id = uuid4()
     user_id = 1
     file_obj = io.BytesIO(b"test content")
@@ -63,9 +62,6 @@ async def test_upload_file_success(mock_cache, file_service, mock_db, mock_stora
     mock_provider.upload = AsyncMock(return_value=mock_upload_result)
     mock_storage_service.get_provider.return_value = mock_provider
 
-    # Mock cache lock
-    mock_cache.client.set = AsyncMock(return_value=True)
-    mock_cache.client.delete = AsyncMock()
 
     result = await file_service.upload_file(
         tenant_id=tenant_id, user_id=user_id, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
@@ -116,37 +112,6 @@ async def test_upload_file_type_not_allowed(file_service, mock_storage_service):
         )
 
 
-@pytest.mark.asyncio
-@patch("src.app.modules.files.service.cache")
-async def test_upload_file_lock_failed(mock_cache, file_service, mock_db, mock_storage_service):
-    tenant_id = uuid4()
-    mock_settings = MagicMock()
-    mock_settings.max_file_size_mb = 10
-    mock_settings.allowed_file_types = None
-    mock_settings.max_file_count = 100
-    mock_settings.storage_quota_bytes = 1024 * 1024 * 1024
-    mock_storage_service.get_settings_or_raise.return_value = mock_settings
-
-    # Set up quota stats so quota check passes (lock failure should be the error)
-    mock_result = MagicMock()
-    mock_row = MagicMock()
-    mock_row.file_count = 5
-    mock_row.storage_usage_bytes = 1000
-    mock_result.one_or_none.return_value = mock_row
-    mock_db.execute.return_value = mock_result
-
-    # Lock acquisition fails
-    mock_cache.client.set = AsyncMock(return_value=False)
-
-    with pytest.raises(QuotaExceededError, match="Another upload is currently in progress"):
-        await file_service.upload_file(
-            tenant_id=tenant_id,
-            user_id=1,
-            file=io.BytesIO(),
-            filename="test.txt",
-            mime_type="text/plain",
-            size_bytes=100,
-        )
 
 
 @pytest.mark.asyncio

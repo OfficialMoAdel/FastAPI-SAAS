@@ -222,7 +222,7 @@ async def update_webhook_endpoint(
     for field, value in update_data.items():
         if isinstance(value, HttpUrl):
             value = str(value)
-        if field == "secret" and value is not None:
+        if field in ("secret", "signing_secret") and value is not None:
             value = encrypt_data(value)
         setattr(endpoint, field, value)
 
@@ -258,7 +258,11 @@ async def delete_webhook_endpoint(
     await db.commit()
 
 
-@router.get("/deliveries/{delivery_id}", response_model=WebhookDeliveryResponse)
+@router.get(
+    "/deliveries/{delivery_id}",
+    response_model=WebhookDeliveryResponse,
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
+)
 async def get_webhook_delivery(
     delivery_id: UUID,
     db: AsyncSession = Depends(async_get_db),

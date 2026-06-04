@@ -166,11 +166,14 @@ class TestAPIKeyRevocationCacheInvalidation:
         mock_key.tenant_id = 1
         mock_key.hashed_key = "abcdef1234567890deadbeefcafe1234"
 
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_key
+        api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
         with (
             patch("src.app.modules.api_keys.service.redis_client") as mock_redis,
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
-            mock_crud.get = AsyncMock(return_value=mock_key)
             mock_crud.update = AsyncMock()
             mock_redis.delete = AsyncMock()
 
@@ -193,11 +196,14 @@ class TestAPIKeyRevocationCacheInvalidation:
         mock_key.tenant_id = 1
         mock_key.hashed_key = "abcdef1234567890deadbeefcafe1234"
 
+        mock_result = MagicMock()
+        mock_result.scalar_one_or_none.return_value = mock_key
+        api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
         with (
             patch("src.app.modules.api_keys.service.redis_client", None),
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
-            mock_crud.get = AsyncMock(return_value=mock_key)
             mock_crud.update = AsyncMock()
 
             result = await api_key_service.revoke_api_key(key_id=42, user_id=1, tenant_id=1)

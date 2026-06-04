@@ -95,35 +95,6 @@ async def list_audit_logs(
 
 
 @router.get(
-    "/{log_id}",
-    response_model=AuditLogResponse,
-    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
-)
-async def get_audit_log(
-    log_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
-    current_user: User = Depends(get_current_user),
-) -> AuditLogResponse:
-    """
-    Get a single audit log entry by ID.
-
-    Enforces tenant isolation - only returns logs for current tenant.
-    """
-    query = select(AuditLog).where(
-        AuditLog.id == log_id,
-        AuditLog.tenant_id == current_tenant.id,
-    )
-    result = await db.execute(query)
-    log = result.scalar_one_or_none()
-
-    if not log:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
-
-    return AuditLogResponse.model_validate(log)
-
-
-@router.get(
     "/actions/list",
     response_model=list[str],
     dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
@@ -375,3 +346,33 @@ async def export_audit_logs(
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
         )
+
+
+@router.get(
+    "/{log_id}",
+    response_model=AuditLogResponse,
+    dependencies=[Depends(requires_permission(Permission.AUDIT_LOGS_VIEW_ONLY))],
+)
+async def get_audit_log(
+    log_id: UUID,
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: Tenant = Depends(get_current_tenant),
+    current_user: User = Depends(get_current_user),
+) -> AuditLogResponse:
+    """
+    Get a single audit log entry by ID.
+
+    Enforces tenant isolation - only returns logs for current tenant.
+    """
+    query = select(AuditLog).where(
+        AuditLog.id == log_id,
+        AuditLog.tenant_id == current_tenant.id,
+    )
+    result = await db.execute(query)
+    log = result.scalar_one_or_none()
+
+    if not log:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
+
+    return AuditLogResponse.model_validate(log)
+

@@ -60,6 +60,7 @@ async def check_auth_rate_limit(request: Request) -> None:
     """Rate limit sensitive auth endpoints by client IP."""
     # Get client IP securely, handling proxies
     from src.app.core.utils.ip_utils import get_client_ip
+
     client_ip = get_client_ip(request)
 
     key = f"auth_ip:{client_ip}"

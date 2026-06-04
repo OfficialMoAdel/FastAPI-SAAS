@@ -220,41 +220,16 @@ class APIKeyService(BaseService[APIKey]):
         if inspect.isawaitable(key):
             key = await key
 
-        # Unit-test compatibility fallback: mocked AsyncSession may not return
-        # a model instance from execute()/scalar_one_or_none().
-        user_id_attr = getattr(key, "user_id", None)
-        tenant_id_attr = getattr(key, "tenant_id", None)
-        if (
-            key is None
-            or type(key).__name__ == "AsyncMock"
-            or type(user_id_attr).__name__ == "AsyncMock"
-            or type(tenant_id_attr).__name__ == "AsyncMock"
-            or user_id_attr is None
-            or tenant_id_attr is None
-        ):
-            key = await crud_api_keys.get(db=self.db, id=key_id)  # type: ignore[assignment]
-
         if key is None:
             raise ModelNotFoundError("APIKey", key_id)
 
-        api_key = key
+        if key.tenant_id != tenant_id or key.user_id != user_id:
+            raise ForbiddenException("You don't have permission to revoke this key")
 
-        # BUG FIX: When the CRUD fallback ran (line above), `key` is a dict
-        # not an ORM object. Use .get() for dict access.
-        if isinstance(api_key, dict):
-            if str(api_key.get("tenant_id")) != str(tenant_id) or str(api_key.get("user_id")) != str(user_id):
-                raise ForbiddenException("You don't have permission to revoke this key")
-            api_key_hashed = api_key.get("hashed_key")
-            api_key_name = api_key.get("name")
-            api_key_prefix = api_key.get("key_prefix")
-            api_key_is_active = api_key.get("is_active")
-        else:
-            if api_key.tenant_id != tenant_id or api_key.user_id != user_id:
-                raise ForbiddenException("You don't have permission to revoke this key")
-            api_key_hashed = api_key.hashed_key
-            api_key_name = api_key.name
-            api_key_prefix = api_key.key_prefix
-            api_key_is_active = api_key.is_active
+        api_key_hashed = key.hashed_key
+        api_key_name = key.name
+        api_key_prefix = key.key_prefix
+        api_key_is_active = key.is_active
 
         # Invalidate cache before revoking (using hashed_key from DB record)
         if redis_client is not None and api_key_hashed:
@@ -473,56 +448,29 @@ class APIKeyService(BaseService[APIKey]):
         """
         from datetime import timedelta
 
-        # Get the existing key
         from sqlalchemy import select
 
+        # Get the existing key
         old_key_stmt = select(APIKey).where(APIKey.id == key_id)
         old_key_result = await self.db.execute(old_key_stmt)
         old_key = old_key_result.scalar_one_or_none()
         if inspect.isawaitable(old_key):
             old_key = await old_key
 
-        # Unit-test compatibility fallback: mocked AsyncSession may not return
-        # a model instance from execute()/scalar_one_or_none().
-        old_user_id_attr = getattr(old_key, "user_id", None)
-        old_tenant_id_attr = getattr(old_key, "tenant_id", None)
-        if (
-            old_key is None
-            or type(old_key).__name__ == "AsyncMock"
-            or type(old_user_id_attr).__name__ == "AsyncMock"
-            or type(old_tenant_id_attr).__name__ == "AsyncMock"
-            or old_user_id_attr is None
-            or old_tenant_id_attr is None
-        ):
-            old_key = await crud_api_keys.get(db=self.db, id=key_id)  # type: ignore[assignment]
-
         if old_key is None:
             raise ModelNotFoundError("APIKey", key_id)
 
-        api_key = old_key
+        if old_key.tenant_id != tenant_id or old_key.user_id != user_id:
+            raise ForbiddenException("You don't have permission to rotate this key")
+        if not old_key.is_active:
+            raise ForbiddenException("Cannot rotate a revoked key")
 
-        # BUG FIX: When the CRUD fallback ran, `old_key` is a dict not an ORM object.
-        # Use dict-aware access to prevent AttributeError.
-        if isinstance(api_key, dict):
-            if str(api_key.get("tenant_id")) != str(tenant_id) or str(api_key.get("user_id")) != str(user_id):
-                raise ForbiddenException("You don't have permission to rotate this key")
-            if not api_key.get("is_active", True):
-                raise ForbiddenException("Cannot rotate a revoked key")
-            api_key_name = api_key.get("name")
-            api_key_scopes = api_key.get("scopes")
-            api_key_expires_at = api_key.get("expires_at")
-            api_key_id = api_key.get("id")
-            api_key_prefix = api_key.get("key_prefix")
-        else:
-            if api_key.tenant_id != tenant_id or api_key.user_id != user_id:
-                raise ForbiddenException("You don't have permission to rotate this key")
-            if not api_key.is_active:
-                raise ForbiddenException("Cannot rotate a revoked key")
-            api_key_name = api_key.name
-            api_key_scopes = api_key.scopes
-            api_key_expires_at = api_key.expires_at
-            api_key_id = api_key.id
-            api_key_prefix = api_key.key_prefix
+        api_key = old_key
+        api_key_name = api_key.name
+        api_key_scopes = api_key.scopes
+        api_key_expires_at = api_key.expires_at
+        api_key_id = api_key.id
+        api_key_prefix = api_key.key_prefix
 
         # BUG FIX: The old logic set valid_from=now+grace on the NEW key, making it unusable
         # during the grace period and never expired the OLD key, leaving it valid indefinitely.
@@ -561,10 +509,7 @@ class APIKeyService(BaseService[APIKey]):
         await self.db.commit()
         await self.db.refresh(new_key_record)
 
-        # Invalidate old key's cache entry so the new expiry takes effect immediately
-        old_key_hashed = (
-            api_key.get("hashed_key") if isinstance(api_key, dict) else getattr(api_key, "hashed_key", None)
-        )
+        old_key_hashed = api_key.hashed_key
         if redis_client is not None and old_key_hashed:
             await redis_client.delete(self._get_cache_key(old_key_hashed))
 

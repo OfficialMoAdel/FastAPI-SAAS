@@ -17,7 +17,6 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
-from src.app.core.utils import cache
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
 from src.app.modules.storage.metrics import storage_metrics
@@ -157,19 +156,7 @@ class FileService:
         # Get storage provider
         provider = await self._storage_service.get_provider(tenant_id)
 
-        # Acquire a distributed per-tenant upload lock to prevent concurrent
-        # quota races. Uses Redis SET NX (atomic compare-and-set).
-        lock_key = f"upload_lock:{tenant_id}"
-        lock_acquired = False
-        if cache.client:
-            acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
-            if not acquired:
-                raise QuotaExceededError("Another upload is currently in progress")
-            lock_acquired = True
-
         # Upload to storage
-        # IMPORTANT: Upload is inside try/finally to ensure the Redis lock
-        # is always released in the finally block, even on StorageResult failure.
         try:
             result = await provider.upload(file, storage_path, mime_type)
 
@@ -238,11 +225,6 @@ class FileService:
             )
             await provider.delete(storage_path)
             raise
-        finally:
-            # Only release the lock if we successfully acquired it.
-            # Do NOT delete if we never acquired it — that would release another request's lock.
-            if lock_acquired and cache.client:
-                await cache.client.delete(lock_key)
 
     async def get_file(self, tenant_id: UUID, file_id: int, user_id: int | None = None) -> File | None:
         """Get file by ID with tenant isolation.

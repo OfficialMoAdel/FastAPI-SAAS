@@ -71,12 +71,14 @@ async def upload_file(
     if file.size is not None:
         size_bytes = file.size
     else:
-        # Fallback: seek to end to get size, then reset position
-        # Uses underlying file object directly because UploadFile.seek()
-        # does not support the whence parameter
-        file.file.seek(0, 2)
-        size_bytes = file.file.tell()
-        file.file.seek(0)
+        import asyncio
+        import os
+
+        # Fallback: seek to end to get size, then reset position.
+        # Use asyncio.to_thread to prevent blocking the event loop on disk I/O.
+        await asyncio.to_thread(file.file.seek, 0, os.SEEK_END)
+        size_bytes = await asyncio.to_thread(file.file.tell)
+        await asyncio.to_thread(file.file.seek, 0, os.SEEK_SET)
 
     try:
         result = await service.upload_file(

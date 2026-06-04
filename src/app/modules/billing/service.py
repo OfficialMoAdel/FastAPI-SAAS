@@ -746,11 +746,12 @@ class CheckoutService:
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
-        try:
-            # Use Platform API Key from Env
-            api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
-        except AttributeError:
-            api_key = None
+        # Use Platform API Key from Env
+        api_key = (
+            settings.STRIPE_SECRET_KEY.get_secret_value()
+            if hasattr(settings.STRIPE_SECRET_KEY, "get_secret_value")
+            else getattr(settings, "STRIPE_SECRET_KEY", None)
+        )
 
         # Get settings to find Customer ID and tenant stripe key
         settings_service = StripeSettingsService(self.db)

@@ -167,6 +167,12 @@ class TestAPIKeyRotation:
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
              patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
              patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_update.return_value = None
 
@@ -211,6 +217,12 @@ class TestAPIKeyRotation:
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
              patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
              patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_update.return_value = None
 
@@ -260,6 +272,12 @@ class TestAPIKeyRotation:
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
              patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
              patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_update.return_value = None
 
@@ -295,6 +313,12 @@ class TestAPIKeyRotation:
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
              patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
              patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_update.return_value = None
 
@@ -321,6 +345,12 @@ class TestAPIKeyRotation:
         mock_key.is_active = True
 
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
 
             with pytest.raises(ForbiddenException) as exc_info:
@@ -342,6 +372,12 @@ class TestAPIKeyRotation:
         mock_key.is_active = True
 
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
 
             with pytest.raises(ForbiddenException) as exc_info:
@@ -363,6 +399,12 @@ class TestAPIKeyRotation:
         mock_key.is_active = False  # Already revoked
 
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
 
             with pytest.raises(ForbiddenException) as exc_info:
@@ -378,6 +420,12 @@ class TestAPIKeyRotation:
     async def test_rotate_nonexistent_key(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
         """Test that rotation fails for non-existent keys."""
         with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = None
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = None
 
             with pytest.raises(ModelNotFoundError) as exc_info:
@@ -434,6 +482,12 @@ class TestAPIKeyRotationGracePeriod:
             patch("src.app.modules.api_keys.service.AuditLogService.create_log"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_gen.return_value = ("test", "prefix", "hashed")
 
@@ -480,6 +534,12 @@ class TestAPIKeyRotationGracePeriod:
             patch("src.app.modules.api_keys.service.AuditLogService.create_log"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
+            mock_result = MagicMock()
+
+            mock_result.scalar_one_or_none.return_value = mock_key
+
+            api_key_service.db.execute = AsyncMock(return_value=mock_result)
+
             mock_get.return_value = mock_key
             mock_gen.return_value = ("test_key", "prefix", "hashed")
 

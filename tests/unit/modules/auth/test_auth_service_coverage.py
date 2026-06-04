@@ -146,7 +146,7 @@ class TestPublishLoginAudit:
         with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Connection failed")):
             with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
-                    mock_settings.AUDIT_LOG_FAILURE_MODE = "fail_closed"
+                    mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_closed"
 
                     with pytest.raises(HTTPException) as exc_info:
                         await auth_service._publish_login_audit(mock_request, "testuser", False, reason="test")

@@ -298,14 +298,10 @@ class DashboardService:
         """
         start_date, end_date = await self._get_date_range(db, time_range, tenant_id)
 
-        # Fetch all metrics concurrently
-        import asyncio
-
-        user_metrics, revenue_metrics, activity_metrics = await asyncio.gather(
-            self._get_user_metrics(db, start_date, end_date, tenant_id),
-            self._get_revenue_metrics(db, start_date, end_date, tenant_id),
-            self._get_activity_metrics(db, start_date, end_date, tenant_id),
-        )
+        # Fetch metrics sequentially (AsyncSession does not support concurrent ops)
+        user_metrics = await self._get_user_metrics(db, start_date, end_date, tenant_id)
+        revenue_metrics = await self._get_revenue_metrics(db, start_date, end_date, tenant_id)
+        activity_metrics = await self._get_activity_metrics(db, start_date, end_date, tenant_id)
 
         return DashboardMetricsResponse(
             time_range=time_range,

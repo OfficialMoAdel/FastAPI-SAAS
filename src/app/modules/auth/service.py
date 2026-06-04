@@ -146,7 +146,7 @@ return new_attempts
             # fail_open: Log error but allow operation (default, availability focused)
             # fail_closed: Raise exception and block operation (security focused, compliance)
             # Note: fail_closed requires ServiceUnavailableException to be defined
-            if getattr(settings, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
+            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
                 from fastapi import HTTPException
 
                 raise HTTPException(status_code=503, detail="Service temporarily unavailable")
@@ -650,7 +650,7 @@ return new_attempts
         # SECURITY FIX: Only active users can change their password
         # Ensure we properly fallback to False when checking active status in cached payload manually
         user = await crud_users.get(db=db, id=user_id, is_deleted=False, is_active=True)
-        if not user or (isinstance(user, dict) and not user.get("is_active", False)):
+        if not user:
             raise UnauthorizedException("User not found.")
 
         # Verify current password
@@ -891,7 +891,9 @@ return new_attempts
 
         # SECURITY FIX: Use generic message for deleted/inactive accounts
         # Prevents account enumeration attacks - attackers cannot determine account status
-        if user.get("is_deleted", False) or not user.get("is_active", False):
+        is_deleted = user.get("is_deleted", False) if isinstance(user, dict) else getattr(user, "is_deleted", False)
+        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
+        if is_deleted or not is_active:
             await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
             raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
 
@@ -952,7 +954,12 @@ return new_attempts
         # verifying emails (which could restore account access without going through reactivation).
         user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
 
-        if user and not user.get("is_email_verified", False):
+        is_email_verified = (
+            user.get("is_email_verified", False)
+            if isinstance(user, dict)
+            else getattr(user, "is_email_verified", False)
+        )
+        if user and not is_email_verified:
             import hashlib
 
             raw_token = generate_verification_token()
@@ -1035,7 +1042,8 @@ return new_attempts
         # BUG FIX: Reject verification for inactive accounts. Without this check,
         # an inactive user could verify their email and gain unintended access.
         # SECURITY: Default to False (deny-by-default) if field is absent.
-        if not user.get("is_active", False):
+        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
+        if not is_active:
             raise UnauthorizedException("This account is inactive. Please contact support.")
 
         # Update user status

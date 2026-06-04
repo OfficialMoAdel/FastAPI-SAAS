@@ -108,28 +108,6 @@ async def list_notifications(
     }
 
 
-@router.get("/{notification_id}", response_model=NotificationResponse)
-async def get_notification(
-    notification_id: UUID,
-    db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
-    current_user: AuthenticatedUser = Depends(get_current_user),
-) -> NotificationResponse:
-    """Get a single notification by ID."""
-    query = select(Notification).where(
-        Notification.id == notification_id,
-        Notification.tenant_id == current_tenant.id,
-        Notification.user_id == current_user.id,
-    )
-    result = await db.execute(query)
-    notification = result.scalar_one_or_none()
-
-    if not notification:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
-
-    return NotificationResponse.model_validate(notification)
-
-
 # Email Template Override endpoints
 @router.get(
     "/templates/overrides",
@@ -192,3 +170,25 @@ async def delete_template_override(
 
     if not deleted:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template override not found")
+
+
+@router.get("/{notification_id}", response_model=NotificationResponse)
+async def get_notification(
+    notification_id: UUID,
+    db: AsyncSession = Depends(async_get_db),
+    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_user: AuthenticatedUser = Depends(get_current_user),
+) -> NotificationResponse:
+    """Get a single notification by ID."""
+    query = select(Notification).where(
+        Notification.id == notification_id,
+        Notification.tenant_id == current_tenant.id,
+        Notification.user_id == current_user.id,
+    )
+    result = await db.execute(query)
+    notification = result.scalar_one_or_none()
+
+    if not notification:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
+
+    return NotificationResponse.model_validate(notification)

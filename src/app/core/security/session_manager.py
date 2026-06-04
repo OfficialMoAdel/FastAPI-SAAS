@@ -573,4 +573,4 @@ class SessionManager:
 
 
 # Global session manager instance
-session_manager = SessionManager()
+session_manager = SessionManager(max_sessions=settings.auth.AUTH_MAX_SESSIONS)

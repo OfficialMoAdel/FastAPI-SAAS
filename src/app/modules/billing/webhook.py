@@ -224,6 +224,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             # Enqueue a fallback cleanup task
             try:
                 from src.app.core.utils.queue import pool
+
                 if pool:
                     await pool.enqueue_job("cleanup_leaked_webhook_lock", event_id, _defer_by=300)
             except Exception as q_err:
@@ -278,7 +279,12 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     # Retrieve subscription details from Stripe
     if stripe_subscription_id:
         try:
-            stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id)
+            api_key = (
+                settings.STRIPE_SECRET_KEY.get_secret_value()
+                if hasattr(settings.STRIPE_SECRET_KEY, "get_secret_value")
+                else getattr(settings, "STRIPE_SECRET_KEY", None)
+            )
+            stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id, api_key=api_key)
             period_start = stripe_sub.get("current_period_start")
             period_end = stripe_sub.get("current_period_end")
             if period_start is None or period_end is None:
@@ -795,7 +801,12 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     stripe_subscription_id = None
     if stripe_invoice_id:
         try:
-            invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id)
+            api_key = (
+                settings.STRIPE_SECRET_KEY.get_secret_value()
+                if hasattr(settings.STRIPE_SECRET_KEY, "get_secret_value")
+                else getattr(settings, "STRIPE_SECRET_KEY", None)
+            )
+            invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id, api_key=api_key)
             stripe_subscription_id = invoice.get("subscription")
         except stripe.error.StripeError as e:
             logger.error("Error retrieving invoice", error=e)

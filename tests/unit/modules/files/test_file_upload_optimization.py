@@ -49,7 +49,7 @@ async def test_router_upload_file_optimization():
     # Router uses: file.file.seek(0, 2), file.file.tell(), file.file.seek(0)
     mock_file.file.seek.assert_any_call(0, 2)
     mock_file.file.tell.assert_called_once()
-    mock_file.file.seek.assert_any_call(0)
+    mock_file.file.seek.assert_any_call(0, 0)
 
     # Verify read NOT called
     mock_file.read.assert_not_called()
