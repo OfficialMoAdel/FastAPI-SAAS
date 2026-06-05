@@ -250,12 +250,8 @@ return new_attempts
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
         if mfa_enabled:
-            # Get client IP, handling proxies
-            forwarded = request.headers.get("X-Forwarded-For")
-            if forwarded:
-                client_ip = forwarded.split(",")[0].strip()
-            else:
-                client_ip = request.client.host if request.client else "unknown"
+            from src.app.core.utils.ip_utils import get_client_ip
+            client_ip = get_client_ip(request)
 
             # Generate MFA pending token
             mfa_token_manager = MFAPendingTokenManager(redis)

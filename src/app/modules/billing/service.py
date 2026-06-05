@@ -631,7 +631,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
                 api_key = CredentialEncryption().decrypt_column(stripe_settings_record["encrypted_secret_key"])
             else:
-                api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
+                api_key = (
+                    settings.STRIPE_SECRET_KEY.get_secret_value()
+                    if hasattr(settings.STRIPE_SECRET_KEY, "get_secret_value")
+                    else getattr(settings, "STRIPE_SECRET_KEY", None)
+                )
 
             if api_key:
                 try:
@@ -877,7 +881,11 @@ class CheckoutService:
                     )
                 return_url = f"{frontend_url}{return_url}"
 
-        api_key = settings.STRIPE_SECRET_KEY.get_secret_value() if settings.STRIPE_SECRET_KEY else None
+        api_key = (
+            settings.STRIPE_SECRET_KEY.get_secret_value()
+            if hasattr(settings.STRIPE_SECRET_KEY, "get_secret_value")
+            else getattr(settings, "STRIPE_SECRET_KEY", None)
+        )
         if not api_key:
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"

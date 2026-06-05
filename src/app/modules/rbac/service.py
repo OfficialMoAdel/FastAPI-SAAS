@@ -493,12 +493,22 @@ class RoleService:
 
             from src.app.modules.users.models import User
 
+            # Fetch affected users to get email/username for invalidating their cache
+            users_stmt = select(User).where(User.id.in_(affected_user_ids))
+            users_result = await self.db.execute(users_stmt)
+            users_records = users_result.scalars().all()
+
             await self.db.execute(
                 sa_update(User)
                 .where(User.id.in_(affected_user_ids))
                 .values(token_version=User.token_version + 1)
             )
             await self.db.commit()
+
+            from src.app.modules.users.service import UserService
+            user_service = UserService(self.db)
+            for u in users_records:
+                await user_service._invalidate_user_cache(u)
 
         for user_id in affected_user_ids:
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
@@ -545,12 +555,22 @@ class RoleService:
 
                 from src.app.modules.users.models import User
 
+                # Fetch affected users to get email/username for invalidating their cache
+                users_stmt = select(User).where(User.id.in_(affected_user_ids))
+                users_result = await self.db.execute(users_stmt)
+                users_records = users_result.scalars().all()
+
                 await self.db.execute(
                     sa_update(User)
                     .where(User.id.in_(affected_user_ids))
                     .values(token_version=User.token_version + 1)
                 )
                 await self.db.commit()
+
+                from src.app.modules.users.service import UserService
+                user_service = UserService(self.db)
+                for u in users_records:
+                    await user_service._invalidate_user_cache(u)
 
             for user_id in affected_user_ids:
                 await invalidate_user_permissions_cache(user_id, self.tenant_id)
@@ -567,7 +587,8 @@ class RoleService:
 
         user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
         user_result = await self.db.execute(user_stmt)
-        if not user_result.scalar_one_or_none():
+        user_record = user_result.scalar_one_or_none()
+        if not user_record:
             raise ModelNotFoundError("User", user_id)
 
         # Check if already assigned
@@ -602,7 +623,9 @@ class RoleService:
             await self.db.rollback()
             return  # Already assigned concurrently, idempotent
 
-        # Invalidate user permissions cache
+        # Invalidate user cache and user permissions cache
+        from src.app.modules.users.service import UserService
+        await UserService(self.db)._invalidate_user_cache(user_record)
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
@@ -615,7 +638,8 @@ class RoleService:
 
         user_stmt = select(User).where(and_(User.id == user_id, User.tenant_id == self.tenant_id))
         user_result = await self.db.execute(user_stmt)
-        if not user_result.scalar_one_or_none():
+        user_record = user_result.scalar_one_or_none()
+        if not user_record:
             raise ModelNotFoundError("User", user_id)
 
         stmt = select(UserRole).where(
@@ -640,7 +664,9 @@ class RoleService:
             )
             await self.db.commit()
 
-            # Invalidate user permissions cache
+            # Invalidate user cache and user permissions cache
+            from src.app.modules.users.service import UserService
+            await UserService(self.db)._invalidate_user_cache(user_record)
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:

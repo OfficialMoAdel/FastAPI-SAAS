@@ -71,7 +71,10 @@ def mock_redis_lifespan():
         patch("src.app.core.setup.close_redis_queue_pool", new_callable=AsyncMock),
         patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock),
         patch("src.app.core.utils.cache.client", mock_redis),
-        patch("src.app.core.security.encryption.CredentialEncryption.encrypt_credential", side_effect=lambda x: b"enc_" + x),
+        patch(
+            "src.app.core.security.encryption.CredentialEncryption.encrypt_credential",
+            side_effect=lambda x: b"enc_" + x,
+        ),
         patch(
             "src.app.core.security.encryption.CredentialEncryption.decrypt_credential",
             side_effect=lambda x: x.removeprefix(b"enc_"),
