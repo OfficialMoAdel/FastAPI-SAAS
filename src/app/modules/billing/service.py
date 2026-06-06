@@ -612,7 +612,18 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         ):
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        # T109: Call Stripe API to cancel subscription at period end
+        # T109: Update DB first but do not commit yet
+        await crud_user_subscriptions.update(
+            db=self.db,
+            object={
+                "cancel_at_period_end": True,
+                "canceled_at": datetime.now(UTC),
+                "updated_at": datetime.now(UTC),
+            },
+            id=subscription_id,
+            commit=False,
+        )
+
         stripe_subscription_id = (
             subscription.get("stripe_subscription_id")
             if isinstance(subscription, dict)
@@ -651,20 +662,13 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                     )
                 except stripe.error.StripeError as e:
                     logger.error("Failed to cancel Stripe subscription", error=e)
+                    await self.db.rollback()
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to cancel subscription in Stripe: {str(e)}",
                     )
 
-        await crud_user_subscriptions.update(
-            db=self.db,
-            object={
-                "cancel_at_period_end": True,
-                "canceled_at": datetime.now(UTC),
-                "updated_at": datetime.now(UTC),
-            },
-            id=subscription_id,
-        )
+        await self.db.commit()
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
 

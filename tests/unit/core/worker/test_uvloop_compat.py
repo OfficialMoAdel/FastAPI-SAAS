@@ -100,13 +100,10 @@ class TestWorkerFunctionsImport:
 
         source = inspect.getsource(functions)
 
-        # Verify try/except pattern exists
-        assert "try:" in source
-        assert "import uvloop" in source
-        assert "except ImportError:" in source
-        assert "pass" in source
-
-        logger.info("Worker functions has proper uvloop fallback pattern")
+        # Verify intentional omission of uvloop import
+        assert "uvloop is deliberately not initialized here" in source
+        
+        logger.info("Worker functions intentionally defers uvloop initialization")
 
 
 class TestEventLoopPerformance:

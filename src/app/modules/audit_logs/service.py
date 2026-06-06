@@ -313,38 +313,40 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
         return 0
 
     # Parse and create log entries
-    log_entries = []
+    log_dicts = []
     for raw_data in logs_data:
         try:
             data = orjson.loads(raw_data)
-            log_entry = AuditLog(
-                tenant_id=UUID(data["tenant_id"]),
-                action=data["action"],
-                entity_type=data.get("entity_type"),
-                entity_id=data.get("entity_id"),
-                user_id=int(data["user_id"]) if data.get("user_id") else None,
-                details=data.get("details", {}),
-                ip_address=data.get("ip_address"),
-                user_agent=data.get("user_agent"),
-            )
+            log_dict = {
+                "tenant_id": UUID(data["tenant_id"]),
+                "action": data["action"],
+                "entity_type": data.get("entity_type"),
+                "entity_id": data.get("entity_id"),
+                "user_id": int(data["user_id"]) if data.get("user_id") else None,
+                "details": data.get("details", {}),
+                "ip_address": data.get("ip_address"),
+                "user_agent": data.get("user_agent"),
+            }
             if data.get("created_at"):
-                object.__setattr__(log_entry, "created_at", datetime.fromisoformat(data["created_at"]))
-            log_entries.append(log_entry)
+                log_dict["created_at"] = datetime.fromisoformat(data["created_at"])
+            log_dicts.append(log_dict)
         except Exception as e:
             logger.error("audit_log_parse_failed", error=str(e), raw_data=raw_data[:100])
 
-    if not log_entries:
+    if not log_dicts:
         return 0
 
     # Helper to perform bulk insert
     async def _perform_bulk_insert(session: AsyncSession) -> bool:
         try:
-            session.add_all(log_entries)
+            from sqlalchemy import insert
+
+            await session.execute(insert(AuditLog).values(log_dicts))
             await session.commit()
-            logger.info("audit_logs_flushed", count=len(log_entries))
+            logger.info("audit_logs_flushed", count=len(log_dicts))
             return True
         except Exception as e:
-            logger.error("audit_log_flush_failed", error=str(e), count=len(log_entries))
+            logger.error("audit_log_flush_failed", error=str(e), count=len(log_dicts))
             await session.rollback()
             return False
 
@@ -381,16 +383,16 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     # log_entries.len can never exceed flush_limit = min(BATCH_SIZE, max_flush_per_run))
     # BUG FIX: Previously compared against max_flush_per_run, so the warning would never
     # fire when AUDIT_LOG_BATCH_SIZE < max_flush_per_run.
-    if len(log_entries) >= flush_limit:
+    if len(log_dicts) >= flush_limit:
         remaining: int = await redis_cache.client.llen(AUDIT_LOG_BUFFER_KEY)  # type: ignore[misc]
         logger.warning(
             "audit_log_flush_limit_reached",
-            flushed=len(log_entries),
+            flushed=len(log_dicts),
             limit=max_flush_per_run,
             remaining=remaining,
         )
 
-    return len(log_entries)
+    return len(log_dicts)
 
 
 # Event handler for audit logs

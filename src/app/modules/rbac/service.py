@@ -164,8 +164,7 @@ class RoleService:
         await self.db.execute(delete(UserRole).where(UserRole.role_id == role_id))
 
         await self.db.delete(role)
-        await self.db.commit()
-
+        # T110: Defer commit until after token_version increment to maintain atomicity
         # Invalidate cache for the deleted role
         await self._invalidate_role_cache(role_id)
 
@@ -180,7 +179,9 @@ class RoleService:
                 .where(User.id.in_(affected_user_ids))
                 .values(token_version=User.token_version + 1)
             )
-            await self.db.commit()
+
+        # Commit both the role deletion and the token version updates atomically
+        await self.db.commit()
 
         for user_id in affected_user_ids:
             await invalidate_user_permissions_cache(user_id, self.tenant_id)

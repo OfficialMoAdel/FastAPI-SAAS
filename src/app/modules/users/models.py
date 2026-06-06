@@ -35,7 +35,7 @@ if TYPE_CHECKING:
 
 
 class User(Base, kw_only=True):
-    __tablename__ = "user"
+    __tablename__ = "users"
     __table_args__: tuple[Index | UniqueConstraint, ...] = (
         # SECURITY FIX: Use partial unique indexes to allow re-registration of soft-deleted emails/usernames
         # This prevents "unique constraint slots" being occupied by deleted records.
@@ -121,7 +121,7 @@ class User(Base, kw_only=True):
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )
-    tier: Mapped["Tier | None"] = relationship(lazy="joined", init=False)  # OPT-6: Eager load tier
+    tier: Mapped["Tier | None"] = relationship(init=False, lazy="raise")
     audit_logs: Mapped[list["AuditLog"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="raise"
     )

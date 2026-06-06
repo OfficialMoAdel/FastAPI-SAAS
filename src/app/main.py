@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, status
+from fastapi import FastAPI, Request, status
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
@@ -173,7 +173,7 @@ app = create_application(
 
 
 @app.exception_handler(CacheException)
-async def cache_exception_handler(request, exc):
+async def cache_exception_handler(request: Request, exc: CacheException) -> ORJSONResponse:
     """Handle custom cache exceptions."""
     from src.app.core.logger import get_logger
     logger = get_logger(__name__)

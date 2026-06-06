@@ -103,6 +103,50 @@ async def _db_idempotency_check(event_id: str) -> bool:
         raise HTTPException(status_code=503, detail="Service unavailable for idempotency check. Please retry.")
 
 
+async def _release_webhook_event_lock(event_id: str) -> None:
+    """Release Redis and DB locks if event processing fails."""
+    lock_released = False
+
+    # Do NOT mark as processed on failure - allow Stripe to retry
+    # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
+    # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
+    if redis_client:
+        try:
+            await redis_client.delete(f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
+            lock_released = True
+        except Exception as redis_e:
+            logger.error("Failed to release webhook event lock:", redis_e=redis_e)
+
+    # Also remove from DB to allow retries if DB fallback was used
+    from sqlalchemy import delete
+
+    from src.app.core.worker.rls_context import job_bypass_context
+    from src.app.modules.billing.models import WebhookEvent
+
+    try:
+        async with job_bypass_context("Webhook DB unlock on error") as db:
+            await db.execute(delete(WebhookEvent).where(WebhookEvent.event_id == event_id))
+            await db.commit()
+            lock_released = True
+    except Exception as db_err:
+        logger.error("Failed to release DB webhook event lock:", db_err=str(db_err))
+
+    if not lock_released:
+        logger.critical(
+            "Failed to release BOTH Redis and DB locks for failed webhook. "
+            "Stripe retries will be falsely rejected! Manual intervention required.",
+            event_id=event_id,
+        )
+        # Enqueue a fallback cleanup task
+        try:
+            from src.app.core.utils.queue import pool
+            if pool:
+                await pool.enqueue_job("cleanup_leaked_webhook_lock", event_id, _defer_by=300)
+        except Exception as q_err:
+            logger.error("Failed to enqueue fallback cleanup task for webhook lock:", error=str(q_err))
+
+
+
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:
     """
     Verify the Stripe webhook signature and construct the event.
@@ -189,46 +233,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             error=e,
         )
 
-        lock_released = False
-
-        # Do NOT mark as processed on failure - allow Stripe to retry
-        # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
-        # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
-        if redis_client:
-            try:
-                await redis_client.delete(f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
-                lock_released = True
-            except Exception as redis_e:
-                logger.error("Failed to release webhook event lock:", redis_e=redis_e)
-
-        # Also remove from DB to allow retries if DB fallback was used
-        from sqlalchemy import delete
-
-        from src.app.core.worker.rls_context import job_bypass_context
-        from src.app.modules.billing.models import WebhookEvent
-
-        try:
-            async with job_bypass_context("Webhook DB unlock on error") as db:
-                await db.execute(delete(WebhookEvent).where(WebhookEvent.event_id == event_id))
-                await db.commit()
-                lock_released = True
-        except Exception as db_err:
-            logger.error("Failed to release DB webhook event lock:", db_err=str(db_err))
-
-        if not lock_released:
-            logger.critical(
-                "Failed to release BOTH Redis and DB locks for failed webhook. "
-                "Stripe retries will be falsely rejected! Manual intervention required.",
-                event_id=event_id,
-            )
-            # Enqueue a fallback cleanup task
-            try:
-                from src.app.core.utils.queue import pool
-
-                if pool:
-                    await pool.enqueue_job("cleanup_leaked_webhook_lock", event_id, _defer_by=300)
-            except Exception as q_err:
-                logger.error("Failed to enqueue fallback cleanup task for webhook lock:", error=str(q_err))
+        await _release_webhook_event_lock(event_id)
 
         raise
 

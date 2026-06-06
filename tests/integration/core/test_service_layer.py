@@ -22,11 +22,11 @@ class TestFastCRUDProjection:
         from sqlalchemy import text
 
         # Full select (all columns)
-        full_result = await real_postgres.execute(text('SELECT * FROM "user" LIMIT 1'))
+        full_result = await real_postgres.execute(text('SELECT * FROM "users" LIMIT 1'))
         full_row = full_result.fetchone()
 
         # Projected select (fewer columns)
-        projected_result = await real_postgres.execute(text('SELECT id, username, email FROM "user" LIMIT 1'))
+        projected_result = await real_postgres.execute(text('SELECT id, username, email FROM "users" LIMIT 1'))
         projected_row = projected_result.fetchone()
 
         if full_row and projected_row:
@@ -40,7 +40,7 @@ class TestFastCRUDProjection:
         from sqlalchemy import text
 
         # List columns should NOT include hashed_password
-        projected_result = await real_postgres.execute(text('SELECT id, username, email, name FROM "user" LIMIT 1'))
+        projected_result = await real_postgres.execute(text('SELECT id, username, email, name FROM "users" LIMIT 1'))
 
         # Get column names from result
         columns = list(projected_result.keys())
@@ -54,10 +54,10 @@ class TestFastCRUDProjection:
         from sqlalchemy import text
 
         # Same user, different projections
-        full_result = await real_postgres.execute(text('SELECT * FROM "user" WHERE id = 1'))
+        full_result = await real_postgres.execute(text('SELECT * FROM "users" WHERE id = 1'))
         full_row = full_result.fetchone()
 
-        projected_result = await real_postgres.execute(text('SELECT id, username FROM "user" WHERE id = 1'))
+        projected_result = await real_postgres.execute(text('SELECT id, username FROM "users" WHERE id = 1'))
         projected_row = projected_result.fetchone()
 
         if full_row and projected_row:

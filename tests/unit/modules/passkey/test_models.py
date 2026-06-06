@@ -66,7 +66,7 @@ class TestPasskeyCredentialModel:
         assert len(user_id_col.foreign_keys) == 1
 
         fk = list(user_id_col.foreign_keys)[0]
-        assert "user.id" in str(fk.target_fullname)
+        assert "users.id" in str(fk.target_fullname)
         assert fk.ondelete == "CASCADE"
 
     def test_credential_id_is_unique_bytes(self):

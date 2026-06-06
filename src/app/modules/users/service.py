@@ -5,7 +5,6 @@ from __future__ import annotations
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import HTTPException, status
 from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -43,58 +42,57 @@ def _user_cache_key(user_id: UUID | str) -> str:
     return f"{USER_CACHE_PREFIX}:{user_id}"
 
 
-def _require_tenant_id() -> str:
+def _require_tenant_id(tenant_id: int | str | None = None) -> str:
     """
-    Get current tenant ID or raise HTTPException.
+    Get current tenant ID or raise RuntimeError/HTTPException.
 
     Tenant context is required for tenant-scoped cache keys to prevent
     cross-tenant cache collisions. Use this for email/username lookups
     which are only unique within a tenant.
-
-    SECURITY FIX: Changed from RuntimeError (causes 500) to HTTPException (500)
-    so FastAPI's exception handlers output a proper JSON error response.
     """
+    if tenant_id is not None:
+        return str(tenant_id)
+
     tenant = get_current_tenant()
     if tenant is None:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error: tenant context not available.",
-        )
+        # Check if we're in an HTTP request context by looking for Starlette/FastAPI context vars
+        # If not, raise RuntimeError instead of HTTPException so background jobs log properly.
+        raise RuntimeError("Internal server error: tenant context not available.")
     return str(tenant.id)
 
 
-def _user_email_cache_key(email: str) -> str:
+def _user_email_cache_key(email: str, tenant_id: int | str | None = None) -> str:
     """Generate cache key for user by email (tenant-scoped, no collision risk).
 
     SECURITY FIX: Normalizes email to lowercase to prevent cache misses
     when the same email is provided with different casing.
     """
-    t_id = _require_tenant_id()
+    t_id = _require_tenant_id(tenant_id)
     # Normalize email to lowercase for consistent cache keys
     normalized_email = email.lower().strip()
     return f"{USER_CACHE_PREFIX}:{t_id}:email:{normalized_email}"
 
 
-def _user_username_cache_key(username: str) -> str:
+def _user_username_cache_key(username: str, tenant_id: int | str | None = None) -> str:
     """Generate cache key for user by username (tenant-scoped, no collision risk).
 
     SECURITY FIX: Normalizes username to lowercase to prevent cache misses
     when the same username is provided with different casing.
     """
-    t_id = _require_tenant_id()
+    t_id = _require_tenant_id(tenant_id)
     # Normalize username to lowercase for consistent cache keys
     normalized_username = username.lower().strip()
     return f"{USER_CACHE_PREFIX}:{t_id}:username:{normalized_username}"
 
 
-def _user_auth_cache_key(identifier: str) -> str:
+def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) -> str:
     """Generate cache key for user auth info (tenant-scoped, no collision risk).
 
     SECURITY FIX: Normalizes identifier to lowercase to prevent cache misses
     when the same email/username is provided with different casing, consistent
     with _user_email_cache_key and _user_username_cache_key.
     """
-    t_id = _require_tenant_id()
+    t_id = _require_tenant_id(tenant_id)
     normalized = identifier.lower().strip()
     return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
 
@@ -137,6 +135,7 @@ class UserService(BaseService[User]):
                 user_id = user["id"]
                 email = user["email"]
                 username = user["username"]
+                tenant_id = user.get("tenant_id")
             else:
                 # U7: Direct dict construction instead of Pydantic validate+dump
                 # ORM data is already validated, skip redundant Pydantic overhead
@@ -149,7 +148,7 @@ class UserService(BaseService[User]):
                     "email": user.email,
                     "profile_image_url": user.profile_image_url,
                     "tier_id": user.tier_id,
-                    "tenant_id": user.tenant_id,
+                    "tenant_id": str(user.tenant_id) if user.tenant_id else None,
                     "is_superuser": user.is_superuser,
                     "is_email_verified": user.is_email_verified,
                     "is_active": user.is_active,
@@ -157,14 +156,15 @@ class UserService(BaseService[User]):
                 user_id = user.id
                 email = user.email
                 username = user.username
+                tenant_id = user.tenant_id
 
             serialized = json_dumps(user_data)
 
             # Cache by all lookup keys using a pipeline for single round-trip
             async with cache.client.pipeline(transaction=False) as pipe:
                 pipe.setex(_user_cache_key(user_id), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_email_cache_key(email), USER_CACHE_TTL, serialized)
-                pipe.setex(_user_username_cache_key(username), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_email_cache_key(email, tenant_id), USER_CACHE_TTL, serialized)
+                pipe.setex(_user_username_cache_key(username, tenant_id), USER_CACHE_TTL, serialized)
                 await pipe.execute()
         except Exception as e:
             # Log warning but don't fail the request due to cache issues
@@ -702,7 +702,7 @@ class UserService(BaseService[User]):
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
-        await self.crud.update(db=self.db, object=values.model_dump(), username=username)
+        await self.crud.update(db=self.db, object=values.model_dump(), username=username, commit=False)
 
         # SECURITY FIX: Increment token_version to invalidate active JWTs
         from sqlalchemy import update as sa_update

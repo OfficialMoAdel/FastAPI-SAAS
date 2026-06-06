@@ -60,6 +60,8 @@ class TestMFASetupFlow:
             "/api/v1/mfa/setup",
             headers={**headers, **ip_headers()},
         )
+        if setup_response.status_code != 200:
+            print("ERROR RESPONSE:", setup_response.json())
         assert setup_response.status_code == 200
         setup_data = setup_response.json()
 

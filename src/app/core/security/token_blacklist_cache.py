@@ -97,7 +97,7 @@ def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
         TOKEN_CACHE_FAILURE_MODE is 'fail_closed', returns (None, True).
         If Redis is unavailable, returns (None, False) for fail-open behavior.
     """
-    fail_closed = getattr(settings.auth, "TOKEN_CACHE_FAILURE_MODE", "fail_open") == "fail_closed"
+    fail_closed = settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed"
     if not _circuit_breaker.can_attempt():
         return None, fail_closed
     return _get_redis_client(), fail_closed

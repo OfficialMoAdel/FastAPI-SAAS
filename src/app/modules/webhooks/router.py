@@ -119,7 +119,7 @@ async def create_webhook_endpoint(
 )
 async def list_webhook_deliveries_route(
     endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
-    status: str | None = Query(None, description="Filter by status"),
+    status: WebhookDeliveryStatus | None = Query(None, description="Filter by status"),
     event_type: str | None = Query(None, description="Filter by event type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),

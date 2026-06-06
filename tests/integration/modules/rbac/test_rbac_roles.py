@@ -11,6 +11,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from src.app.main import app
+from src.app.modules._base.exceptions import ModelNotFoundError
 
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"
@@ -279,7 +280,7 @@ class TestRBACRolesCRUD:
             patch(
                 "src.app.modules.rbac.service.RoleService.get_role",
                 new_callable=AsyncMock,
-                return_value=None,
+                side_effect=ModelNotFoundError("Role", 999),
             ),
         ):
             async with AsyncClient(
@@ -294,7 +295,7 @@ class TestRBACRolesCRUD:
                         "User-Agent": TEST_USER_AGENT,
                     },
                 )
-                assert response.status_code == 404
+                assert response.status_code == 404, f"Expected 404, got {response.status_code}. Response: {response.text}"
 
     @pytest.mark.asyncio
     async def test_update_role_success(self, mock_superuser, mock_tenant):

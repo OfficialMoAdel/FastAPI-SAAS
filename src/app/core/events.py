@@ -244,7 +244,7 @@ class EventBus:
         """
         with trace_span(
             "event_bus_publish",
-            attributes={"event_name": event_name, "priority": priority, "event_id": event_id or "none"},
+            attributes={"event_name": event_name, "priority": priority.value, "event_id": event_id or "none"},
         ):
             # Check for duplicate event if event_id provided
             if event_id and self._redis_client:

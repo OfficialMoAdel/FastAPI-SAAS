@@ -20,10 +20,11 @@ def sample_tenant_id():
 
 
 @pytest.fixture
-def sample_pricing(db) -> Pricing:
+def sample_pricing(db, sample_tenant_id) -> Pricing:
     """Create a sample pricing tier for testing."""
     pricing = Pricing(
         product_id=1,
+        tenant_id=sample_tenant_id,
         name="Pro Plan",
         amount_cents=999,
         interval="monthly",
@@ -89,6 +90,7 @@ def test_product_to_dict_matches_original(db, sample_product):
     # Create pricing tiers for the product
     pricing1 = Pricing(
         product_id=sample_product.id,
+        tenant_id=sample_product.tenant_id,
         name="Monthly Plan",
         amount_cents=999,
         interval="monthly",
@@ -99,6 +101,7 @@ def test_product_to_dict_matches_original(db, sample_product):
     )
     pricing2 = Pricing(
         product_id=sample_product.id,
+        tenant_id=sample_product.tenant_id,
         name="Yearly Plan",
         amount_cents=9990,
         interval="yearly",
@@ -168,6 +171,7 @@ def test_nested_structures_serialized(db, sample_tenant_id):
     for i in range(3):
         pricing = Pricing(
             product_id=product.id,
+            tenant_id=sample_tenant_id,
             name=f"Plan {i}",
             amount_cents=(i + 1) * 1000,
             interval="monthly" if i % 2 == 0 else "yearly",
@@ -268,6 +272,7 @@ def test_product_fields_complete(db, sample_product):
     """Test that all product fields are included in the dict."""
     pricing = Pricing(
         product_id=sample_product.id,
+        tenant_id=sample_product.tenant_id,
         name="Test Plan",
         amount_cents=100,
         interval="monthly",

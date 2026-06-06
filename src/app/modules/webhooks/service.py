@@ -360,7 +360,7 @@ class WebhookService:
             "X-Webhook-Signature": delivery.signature,
             "X-Webhook-Event": delivery.event_type,
             "X-Webhook-ID": str(delivery.id),
-            "X-Webhook-Timestamp": str(int(delivery.created_at.timestamp())),
+            "X-Webhook-Timestamp": str(int(delivery.created_at.replace(tzinfo=UTC).timestamp())),
         }
 
         # Validate URL for SSRF protection before making request

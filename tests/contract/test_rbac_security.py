@@ -216,37 +216,45 @@ class TestRBACSecurityContract:
     @pytest.mark.asyncio
     async def test_superuser_bypasses_permission_check(self, client: AsyncClient) -> None:
         """Superuser can access any endpoint regardless of permissions."""
+        from src.app.core.db.database import async_get_db
         mock_user = {"id": 1, "is_superuser": True, "tenant_id": MOCK_TENANT_ID}
         mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 
         async def mock_get_tenant(*args, **kwargs):
             return mock_tenant
 
-        with (
-            patch(
-                "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
-                new=mock_get_tenant,
-            ),
-            patch(
-                "src.app.core.rbac.dependencies._get_current_user_from_token",
-                return_value=mock_user,
-            ),
-            patch(
-                "src.app.core.rbac.dependencies.has_permission_cached",
-                new=AsyncMock(return_value=True),
-            ),
-            patch(
-                "src.app.modules.rbac.service.RoleService.get_roles",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
-            response = await client.get(
-                "/api/v1/roles",
-                headers={"Authorization": "Bearer test", "X-Tenant-ID": "test-tenant"},
-            )
+        mock_db = MagicMock()
+        mock_db.scalar = AsyncMock(return_value=True)
+        app.dependency_overrides[async_get_db] = lambda: mock_db
 
-        # Superuser should get 200, not 403
-        assert response.status_code == 200
+        try:
+            with (
+                patch(
+                    "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
+                    new=mock_get_tenant,
+                ),
+                patch(
+                    "src.app.core.rbac.dependencies._get_current_user_from_token",
+                    return_value=mock_user,
+                ),
+                patch(
+                    "src.app.core.rbac.dependencies.has_permission_cached",
+                    new=AsyncMock(return_value=True),
+                ),
+                patch(
+                    "src.app.modules.rbac.service.RoleService.get_roles",
+                    new=AsyncMock(return_value=[]),
+                ),
+            ):
+                response = await client.get(
+                    "/api/v1/roles",
+                    headers={"Authorization": "Bearer test", "X-Tenant-ID": "test-tenant"},
+                )
+
+            # Superuser should get 200, not 403
+            assert response.status_code == 200
+        finally:
+            app.dependency_overrides.pop(async_get_db, None)
 
     @pytest.mark.asyncio
     async def test_unauthenticated_request_returns_401(self, client: AsyncClient) -> None:

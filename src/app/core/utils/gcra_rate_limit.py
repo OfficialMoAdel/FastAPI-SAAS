@@ -219,10 +219,15 @@ class GCRARateLimiter:
 
         except Exception as e:
             logger.warning("GCRA rate limit check failed", error=e)
-            # Fail open on error
+
+            # Use configured fail-open behavior
+            from src.app.core.config import settings
+            fail_open = getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
+            is_limited = not fail_open
+
             return GCRARateLimitResult(
-                is_limited=False,
-                remaining=limit,
+                is_limited=is_limited,
+                remaining=limit if fail_open else 0,
                 retry_after=0.0,
                 reset_at=0.0,
             )

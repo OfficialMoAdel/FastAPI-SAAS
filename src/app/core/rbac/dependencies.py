@@ -11,7 +11,7 @@ Bitmask Strategy:
 - Multiple role masks combined with OR
 """
 
-from collections.abc import AsyncGenerator, Callable
+from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
@@ -230,9 +230,11 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
+    from src.app.core.db.database import async_get_db
+
     async def _check_permission(
         token: str = Depends(_oauth2_scheme),
-        db: AsyncSession = Depends(_get_db),
+        db: AsyncSession = Depends(async_get_db),
     ) -> None:
         # 1. Get current user FIRST to check for superuser bypass
         current_user = await _get_current_user_from_token(token, db)
@@ -316,12 +318,7 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
 # Private helpers
 
 
-async def _get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Get async database session."""
-    from src.app.core.db.database import get_db_context
 
-    async with get_db_context() as db:
-        yield db
 
 
 async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str, Any]:

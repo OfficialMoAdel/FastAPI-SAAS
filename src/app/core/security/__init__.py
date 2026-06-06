@@ -41,6 +41,8 @@ _bcrypt_executor = ThreadPoolExecutor(max_workers=settings.BCRYPT_THREAD_POOL_SI
 # Ensure thread pool is properly shutdown on exit
 atexit.register(_bcrypt_executor.shutdown, wait=True)
 
+from src.app.core.security.jwt_utils import _get_verification_key
+
 
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
@@ -50,12 +52,7 @@ def _get_signing_key() -> str:
     return str(settings.SECRET_KEY.get_secret_value())
 
 
-@lru_cache(maxsize=1)
-def _get_verification_key() -> str:
-    """Get the key for verifying tokens (public key for RS256, secret for HS256)."""
-    if settings.ALGORITHM == "RS256" and settings.JWT_PUBLIC_KEY:
-        return str(settings.JWT_PUBLIC_KEY)
-    return str(settings.SECRET_KEY.get_secret_value())
+
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
@@ -300,6 +297,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
 
     # Extract absolute expiration for session lifetime enforcement
     absolute_exp: float | None = payload.get("absolute_exp")
+    if absolute_exp is not None and absolute_exp < datetime.now(UTC).timestamp():
+        _jwt_logger.info("Token absolute expiration reached")
+        return None
 
     return TokenData(
         username_or_email=username_or_email,
@@ -351,11 +351,21 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
                         if tenant:
                             tenant_id = tenant.id
                         else:
-                            # Fallback for system tokens or tokens without tenant_id
-                            # This should be rare if all tokens are correctly issued
-                            import uuid
+                            from sqlalchemy import select
 
-                            tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
+                            from src.app.modules.users.models import User
+
+                            sub = payload.get("sub")
+                            if sub:
+                                stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
+                                result = await db.execute(stmt)
+                                tenant_id = result.scalar()
+
+                            if not tenant_id:
+                                _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                                # If we truly cannot find it, we can't satisfy the FK constraint.
+                                # But this should never happen for valid tokens.
+                                continue
 
                     # Store full token in DB for backward compatibility
                     await crud_token_blacklist.create(

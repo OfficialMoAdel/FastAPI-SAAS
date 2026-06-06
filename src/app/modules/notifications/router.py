@@ -1,6 +1,7 @@
 """Notifications API Router."""
 
 from datetime import datetime
+from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -38,7 +39,7 @@ async def send_notification(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: TenantContext = Depends(get_current_tenant),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> NotificationResponse:
+) -> Any:
     """
     Send an email notification.
 
@@ -61,9 +62,10 @@ async def send_notification(
     )
 
     if notification is None:
-        raise HTTPException(
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
-            detail="Notification skipped by user preferences.",
+            content={"message": "Notification skipped by user preferences.", "skipped": True}
         )
 
     return NotificationResponse.model_validate(notification)

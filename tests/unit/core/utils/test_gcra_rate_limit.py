@@ -68,8 +68,8 @@ class TestGCRARateLimiter:
 
         result = await limiter.check_rate_limit("user:123", limit=10, period=60)
 
-        assert result.is_limited is False  # Fail open
-        assert result.remaining == 10
+        assert result.is_limited is True  # Fail closed by default
+        assert result.remaining == 0
 
     @pytest.mark.asyncio
     async def test_reset_key(self, gcra_limiter, mock_redis):

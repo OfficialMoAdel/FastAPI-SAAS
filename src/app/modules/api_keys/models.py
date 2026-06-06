@@ -36,7 +36,7 @@ class APIKey(Base):
     hashed_key: Mapped[str] = mapped_column(String(255), unique=True)
 
     # Ownership
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"))
 
     # Status and metadata

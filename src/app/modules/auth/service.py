@@ -28,6 +28,7 @@ from src.app.core.security import (
     verify_password,
     verify_token,
 )
+from src.app.core.security.tokens import hash_token
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules.auth.models import (
     EmailVerificationToken,
@@ -149,7 +150,7 @@ return new_attempts
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
                 from fastapi import HTTPException
 
-                raise HTTPException(status_code=503, detail="Service temporarily unavailable")
+                raise HTTPException(status_code=503, detail="Service temporarily unavailable") from e
 
     async def login(
         self,
@@ -786,10 +787,8 @@ return new_attempts
 
         # Always return success to prevent email enumeration
         if user:
-            import hashlib
-
             raw_token = generate_reset_token()
-            hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
+            hashed_token = hash_token(raw_token)
             # Create password reset token (expires in 1 hour)
             reset_token = PasswordResetToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
             db.add(reset_token)
@@ -863,9 +862,7 @@ return new_attempts
         # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
         # Without this lock, two concurrent requests with the same token could both
         # pass the is_valid check before either marks the token as used.
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode()).hexdigest()
+        hashed_token = hash_token(token)
         stmt = select(PasswordResetToken).where(PasswordResetToken.token == hashed_token).with_for_update()
         result = await db.execute(stmt)
         reset_token = result.scalar_one_or_none()
@@ -956,10 +953,8 @@ return new_attempts
             else getattr(user, "is_email_verified", False)
         )
         if user and not is_email_verified:
-            import hashlib
-
             raw_token = generate_verification_token()
-            hashed_token = hashlib.sha256(raw_token.encode()).hexdigest()
+            hashed_token = hash_token(raw_token)
             # Create verification token
             token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
             db.add(token_model)
@@ -1016,9 +1011,7 @@ return new_attempts
         UnauthorizedException
             If token is invalid or expired
         """
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode()).hexdigest()
+        hashed_token = hash_token(token)
         # Find token in database
         stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == hashed_token).with_for_update()
         result = await db.execute(stmt)

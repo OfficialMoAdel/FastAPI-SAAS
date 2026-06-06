@@ -116,10 +116,10 @@ async def test_tenant_sharded_invalidation_logic():
         mock_client.smembers.assert_called_with("tenant_index:1:user")
 
         # Should remove from global index too
-        mock_pipeline.srem.assert_called_with("tenant_index:1", b"tenant:1:user:profile")
+        mock_pipeline.srem.assert_called_with("tenant_index:1", "tenant:1:user:profile")
 
         # Should delete the keys
-        mock_pipeline.delete.assert_any_call(b"tenant:1:user:profile")
+        mock_pipeline.delete.assert_any_call("tenant:1:user:profile")
 
     # 3. Test invalidate_tenant_cache FULL (no prefix)
     mock_pipeline.reset_mock()
@@ -141,7 +141,7 @@ async def test_tenant_sharded_invalidation_logic():
         keys_deleted = False
         for call in delete_calls:
             args = call[0]
-            if b"tenant:1:user:profile" in args and b"tenant:1:settings:main" in args:
+            if "tenant:1:user:profile" in args and "tenant:1:settings:main" in args:
                 keys_deleted = True
                 break
 

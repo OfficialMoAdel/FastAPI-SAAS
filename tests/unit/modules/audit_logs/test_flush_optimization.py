@@ -99,7 +99,7 @@ class TestFlushAuditLogBuffer:
                 result = await audit_service.flush_audit_log_buffer()
 
         assert result == 2
-        assert mock_db.add_all.call_count == 1
+        assert mock_db.execute.call_count == 1
 
     @pytest.mark.asyncio
     async def test_flush_handles_db_error(self):

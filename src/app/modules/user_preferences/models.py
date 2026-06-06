@@ -51,7 +51,7 @@ class UserPreferences(Base):
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         unique=True,
         index=True,

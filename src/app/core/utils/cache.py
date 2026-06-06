@@ -1,3 +1,4 @@
+import asyncio
 import functools
 import random
 import re
@@ -7,6 +8,9 @@ from typing import Any
 
 from fastapi import Request, Response
 from redis.asyncio import ConnectionPool, Redis
+
+# Global set to hold strong references to background tasks (prevents GC of running tasks)
+_background_tasks: set[asyncio.Task] = set()
 
 from src.app.core.config import settings
 from src.app.core.exceptions.cache_exceptions import (
@@ -112,8 +116,9 @@ async def invalidate_tenant_cache(tenant_id: int | str, prefix: str | None = Non
         index_key = _tenant_index_key(tenant_id)
         global_index_key = None
 
-    # Get keys from the appropriate index
-    keys: set[str] = await client.smembers(index_key)  # type: ignore[misc, assignment]
+    # smembers returns bytes when decode_responses=False
+    raw_keys = await client.smembers(index_key)  # type: ignore[misc]
+    keys: set[str] = {k.decode("utf-8") if isinstance(k, bytes) else k for k in raw_keys}
 
     if not keys:
         return 0
@@ -556,7 +561,10 @@ async def get_with_stampede_protection(
                     )
                     # Refresh in background, return stale data
                     # Pass lock_key to cleanup after refresh
-                    asyncio.create_task(_refresh_cache_with_lock(key, fetch_func, ttl, lock_key))
+                    # Track task to prevent GC while running
+                    task = asyncio.create_task(_refresh_cache_with_lock(key, fetch_func, ttl, lock_key))
+                    _background_tasks.add(task)
+                    task.add_done_callback(_background_tasks.discard)
                 else:
                     stampede_logger.debug(
                         "Cache early refresh skipped - already in progress",

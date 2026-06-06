@@ -803,8 +803,12 @@ class Settings(BaseSettings):
                     computed = getattr(type(component), "__pydantic_computed_fields__", {})
                     for key in computed:
                         dmap[key] = field_name
-                except Exception:
+                except AttributeError:
+                    # Not a Pydantic model, skip
                     pass
+                except Exception as e:
+                    import logging
+                    logging.getLogger(__name__).warning("Failed to map config delegation for %s: %s", field_name, e)
             self.__dict__["_delegation_map"] = dmap
 
         result: dict[str, str] = self.__dict__["_delegation_map"]

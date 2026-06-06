@@ -85,12 +85,12 @@ class TenantAwareCRUD(
                 if isinstance(tenant_id, str):
                     try:
                         tenant_id = uuid.UUID(tenant_id)
-                    except (ValueError, TypeError):
-                        # ISSUE 11 FIX: Log invalid UUID instead of silent failure
+                    except (ValueError, TypeError) as e:
+                        # ISSUE 11 FIX: Log invalid UUID and fail fast
                         from src.app.core.logger import get_logger
 
-                        get_logger(__name__).warning("invalid_tenant_uuid_in_context", tenant_id=tenant_id)
-                        # Keep as string - downstream DB driver might handle it or fail explicitly
+                        get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
+                        raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
                 return {"tenant_id": tenant_id, **kwargs}
             else:
                 # Fail-closed: raise an error if context is missing for a tenant-aware operation
@@ -166,6 +166,16 @@ class TenantAwareCRUD(
         """
         kwargs = self._inject_tenant_filter(kwargs)
         return cast(dict[Any, Any], await super().get_multi(db, **kwargs))
+
+    async def get_joined(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
+        """Get a single record with joins, filtered by tenant context."""
+        kwargs = self._inject_tenant_filter(kwargs)
+        return cast(dict[Any, Any] | None, await super().get_joined(db, **kwargs))
+
+    async def get_multi_joined(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
+        """Get multiple records with joins, filtered by tenant context."""
+        kwargs = self._inject_tenant_filter(kwargs)
+        return cast(dict[Any, Any], await super().get_multi_joined(db, **kwargs))
 
     async def exists(self, db: AsyncSession, **kwargs: Any) -> bool:
         """Check if a record exists, filtered by tenant context.

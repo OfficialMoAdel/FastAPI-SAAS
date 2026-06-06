@@ -504,11 +504,8 @@ class PasskeyService:
         }
 
     def _get_origin(self) -> str:
-        """Get expected origin based on environment."""
-        if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
-            return "http://localhost:3000"  # Default frontend port
-        # In production, use configured frontend URL
-        return str(settings.FRONTEND_URL)
+        """Get expected origin based on configured frontend URL."""
+        return str(settings.FRONTEND_URL).rstrip("/")
 
     async def _count_user_passkeys(self, db: AsyncSession, user_id: int) -> int:
         """Count user passkeys."""

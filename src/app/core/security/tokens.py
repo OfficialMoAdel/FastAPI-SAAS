@@ -29,6 +29,7 @@ Usage:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import secrets
 from typing import Any, cast
@@ -49,6 +50,11 @@ _GETDEL_LUA = """
     end
     return value
 """
+
+def hash_token(token: str) -> str:
+    """Hash a token for secure storage."""
+    return hashlib.sha256(token.encode("utf-8")).hexdigest()
+
 
 class TokenGenerator:
     """Static utilities for secure token generation.
@@ -268,9 +274,7 @@ class MagicLinkManager:
             token_data["extra_data"] = extra_data
 
         # Hash token before storing in Redis to prevent plaintext exposure
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        hashed_token = hash_token(token)
 
         # Store in Redis with expiration
         key = f"magic_link:{hashed_token}"
@@ -300,9 +304,7 @@ class MagicLinkManager:
         Returns:
             Token metadata dict if valid, None if expired/used/invalid.
         """
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        hashed_token = hash_token(token)
         key = f"magic_link:{hashed_token}"
 
         data = await self._redis.get(key)
@@ -324,9 +326,7 @@ class MagicLinkManager:
         Returns:
             True if the token was successfully consumed, False if it was already gone.
         """
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        hashed_token = hash_token(token)
         key = f"magic_link:{hashed_token}"
 
         # delete returns the number of keys removed (1 if it existed, 0 otherwise)
@@ -342,9 +342,7 @@ class MagicLinkManager:
         Returns:
             Token metadata dict if valid, None if expired/used/invalid.
         """
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        hashed_token = hash_token(token)
         key = f"magic_link:{hashed_token}"
 
         # Get and delete token data atomically to prevent race conditions

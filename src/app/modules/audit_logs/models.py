@@ -59,7 +59,7 @@ class AuditLog(Base):
     )
     user_id: Mapped[int | None] = mapped_column(
         Integer,
-        ForeignKey("user.id", ondelete="SET NULL"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

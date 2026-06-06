@@ -46,6 +46,10 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         if tenant is not None:
             # SECURITY FIX: Ensure exact tenant mapping even through joins/eager loading.
             stmt = stmt.where(User.tenant_id == tenant.id)
+        else:
+            # SECURITY FIX: Do not allow global lookup without a tenant context
+            # since usernames/emails are only unique per-tenant.
+            raise RuntimeError("Tenant context is required for user lookup to prevent cross-tenant data exposure")
 
         result = await db.execute(stmt)
         user = result.unique().scalar_one_or_none()

@@ -144,9 +144,8 @@ class TestApplicationStartupShutdown:
 
         source = inspect.getsource(functions)
 
-        # Verify uvloop fallback pattern
-        assert "import uvloop" in source
-        assert "except ImportError:" in source
+        # Verify intentional omission of uvloop import
+        assert "uvloop is deliberately not initialized here" in source
 
         logger.info("E2E: uvloop fallback pattern verified (platform: %s)", sys.platform)
 

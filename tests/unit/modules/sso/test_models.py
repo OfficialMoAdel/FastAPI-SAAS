@@ -76,7 +76,7 @@ class TestUserSSOConnectionModel:
 
         fks = list(user_id_col.foreign_keys)
         assert len(fks) == 1
-        assert "user.id" in str(fks[0].target_fullname)
+        assert "users.id" in str(fks[0].target_fullname)
 
     def test_user_sso_connection_user_provider_unique_constraint(self):
         """Verify unique constraint on (user_id, provider) pair."""

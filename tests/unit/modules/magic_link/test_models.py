@@ -75,7 +75,7 @@ class TestMagicLinkModel:
         # Check foreign key
         fks = list(user_id_col.foreign_keys)
         assert len(fks) == 1
-        assert "user.id" in str(fks[0].target_fullname)
+        assert "users.id" in str(fks[0].target_fullname)
 
     def test_magic_link_expires_at_required(self):
         """Verify expires_at is required (non-nullable)."""

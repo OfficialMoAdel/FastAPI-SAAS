@@ -4,19 +4,13 @@ from uuid import UUID
 from arq.worker import Worker
 from sqlalchemy import text
 
+# uvloop is deliberately not initialized here at import time to prevent globally
+# overriding the web server's event loop policy silently.
+# Centralized logging configured via src/app/core/logger.py (structlog)
+from src.app.core.logger import get_logger
 from src.app.core.utils.job_wrapper import monitor_job
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.webhooks.service import WebhookService
-
-try:
-    import uvloop
-
-    asyncio.set_event_loop_policy(uvloop.EventLoopPolicy())
-except ImportError:
-    pass
-
-# Centralized logging configured via src/app/core/logger.py (structlog)
-from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 

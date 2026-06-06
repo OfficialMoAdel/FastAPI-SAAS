@@ -63,7 +63,7 @@ class PasswordResetToken(Base):
 
     user_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("user.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )
@@ -153,7 +153,7 @@ class EmailVerificationToken(Base):
 
     user_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("user.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         nullable=False,
         index=True,
     )

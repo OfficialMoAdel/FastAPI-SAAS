@@ -28,7 +28,7 @@ class AIChatSession(Base):
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
 
     title: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
@@ -52,6 +52,7 @@ class AIChatSession(Base):
         init=False,
         cascade="all, delete-orphan",
         order_by="AIChatMessage.created_at",
+        lazy="raise",
     )
 
 
@@ -101,7 +102,7 @@ class AISettings(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
     user_id: Mapped[int] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"), index=True, unique=True, nullable=False
+        ForeignKey("users.id", ondelete="CASCADE"), index=True, unique=True, nullable=False
     )
 
     model: Mapped[str] = mapped_column(String(50), nullable=False, default="gemma3")
@@ -139,7 +140,7 @@ class AITokenUsage(Base):
         nullable=True,
     )
     user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user.id", ondelete="CASCADE"),
+        ForeignKey("users.id", ondelete="CASCADE"),
         index=True,
         nullable=True,
     )

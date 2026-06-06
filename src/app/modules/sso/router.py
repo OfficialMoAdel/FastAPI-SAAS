@@ -124,7 +124,6 @@ async def handle_callback(
             request=request,
             db=db,
         )
-        response.delete_cookie("sso_state")
         return tokens
     except HTTPException as e:
         e.headers = e.headers or {}
@@ -144,6 +143,8 @@ async def handle_callback(
             detail=f"Provider error: {e.response.status_code}",
             headers=headers,
         )
+    finally:
+        response.delete_cookie("sso_state")
 
 
 @router.post("/{provider}/callback")

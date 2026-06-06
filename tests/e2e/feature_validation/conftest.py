@@ -71,10 +71,17 @@ async def ensure_real_postgres_schema():
     Uses checkfirst semantics via SQLAlchemy metadata create_all to avoid
     failures when tests run against stale DB schemas after migrations.
     """
+    import sqlalchemy.exc
+
     test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
     engine = create_async_engine(test_db_url, poolclass=NullPool)
+    from sqlalchemy import text
     try:
         async with engine.begin() as conn:
+            # Fully reset schema to avoid index collisions from stray tables
+            await conn.execute(text("DROP SCHEMA public CASCADE"))
+            await conn.execute(text("CREATE SCHEMA public"))
+            await conn.execute(text("GRANT ALL ON SCHEMA public TO public"))
             await conn.run_sync(Base.metadata.create_all)
         yield
     finally:
@@ -302,7 +309,7 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
 
         # Clean up existing user if any
         await session.execute(
-            text('DELETE FROM "user" WHERE email = :email OR username = :username'),
+            text("DELETE FROM users WHERE email = :email OR username = :username"),
             {"email": user_data["email"], "username": user_data["username"]},
         )
         await session.commit()
@@ -316,7 +323,7 @@ async def authenticated_user(client: AsyncClient, ensure_test_tenant) -> dict[st
 
         insert_result = await session.execute(
             text("""
-                INSERT INTO "user" (
+                INSERT INTO users (
                     name, email, username, hashed_password, tenant_id, tier_id,
                     profile_image_url, uuid, is_active, is_deleted, is_superuser,
                     is_email_verified, token_version, created_at, updated_at
@@ -419,7 +426,7 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
 
         # Clean up existing user if any
         await session.execute(
-            text('DELETE FROM "user" WHERE email = :email OR username = :username'),
+            text("DELETE FROM users WHERE email = :email OR username = :username"),
             {"email": user_data["email"], "username": user_data["username"]},
         )
         await session.commit()
@@ -433,7 +440,7 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
 
         insert_result = await session.execute(
             text("""
-                INSERT INTO "user" (
+                INSERT INTO users (
                     name, email, username, hashed_password, tenant_id, tier_id,
                     profile_image_url, uuid, is_active, is_deleted, is_superuser,
                     is_email_verified, token_version, created_at, updated_at

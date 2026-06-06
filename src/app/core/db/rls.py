@@ -291,7 +291,7 @@ async def bypass_rls(
                     VALUES (:user_id, :reason, NOW(), :ip_address)
                 """),
                 {
-                    "user_id": user_id or "system",
+                    "user_id": user_id or None,
                     "reason": reason,
                     "ip_address": None,  # Will be populated by trigger if available
                 },
@@ -321,7 +321,7 @@ async def bypass_rls(
             session.sync_session.info.pop("rls_user_id", None)
 
         try:
-            await connection.execute(text(f"RESET {RLS_BYPASS_VAR}"))
+            await connection.execute(text(f"SELECT set_config('{RLS_BYPASS_VAR}', '', true)"))
             logger.debug("RLS bypass cleared")
         except Exception as e:
             logger.warning("Failed to clear RLS bypass", error=str(e))

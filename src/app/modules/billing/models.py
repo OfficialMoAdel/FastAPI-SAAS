@@ -88,7 +88,7 @@ class SubscriptionPlan(Base, kw_only=True):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False)
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="subscription_plan", init=False, lazy="selectin"
+        back_populates="subscription_plan", init=False, lazy="raise"
     )
 
 
@@ -129,6 +129,9 @@ class Pricing(Base, kw_only=True):
     __tablename__ = "pricing"
 
     id: Mapped[int] = mapped_column(autoincrement=True, primary_key=True, init=False)
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
+    )
     product_id: Mapped[int] = mapped_column(ForeignKey("products.id", ondelete="CASCADE"), index=True, nullable=False)
 
     # Required fields (no defaults) must come first
@@ -152,6 +155,7 @@ class Pricing(Base, kw_only=True):
     )
 
     # Relationships
+    tenant: Mapped["Tenant"] = relationship(init=False)
     product: Mapped["Product"] = relationship(back_populates="pricing_tiers", init=False)
 
 
@@ -173,7 +177,7 @@ class UserSubscription(Base, kw_only=True):
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
     subscription_plan_id: Mapped[int] = mapped_column(ForeignKey("subscription_plans.id"), index=True, nullable=False)
 
     # Required fields (no defaults) must come first
@@ -216,7 +220,7 @@ class BillingRecord(Base, kw_only=True):
     tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id"), index=True, nullable=False
     )
-    user_id: Mapped[int] = mapped_column(ForeignKey("user.id", ondelete="CASCADE"), index=True, nullable=False)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False)
 
     # Required fields (no defaults) must come first
     amount_cents: Mapped[int] = mapped_column(Integer, nullable=False)

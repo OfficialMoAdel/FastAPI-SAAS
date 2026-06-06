@@ -233,11 +233,11 @@ class TestQueryFlowIsomorphism:
         from sqlalchemy import text
 
         # Full select
-        full_result = await real_postgres.execute(text('SELECT id, username, email, name FROM "user" WHERE id = 1'))
+        full_result = await real_postgres.execute(text('SELECT id, username, email, name FROM "users" WHERE id = 1'))
         full_row = full_result.fetchone()
 
         # Projected select (fewer columns)
-        projected_result = await real_postgres.execute(text('SELECT id, username FROM "user" WHERE id = 1'))
+        projected_result = await real_postgres.execute(text('SELECT id, username FROM "users" WHERE id = 1'))
         projected_row = projected_result.fetchone()
 
         if full_row and projected_row:

@@ -28,7 +28,7 @@ class AuthenticatedUser(BaseModel):
     with dict-based access via __getitem__.
     """
 
-    model_config = ConfigDict(extra="allow", arbitrary_types_allowed=True)
+    model_config = ConfigDict(extra="ignore", arbitrary_types_allowed=True)
 
     id: int
     uuid: UUID | str | None = None
@@ -49,6 +49,22 @@ class AuthenticatedUser(BaseModel):
         return getattr(self, item, default)
 
 
+async def _is_token_blacklisted_with_fallback(token: str, jti: str | None, db: AsyncSession) -> bool:
+    """Check if token is blacklisted, falling back to DB if Redis fails."""
+    from src.app.core.db.crud_token_blacklist import crud_token_blacklist
+    from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+
+    cache_result = await is_token_blacklisted(token)
+    if cache_result is True:
+        return True
+    if cache_result is None:
+        if jti and await crud_token_blacklist.exists(db, token=f"jti:{jti}"):
+            return True
+        if await crud_token_blacklist.exists(db, token=token):
+            return True
+    return False
+
+
 async def get_current_user(
     request: Request,
     token: Annotated[str, Depends(oauth2_scheme)],
@@ -67,25 +83,9 @@ async def get_current_user(
 
     if cached_payload:
         # Reuse cached payload - still need to verify token isn't blacklisted
-        from src.app.core.db.crud_token_blacklist import crud_token_blacklist
-        from src.app.core.security.token_blacklist_cache import is_token_blacklisted
-
-        # Check Redis cache first (O(1) lookup)
-        # SECURITY FIX: is_token_blacklisted extracts JTI internally if available.
-        # This unified extraction prevents mismatches between JTI-based and token-based lookup.
-        cache_result = await is_token_blacklisted(token)
-        if cache_result is True:
+        jti = cached_payload.get("jti")
+        if await _is_token_blacklisted_with_fallback(token, jti, db):
             raise UnauthorizedException("Token has been revoked.")
-        elif cache_result is None:
-            # Redis unavailable, fall back to DB check
-            jti_in_payload = cached_payload.get("jti")
-            is_blacklisted = False
-            if jti_in_payload:
-                is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti_in_payload}")
-            if not is_blacklisted:
-                is_blacklisted = await crud_token_blacklist.exists(db, token=token)
-            if is_blacklisted:
-                raise UnauthorizedException("Token has been revoked.")
 
         # Validate token type
         token_type = cached_payload.get("token_type")
@@ -234,24 +234,9 @@ async def get_optional_user(
 
         if cached_payload:
             # SECURITY FIX: Need to check blacklist even if cached
-            from src.app.core.db.crud_token_blacklist import crud_token_blacklist
-            from src.app.core.security.token_blacklist_cache import is_token_blacklisted
-
-            # Check Redis cache first (O(1) lookup)
-            # is_token_blacklisted extracts JTI internally if available
-            cache_result = await is_token_blacklisted(token_value)
-            if cache_result is True:
+            jti = cached_payload.get("jti")
+            if await _is_token_blacklisted_with_fallback(token_value, jti, db):
                 return None
-            elif cache_result is None:
-                # Redis unavailable, fall back to DB check
-                jti_in_payload = cached_payload.get("jti")
-                is_blacklisted = False
-                if jti_in_payload:
-                    is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti_in_payload}")
-                if not is_blacklisted:
-                    is_blacklisted = await crud_token_blacklist.exists(db, token=token_value)
-                if is_blacklisted:
-                    return None
 
             username_or_email = cached_payload.get("sub")
             # BUG FIX: Use .get() with explicit default 0 — matches the non-cached path below.

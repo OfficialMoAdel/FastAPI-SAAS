@@ -78,16 +78,16 @@ class TestAuditLogBatching:
         assert "lrange" in source
         assert "ltrim" in source
 
-    def test_batch_insert_uses_add_all(self) -> None:
-        """Verify batch insert uses add_all for efficiency."""
+    def test_batch_insert_uses_bulk_insert(self) -> None:
+        """Verify batch insert uses execute(insert().values()) for efficiency."""
         import inspect
 
         from src.app.modules.audit_logs import service
 
         source = inspect.getsource(service)
 
-        # Verify add_all is used for batch insert
-        assert "add_all" in source
+        # Verify bulk insert is used instead of add_all
+        assert "session.execute(insert(" in source or "await session.execute(insert(" in source
 
     def test_buffer_key_constant_exists(self) -> None:
         """Verify buffer key constant is defined."""

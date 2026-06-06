@@ -41,7 +41,7 @@ class TestUserPreferencesModel:
         user_id_col = UserPreferences.__table__.c.user_id
         assert len(user_id_col.foreign_keys) > 0
         fk = list(user_id_col.foreign_keys)[0]
-        assert "user.id" in str(fk.target_fullname)
+        assert "users.id" in str(fk.target_fullname)
 
     def test_default_preferences_has_all_keys(self):
         """Test that DEFAULT_PREFERENCES contains all expected keys."""

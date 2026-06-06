@@ -311,7 +311,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                     match_start = match.start()
                     line_start = content.rfind(b"\n", 0, match_start) + 1
                     line = content[line_start : match.end()]
-                    if line.startswith(b"--") and len(line.strip()) > 4:
+                    if line.startswith(b"--") and b" " not in line.strip() and len(line.strip()) > 10:
                         continue
 
                 attacks.append(

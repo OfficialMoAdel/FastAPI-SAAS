@@ -130,7 +130,7 @@ class SSOService:
         code: str,
         state: str,
         user_data: dict[str, Any] | None = None,
-    ) -> AuthTokenResponse | dict[str, str]:
+    ) -> AuthTokenResponse | dict[str, Any]:
         """Handle OAuth2 callback, verify state, and authenticate user.
 
         Args:
@@ -351,9 +351,9 @@ class SSOService:
                     ip_address=get_client_ip(request),
                 )
                 return {
-                    "mfa_required": "true",
+                    "mfa_required": True,
                     "mfa_token": mfa_token,
-                    "expires_in": str(settings.MFA_PENDING_EXPIRY_SECONDS),
+                    "expires_in": settings.MFA_PENDING_EXPIRY_SECONDS,
                     "message": "MFA verification required",
                 }
 
@@ -522,27 +522,10 @@ class SSOService:
         for provider in supported_providers:
             is_enabled = False
             try:
-                # We use get_settings_by_provider which is public/safe
-                # Using crud directly might be faster/safer to avoid circular dep issues if service logic is complex
-                # But service is better for encapsulation.
-                # However, sso_settings_service.get_settings_by_provider raises NotFoundException if not found.
                 sso_settings = await sso_settings_service.get_settings_by_provider(db, provider.value)
                 is_enabled = sso_settings.is_enabled
             except NotFoundException:
-                # Provider not configured -> disabled
                 pass
-
-            # If the endpoint is strictly for "enabled" providers as buttons, we might filter here.
-            # But the schema has an 'enabled' field, implying we might return all.
-            # Let's filter for now to match method name 'get_enabled_providers',
-            # OR we change it to return all?
-            # The test expected a specific structure. If I change to return all, it's safer for UI to filter.
-            # Let's return all so UI knows what's available vs enabled.
-            # Wait, if method is 'get_enabled_providers', it should return enabled ones.
-            # But the schema 'SSOProviderRead' has 'enabled: bool'.
-            # Logically, if I only return enabled ones, 'enabled' is always true.
-            # The error 'Field required' for 'enabled' suggests we are sending wrong data structure.
-            # Let's assume we return ALL supported providers with their status.
 
             providers_list.append(
                 {

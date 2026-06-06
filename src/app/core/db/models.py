@@ -2,7 +2,7 @@ import uuid as uuid_pkg
 from datetime import UTC, datetime
 from enum import Enum
 
-from sqlalchemy import Boolean, DateTime, String, Text, text
+from sqlalchemy import Boolean, DateTime, Integer, String, Text, text
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, MappedAsDataclass, mapped_column
 from uuid6 import uuid7
@@ -44,13 +44,13 @@ class UUIDMixin(MappedAsDataclass):
 
 class TimestampMixin(MappedAsDataclass):
     created_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         insert_default=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
         init=False,
     )
     updated_at: Mapped[datetime | None] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         nullable=True,
         onupdate=lambda: datetime.now(UTC),
         server_default=text("current_timestamp(0)"),
@@ -75,7 +75,7 @@ class RLSAuditLog(Base):
         insert_default=uuid7,
         init=False,
     )
-    user_id: Mapped[str | None] = mapped_column(String(100), nullable=True, init=False)
+    user_id: Mapped[int | None] = mapped_column(Integer, nullable=True, init=False)
     reason: Mapped[str] = mapped_column(Text, nullable=False, init=False)
     timestamp: Mapped[datetime] = mapped_column(
         DateTime, server_default=text("now()"), insert_default=lambda: datetime.now(UTC), init=False

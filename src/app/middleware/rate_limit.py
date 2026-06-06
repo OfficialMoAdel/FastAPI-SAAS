@@ -185,13 +185,19 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                     # Return 403 Forbidden instead of 429 to indicate ban
                     headers["X-Banned"] = "true"
                     headers["X-Ban-Reason"] = f"Auto-ban after {violation_count} violations"
-                    return Response(
-                        content=f"Forbidden: IP banned after {violation_count} rate limit violations",
+                    from fastapi.responses import JSONResponse
+
+                    return JSONResponse(
+                        content={"detail": f"Forbidden: IP banned after {violation_count} rate limit violations"},
                         status_code=status.HTTP_403_FORBIDDEN,
                         headers=headers,
                     )
 
-            return Response("Too Many Requests", status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers=headers)
+            from fastapi.responses import JSONResponse
+
+            return JSONResponse(
+                {"detail": "Rate limit exceeded"}, status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers=headers
+            )
 
         response: Response = await call_next(request)
 

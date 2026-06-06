@@ -65,7 +65,7 @@ class File(Base):
 
     # User relationship (SET NULL on delete - per clarification Q2)
     user_id: Mapped[int | None] = mapped_column(
-        ForeignKey("user.id", ondelete="SET NULL"),
+        ForeignKey("users.id", ondelete="SET NULL"),
         nullable=True,
         index=True,
     )

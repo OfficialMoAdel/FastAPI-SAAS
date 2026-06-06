@@ -81,7 +81,7 @@ def test_rate_limit_headers_exceeded(mock_limiter, client):
     response = client.get("/")
 
     assert response.status_code == 429
-    assert response.text == "Too Many Requests"
+    assert response.json() == {"detail": "Rate limit exceeded"}
     assert response.headers["X-RateLimit-Limit"] == str(limit)
     assert response.headers["X-RateLimit-Remaining"] == "0"
 

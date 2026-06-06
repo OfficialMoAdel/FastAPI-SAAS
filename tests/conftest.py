@@ -176,6 +176,7 @@ from src.app.modules.user_preferences.models import UserPreferences  # noqa: F40
 
 # 2. Models that depend on above
 from src.app.modules.users.models import User
+from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage  # noqa: F401
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
 
 # Debug: Print registered tables to verify imports
@@ -1267,10 +1268,10 @@ class FakeRedis:
         # --- GCRA Rate Limit Script ---
         # Called with 1 key and 4 ARGV: now_ms, emission_interval_ms, limit, period_ms
         if primary_key.startswith("gcra:") and len(keys_and_args) >= 5:
-            now_ms = int(keys_and_args[1])
-            int(keys_and_args[2])
-            limit = int(keys_and_args[3])
-            period_ms = int(keys_and_args[4])
+            now_ms = int(float(keys_and_args[1]))
+            int(float(keys_and_args[2]))
+            limit = int(float(keys_and_args[3]))
+            period_ms = int(float(keys_and_args[4]))
 
             current = self.store.get(primary_key, 0)
             if isinstance(current, str):

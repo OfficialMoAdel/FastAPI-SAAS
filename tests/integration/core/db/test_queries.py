@@ -51,7 +51,7 @@ class TestCompositeIndexes:
         result = await real_postgres.execute(
             text("""
                 EXPLAIN (FORMAT JSON)
-                SELECT * FROM "user"
+                SELECT * FROM "users"
                 WHERE tenant_id = '00000000-0000-0000-0000-000000000001' AND email = 'test@example.com'
             """)
         )
@@ -66,8 +66,8 @@ class TestCompositeIndexes:
         """Verify indexed query returns same results as non-indexed."""
         # Both queries should return same results
         # Index only affects performance, not correctness
-        query1 = text("SELECT id FROM \"user\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
-        query2 = text("SELECT id FROM \"user\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
+        query1 = text("SELECT id FROM \"users\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
+        query2 = text("SELECT id FROM \"users\" WHERE tenant_id = '00000000-0000-0000-0000-000000000001' ORDER BY id")
 
         result1 = await real_postgres.execute(query1)
         result2 = await real_postgres.execute(query2)
@@ -94,7 +94,7 @@ class TestN1Elimination:
         await real_postgres.execute(
             text("""
                 SELECT u.*, t.*, rl.*
-                FROM "user" u
+                FROM "users" u
                 LEFT JOIN tier t ON u.tier_id = t.id
                 LEFT JOIN rate_limit rl ON rl.tier_id = t.id
                 WHERE u.id = 1
@@ -111,7 +111,7 @@ class TestN1Elimination:
         await real_postgres.execute(
             text("""
                 SELECT u.id, t.name as tier_name
-                FROM "user" u
+                FROM "users" u
                 LEFT JOIN tier t ON u.tier_id = t.id
                 WHERE u.id = 1
             """)
