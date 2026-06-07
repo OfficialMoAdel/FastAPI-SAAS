@@ -147,6 +147,25 @@ def clear_jwt_key_cache() -> None:
     _get_parsed_verification_key.cache_clear()
 
 
+def extract_jti_unverified(token: str) -> str | None:
+    """Fast base64 payload extraction for JTI without signature verification."""
+    try:
+        import base64
+
+        from src.app.core.json_utils import json_loads
+
+        parts = token.split(".")
+        if len(parts) == 3:
+            payload_b64 = parts[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload = json_loads(base64.urlsafe_b64decode(payload_b64))
+            jti = payload.get("jti")
+            return str(jti) if jti else None
+    except Exception:
+        pass
+    return None
+
+
 def extract_token_from_header(authorization: str | None) -> str | None:
     """Extract Bearer token from Authorization header.
 

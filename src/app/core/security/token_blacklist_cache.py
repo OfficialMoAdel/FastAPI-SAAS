@@ -252,19 +252,19 @@ def _extract_blacklist_member(token: str) -> str:
     and storage always use an identical key.
     """
     try:
-        import jwt as _jwt
+        import base64
 
-        from src.app.core.security.jwt_utils import _get_algorithm, _get_parsed_verification_key, validate_jwt_length
+        from src.app.core.json_utils import json_loads
 
-        if not validate_jwt_length(token):
-            return token
-
-        alg = _get_algorithm()
-        key = _get_parsed_verification_key()
-        payload = _jwt.decode(token, key, algorithms=[alg], options={"verify_exp": False, "verify_aud": False})
-        jti = payload.get("jti")
-        if jti:
-            return f"jti:{jti}"
+        parts = token.split(".")
+        if len(parts) == 3:
+            payload_b64 = parts[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload_bytes = base64.urlsafe_b64decode(payload_b64)
+            payload = json_loads(payload_bytes)
+            jti = payload.get("jti")
+            if jti:
+                return f"jti:{jti}"
     except Exception:
         pass  # Malformed token – fall back to raw token
     return token

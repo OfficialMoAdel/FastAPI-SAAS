@@ -434,8 +434,8 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         except BodyScanError as e:
             logger.error("Body scan failed: %s", str(e))
             return Response(
-                content='{"detail":"Internal Server Error - Request body processing failed"}',
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                content='{"detail":"Payload Too Large - Request body exceeded maximum scan size"}',
+                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                 media_type="application/json",
             )
 

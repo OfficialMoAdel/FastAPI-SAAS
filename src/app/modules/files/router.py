@@ -86,7 +86,11 @@ async def upload_file(
             user_id=_user["id"],
             file=file.file,
             filename=file.filename or "unnamed",
-            mime_type=file.content_type or "application/octet-stream",
+            mime_type=(
+                __import__("mimetypes").guess_type(file.filename)[0]
+                or file.content_type
+                or "application/octet-stream"
+            ),
             size_bytes=size_bytes,
         )
 

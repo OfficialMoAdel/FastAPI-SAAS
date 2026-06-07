@@ -472,17 +472,9 @@ return new_attempts
         try:
             import json
 
-            import jwt
-
-            from src.app.core.security.jwt_utils import validate_jwt_length
+            from src.app.core.security.jwt_utils import extract_jti_unverified
             from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            if not validate_jwt_length(new_access_token):
-                decoded_token = {}
-            else:
-                decoded_token = jwt.decode(new_access_token, options={"verify_signature": False})
-
-            session_id = decoded_token.get("jti", new_access_token[:32])
+            session_id = extract_jti_unverified(new_access_token) or new_access_token[:32]
 
             client_ip = request.client.host if request and request.client else "Unknown"
 
@@ -559,18 +551,10 @@ return new_attempts
                         db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
                     if db_user:
-                        import jwt
 
-                        from src.app.core.security.jwt_utils import validate_jwt_length
+                        from src.app.core.security.jwt_utils import extract_jti_unverified
                         from src.app.core.security.session_manager import session_manager as global_session_manager
-
-                        # SECURITY: Validate token length before unverified decoding
-                        if not validate_jwt_length(access_token):
-                            logger.warning("Unverified JWT decode blocked during logout: token too long")
-                            decoded_token = {}
-                        else:
-                            decoded_token = jwt.decode(access_token, options={"verify_signature": False})
-                        session_id = decoded_token.get("jti", access_token[:32])
+                        session_id = extract_jti_unverified(access_token) or access_token[:32]
                         await global_session_manager.invalidate_session(db_user["id"], session_id)
                 except Exception as e:
                     logger.warning("failed_to_invalidate_session_on_logout", error=str(e))

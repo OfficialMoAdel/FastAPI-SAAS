@@ -376,8 +376,8 @@ class StorageSettingsService:
             return S3Storage(
                 bucket=credentials.get("bucket_name", credentials.get("bucket", "default-bucket")),
                 region=credentials.get("region", "us-east-1"),
-                aws_access_key_id=credentials.get("aws_access_key_id"),
-                aws_secret_access_key=credentials.get("aws_secret_access_key"),
+                aws_access_key_id=credentials.get("access_key_id"),
+                aws_secret_access_key=credentials.get("secret_access_key"),
             )
 
         if provider == StorageProviderType.AZURE:

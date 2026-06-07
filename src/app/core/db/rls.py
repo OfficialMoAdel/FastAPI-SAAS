@@ -271,7 +271,7 @@ async def bypass_rls(
 
         # Set bypass flag
         await connection.execute(
-            text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)"),
+            text(f"SELECT set_config('{RLS_BYPASS_VAR}', 'true', true)")
         )
 
         # Log bypass event (CRITICAL for security audit)
@@ -321,7 +321,9 @@ async def bypass_rls(
             session.sync_session.info.pop("rls_user_id", None)
 
         try:
-            await connection.execute(text(f"SELECT set_config('{RLS_BYPASS_VAR}', '', true)"))
+            await connection.execute(
+                text(f"SELECT set_config('{RLS_BYPASS_VAR}', '', true)")
+            )
             logger.debug("RLS bypass cleared")
         except Exception as e:
             logger.warning("Failed to clear RLS bypass", error=str(e))
@@ -379,7 +381,10 @@ async def get_current_tenant_id(connection: AsyncConnection) -> str | None:
     if _is_sqlite(connection):
         return None
     try:
-        result = await connection.execute(text(f"SELECT current_setting('{RLS_TENANT_VAR}', true)"))
+        result = await connection.execute(
+            text("SELECT current_setting(:t_var, true)"),
+            {"t_var": RLS_TENANT_VAR}
+        )
         tenant_id = result.scalar()
         return tenant_id if tenant_id else None
     except Exception as e:

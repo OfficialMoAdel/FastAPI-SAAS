@@ -30,7 +30,6 @@ Usage:
 from __future__ import annotations
 
 import hashlib
-import json
 import secrets
 from typing import Any, cast
 
@@ -219,7 +218,7 @@ class SSOStateManager:
                 },
             )
             return state_data
-        except json.JSONDecodeError:
+        except ValueError:
             logger.warning(
                 "SSO state validation failed: invalid JSON",
                 extra={"operation": "validate_sso_state"},
@@ -315,7 +314,7 @@ class MagicLinkManager:
 
         try:
             return cast(dict[str, Any], json_loads(data))
-        except json.JSONDecodeError:
+        except ValueError:
             return None
 
     async def consume_token(self, token: str) -> bool:
@@ -366,7 +365,7 @@ class MagicLinkManager:
                 },
             )
             return token_data
-        except json.JSONDecodeError:
+        except ValueError:
             logger.warning(
                 "Magic link validation failed: invalid JSON",
                 extra={"operation": "validate_magic_link"},
