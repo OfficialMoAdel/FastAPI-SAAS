@@ -12,6 +12,7 @@ router.include_router(monitoring_router, tags=["monitoring"])
 
 _cached_router = None
 
+
 def get_router() -> APIRouter:
     """Get the main API router with v1 routes included.
 
@@ -22,6 +23,7 @@ def get_router() -> APIRouter:
         return _cached_router
 
     from src.app.api.v1 import router as v1_router
+
     main_router = APIRouter(prefix="/api")
     main_router.include_router(monitoring_router, tags=["monitoring"])
     main_router.include_router(v1_router)

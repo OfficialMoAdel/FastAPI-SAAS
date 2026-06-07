@@ -97,9 +97,7 @@ async def test_disconnect_provider_success(mock_get_service, mock_crud_sso, serv
     tenant_id = uuid4()
     await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=tenant_id)
 
-    mock_crud_sso.delete_by_criteria.assert_awaited_once_with(
-        db=mock_db, id=mock_connection.id, tenant_id=tenant_id
-    )
+    mock_crud_sso.delete_by_criteria.assert_awaited_once_with(db=mock_db, id=mock_connection.id, tenant_id=tenant_id)
 
 
 @pytest.mark.asyncio

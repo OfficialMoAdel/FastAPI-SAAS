@@ -124,6 +124,7 @@ class BaseService(Generic[T]):
             sort_orders = kwargs.pop("sort_orders", None)
 
             from src.app.core.db.tenant_crud import TenantAwareCRUD
+
             if isinstance(self.crud, TenantAwareCRUD):
                 kwargs = self.crud._inject_tenant_filter(kwargs)
             elif hasattr(self.crud, "_inject_tenant_filter"):

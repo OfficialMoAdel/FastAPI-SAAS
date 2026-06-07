@@ -255,6 +255,7 @@ class MFAService:
         if cache.client is None:
             # SECURITY FIX: Fail closed during infrastructure disruptions
             from src.app.core.config import settings
+
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
                 logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
                 raise UnauthorizedException("Authentication temporarily unavailable. Please try again later.")
@@ -274,6 +275,7 @@ class MFAService:
             result = int(raw_result) if raw_result is not None else 0
         except (TypeError, ValueError, Exception) as e:
             from src.app.core.config import settings
+
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
                 logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
                 raise UnauthorizedException("Authentication temporarily unavailable.")

@@ -65,6 +65,7 @@ class EmailTemplatesService:
 
             try:
                 from jinja2.sandbox import SandboxedEnvironment
+
                 env = SandboxedEnvironment()
                 subject_template = env.from_string(subject)
                 html_template = env.from_string(html_content)

@@ -71,11 +71,11 @@ async def ensure_real_postgres_schema():
     Uses checkfirst semantics via SQLAlchemy metadata create_all to avoid
     failures when tests run against stale DB schemas after migrations.
     """
-    import sqlalchemy.exc
 
     test_db_url = f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
     engine = create_async_engine(test_db_url, poolclass=NullPool)
     from sqlalchemy import text
+
     try:
         async with engine.begin() as conn:
             # Fully reset schema to avoid index collisions from stray tables

@@ -20,8 +20,10 @@ def mock_redis():
     mock_pipe.__aenter__.return_value = mock_pipe
     mock.pipeline = MagicMock(return_value=mock_pipe)
     with patch("src.app.modules.security.service.cache.async_get_redis") as mock_get:
+
         async def mock_gen():
             yield mock
+
         mock_get.return_value = mock_gen()
         yield mock
 

@@ -176,6 +176,7 @@ app = create_application(
 async def cache_exception_handler(request: Request, exc: CacheException) -> ORJSONResponse:
     """Handle custom cache exceptions."""
     from src.app.core.logger import get_logger
+
     logger = get_logger(__name__)
     logger.error("Cache error", error=str(exc), exc_info=True)
     return ORJSONResponse(
@@ -257,6 +258,7 @@ def custom_openapi():
     # Identify paths that explicitly depend on authentication
     protected_paths = set()
     from fastapi.params import Security
+
     for route in app.routes:
         if not hasattr(route, "dependencies"):
             continue

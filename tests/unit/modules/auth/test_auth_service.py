@@ -708,6 +708,7 @@ class TestA2CachedAuthInfoFields:
 
         # Call the method that should include A2 fields
         from unittest.mock import patch
+
         with patch("src.app.modules.users.crud.get_tenant_context", return_value=MagicMock(id=1)):
             result = await crud.get_user_with_tier_eager(db=mock_db, username="testuser")
 
@@ -753,6 +754,7 @@ class TestA2CachedAuthInfoFields:
         mock_db.execute = AsyncMock(return_value=mock_result)
 
         from unittest.mock import patch
+
         with patch("src.app.modules.users.crud.get_tenant_context", return_value=MagicMock(id=1)):
             result = await crud.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
 

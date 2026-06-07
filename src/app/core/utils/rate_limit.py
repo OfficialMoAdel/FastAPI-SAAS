@@ -97,6 +97,7 @@ class RateLimiter:
 
         # P2-7: Incorporate tenant isolation in rate limit key
         from src.app.core.tenancy.context import get_current_tenant
+
         tenant = get_current_tenant()
         tenant_id = tenant.tenant_id if tenant else None
 

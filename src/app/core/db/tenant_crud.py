@@ -116,13 +116,10 @@ class TenantAwareCRUD(
             tenant_id = tenant.id
             # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
             if isinstance(tenant_id, str):
-
                 try:
                     tenant_id = uuid.UUID(tenant_id)
                 except (ValueError, TypeError) as exc:
-                    raise ValueError(
-                        f"Invalid tenant_id format: {tenant_id!r}. Must be a valid UUID."
-                    ) from exc
+                    raise ValueError(f"Invalid tenant_id format: {tenant_id!r}. Must be a valid UUID.") from exc
 
             # Inject tenant_id if not already present
             if isinstance(object, dict):

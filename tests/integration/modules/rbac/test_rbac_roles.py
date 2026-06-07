@@ -295,7 +295,9 @@ class TestRBACRolesCRUD:
                         "User-Agent": TEST_USER_AGENT,
                     },
                 )
-                assert response.status_code == 404, f"Expected 404, got {response.status_code}. Response: {response.text}"
+                assert response.status_code == 404, (
+                    f"Expected 404, got {response.status_code}. Response: {response.text}"
+                )
 
     @pytest.mark.asyncio
     async def test_update_role_success(self, mock_superuser, mock_tenant):

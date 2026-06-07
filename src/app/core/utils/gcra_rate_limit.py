@@ -222,6 +222,7 @@ class GCRARateLimiter:
 
             # Use configured fail-open behavior
             from src.app.core.config import settings
+
             fail_open = getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
             is_limited = not fail_open
 

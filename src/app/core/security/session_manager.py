@@ -180,7 +180,7 @@ class SessionManager:
                     timestamp,
                     self.SESSION_TTL_SECONDS,
                     settings.SESSION_MAX_EVICTION_BATCH_SIZE,
-                )
+                ),
             )
 
             if result and result[0] in (b"already_exists", "already_exists"):
@@ -193,7 +193,7 @@ class SessionManager:
                     for i in range(2, len(result)):
                         data = result[i]
                         if isinstance(data, bytes):
-                            data = data.decode('utf-8')
+                            data = data.decode("utf-8")
                         invalidated_sessions.append(json_loads(data))
                     record_session_eviction(1)  # 1 Lua roundtrip
             else:
@@ -215,7 +215,6 @@ class SessionManager:
             "active_sessions": final_count,
             "invalidated_sessions": invalidated_sessions,
         }
-
 
     async def is_session_valid(
         self,

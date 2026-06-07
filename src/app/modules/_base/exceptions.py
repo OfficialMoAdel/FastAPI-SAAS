@@ -104,4 +104,18 @@ class ForbiddenError(Exception):
         super().__init__(self.message)
 
 
-__all__ = ["ModelNotFoundError", "ValidationError", "DuplicateError", "ForbiddenError"]
+class RateLimitExceededError(Exception):
+    """Raised when a rate limit is exceeded.
+
+    Attributes:
+        message: Human-readable error message.
+        retry_after: Seconds to wait before retrying.
+    """
+
+    def __init__(self, message: str, retry_after: int = 60):
+        self.message = message
+        self.retry_after = retry_after
+        super().__init__(self.message)
+
+
+__all__ = ["ModelNotFoundError", "ValidationError", "DuplicateError", "ForbiddenError", "RateLimitExceededError"]

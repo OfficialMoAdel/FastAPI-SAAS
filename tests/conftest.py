@@ -152,6 +152,7 @@ def get_testing_session_local():
 
 from src.app.core.db.database import Base
 from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
+from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings, AITokenUsage  # noqa: F401
 from src.app.modules.api_keys.models import APIKey  # noqa: F401
 from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
 from src.app.modules.files.models import File  # noqa: F401
@@ -176,7 +177,6 @@ from src.app.modules.user_preferences.models import UserPreferences  # noqa: F40
 
 # 2. Models that depend on above
 from src.app.modules.users.models import User
-from src.app.modules.ai.models import AIChatSession, AIChatMessage, AISettings, AITokenUsage  # noqa: F401
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookEndpoint  # noqa: F401
 
 # Debug: Print registered tables to verify imports

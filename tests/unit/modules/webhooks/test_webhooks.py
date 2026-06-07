@@ -205,7 +205,7 @@ async def test_trigger_webhooks_enqueues_job(service, mock_db):
     # Mock _enqueue_delivery and decrypt_data to verify it's called
     with (
         patch.object(service, "_enqueue_delivery", new_callable=AsyncMock) as mock_enqueue,
-        patch("src.app.modules.webhooks.service.decrypt_data", return_value="decrypted_secret")
+        patch("src.app.modules.webhooks.service.decrypt_data", return_value="decrypted_secret"),
     ):
         await service.trigger_webhooks(tenant_id, event_type, payload)
 

@@ -20,7 +20,6 @@ class TestMagicLinkSendEndpoint:
         response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={"email": "test@example.com"},
-
         )
         # Should not return 404 or 405
         assert response.status_code not in [404, 405]
@@ -30,7 +29,6 @@ class TestMagicLinkSendEndpoint:
         response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={},
-
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -39,7 +37,6 @@ class TestMagicLinkSendEndpoint:
         response = await async_client.post(
             "/api/v1/auth/magic-link/send",
             json={"email": "not-an-email"},
-
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -57,7 +54,6 @@ class TestMagicLinkSendEndpoint:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/send",
                 json={"email": "user@example.com"},
-
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -76,7 +72,6 @@ class TestMagicLinkSendEndpoint:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/send",
                 json={"email": "user@example.com"},
-
             )
 
         data = response.json()
@@ -99,7 +94,6 @@ class TestMagicLinkVerifyEndpoint:
         response = await async_client.post(
             "/api/v1/auth/magic-link/verify",
             json={"token": "a" * 43},
-
         )
         # Should not return 404 or 405
         assert response.status_code not in [404, 405]
@@ -109,7 +103,6 @@ class TestMagicLinkVerifyEndpoint:
         response = await async_client.post(
             "/api/v1/auth/magic-link/verify",
             json={},
-
         )
         assert response.status_code == status.HTTP_422_UNPROCESSABLE_ENTITY
 
@@ -129,7 +122,6 @@ class TestMagicLinkVerifyEndpoint:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "a" * 43},
-
             )
 
         assert response.status_code == status.HTTP_200_OK
@@ -151,7 +143,6 @@ class TestMagicLinkVerifyEndpoint:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "invalid_token_" + "a" * 30},
-
             )
 
         assert response.status_code == status.HTTP_400_BAD_REQUEST
@@ -168,7 +159,6 @@ class TestMagicLinkVerifyEndpoint:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "used_token_" + "a" * 33},
-
             )
 
         assert response.status_code == status.HTTP_410_GONE
@@ -189,7 +179,6 @@ class TestMagicLinkErrorResponses:
             response = await async_client.post(
                 "/api/v1/auth/magic-link/verify",
                 json={"token": "bad_token_" + "a" * 34},
-
             )
 
         data = response.json()

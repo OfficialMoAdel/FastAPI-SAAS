@@ -249,6 +249,7 @@ class MagicLinkService:
         refresh_token = tokens.pop("refresh_token", None)
         if response and refresh_token:
             from src.app.core.config import EnvironmentOption
+
             max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
             is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
             response.set_cookie(

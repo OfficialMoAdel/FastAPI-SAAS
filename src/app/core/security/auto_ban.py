@@ -339,11 +339,9 @@ async def get_all_banned_ips() -> list[dict]:
                     for ip in ips:
                         ban_key = BAN_KEY_PREFIX.format(ip=ip)
                         ban_count_key = BAN_COUNT_KEY_PREFIX.format(ip=ip)
-                        tasks.extend([
-                            redis_client.get(ban_key),
-                            redis_client.ttl(ban_key),
-                            redis_client.get(ban_count_key)
-                        ])
+                        tasks.extend(
+                            [redis_client.get(ban_key), redis_client.ttl(ban_key), redis_client.get(ban_count_key)]
+                        )
 
                     results = await asyncio.gather(*tasks, return_exceptions=True)
 

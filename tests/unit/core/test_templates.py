@@ -57,9 +57,7 @@ async def test_render_template_with_override(mock_session_maker) -> None:
     mock_result.scalar_one_or_none.return_value = expected_override
     mock_session_maker.execute.return_value = mock_result
 
-    subject, html = await email_templates_service.render_template(
-        "tenant-123", "test_template", {"name": "World"}
-    )
+    subject, html = await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
     assert subject == "Subject: World"
     assert html == "<title>Should be ignored</title><p>Hello World</p>"
@@ -70,7 +68,7 @@ async def test_render_template_override_error_fallback(mock_session_maker, tmp_p
     expected_override = MagicMock()
     expected_override.tenant_id = "tenant-123"
     expected_override.template_name = "test_template"
-    expected_override.subject_override = "Subject: {{ unclosed" # invalid jinja
+    expected_override.subject_override = "Subject: {{ unclosed"  # invalid jinja
     expected_override.content = "<p>Hello</p>"
 
     mock_result = MagicMock()
@@ -88,9 +86,7 @@ async def test_render_template_override_error_fallback(mock_session_maker, tmp_p
 
     monkeypatch.setattr("src.app.templates.settings", MockSettings())
 
-    subject, html = await email_templates_service.render_template(
-        "tenant-123", "test_template", {"name": "World"}
-    )
+    subject, html = await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
     assert subject == "Fallback Subject"
     assert html == "<p>Fallback Content World</p>"
@@ -113,9 +109,7 @@ async def test_render_template_default_success(mock_session_maker, tmp_path, mon
 
     monkeypatch.setattr("src.app.templates.settings", MockSettings())
 
-    subject, html = await email_templates_service.render_template(
-        "tenant-123", "test_template", {"name": "World"}
-    )
+    subject, html = await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
     assert subject == "Default World"
     assert html == "<p>Default Content</p>"
@@ -137,9 +131,7 @@ async def test_render_template_not_found(mock_session_maker, tmp_path, monkeypat
     monkeypatch.setattr("src.app.templates.settings", MockSettings())
 
     with pytest.raises(TemplateNotFound):
-        await email_templates_service.render_template(
-            "tenant-123", "test_template", {"name": "World"}
-        )
+        await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})
 
 
 @pytest.mark.asyncio
@@ -160,7 +152,6 @@ async def test_render_template_default_error(mock_session_maker, tmp_path, monke
     monkeypatch.setattr("src.app.templates.settings", MockSettings())
 
     from jinja2.exceptions import TemplateSyntaxError
+
     with pytest.raises(TemplateSyntaxError):
-        await email_templates_service.render_template(
-            "tenant-123", "test_template", {"name": "World"}
-        )
+        await email_templates_service.render_template("tenant-123", "test_template", {"name": "World"})

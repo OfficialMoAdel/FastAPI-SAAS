@@ -43,7 +43,7 @@ MOCK_SUBSCRIPTION_CANCELED = {**MOCK_SUBSCRIPTION, "status": "canceled"}
 
 from src.app.core.config import settings as app_settings
 
-_frontend = app_settings.FRONTEND_URL.rstrip('/') if app_settings.FRONTEND_URL else "https://example.com"
+_frontend = app_settings.FRONTEND_URL.rstrip("/") if app_settings.FRONTEND_URL else "https://example.com"
 
 VALID_CHECKOUT_PAYLOAD = {
     "plan_id": 1,

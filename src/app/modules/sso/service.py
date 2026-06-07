@@ -337,6 +337,7 @@ class SSOService:
 
             # SECURITY FIX: Check if MFA is enabled before issuing access token
             from src.app.modules.mfa.service import get_mfa_service
+
             mfa_service = get_mfa_service()
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
@@ -344,6 +345,7 @@ class SSOService:
                 from src.app.core.security import MFAPendingTokenManager
                 from src.app.core.utils.cache import client as mfa_redis_client
                 from src.app.core.utils.ip_utils import get_client_ip
+
                 mfa_token_manager = MFAPendingTokenManager(mfa_redis_client)
                 mfa_token = await mfa_token_manager.create_token(
                     user_id=normalized_user["id"],

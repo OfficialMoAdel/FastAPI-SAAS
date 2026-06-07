@@ -140,8 +140,6 @@ async def test_override_crud_operations(service, mock_db):
         service.override_crud = original_crud
 
 
-
-
 @pytest.mark.asyncio
 @patch("src.app.modules.feature_flags.service.redis_client")
 async def test_get_tenant_flags_cache_hit(mock_redis, service, mock_db):

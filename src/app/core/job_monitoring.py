@@ -116,12 +116,9 @@ class JobMonitoringService:
             pipe.hincrby(key, "failed", 1)
 
             # Add to Dead Letter Queue (use JSON to safely handle pipes/newlines in errors)
-            dlq_entry = json.dumps({
-                "job_id": job_id,
-                "function": function_name,
-                "error": error,
-                "timestamp": time.time()
-            })
+            dlq_entry = json.dumps(
+                {"job_id": job_id, "function": function_name, "error": error, "timestamp": time.time()}
+            )
             pipe.lpush(DLQ_KEY, dlq_entry)
             # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
             pipe.ltrim(DLQ_KEY, 0, 999)
@@ -211,13 +208,15 @@ class JobMonitoringService:
                         # Now split the rest from the left
                         first_parts = rest.split("|", 2)
                         if len(first_parts) >= 3:
-                            parsed_items.append({
-                                "job_id": first_parts[0],
-                                "function": first_parts[1],
-                                "error": first_parts[2],
-                                "timestamp": timestamp,
-                                "timestamp_iso": datetime.fromtimestamp(timestamp, tz=UTC).isoformat(),
-                            })
+                            parsed_items.append(
+                                {
+                                    "job_id": first_parts[0],
+                                    "function": first_parts[1],
+                                    "error": first_parts[2],
+                                    "timestamp": timestamp,
+                                    "timestamp_iso": datetime.fromtimestamp(timestamp, tz=UTC).isoformat(),
+                                }
+                            )
                         else:
                             parsed_items.append({"raw": item_str, "error": "parse_error"})
                     else:

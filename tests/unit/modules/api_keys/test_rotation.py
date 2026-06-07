@@ -164,9 +164,11 @@ class TestAPIKeyRotation:
             setattr(mock_key, key, value)
 
         # Mock crud_api_keys.get
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
-             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
-             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock),
+        ):
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -214,9 +216,11 @@ class TestAPIKeyRotation:
 
         before_rotation = datetime.now(UTC)
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
-             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
-             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock),
+        ):
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -269,9 +273,11 @@ class TestAPIKeyRotation:
         mock_key.scopes = scopes
         mock_key.expires_at = None
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
-             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
-             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock),
+        ):
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -310,9 +316,11 @@ class TestAPIKeyRotation:
         mock_key.scopes = None
         mock_key.expires_at = expires
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get, \
-             patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update, \
-             patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock):
+        with (
+            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
+            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch("src.app.modules.api_keys.service.AuditLogService.create_log", new_callable=AsyncMock),
+        ):
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key

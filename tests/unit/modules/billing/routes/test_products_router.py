@@ -72,7 +72,7 @@ def test_list_endpoint_pagination():
                         "description": "Desc 1",
                         "stripe_product_id": "prod_1",
                         "is_active": True,
-                        "created_at": datetime.now().isoformat()
+                        "created_at": datetime.now().isoformat(),
                     },
                     {
                         "id": 2,
@@ -81,7 +81,7 @@ def test_list_endpoint_pagination():
                         "description": "Desc 2",
                         "stripe_product_id": "prod_2",
                         "is_active": True,
-                        "created_at": datetime.now().isoformat()
+                        "created_at": datetime.now().isoformat(),
                     },
                 ],
                 "total_count": 2,

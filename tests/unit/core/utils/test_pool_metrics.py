@@ -44,10 +44,12 @@ def test_setup_pool_metrics_and_events() -> None:
     listeners = {}
 
     with patch("src.app.core.utils.pool_metrics.event.listens_for") as mock_listens_for:
+
         def side_effect(target, identifier):
             def decorator(fn):
                 listeners[identifier] = fn
                 return fn
+
             return decorator
 
         mock_listens_for.side_effect = side_effect

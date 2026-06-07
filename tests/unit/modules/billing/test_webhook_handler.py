@@ -274,6 +274,7 @@ async def test_db_idempotency_check_duplicate():
 async def test_db_idempotency_check_failure_fails_closed():
     """Test DB idempotency check fails closed when DB also fails (lines 92-100)."""
     from fastapi import HTTPException
+
     mock_db = AsyncMock()
     mock_db.commit = AsyncMock(side_effect=Exception("DB connection failed"))
 

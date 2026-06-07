@@ -230,7 +230,6 @@ def get_query_stats() -> dict[str, dict[str, Any]]:
         }
 
 
-
 def is_profiler_enabled(environment: str) -> bool:
     """Check if profiler should be enabled based on environment.
 
@@ -354,4 +353,3 @@ __all__ = [
     "end_request_tracking",
     "get_request_query_stats",
 ]
-

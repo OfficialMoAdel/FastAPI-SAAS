@@ -16,9 +16,7 @@ async def test_create_session_success(db_session, tenant):
         service = CheckoutService(db_session)
 
         # Mock dependencies
-        mock_stripe_session = MagicMock(
-            url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890
-        )
+        mock_stripe_session = MagicMock(url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890)
         with (
             patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(
@@ -105,9 +103,7 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
         service = CheckoutService(db_session)
 
         # Mock dependencies
-        mock_stripe_session = MagicMock(
-            url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890
-        )
+        mock_stripe_session = MagicMock(url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890)
         with (
             patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant),
             patch(

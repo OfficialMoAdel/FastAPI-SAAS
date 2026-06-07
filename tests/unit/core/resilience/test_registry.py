@@ -704,6 +704,7 @@ def test_register_logs_info(registry, mock_circuit_breaker):
         args = " ".join(str(a) for a in mock_info.call_args[0])
         assert "Registered circuit breaker" in args
 
+
 @pytest.mark.asyncio
 async def test_reset_logs_info(registry, mock_circuit_breaker):
     """Reset operation logs info message."""

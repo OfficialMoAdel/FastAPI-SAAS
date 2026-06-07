@@ -4,7 +4,6 @@ Tests follow TDD approach - these tests define the expected behavior
 for the CredentialEncryption class implementation.
 """
 
-
 import pytest
 from cryptography.fernet import Fernet
 
@@ -207,6 +206,7 @@ class TestAuditLogging:
     """Test audit logging for encryption operations."""
 
     from unittest.mock import patch
+
     @patch("src.app.core.security.encryption.logger.debug")
     def test_encryption_logs_audit_event(self, mock_logger):
         """Test that encryption operations are logged."""
@@ -218,6 +218,7 @@ class TestAuditLogging:
         assert mock_logger.called
 
     from unittest.mock import patch
+
     @patch("src.app.core.security.encryption.logger.debug")
     def test_decryption_logs_audit_event(self, mock_logger):
         """Test that decryption operations are logged."""

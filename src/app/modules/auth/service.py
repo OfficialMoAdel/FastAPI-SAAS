@@ -252,6 +252,7 @@ return new_attempts
 
         if mfa_enabled:
             from src.app.core.utils.ip_utils import get_client_ip
+
             client_ip = get_client_ip(request)
 
             # Generate MFA pending token

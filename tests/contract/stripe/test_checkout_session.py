@@ -24,7 +24,7 @@ class TestCheckoutSessionContract:
     @pytest.fixture
     def checkout_create_data(self):
         """Valid checkout creation request."""
-        frontend = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else "https://example.com"
+        frontend = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else "https://example.com"
         return CheckoutCreate(
             plan_id=1,
             billing_interval="monthly",
@@ -308,7 +308,7 @@ class TestCheckoutSessionLive:
                 "stripe_price_id_yearly": test_price_id,
             }
 
-            frontend = settings.FRONTEND_URL.rstrip('/') if settings.FRONTEND_URL else "https://example.com"
+            frontend = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else "https://example.com"
             data = CheckoutCreate(
                 plan_id=1,
                 billing_interval="monthly",

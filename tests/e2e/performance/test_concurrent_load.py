@@ -136,7 +136,6 @@ class TestMiddlewarePerformance:
         perf_metrics: PerformanceMetrics,
         e2e_thresholds: dict,
     ):
-
         """Test middleware adds minimal overhead to requests."""
         # Warmup
         await e2e_client.get("/api/v1/health")
@@ -158,7 +157,6 @@ class TestMiddlewarePerformance:
         perf_metrics: PerformanceMetrics,
         e2e_thresholds: dict,
     ):
-
         """Test rate limiting middleware performance."""
         # Warmup: Initialize middleware stack and internal caches
         await e2e_client.get(

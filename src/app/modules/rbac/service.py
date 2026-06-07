@@ -176,7 +176,7 @@ class RoleService:
 
             await self.db.execute(
                 sa_update(User)
-                .where(User.id.in_(affected_user_ids))
+                .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
                 .values(token_version=User.token_version + 1)
             )
 
@@ -495,18 +495,19 @@ class RoleService:
             from src.app.modules.users.models import User
 
             # Fetch affected users to get email/username for invalidating their cache
-            users_stmt = select(User).where(User.id.in_(affected_user_ids))
+            users_stmt = select(User).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
             users_result = await self.db.execute(users_stmt)
             users_records = users_result.scalars().all()
 
             await self.db.execute(
                 sa_update(User)
-                .where(User.id.in_(affected_user_ids))
+                .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
                 .values(token_version=User.token_version + 1)
             )
             await self.db.commit()
 
             from src.app.modules.users.service import UserService
+
             user_service = UserService(self.db)
             for u in users_records:
                 await user_service._invalidate_user_cache(u)
@@ -557,18 +558,19 @@ class RoleService:
                 from src.app.modules.users.models import User
 
                 # Fetch affected users to get email/username for invalidating their cache
-                users_stmt = select(User).where(User.id.in_(affected_user_ids))
+                users_stmt = select(User).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
                 users_result = await self.db.execute(users_stmt)
                 users_records = users_result.scalars().all()
 
                 await self.db.execute(
                     sa_update(User)
-                    .where(User.id.in_(affected_user_ids))
+                    .where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
                     .values(token_version=User.token_version + 1)
                 )
                 await self.db.commit()
 
                 from src.app.modules.users.service import UserService
+
                 user_service = UserService(self.db)
                 for u in users_records:
                     await user_service._invalidate_user_cache(u)
@@ -626,6 +628,7 @@ class RoleService:
 
         # Invalidate user cache and user permissions cache
         from src.app.modules.users.service import UserService
+
         await UserService(self.db)._invalidate_user_cache(user_record)
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
@@ -667,6 +670,7 @@ class RoleService:
 
             # Invalidate user cache and user permissions cache
             from src.app.modules.users.service import UserService
+
             await UserService(self.db)._invalidate_user_cache(user_record)
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
 

@@ -417,6 +417,7 @@ class UserService(BaseService[User]):
         if cached:
             return cached
         from fastapi.encoders import jsonable_encoder
+
         return cast(dict[str, Any], jsonable_encoder(db_user))
 
     async def get(self, user_id: Any) -> dict[str, Any] | None:  # type: ignore[override]
@@ -445,6 +446,7 @@ class UserService(BaseService[User]):
             if cached:
                 return cached
             from fastapi.encoders import jsonable_encoder
+
             return cast(dict[str, Any], jsonable_encoder(user))
         return None
 
@@ -474,6 +476,7 @@ class UserService(BaseService[User]):
             if cached:
                 return cached
             from fastapi.encoders import jsonable_encoder
+
             return cast(dict[str, Any], jsonable_encoder(user))
         return None
 

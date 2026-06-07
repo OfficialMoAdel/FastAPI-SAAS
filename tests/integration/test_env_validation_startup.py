@@ -28,6 +28,7 @@ class TestEnvValidationStartup:
 
         # Simulate Production Environment
         from src.app.core.config import EnvironmentOption
+
         with patch.object(settings.env, "ENVIRONMENT", EnvironmentOption.PRODUCTION):
             # Mock validation to fail
             with patch.object(EnvironmentValidator, "validate_and_log", return_value=False):
@@ -45,6 +46,7 @@ class TestEnvValidationStartup:
 
         # Simulate Development Environment
         from src.app.core.config import EnvironmentOption
+
         with patch.object(settings.env, "ENVIRONMENT", EnvironmentOption.LOCAL):
             # Mock validation to fail
             with patch.object(EnvironmentValidator, "validate_and_log", return_value=False):

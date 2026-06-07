@@ -448,9 +448,7 @@ class EventBus:
                 # SECURITY FIX: Unified queue naming with _publish_async_batch.
                 # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
                 q_name = (
-                    default_queue_name
-                    if priority == EventPriority.NORMAL
-                    else f"{default_queue_name}_low_priority"
+                    default_queue_name if priority == EventPriority.NORMAL else f"{default_queue_name}_low_priority"
                 )
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",

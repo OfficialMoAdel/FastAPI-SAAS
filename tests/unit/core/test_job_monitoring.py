@@ -279,6 +279,7 @@ async def test_get_job_metrics(service, mock_redis_client):
 @pytest.mark.asyncio
 async def test_get_dead_letter_queue(service, mock_redis_client):
     import json
+
     dlq_key = "arq:dlq"
     # Add items directly
     ts = time.time()

@@ -137,8 +137,7 @@ class CryptSettings(BaseSettings):
             # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated in production/staging
             if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
                 raise ValueError(
-                    "SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set "
-                    "in the production/staging environment."
+                    "SECURITY: ENCRYPTION_KEY and ENCRYPTION_SALT must be set in the production/staging environment."
                 )
 
         return self
@@ -246,6 +245,7 @@ class MySQLSettings(DatabaseConfigMixin, BaseSettings):
         password = self.MYSQL_PASSWORD.get_secret_value() if self.MYSQL_PASSWORD else ""
         if password:
             import urllib.parse
+
             password = urllib.parse.quote_plus(password)
         credentials = f"{self.MYSQL_USER}:{password}"
         location = f"{self.MYSQL_SERVER}:{self.MYSQL_PORT}/{self.MYSQL_DB}"
@@ -268,6 +268,7 @@ class PostgresSettings(DatabaseConfigMixin, BaseSettings):
         password = self.POSTGRES_PASSWORD.get_secret_value() if self.POSTGRES_PASSWORD else ""
         if password:
             import urllib.parse
+
             password = urllib.parse.quote_plus(password)
         credentials = f"{self.POSTGRES_USER}:{password}"
         location = f"{self.POSTGRES_SERVER}:{self.POSTGRES_PORT}/{self.POSTGRES_DB}"
@@ -315,9 +316,7 @@ class AuthSettings(BaseSettings):
     MFA_PENDING_EXPIRY_SECONDS: int = Field(
         default=300, ge=60, le=3600, description="MFA pending token TTL in seconds (default: 5 minutes)"
     )
-    AUTH_MAX_SESSIONS: int = Field(
-        default=5, ge=1, le=50, description="Max concurrent sessions per user"
-    )
+    AUTH_MAX_SESSIONS: int = Field(default=5, ge=1, le=50, description="Max concurrent sessions per user")
     AUTH_SESSION_TTL_SECONDS: int = Field(
         default=86400 * 7, ge=3600, le=86400 * 30, description="Session TTL in seconds"
     )
@@ -808,6 +807,7 @@ class Settings(BaseSettings):
                     pass
                 except Exception as e:
                     import logging
+
                     logging.getLogger(__name__).warning("Failed to map config delegation for %s: %s", field_name, e)
             self.__dict__["_delegation_map"] = dmap
 

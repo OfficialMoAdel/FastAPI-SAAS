@@ -14,6 +14,7 @@ from src.app.modules.webhooks.service import WebhookService
 
 logger = get_logger(__name__)
 
+
 # -------- background tasks --------
 @monitor_job("sample_background_task")
 async def sample_background_task(ctx: Worker, name: str) -> str:

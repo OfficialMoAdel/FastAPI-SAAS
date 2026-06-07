@@ -109,6 +109,7 @@ async def handle_callback(
     """Handle OAuth callback and return authentication tokens."""
     # Login CSRF Protection Constraint
     import hmac
+
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
         raise HTTPException(
@@ -165,6 +166,7 @@ async def handle_post_callback(
     """
     # Login CSRF Protection Constraint
     import hmac
+
     cookie_state = request.cookies.get("sso_state")
     if not cookie_state or not hmac.compare_digest(state or "", cookie_state or ""):
         raise HTTPException(
@@ -198,13 +200,13 @@ async def handle_post_callback(
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Provider timeout: {str(e)}",
-            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
+            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'},
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Provider error: {e.response.status_code}",
-            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
+            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'},
         )
     finally:
         response.delete_cookie("sso_state")

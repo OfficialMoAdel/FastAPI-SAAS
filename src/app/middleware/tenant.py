@@ -16,6 +16,8 @@ Performance Optimization (R2-HYBRID MED-1):
 """
 
 import asyncio
+from collections.abc import AsyncGenerator
+from contextlib import asynccontextmanager
 from typing import cast
 
 from cachetools import TTLCache
@@ -37,14 +39,25 @@ logger = get_logger(__name__)
 # L1 In-Memory Cache for tenant resolution
 _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
 
-# Cache stampede protection - use dict to prevent lock eviction while waiting
-_TENANT_LOCKS: dict[str, asyncio.Lock] = {}
+# Cache stampede protection - track lock waiters to prevent memory leaks
+_TENANT_LOCKS: dict[str, dict] = {}
 
-def _get_tenant_lock(slug: str) -> asyncio.Lock:
-    """Get or create an asyncio.Lock for the given slug."""
-    if slug not in _TENANT_LOCKS:
-        _TENANT_LOCKS[slug] = asyncio.Lock()
-    return _TENANT_LOCKS[slug]
+
+@asynccontextmanager
+async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
+    """Get an asyncio.Lock for the given slug, cleaning up when unused."""
+    lock_info = _TENANT_LOCKS.get(slug)
+    if lock_info is None:
+        lock_info = {"lock": asyncio.Lock(), "waiters": 0}
+        _TENANT_LOCKS[slug] = lock_info
+
+    lock_info["waiters"] += 1
+    try:
+        yield lock_info["lock"]
+    finally:
+        lock_info["waiters"] -= 1
+        if lock_info["waiters"] == 0:
+            _TENANT_LOCKS.pop(slug, None)
 
 
 TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
@@ -146,79 +159,80 @@ class TenantMiddleware(BaseHTTPMiddleware):
             logger.warning("Tenant L1 cache read error: %s", e)
 
         # L2/L3: Lock and lookup
-        async with _get_tenant_lock(slug):
-            # Double-check L1
-            if slug in _L1_TENANT_CACHE:
-                data = _L1_TENANT_CACHE[slug]
-                return await self._get_tenant_from_cache_data(data) if data else None
+        async with _get_tenant_lock(slug) as lock:
+            async with lock:
+                # Double-check L1
+                if slug in _L1_TENANT_CACHE:
+                    data = _L1_TENANT_CACHE[slug]
+                    return await self._get_tenant_from_cache_data(data) if data else None
 
-            cache_key = f"tenant:slug:{slug}"
+                cache_key = f"tenant:slug:{slug}"
 
-            # L2: Redis cache
-            if redis_client:
-                try:
-                    # Check negative cache first (dedicated key avoids sentinel collision)
-                    neg_key = f"tenant:negative:{slug}"
-                    if await redis_client.exists(neg_key):
-                        _L1_TENANT_CACHE[slug] = None
-                        return None
-
-                    cached = await redis_client.get(cache_key)
-                    if cached:
-                        data = json_loads(cached)
-                        _L1_TENANT_CACHE[slug] = data
-                        return await self._get_tenant_from_cache_data(data)
-                except Exception as e:
-                    logger.warning("Tenant L2 cache read error: %s", e)
-
-            # L3: Database
-            async with local_session() as session:
-                from src.app.core.db.rls import bypass_rls, clear_rls_context
-
-                stmt = select(Tenant).where(Tenant.slug == slug)
-                async with bypass_rls(session, reason="Tenant resolution via middleware"):
-                    result = await session.execute(stmt)
-                tenant = result.scalar_one_or_none()
-
-                # SECURITY FIX: Explicitly clear RLS context before returning connection to pool
-                try:
-                    conn = await session.connection()
-                    await clear_rls_context(conn)
-                except Exception as e:
-                    logger.warning("Failed to clear RLS context in tenant middleware: %s", e)
-
-                cache_data: dict | None = None
-                if tenant:
-                    cache_data = {
-                        "id": str(tenant.id),
-                        "slug": tenant.slug,
-                        "name": tenant.name,
-                        "is_active": tenant.is_active,
-                    }
-
-                # Populate caches
-                try:
-                    _L1_TENANT_CACHE[slug] = cache_data
-                except Exception as e:
-                    logger.warning("Tenant L1 cache write error: %s", e)
-
+                # L2: Redis cache
                 if redis_client:
                     try:
-                        if cache_data:
-                            await redis_client.setex(cache_key, 3600, json_dumps(cache_data))
-                            # Clear any stale negative cache for this slug
-                            await redis_client.delete(f"tenant:negative:{slug}")
-                        else:
-                            # Use dedicated negative-cache key instead of sentinel value
-                            await redis_client.setex(
-                                f"tenant:negative:{slug}",
-                                settings.redis_cache.TENANT_NEGATIVE_CACHE_TTL,
-                                "1",
-                            )
-                    except Exception as e:
-                        logger.warning("Tenant L2 cache write error: %s", e)
+                        # Check negative cache first (dedicated key avoids sentinel collision)
+                        neg_key = f"tenant:negative:{slug}"
+                        if await redis_client.exists(neg_key):
+                            _L1_TENANT_CACHE[slug] = None
+                            return None
 
-                return cast(Tenant | None, tenant)
+                        cached = await redis_client.get(cache_key)
+                        if cached:
+                            data = json_loads(cached)
+                            _L1_TENANT_CACHE[slug] = data
+                            return await self._get_tenant_from_cache_data(data)
+                    except Exception as e:
+                        logger.warning("Tenant L2 cache read error: %s", e)
+
+                # L3: Database
+                async with local_session() as session:
+                    from src.app.core.db.rls import bypass_rls, clear_rls_context
+
+                    stmt = select(Tenant).where(Tenant.slug == slug)
+                    async with bypass_rls(session, reason="Tenant resolution via middleware"):
+                        result = await session.execute(stmt)
+                    tenant = result.scalar_one_or_none()
+
+                    # SECURITY FIX: Explicitly clear RLS context before returning connection to pool
+                    try:
+                        conn = await session.connection()
+                        await clear_rls_context(conn)
+                    except Exception as e:
+                        logger.warning("Failed to clear RLS context in tenant middleware: %s", e)
+
+                    cache_data: dict | None = None
+                    if tenant:
+                        cache_data = {
+                            "id": str(tenant.id),
+                            "slug": tenant.slug,
+                            "name": tenant.name,
+                            "is_active": tenant.is_active,
+                        }
+
+                    # Populate caches
+                    try:
+                        _L1_TENANT_CACHE[slug] = cache_data
+                    except Exception as e:
+                        logger.warning("Tenant L1 cache write error: %s", e)
+
+                    if redis_client:
+                        try:
+                            if cache_data:
+                                await redis_client.setex(cache_key, 3600, json_dumps(cache_data))
+                                # Clear any stale negative cache for this slug
+                                await redis_client.delete(f"tenant:negative:{slug}")
+                            else:
+                                # Use dedicated negative-cache key instead of sentinel value
+                                await redis_client.setex(
+                                    f"tenant:negative:{slug}",
+                                    settings.redis_cache.TENANT_NEGATIVE_CACHE_TTL,
+                                    "1",
+                                )
+                        except Exception as e:
+                            logger.warning("Tenant L2 cache write error: %s", e)
+
+                    return cast(Tenant | None, tenant)
 
     async def _get_tenant_from_cache_data(self, data: dict) -> TenantContext:
         """Reconstruct TenantContext from cached dict."""

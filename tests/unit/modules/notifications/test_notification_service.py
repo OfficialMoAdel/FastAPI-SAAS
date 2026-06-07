@@ -156,14 +156,15 @@ async def test_send_email_skipped_by_prefs(service, mock_db):
 @pytest.mark.asyncio
 @patch("src.app.modules.notifications.service.rate_limiter")
 async def test_send_email_rate_limit_exceeded(mock_rate_limiter, service, mock_db):
-    from fastapi import HTTPException
+    from src.app.modules._base.exceptions import RateLimitExceededError
+
     t_id = uuid4()
     mock_rate_limiter.check_rate_limit = AsyncMock(return_value=(True, {}))
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(RateLimitExceededError) as exc_info:
         await service.send_email(t_id, "user@test.com", "welcome", {})
-    
-    assert exc_info.value.status_code == 429
+
+    assert exc_info.value.retry_after == 60
 
 
 @pytest.mark.asyncio

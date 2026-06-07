@@ -138,28 +138,36 @@ class RequestBodyLimitMiddleware:
                 await self._send_413(send)
 
     async def _send_413(self, send: Send) -> None:
-        await send({
-            "type": "http.response.start",
-            "status": 413,
-            "headers": [
-                (b"content-type", b"text/plain"),
-                (b"x-max-body-size", str(self.max_body_size).encode()),
-            ],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": b"Request body too large",
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 413,
+                "headers": [
+                    (b"content-type", b"text/plain"),
+                    (b"x-max-body-size", str(self.max_body_size).encode()),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": b"Request body too large",
+            }
+        )
 
     async def _send_400(self, send: Send, message: bytes) -> None:
-        await send({
-            "type": "http.response.start",
-            "status": 400,
-            "headers": [
-                (b"content-type", b"text/plain"),
-            ],
-        })
-        await send({
-            "type": "http.response.body",
-            "body": message,
-        })
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 400,
+                "headers": [
+                    (b"content-type", b"text/plain"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "http.response.body",
+                "body": message,
+            }
+        )

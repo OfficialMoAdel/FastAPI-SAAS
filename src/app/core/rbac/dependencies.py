@@ -268,7 +268,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
                     "Superuser bypass used",
                     user_id=current_user["id"],
                     tenant_id=str(tenant_id),
-                    permission=permission_slug
+                    permission=permission_slug,
                 )
                 return
 
@@ -316,9 +316,6 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
 
 
 # Private helpers
-
-
-
 
 
 async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str, Any]:

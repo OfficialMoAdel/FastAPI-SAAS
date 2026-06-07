@@ -33,7 +33,7 @@ def test_log_token_usage_method(mock_logger) -> None:
         user_id=1,
         tenant_id=tenant_id,
         session_id=123,
-        metadata={"test": "data"}
+        metadata={"test": "data"},
     )
 
     # Ensure logger was called
@@ -44,7 +44,7 @@ def test_log_token_usage_method(mock_logger) -> None:
     assert extra["provider"] == "anthropic"
     assert extra["model"] == "claude-3-haiku"
     assert extra["total_tokens"] == 3000
-    expected_cost = (1000 / 1_000_000) * 0.25 + (2000 / 1_000_000) * 1.25 # 0.00025 + 0.0025 = 0.00275
+    expected_cost = (1000 / 1_000_000) * 0.25 + (2000 / 1_000_000) * 1.25  # 0.00025 + 0.0025 = 0.00275
     assert abs(extra["cost_usd"] - expected_cost) < 1e-6
 
 
@@ -72,11 +72,7 @@ async def test_save_token_usage_success() -> None:
         MockModel.return_value = mock_instance
 
         await AITokenUsageService.save_token_usage(
-            session=mock_session,
-            provider="openai",
-            model="gpt-4",
-            prompt_tokens=100,
-            completion_tokens=200
+            session=mock_session, provider="openai", model="gpt-4", prompt_tokens=100, completion_tokens=200
         )
 
         assert mock_session.add.called
@@ -97,11 +93,7 @@ async def test_save_token_usage_error() -> None:
 
     with patch("src.app.modules.ai.models.AITokenUsage"):
         await AITokenUsageService.save_token_usage(
-            session=mock_session,
-            provider="openai",
-            model="gpt-4",
-            prompt_tokens=100,
-            completion_tokens=200
+            session=mock_session, provider="openai", model="gpt-4", prompt_tokens=100, completion_tokens=200
         )
 
         assert mock_session.rollback.called

@@ -51,6 +51,7 @@ _GETDEL_LUA = """
     return value
 """
 
+
 def hash_token(token: str) -> str:
     """Hash a token for secure storage."""
     return hashlib.sha256(token.encode("utf-8")).hexdigest()

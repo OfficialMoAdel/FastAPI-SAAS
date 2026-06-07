@@ -300,6 +300,7 @@ def requires_api_key_scope(required_scope: str) -> Any:
     If the user authenticated via Bearer token (not API key), they bypass this check.
     If they authenticated via API key, the key must have the requested scope.
     """
+
     def dependency(current_user: Annotated[AuthenticatedUser, Depends(get_current_user)]) -> AuthenticatedUser:
         key_id = current_user.get("api_key_id")
         scopes = current_user.get("api_key_scopes", [])
@@ -308,6 +309,7 @@ def requires_api_key_scope(required_scope: str) -> Any:
             raise ForbiddenException(f"API key missing required scope: {required_scope}")
 
         return current_user
+
     return dependency
 
 
@@ -326,7 +328,6 @@ from src.app.core.tenancy.context import TenantContext
 
 
 def get_current_tenant() -> TenantContext:
-
     """Get the current tenant from context.
 
     This dependency retrieves the tenant that was set by TenantMiddleware.

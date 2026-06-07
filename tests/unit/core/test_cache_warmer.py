@@ -243,10 +243,7 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any(
-            "[SUCCESS]" in call[0][0] and call[0][2] == 15
-            for call in mock_logger.info.call_args_list
-        )
+        assert any("[SUCCESS]" in call[0][0] and call[0][2] == 15 for call in mock_logger.info.call_args_list)
 
     async def test_warm_all_logs_error_count(self):
         """Test that warm_all logs error count when errors occur."""
@@ -260,10 +257,7 @@ class TestWarmingObservability:
         with patch("src.app.core.cache.warmer.logger") as mock_logger:
             await test_warmer.warm_all(mock_session)
 
-        assert any(
-            "[COMPLETE]" in call[0][0] and call[0][4] == 1
-            for call in mock_logger.info.call_args_list
-        )
+        assert any("[COMPLETE]" in call[0][0] and call[0][4] == 1 for call in mock_logger.info.call_args_list)
 
     async def test_warm_all_logs_start_time(self):
         """Test that warm_all logs start time."""

@@ -23,12 +23,14 @@ async def test_dispatch_success(middleware) -> None:
     mock_request.url.path = "/test/path"
 
     expected_response = JSONResponse({"status": "ok"})
+
     async def mock_call_next(request):
         return expected_response
 
-    with patch("src.app.middleware.query_tracking.start_request_tracking") as mock_start, \
-         patch("src.app.middleware.query_tracking.end_request_tracking") as mock_end:
-
+    with (
+        patch("src.app.middleware.query_tracking.start_request_tracking") as mock_start,
+        patch("src.app.middleware.query_tracking.end_request_tracking") as mock_end,
+    ):
         response = await middleware.dispatch(mock_request, mock_call_next)
 
         assert response == expected_response
@@ -48,9 +50,10 @@ async def test_dispatch_exception_in_call_next(middleware) -> None:
     async def mock_call_next(request):
         raise ValueError("Handler error")
 
-    with patch("src.app.middleware.query_tracking.start_request_tracking") as mock_start, \
-         patch("src.app.middleware.query_tracking.end_request_tracking") as mock_end:
-
+    with (
+        patch("src.app.middleware.query_tracking.start_request_tracking") as mock_start,
+        patch("src.app.middleware.query_tracking.end_request_tracking") as mock_end,
+    ):
         with pytest.raises(ValueError, match="Handler error"):
             await middleware.dispatch(mock_request, mock_call_next)
 
@@ -68,6 +71,7 @@ async def test_dispatch_exception_in_end_tracking(middleware) -> None:
     mock_request.url.path = "/test/path"
 
     expected_response = JSONResponse({"status": "ok"})
+
     async def mock_call_next(request):
         return expected_response
 

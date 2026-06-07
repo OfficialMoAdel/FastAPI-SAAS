@@ -217,6 +217,7 @@ class TestRBACSecurityContract:
     async def test_superuser_bypasses_permission_check(self, client: AsyncClient) -> None:
         """Superuser can access any endpoint regardless of permissions."""
         from src.app.core.db.database import async_get_db
+
         mock_user = {"id": 1, "is_superuser": True, "tenant_id": MOCK_TENANT_ID}
         mock_tenant = MagicMock(id=MOCK_TENANT_ID, slug="test-tenant", is_active=True)
 

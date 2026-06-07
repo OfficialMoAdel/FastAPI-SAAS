@@ -32,14 +32,10 @@ def mock_tenant_context(tenant):
     """Mock tenant context to avoid fail-closed RuntimeErrors in CRUD tests."""
     from src.app.core.tenancy.context import TenantContext
 
-    mock_ctx = TenantContext(
-        tenant_id=tenant.id,
-        tenant_slug=tenant.slug,
-        tenant_name=tenant.name,
-        is_active=True
-    )
+    mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
     with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx):
         yield
+
 
 # ==================== Subscription Plan CRUD ====================
 

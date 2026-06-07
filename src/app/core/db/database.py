@@ -53,6 +53,7 @@ def get_database_url() -> str:
     """Get the database URL dynamically to support test patching."""
     return f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
 
+
 # Internal state for lazy initialization
 _async_engine = None
 _local_session = None
@@ -62,10 +63,7 @@ def _create_engine() -> AsyncEngine:
     """Internal helper to create the SQLAlchemy engine with proper settings."""
     # Use NullPool in test mode to prevent event loop binding issues
     # NullPool creates fresh connections per use, avoiding "Event loop is closed" errors
-    _is_testing = (
-        "PYTEST_CURRENT_TEST" in os.environ
-        or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
-    )
+    _is_testing = "PYTEST_CURRENT_TEST" in os.environ or os.environ.get("TESTING", "").lower() in ("1", "true", "yes")
 
     if _is_testing:
         engine = create_async_engine(
@@ -108,7 +106,7 @@ def _create_engine() -> AsyncEngine:
     except Exception as e:
         logger.critical(
             "CRITICAL: Failed to register RLS event listener. Application cannot start without tenant isolation.",
-            error=e
+            error=e,
         )
         raise RuntimeError("RLS event listener registration failed") from e
 
@@ -122,6 +120,7 @@ def get_async_engine() -> AsyncEngine:
         _async_engine = _create_engine()
     return _async_engine
 
+
 def _get_local_session() -> async_sessionmaker[AsyncSession]:
     """Internal helper to get or create the local session maker."""
     global _local_session
@@ -130,6 +129,7 @@ def _get_local_session() -> async_sessionmaker[AsyncSession]:
         engine = get_async_engine()
         _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     return _local_session
+
 
 def __getattr__(name: str) -> Any:
     """Lazy-load engine and session maker to prevent connection leaks during module import.

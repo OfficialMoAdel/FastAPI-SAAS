@@ -102,7 +102,7 @@ class TestWorkerFunctionsImport:
 
         # Verify intentional omission of uvloop import
         assert "uvloop is deliberately not initialized here" in source
-        
+
         logger.info("Worker functions intentionally defers uvloop initialization")
 
 

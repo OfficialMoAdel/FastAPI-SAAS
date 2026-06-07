@@ -19,8 +19,10 @@ def mock_request():
     """Mock FastAPI Request object."""
     request = MagicMock(spec=Request)
     request.headers = {}
+
     class MockState:
         pass
+
     request.state = MockState()
     return request
 

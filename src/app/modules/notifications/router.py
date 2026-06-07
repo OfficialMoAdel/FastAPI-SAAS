@@ -63,9 +63,10 @@ async def send_notification(
 
     if notification is None:
         from fastapi.responses import JSONResponse
+
         return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
-            content={"message": "Notification skipped by user preferences.", "skipped": True}
+            content={"message": "Notification skipped by user preferences.", "skipped": True},
         )
 
     return NotificationResponse.model_validate(notification)

@@ -62,7 +62,6 @@ async def test_upload_file_success(file_service, mock_db, mock_storage_service):
     mock_provider.upload = AsyncMock(return_value=mock_upload_result)
     mock_storage_service.get_provider.return_value = mock_provider
 
-
     result = await file_service.upload_file(
         tenant_id=tenant_id, user_id=user_id, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
     )
@@ -110,8 +109,6 @@ async def test_upload_file_type_not_allowed(file_service, mock_storage_service):
             mime_type="text/plain",
             size_bytes=100,
         )
-
-
 
 
 @pytest.mark.asyncio

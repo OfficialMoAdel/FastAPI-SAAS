@@ -1,4 +1,3 @@
-
 from fastapi import APIRouter, HTTPException, Query, status
 
 from src.app.core.job_monitoring import get_job_monitor

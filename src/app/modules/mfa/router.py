@@ -289,6 +289,7 @@ async def complete_mfa_login(
         raise UnauthorizedException("Authentication service unavailable")
 
     from src.app.core.utils.ip_utils import get_client_ip
+
     client_ip = get_client_ip(fastapi_request)
 
     token_manager = MFAPendingTokenManager(_redis_cache.client)

@@ -247,7 +247,7 @@ class AISettingsService(BaseService[AISettings]):
         """Get AI settings for a user, creating defaults if needed."""
         tenant = get_tenant_context()
         if tenant is None:
-             raise ModelNotFoundError("Tenant", "current")
+            raise ModelNotFoundError("Tenant", "current")
         tenant_id = tenant.id
 
         settings = await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
@@ -272,7 +272,7 @@ class AISettingsService(BaseService[AISettings]):
         """Update AI settings for a user."""
         tenant = get_tenant_context()
         if tenant is None:
-             raise ModelNotFoundError("Tenant", "current")
+            raise ModelNotFoundError("Tenant", "current")
         tenant_id = tenant.id
 
         settings = await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
@@ -527,13 +527,12 @@ class ChatCompletionService:
                                     "Failed to save AI chat response in background task, retrying",
                                     attempt=attempt + 1,
                                     max_retries=max_retries,
-                                    error=str(e)
+                                    error=str(e),
                                 )
                                 await asyncio.sleep(2 * (attempt + 1))
                             else:
                                 logger.error(
-                                    "Failed to save AI chat response in background task after all retries",
-                                    error=str(e)
+                                    "Failed to save AI chat response in background task after all retries", error=str(e)
                                 )
 
                 # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream

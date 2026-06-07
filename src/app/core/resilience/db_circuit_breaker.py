@@ -181,7 +181,7 @@ async def execute_transaction_with_circuit_breaker(
             # Exponential backoff
             if attempt <= max_retries:
                 # Use proportional jitter (industry standard) rather than tiny fixed jitter
-                wait_time = (2 ** attempt) * random.uniform(0.5, 1.5)
+                wait_time = (2**attempt) * random.uniform(0.5, 1.5)
                 logger.warning(
                     "Transaction failed, retrying",
                     wait_time=round(wait_time, 3),

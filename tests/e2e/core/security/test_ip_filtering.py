@@ -31,9 +31,7 @@ class TestIPWhitelistE2E:
             # Cleanup
             await ip_filter_service.remove_from_whitelist("127.0.0.1")
 
-    async def test_non_whitelisted_ip_allowed_if_not_blacklisted(
-        self, async_client: AsyncClient, override_settings
-    ):
+    async def test_non_whitelisted_ip_allowed_if_not_blacklisted(self, async_client: AsyncClient, override_settings):
         """Test that non-whitelisted IPs fall through to blacklist check."""
         # Setup: Enable whitelist without adding the test IP
         with override_settings(IP_WHITELIST_ENABLED=True, IP_BLACKLIST_ENABLED=False):

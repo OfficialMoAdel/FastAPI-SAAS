@@ -52,9 +52,6 @@ def _get_signing_key() -> str:
     return str(settings.SECRET_KEY.get_secret_value())
 
 
-
-
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 

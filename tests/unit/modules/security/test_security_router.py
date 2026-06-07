@@ -43,12 +43,7 @@ async def test_add_ip_to_whitelist() -> None:
         assert response.ip_address == "1.2.3.4"
         assert response.list_type == "whitelist"
         assert response.action == "added"
-        mock_add.assert_called_once_with(
-            ip_address="1.2.3.4",
-            reason="test",
-            expires_at=None,
-            added_by=1
-        )
+        mock_add.assert_called_once_with(ip_address="1.2.3.4", reason="test", expires_at=None, added_by=1)
 
 
 @pytest.mark.asyncio
@@ -106,7 +101,6 @@ async def test_get_ip_lists() -> None:
         patch("src.app.modules.security.router.ip_filter_service.get_whitelist", new_callable=AsyncMock) as mock_white,
         patch("src.app.modules.security.router.ip_filter_service.get_blacklist", new_callable=AsyncMock) as mock_black,
     ):
-
         mock_white.return_value = [{"ip_address": "1.1.1.1", "added_at": "2023-01-01T00:00:00Z"}]
         mock_black.return_value = [{"ip_address": "2.2.2.2", "added_at": "2023-01-01T00:00:00Z"}]
 
@@ -257,7 +251,6 @@ async def test_passkey_routes() -> None:
         patch("src.app.modules.security.router.passkey_service.list_credentials", new_callable=AsyncMock) as mock_list,
         patch("src.app.modules.security.router.passkey_service.delete_credential", new_callable=AsyncMock),
     ):
-
         mock_list.return_value = []
         res = await list_passkeys(current_user, mock_db)
         assert res == []

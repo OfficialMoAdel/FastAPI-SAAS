@@ -140,11 +140,11 @@ async def _release_webhook_event_lock(event_id: str) -> None:
         # Enqueue a fallback cleanup task
         try:
             from src.app.core.utils.queue import pool
+
             if pool:
                 await pool.enqueue_job("cleanup_leaked_webhook_lock", event_id, _defer_by=300)
         except Exception as q_err:
             logger.error("Failed to enqueue fallback cleanup task for webhook lock:", error=str(q_err))
-
 
 
 def verify_webhook_signature(payload: bytes, sig_header: str, secret: str) -> stripe.Event:

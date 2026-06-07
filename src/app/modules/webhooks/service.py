@@ -212,9 +212,7 @@ class WebhookService:
                     endpoint_id=str(endpoint.id),
                     error=str(e),
                 )
-                raise ValueError(
-                    f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}."
-                ) from e
+                raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
         elif endpoint.secret:
             try:
                 secret = decrypt_data(endpoint.secret)
@@ -469,17 +467,13 @@ class WebhookService:
                 from src.app.core.utils.background_task import create_safe_task
 
                 create_safe_task(
-                    self._enqueue_delivery(
-                        delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id
-                    )
+                    self._enqueue_delivery(delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id)
                 )
             except RuntimeError:
                 try:
                     loop = asyncio.get_event_loop()
                     asyncio.run_coroutine_threadsafe(
-                        self._enqueue_delivery(
-                            delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id
-                        ),
+                        self._enqueue_delivery(delivery_id, defer_by=retry_delay, tenant_id=delivery.tenant_id),
                         loop,
                     )
                 except Exception as loop_err:

@@ -24,6 +24,7 @@ from src.app.modules._base.exceptions import (
     DuplicateError,
     ForbiddenError,
     ModelNotFoundError,
+    RateLimitExceededError,
 )
 from src.app.modules._base.exceptions import (
     ValidationError as BaseValidationError,
@@ -224,6 +225,25 @@ def setup_exception_handlers(app: FastAPI) -> None:
             code=ErrorCode.VALIDATION_ERROR,
             message=str(exc),
             status_code=status.HTTP_400_BAD_REQUEST,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(RateLimitExceededError)
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceededError) -> JSONResponse:
+        """Handle RateLimitExceededError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Rate limit exceeded",
+            message=exc.message,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.RATE_LIMITED,
+            message=str(exc),
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             request_id=request_id,
         )
 

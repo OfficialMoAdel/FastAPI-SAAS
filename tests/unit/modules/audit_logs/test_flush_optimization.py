@@ -21,12 +21,16 @@ import src.app.modules.billing.models  # noqa: F401
 
 def _acm(pipe):
     """Make a pipeline mock support 'async with' returning itself."""
-    async def __aenter__(*a): return pipe
-    async def __aexit__(*a): return False
+
+    async def __aenter__(*a):
+        return pipe
+
+    async def __aexit__(*a):
+        return False
+
     pipe.__aenter__ = __aenter__
     pipe.__aexit__ = __aexit__
     return pipe
-
 
 
 class TestFlushAuditLogBuffer:

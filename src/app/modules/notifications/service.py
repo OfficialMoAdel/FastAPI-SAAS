@@ -186,21 +186,22 @@ class NotificationService:
                 # for skipped notifications.
                 return None
 
-        from fastapi import HTTPException
+        from src.app.modules._base.exceptions import RateLimitExceededError
+
         # Rate limiting check (T105)
         # 100 emails/minute per tenant
         rate_limit_key_min = f"notif:min:{tenant_id}" if tenant_id else f"notif:min:global:{to_email}"
         is_limited_min, _ = await rate_limiter.check_rate_limit(rate_limit_key_min, 100, 60)
         if is_limited_min:
             logger.warning("notification_rate_limit_exceeded_min", tenant_id=str(tenant_id))
-            raise HTTPException(status_code=429, detail="Rate limit exceeded: 100 emails per minute")
+            raise RateLimitExceededError("Rate limit exceeded: 100 emails per minute")
 
         # 1000 emails/hour per tenant
         rate_limit_key_hour = f"notif:hour:{tenant_id}" if tenant_id else f"notif:hour:global:{to_email}"
         is_limited_hour, _ = await rate_limiter.check_rate_limit(rate_limit_key_hour, 1000, 3600)
         if is_limited_hour:
             logger.warning("notification_rate_limit_exceeded_hour", tenant_id=str(tenant_id))
-            raise HTTPException(status_code=429, detail="Rate limit exceeded: 1000 emails per hour")
+            raise RateLimitExceededError("Rate limit exceeded: 1000 emails per hour")
 
         # Render template
         subject, html_content = await self.render_template(tenant_id, template_name, context)

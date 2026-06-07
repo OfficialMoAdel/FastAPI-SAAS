@@ -36,6 +36,7 @@ from src.app.core.rbac.permissions import Permission as PermissionEnum
 # Python handles arbitrarily large integers, and Redis can store large string representations.
 # The previous 64-bit limit was an artificial ceiling since the bitmask is not stored in Postgres BIGINT.
 
+
 def _build_permission_bit_map() -> dict[str, int]:
     """
     Build a mapping from permission slug to bit position.
