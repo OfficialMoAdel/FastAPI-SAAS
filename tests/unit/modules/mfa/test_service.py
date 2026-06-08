@@ -275,7 +275,7 @@ class TestVerifyBackupCode:
 
         # Create a test backup code and its hash
         test_code = "BC-ABCDE-FGHIJ"
-        code_hash = await mfa_service._hash_backup_code(test_code)
+        code_hash = await mfa_service._hash_backup_code(test_code, mock_user_id)
 
         mfa_method = {
             "id": "test-id",
@@ -308,32 +308,34 @@ class TestVerifyBackupCode:
         """Test invalid backup code verification fails."""
         from src.app.modules.mfa.crud import crud_mfa_methods
 
-        # Create a test backup code with different hash
-        test_code = "BC-ABCDE-FGHIJ"
-        wrong_hash = "$2b$12$wronghashvalue1234567890"
+        # Store the hash of one code
+        stored_code = "BC-ABCDE-FGHIJ"
+        code_hash = await mfa_service._hash_backup_code(stored_code, mock_user_id)
 
-        mfa_method = {
+        mfa_method_dict = {
             "id": "test-id",
             "user_id": mock_user_id,
-            "backup_codes": [wrong_hash],
+            "backup_codes": [code_hash],
         }
 
         mock_model = MagicMock()
-        mock_model.backup_codes = [wrong_hash]
+        mock_model.backup_codes = [code_hash]
 
-        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method):
+        with patch.object(crud_mfa_methods, "get", new_callable=AsyncMock, return_value=mfa_method_dict):
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = mock_model
             mock_db.execute = AsyncMock(return_value=mock_result)
-            # Patch verify_password in the core.security module where it's imported from
-            with patch("src.app.core.security.verify_password", new_callable=AsyncMock, return_value=False):
-                result = await mfa_service._verify_backup_code(
-                    user_id=mock_user_id,
-                    code=test_code,
-                    db=mock_db,
-                )
+
+            # Verify with a DIFFERENT code that doesn't match the stored hash
+            wrong_code = "BC-ZZZZZ-ZZZZZ"
+            result = await mfa_service._verify_backup_code(
+                user_id=mock_user_id,
+                code=wrong_code,
+                db=mock_db,
+            )
 
         assert result["valid"] is False
+        assert result["message"] == "Invalid code"
 
     @pytest.mark.asyncio
     async def test_verify_backup_code_code_removed_after_use(self, mfa_service, mock_db, mock_user_id):
@@ -341,7 +343,7 @@ class TestVerifyBackupCode:
         from src.app.modules.mfa.crud import crud_mfa_methods
 
         test_code = "BC-ABCDE-FGHIJ"
-        code_hash = await mfa_service._hash_backup_code(test_code)
+        code_hash = await mfa_service._hash_backup_code(test_code, mock_user_id)
 
         mfa_method_dict = {
             "id": "test-id",
@@ -551,35 +553,35 @@ class TestHashBackupCode:
     """Test backup code hashing."""
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_produces_sha256_hash(self, mfa_service):
+    async def test_hash_backup_code_produces_sha256_hash(self, mfa_service, mock_user_id):
         """Test that hashing produces a SHA256 hex digest."""
         code = "BC-ABCDE-FGHIJ"
 
-        hash1 = await mfa_service._hash_backup_code(code)
+        hash1 = await mfa_service._hash_backup_code(code, mock_user_id)
 
         # SHA256 hex digests are 64 characters long and contain only hex digits
         assert len(hash1) == 64
         int(hash1, 16)  # Will raise ValueError if not valid hex
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_same_calls_same_hashes(self, mfa_service):
+    async def test_hash_backup_code_same_calls_same_hashes(self, mfa_service, mock_user_id):
         """Test that SHA256 produces identical hashes for same input (deterministic)."""
         code = "BC-ABCDE-FGHIJ"
 
-        hash1 = await mfa_service._hash_backup_code(code)
-        hash2 = await mfa_service._hash_backup_code(code)
+        hash1 = await mfa_service._hash_backup_code(code, mock_user_id)
+        hash2 = await mfa_service._hash_backup_code(code, mock_user_id)
 
         # SHA256 is deterministic, so hashes should match
         assert hash1 == hash2
 
     @pytest.mark.asyncio
-    async def test_hash_backup_code_different_codes_different_hashes(self, mfa_service):
+    async def test_hash_backup_code_different_codes_different_hashes(self, mfa_service, mock_user_id):
         """Test that different codes produce different hashes."""
         code1 = "BC-ABCDE-FGHIJ"
         code2 = "BC-ABCDE-FGHIK"
 
-        hash1 = await mfa_service._hash_backup_code(code1)
-        hash2 = await mfa_service._hash_backup_code(code2)
+        hash1 = await mfa_service._hash_backup_code(code1, mock_user_id)
+        hash2 = await mfa_service._hash_backup_code(code2, mock_user_id)
 
         assert hash1 != hash2
 
@@ -633,7 +635,7 @@ class TestBackupCodeUsage:
 
         # Create 3 backup codes
         test_codes = ["BC-ABCDE-FGHIJ", "BC-KLMNO-PQRST", "BC-UVWXY-Z1234"]
-        code_hashes = [await mfa_service._hash_backup_code(code) for code in test_codes]
+        code_hashes = [await mfa_service._hash_backup_code(code, mock_user_id) for code in test_codes]
 
         mfa_method_dict = {
             "id": "test-id",
@@ -667,7 +669,7 @@ class TestBackupCodeUsage:
         from src.app.modules.mfa.crud import crud_mfa_methods
 
         test_code = "BC-ABCDE-FGHIJ"
-        code_hash = await mfa_service._hash_backup_code(test_code)
+        code_hash = await mfa_service._hash_backup_code(test_code, mock_user_id)
 
         mfa_method_dict = {
             "id": "test-id",
@@ -711,7 +713,7 @@ class TestBackupCodeUsage:
         from src.app.modules.mfa.crud import crud_mfa_methods
 
         test_code = "BC-ABCDE-FGHIJ"
-        code_hash = await mfa_service._hash_backup_code(test_code)
+        code_hash = await mfa_service._hash_backup_code(test_code, mock_user_id)
 
         mfa_method_dict = {
             "id": "test-id",

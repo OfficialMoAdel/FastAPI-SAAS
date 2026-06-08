@@ -263,14 +263,16 @@ class TestUserServiceGet:
     @pytest.mark.asyncio
     async def test_get_by_username_success(self, user_service, mock_existing_user):
         """Test successful user retrieval by username."""
+        expected_dict = {"username": "testuser", "id": 1, "email": "test@example.com"}
         with (
             patch("src.app.modules.users.service.get_current_tenant") as mock_tenant,
             patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get,
             patch.object(user_service, "_get_cached_user", new_callable=AsyncMock) as mock_cached,
+            patch("fastapi.encoders.jsonable_encoder", return_value=expected_dict),
         ):
             mock_tenant.return_value = MagicMock(id=uuid.uuid4())
             mock_get.return_value = mock_existing_user
-            mock_cached.side_effect = [None, {"username": "testuser", "id": 1, "email": "test@example.com"}]
+            mock_cached.return_value = None
 
             result = await user_service.get_by_username("testuser")
 
