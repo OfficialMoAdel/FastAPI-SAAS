@@ -37,7 +37,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_audit_logs_tenant_id"), ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_audit_logs_user_id"), ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_audit_logs_user_id"), ondelete="SET NULL"),
     )
     op.create_index("idx_audit_tenant_created", "audit_logs", ["tenant_id", "created_at"])
     op.create_index("idx_audit_user", "audit_logs", ["user_id"])
@@ -96,7 +96,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_notifications_tenant_id"), ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_notifications_user_id"), ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_notifications_user_id"), ondelete="SET NULL"),
         sa.CheckConstraint("status IN ('pending', 'sent', 'failed')", name=op.f("ck_notifications_status_valid")),
     )
     op.create_index("idx_notification_tenant_created", "notifications", ["tenant_id", "created_at"])

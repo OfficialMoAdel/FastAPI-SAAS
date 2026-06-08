@@ -60,8 +60,8 @@ class APIKey(Base):
     )
 
     # Relationships
-    user = relationship("User", back_populates="api_keys")
-    tenant = relationship("Tenant", back_populates="api_keys")
+    user = relationship("User", back_populates="api_keys", lazy="raise")
+    tenant = relationship("Tenant", back_populates="api_keys", lazy="raise")
 
     def __repr__(self) -> str:
         return f"APIKey(id={self.id}, name='{self.name}', prefix='{self.key_prefix}')"

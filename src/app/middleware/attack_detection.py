@@ -250,6 +250,11 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 try:
                     MAX_SCAN_SIZE = 128 * 1024
 
+                    content_length = request.headers.get("content-length")
+                    if content_length and int(content_length) > MAX_SCAN_SIZE:
+                        logger.warning("Content-Length exceeded maximum scan size of %d bytes", MAX_SCAN_SIZE)
+                        raise BodyScanError(f"Request body exceeded maximum scan size of {MAX_SCAN_SIZE} bytes")
+
                     body_chunks: list[bytes] = []
                     body_size = 0
 

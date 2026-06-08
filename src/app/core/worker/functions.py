@@ -17,7 +17,7 @@ logger = get_logger(__name__)
 
 # -------- background tasks --------
 @monitor_job("sample_background_task")
-async def sample_background_task(ctx: Worker, name: str) -> str:
+async def sample_background_task(ctx: Worker, name: str, tenant_id: UUID | str | None = None) -> str:
     await asyncio.sleep(5)
     return f"Task {name} is complete!"
 

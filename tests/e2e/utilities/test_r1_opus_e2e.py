@@ -275,57 +275,6 @@ class TestSessionManagerIntegration:
         return redis
 
     @pytest.mark.asyncio
-    @pytest.mark.skip(reason="Obsolete due to Lua script rewrite")
-    async def test_session_limit_enforcement(self, e2e_results, mock_redis_session):
-        """Verify session limit is enforced correctly with ZSET eviction."""
-        sm = SessionManager(redis_client=mock_redis_session, max_sessions=5)
-        user_id = 12345
-
-        # Register 5 sessions
-        session_ids = []
-        for i in range(5):
-            result = await sm.register_session(
-                user_id=user_id,
-                session_id=f"session_{i}",
-                device_info=f"Device {i}",
-            )
-            session_ids.append(f"session_{i}")
-            logger.info(f"Registered session_{i}: active={result.get('active_sessions', 'N/A')}")
-
-        # Verify all sessions valid
-        for sid in session_ids:
-            is_valid = await sm.is_session_valid(user_id, sid)
-            assert is_valid, f"Session {sid} should be valid"
-
-        # Register 6th session (should evict oldest)
-        result = await sm.register_session(
-            user_id=user_id,
-            session_id="session_new",
-            device_info="New Device",
-        )
-
-        logger.info(f"Registered session_new, evicted: {result.get('invalidated_sessions', [])}")
-
-        # Verify oldest evicted
-        is_oldest_valid = await sm.is_session_valid(user_id, "session_0")
-        assert not is_oldest_valid, "Oldest session should be evicted"
-
-        # Verify new session valid
-        is_new_valid = await sm.is_session_valid(user_id, "session_new")
-        assert is_new_valid, "New session should be valid"
-
-        e2e_results.add(
-            "session_limit_enforcement",
-            "PASS",
-            {
-                "sessions_registered": 6,
-                "max_sessions": 5,
-                "oldest_evicted": True,
-                "new_valid": True,
-            },
-        )
-
-    @pytest.mark.asyncio
     async def test_session_eviction_latency(self, e2e_results, mock_redis_session):
         """Measure actual eviction latency in simulated environment."""
         sm = SessionManager(redis_client=mock_redis_session, max_sessions=50)

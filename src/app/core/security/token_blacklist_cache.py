@@ -251,22 +251,11 @@ def _extract_blacklist_member(token: str) -> str:
     claim is present.  This helper performs the same extraction so that lookup
     and storage always use an identical key.
     """
-    try:
-        import base64
+    from src.app.core.security.jwt_utils import extract_jti_unverified
 
-        from src.app.core.json_utils import json_loads
-
-        parts = token.split(".")
-        if len(parts) == 3:
-            payload_b64 = parts[1]
-            payload_b64 += "=" * (-len(payload_b64) % 4)
-            payload_bytes = base64.urlsafe_b64decode(payload_b64)
-            payload = json_loads(payload_bytes)
-            jti = payload.get("jti")
-            if jti:
-                return f"jti:{jti}"
-    except Exception:
-        pass  # Malformed token – fall back to raw token
+    jti = extract_jti_unverified(token)
+    if jti:
+        return f"jti:{jti}"
     return token
 
 

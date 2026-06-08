@@ -50,7 +50,7 @@ def upgrade() -> None:
 
     # ===== USER =====
     op.create_table(
-        "user",
+        "users",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("tier_id", sa.Integer(), nullable=True),
@@ -68,17 +68,17 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("id", name=op.f("pk_user")),
+        sa.PrimaryKeyConstraint("id", name=op.f("pk_users")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_user_tenant_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tier_id"], ["tier.id"], name=op.f("fk_user_tier_id"), ondelete="SET NULL"),
     )
-    op.create_index("ix_user_username", "user", ["username"], unique=True)
-    op.create_index("ix_user_email", "user", ["email"], unique=False)
-    op.create_index("ix_user_uuid", "user", ["uuid"], unique=True)
-    op.create_index("idx_users_tenant_email", "user", ["tenant_id", "email"])
-    op.create_index("idx_users_tenant_deleted", "user", ["tenant_id", "is_deleted"])
-    op.create_index("ix_user_is_active", "user", ["is_active"])
-    op.create_index("ix_user_token_version", "user", ["token_version"])
+    op.create_index("ix_user_username", "users", ["username"], unique=True)
+    op.create_index("ix_user_email", "users", ["email"], unique=False)
+    op.create_index("ix_user_uuid", "users", ["uuid"], unique=True)
+    op.create_index("idx_users_tenant_email", "users", ["tenant_id", "email"])
+    op.create_index("idx_users_tenant_deleted", "users", ["tenant_id", "is_deleted"])
+    op.create_index("ix_user_is_active", "users", ["is_active"])
+    op.create_index("ix_user_token_version", "users", ["token_version"])
 
     # ===== POST =====
     op.create_table(
@@ -97,7 +97,7 @@ def upgrade() -> None:
         sa.PrimaryKeyConstraint("id", name=op.f("pk_post")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_post_tenant_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
-            ["created_by_user_id"], ["user.id"], name=op.f("fk_post_created_by_user_id"), ondelete="CASCADE"
+            ["created_by_user_id"], ["users.id"], name=op.f("fk_post_created_by_user_id"), ondelete="CASCADE"
         ),
     )
     op.create_index("ix_post_tenant_id", "post", ["tenant_id"])
@@ -107,6 +107,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_table("post")
-    op.drop_table("user")
+    op.drop_table("users")
     op.drop_table("tier")
     op.drop_table("tenants")

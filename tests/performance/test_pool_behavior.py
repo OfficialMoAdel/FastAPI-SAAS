@@ -74,35 +74,6 @@ class TestConnectionReleasePattern:
 class TestAsyncioGatherParallelFetch:
     """Test P5: asyncio.gather() for parallel fetches."""
 
-    @pytest.mark.skip(reason="Optimization P5 reverted due to SQLAlchemy AsyncSession concurrency issues")
-    def test_complete_uses_asyncio_gather(self) -> None:
-        """Verify complete() uses asyncio.gather for parallel fetch."""
-        import inspect
-
-        from src.app.modules.ai.service import ChatCompletionService
-
-        source = inspect.getsource(ChatCompletionService.complete)
-
-        assert "asyncio.gather" in source, "Should use asyncio.gather"
-        assert "session_coro" in source, "Should define session coroutine"
-        assert "settings_coro" in source, "Should define settings coroutine"
-        assert "messages_coro" in source, "Should define messages coroutine"
-
-        logger.info("asyncio.gather pattern: verified in complete()")
-
-    @pytest.mark.skip(reason="Optimization P5 reverted due to SQLAlchemy AsyncSession concurrency issues")
-    def test_stream_uses_asyncio_gather(self) -> None:
-        """Verify complete_stream() uses asyncio.gather for parallel fetch."""
-        import inspect
-
-        from src.app.modules.ai.service import ChatCompletionService
-
-        source = inspect.getsource(ChatCompletionService.complete_stream)
-
-        assert "asyncio.gather" in source, "Should use asyncio.gather in stream"
-
-        logger.info("asyncio.gather pattern: verified in complete_stream()")
-
     @pytest.mark.asyncio
     async def test_parallel_fetch_faster_than_sequential(self) -> None:
         """Verify parallel fetch is faster than sequential."""

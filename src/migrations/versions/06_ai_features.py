@@ -38,7 +38,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_ai_chat_sessions_tenant_id"), ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_ai_chat_sessions_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_ai_chat_sessions_user_id"), ondelete="CASCADE"),
     )
     op.create_index("ix_ai_chat_sessions_uuid", "ai_chat_sessions", ["uuid"], unique=True)
     op.create_index("idx_ai_chat_sessions_tenant", "ai_chat_sessions", ["tenant_id"])
@@ -79,7 +79,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_settings")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_ai_settings_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_ai_settings_user_id"), ondelete="CASCADE"),
         sa.CheckConstraint("temperature >= 0.0 AND temperature <= 2.0", name=op.f("ck_ai_settings_temperature_valid")),
         sa.CheckConstraint("max_tokens >= 1 AND max_tokens <= 32000", name=op.f("ck_ai_settings_max_tokens_valid")),
     )
@@ -105,7 +105,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_token_usage")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_ai_token_usage_tenant_id")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_ai_token_usage_user_id")),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_ai_token_usage_user_id")),
         sa.ForeignKeyConstraint(["session_id"], ["ai_chat_sessions.id"], name=op.f("fk_ai_token_usage_session_id")),
     )
     op.create_index("idx_ai_token_usage_tenant", "ai_token_usage", ["tenant_id"])

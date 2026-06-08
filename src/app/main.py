@@ -203,7 +203,6 @@ async def cache_exception_handler(request: Request, exc: CacheException) -> ORJS
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
-from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 
 app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
@@ -217,13 +216,6 @@ app.add_middleware(
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
 app.add_middleware(GZipMiddleware, minimum_size=500)  # Compresses all responses
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.CORS_ORIGINS,
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)  # Outermost - handles preflight requests early
 
 # Admin mounting moved to lifespan
 

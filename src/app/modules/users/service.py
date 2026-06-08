@@ -413,9 +413,6 @@ class UserService(BaseService[User]):
             raise ModelNotFoundError("User", username)
 
         await self._cache_user(db_user)
-        cached = await self._get_cached_user(_user_username_cache_key(username))
-        if cached:
-            return cached
         from fastapi.encoders import jsonable_encoder
 
         return cast(dict[str, Any], jsonable_encoder(db_user))

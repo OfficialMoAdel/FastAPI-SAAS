@@ -40,7 +40,7 @@ TENANT_TABLES = [
     "notifications",
     "email_template_overrides",
     "ai_chat_sessions",
-    "user",
+    "users",
 ]
 
 
@@ -150,7 +150,7 @@ def upgrade() -> None:
     op.execute(
         """
         CREATE INDEX IF NOT EXISTS idx_user_tenant_active
-        ON "user"(tenant_id, created_at DESC)
+        ON "users"(tenant_id, created_at DESC)
         WHERE is_deleted = false
         """
     )

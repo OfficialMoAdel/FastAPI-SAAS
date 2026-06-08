@@ -20,7 +20,6 @@ TEST SCENARIOS:
 
 import asyncio
 import logging
-import time
 from typing import Any
 
 import pytest
@@ -490,36 +489,3 @@ class TestConcurrentAndPerformance:
         assert blocked_count == 100, f"All 100 requests should be blocked/throttled, got {blocked_count}"
 
         logger.info(f"Concurrent banned IP test passed | blocked={blocked_count}/100")
-
-    @pytest.mark.asyncio
-    @pytest.mark.uses_real_redis
-    @pytest.mark.skip(reason="Performance test - run manually")
-    async def test_security_middleware_overhead(
-        self,
-        async_client: AsyncClient,
-        redis_client: Any,
-        test_user: dict[str, Any],
-    ):
-        """Measure security middleware overhead (manual test)."""
-        # Baseline: exempt path (no security middleware)
-        start = time.time()
-        for _ in range(100):
-            await async_client.get("/health")
-        baseline_time = time.time() - start
-
-        # With security middleware
-        start = time.time()
-        for _ in range(100):
-            await async_client.get(
-                "/api/v1/users/me",
-                headers={"Authorization": f"Bearer {test_user['access_token']}"},
-            )
-        with_security_time = time.time() - start
-
-        overhead = (with_security_time - baseline_time) / 100 * 1000  # ms per request
-
-        logger.info(f"Security middleware overhead: {overhead:.2f}ms per request")
-        logger.info(f"Baseline: {baseline_time:.3f}s, With security: {with_security_time:.3f}s")
-
-        # Assert overhead < 10ms
-        assert overhead < 10.0, f"Overhead too high: {overhead:.2f}ms"

@@ -200,7 +200,7 @@ class MFAService:
         encrypted_secret = await self._encrypt_secret(totp_secret)
 
         # Hash backup codes for storage concurrently
-        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes])
+        backup_codes_hashed = await asyncio.gather(*[self._hash_backup_code(code, user_id) for code in backup_codes])
 
         # Create MFA method record
         mfa_method = MFAMethod(
@@ -439,7 +439,7 @@ class MFAService:
         matched_hash = None
 
         # We now use fast SHA256 hashing to prevent bcrypt DoS when iterating 10 codes
-        hashed_input = await self._hash_backup_code(formatted_code)
+        hashed_input = await self._hash_backup_code(formatted_code, user_id)
         for stored_hash in mfa_method.backup_codes:
             # Fallback for old bcrypt hashes dynamically
             if stored_hash.startswith("$2b$"):
@@ -678,7 +678,9 @@ class MFAService:
 
         # Generate new backup codes and hash them concurrently
         backup_codes = await self._generate_backup_codes()
-        backup_codes_hashed = list(await asyncio.gather(*[self._hash_backup_code(code) for code in backup_codes]))
+        backup_codes_hashed = list(
+            await asyncio.gather(*[self._hash_backup_code(code, user_id) for code in backup_codes])
+        )
 
         # Fetch model instance to update
         mfa_method = await db.get(MFAMethod, mfa_method_dict["id"])
@@ -726,19 +728,21 @@ class MFAService:
             codes.append(formatted_code)
         return codes
 
-    async def _hash_backup_code(self, code: str) -> str:
-        """Hash a backup code for secure storage using fast SHA256 (mitigating DoS).
+    async def _hash_backup_code(self, code: str, user_id: int) -> str:
+        """Hash a backup code for secure storage using HMAC-SHA256.
 
         Args:
             code: The backup code to hash.
+            user_id: The ID of the user (used as salt).
 
         Returns:
             Hashed code string.
         """
         import hashlib
+        import hmac
 
-        salt = settings.SECRET_KEY.get_secret_value().encode()
-        return hashlib.sha256(salt + code.encode()).hexdigest()
+        salt = f"{settings.SECRET_KEY.get_secret_value()}_{user_id}".encode()
+        return hmac.new(salt, code.encode(), hashlib.sha256).hexdigest()
 
     _fernet_instance: Fernet | None = None
 

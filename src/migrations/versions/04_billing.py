@@ -27,7 +27,7 @@ def upgrade() -> None:
         sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("stripe_customer_id", sa.String(length=255), nullable=True),
         sa.Column("stripe_account_id", sa.String(length=255), nullable=True),
-        sa.Column("encrypted_secret_key", sa.LargeBinary(), nullable=True),
+        sa.Column("encrypted_secret_key", sa.Text(), nullable=True),
         sa.Column("webhook_secret", sa.LargeBinary(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -129,7 +129,7 @@ def upgrade() -> None:
             ["tenant_id"], ["tenants.id"], name=op.f("fk_user_subscriptions_tenant_id"), ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["user.id"], name=op.f("fk_user_subscriptions_user_id"), ondelete="CASCADE"
+            ["user_id"], ["users.id"], name=op.f("fk_user_subscriptions_user_id"), ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
             ["subscription_plan_id"],
@@ -166,7 +166,7 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_billing_records_tenant_id"), ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_billing_records_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_billing_records_user_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["user_subscription_id"],
             ["user_subscriptions.id"],

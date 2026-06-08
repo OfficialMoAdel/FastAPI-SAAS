@@ -29,6 +29,7 @@ See Also:
 
 from __future__ import annotations
 
+import base64
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
 
@@ -41,6 +42,7 @@ from cryptography.hazmat.primitives.serialization import load_pem_public_key
 from jwt.exceptions import PyJWTError
 
 from src.app.core.config import settings
+from src.app.core.json_utils import json_loads
 from src.app.core.logger import get_logger
 
 # Type alias for PyJWT-compatible public key types
@@ -150,10 +152,6 @@ def clear_jwt_key_cache() -> None:
 def extract_jti_unverified(token: str) -> str | None:
     """Fast base64 payload extraction for JTI without signature verification."""
     try:
-        import base64
-
-        from src.app.core.json_utils import json_loads
-
         parts = token.split(".")
         if len(parts) == 3:
             payload_b64 = parts[1]
@@ -161,8 +159,10 @@ def extract_jti_unverified(token: str) -> str | None:
             payload = json_loads(base64.urlsafe_b64decode(payload_b64))
             jti = payload.get("jti")
             return str(jti) if jti else None
-    except Exception:
-        pass
+    except (ValueError, TypeError) as e:
+        logger.debug("Failed to extract unverified JTI: %s", e)
+    except Exception as e:
+        logger.warning("Unexpected error extracting unverified JTI: %s", e)
     return None
 
 

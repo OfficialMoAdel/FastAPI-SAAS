@@ -96,7 +96,7 @@ def upgrade() -> None:
         sa.Column("role_id", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("user_id", "tenant_id", "role_id", name=op.f("pk_user_roles")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_user_roles_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_user_roles_user_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_user_roles_tenant_id"), ondelete="CASCADE"
         ),
@@ -129,7 +129,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_api_keys")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_api_keys_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_api_keys_user_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_api_keys_tenant_id"), ondelete="CASCADE"),
     )
     op.create_index("ix_api_keys_user_id", "api_keys", ["user_id"])

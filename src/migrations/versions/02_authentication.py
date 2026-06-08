@@ -55,7 +55,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_passkey_credentials")),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["user.id"], name=op.f("fk_passkey_credentials_user_id"), ondelete="CASCADE"
+            ["user_id"], ["users.id"], name=op.f("fk_passkey_credentials_user_id"), ondelete="CASCADE"
         ),
     )
     op.create_index("idx_passkey_credentials_user_id", "passkey_credentials", ["user_id"])
@@ -73,7 +73,7 @@ def upgrade() -> None:
         sa.Column("ip_address", postgresql.INET(), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_magic_links")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_magic_links_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_magic_links_user_id"), ondelete="CASCADE"),
     )
     op.create_index("idx_magic_links_token", "magic_links", ["token"], unique=True)
     op.create_index("idx_magic_links_user_id", "magic_links", ["user_id"])
@@ -93,7 +93,7 @@ def upgrade() -> None:
         sa.Column("is_primary", sa.Boolean(), server_default="false", nullable=False),
         sa.Column("last_used_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), nullable=False, server_default=sa.text("now()")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_mfa_methods_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_mfa_methods_user_id"), ondelete="CASCADE"),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_mfa_methods")),
         sa.UniqueConstraint("user_id", "type", name=op.f("uq_user_mfa_type")),
     )
@@ -111,7 +111,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_password_reset_tokens")),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["user.id"], name=op.f("fk_password_reset_tokens_user_id"), ondelete="CASCADE"
+            ["user_id"], ["users.id"], name=op.f("fk_password_reset_tokens_user_id"), ondelete="CASCADE"
         ),
     )
     op.create_index("ix_password_reset_tokens_token", "password_reset_tokens", ["token"], unique=True)
@@ -127,7 +127,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_email_verification_tokens")),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["user.id"], name=op.f("fk_email_verification_tokens_user_id"), ondelete="CASCADE"
+            ["user_id"], ["users.id"], name=op.f("fk_email_verification_tokens_user_id"), ondelete="CASCADE"
         ),
     )
     op.create_index("ix_email_verification_tokens_token", "email_verification_tokens", ["token"], unique=True)
@@ -163,7 +163,7 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_sso_connections")),
         sa.ForeignKeyConstraint(
-            ["user_id"], ["user.id"], name=op.f("fk_user_sso_connections_user_id"), ondelete="CASCADE"
+            ["user_id"], ["users.id"], name=op.f("fk_user_sso_connections_user_id"), ondelete="CASCADE"
         ),
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_user_sso_connections_tenant_id"), ondelete="CASCADE"

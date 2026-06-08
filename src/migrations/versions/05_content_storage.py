@@ -66,7 +66,7 @@ def upgrade() -> None:
         sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_files")),
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_files_tenant_id"), ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_files_user_id"), ondelete="SET NULL"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_files_user_id"), ondelete="SET NULL"),
         sa.CheckConstraint("size_bytes >= 0", name=op.f("ck_files_size_non_negative")),
     )
     op.create_index("ix_files_uuid", "files", ["uuid"], unique=True)
@@ -97,7 +97,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_preferences")),
-        sa.ForeignKeyConstraint(["user_id"], ["user.id"], name=op.f("fk_user_preferences_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_user_preferences_user_id"), ondelete="CASCADE"),
     )
     op.create_index("idx_user_preferences_user_id", "user_preferences", ["user_id"], unique=True)
     op.create_index("idx_user_preferences_quiet_hours", "user_preferences", ["quiet_hours_enabled"])

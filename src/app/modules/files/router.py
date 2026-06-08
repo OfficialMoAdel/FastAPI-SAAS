@@ -6,6 +6,7 @@ Endpoints require appropriate FILES_* permissions.
 
 from __future__ import annotations
 
+import mimetypes
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -87,7 +88,7 @@ async def upload_file(
             file=file.file,
             filename=file.filename or "unnamed",
             mime_type=(
-                __import__("mimetypes").guess_type(file.filename)[0]
+                (mimetypes.guess_type(file.filename)[0] if file.filename else None)
                 or file.content_type
                 or "application/octet-stream"
             ),

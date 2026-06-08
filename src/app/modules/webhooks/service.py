@@ -578,7 +578,14 @@ class WebhookService:
         if endpoint.signing_secret:
             try:
                 secret = decrypt_data(endpoint.signing_secret)
-            except Exception:
+            except Exception as e:
+                logger.error(
+                    "webhook_signing_secret_decryption_failed",
+                    endpoint_id=str(endpoint.id),
+                    error=str(e),
+                )
+                if endpoint.signing_secret.startswith("v1:"):
+                    raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
                 secret = endpoint.signing_secret
 
         masked_secret = f"{secret[:4]}...{secret[-4:]}" if secret and len(secret) > 8 else "****"
