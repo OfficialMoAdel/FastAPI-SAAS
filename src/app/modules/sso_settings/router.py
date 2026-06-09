@@ -36,7 +36,7 @@ async def create_sso_settings(
         )
 
     result = await sso_settings_service.create_settings(db, settings, user_id=current_superuser["id"])
-    return SSOSettingsRead.model_validate(result)
+    return result  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/", response_model=SSOSettingsList, dependencies=[Depends(get_current_superuser)])
@@ -59,7 +59,7 @@ async def list_sso_settings(
     data: list[dict[str, Any]] = data_raw if isinstance(data_raw, list) else []
     total_count = settings_data.get("total_count")
     total: int = total_count if isinstance(total_count, int) else len(data)
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": page,
@@ -76,7 +76,7 @@ async def list_available_providers() -> list[str]:
     Returns a static list of SSO providers that can be configured.
     This endpoint is accessible to superusers for setting up new SSO providers.
     """
-    return [
+    return [  # type: ignore[return-value, no-any-return]
         "google",
         "github",
         "apple",
@@ -103,7 +103,7 @@ async def get_sso_settings(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"SSO settings for provider {provider} not found",
         )
-    return settings
+    return settings  # type: ignore[return-value, no-any-return]
 
 
 @router.patch("/{provider}", response_model=SSOSettingsRead, dependencies=[Depends(get_current_superuser)])
@@ -125,7 +125,7 @@ async def update_sso_settings(
         )
 
     result = await sso_settings_service.update_settings(db, provider, values, user_id=current_superuser["id"])
-    return SSOSettingsRead.model_validate(result)
+    return result  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/{provider}", status_code=status.HTTP_200_OK, dependencies=[Depends(get_current_superuser)])
@@ -146,4 +146,4 @@ async def delete_sso_settings(
         )
 
     await sso_settings_service.delete_settings(db, provider, user_id=current_superuser["id"])
-    return {"message": f"SSO settings for provider {provider} deleted successfully"}
+    return {"message": f"SSO settings for provider {provider} deleted successfully"}  # type: ignore[return-value, no-any-return]

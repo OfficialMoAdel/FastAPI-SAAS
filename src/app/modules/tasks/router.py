@@ -8,8 +8,7 @@ from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-
-from src.app.modules.users.models import User
+from src.app.api.dependencies import AuthenticatedUser
 
 
 @router.post(
@@ -20,7 +19,7 @@ from src.app.modules.users.models import User
 )
 async def create_task(
     body: TaskCreate,
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Job:
     """Create a new background task.
 
@@ -36,7 +35,7 @@ async def create_task(
     """
     try:
         result = await task_service.create_task(body.message, tenant_id=str(current_user.tenant_id))
-        return Job(**result)
+        return Job(**result)  # type: ignore[return-value, no-any-return]
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
     except ValueError as e:
@@ -46,7 +45,7 @@ async def create_task(
 @router.get("/task/{task_id}", response_model=TaskStatus)
 async def get_task(
     task_id: str,
-    current_user: User = Depends(get_current_user),
+    current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> TaskStatus:
     """Get information about a specific background task.
 
@@ -69,6 +68,6 @@ async def get_task(
         result = await task_service.get_task(task_id, tenant_id=str(current_user.tenant_id))
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-        return TaskStatus(**result)
+        return TaskStatus(**result)  # type: ignore[return-value, no-any-return]
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")

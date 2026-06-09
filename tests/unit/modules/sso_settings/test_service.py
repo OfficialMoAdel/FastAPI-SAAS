@@ -148,26 +148,21 @@ class TestSSOSettingsServiceUpdate:
         service = SSOSettingsService()
         mock_db = AsyncMock()
 
-        # First get returns current settings (before update)
-        mock_current = MagicMock()
-        mock_current.id = 1
-        mock_current.provider = "google"
-
-        # Second get returns updated settings (after update)
-        mock_updated = MagicMock()
-        mock_updated.id = 1
-        mock_updated.provider = "google"
-        mock_updated.additional_config = {}
-        mock_updated.is_enabled = True
-        mock_updated.created_at = datetime.now(UTC)
-        mock_updated.updated_at = datetime.now(UTC)
+        mock_current = {
+            "id": 1,
+            "provider": "google",
+            "additional_config": {},
+            "is_enabled": True,
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
 
         mock_encryption = MagicMock()
         mock_encryption.encrypt_column.return_value = "new_encrypted_value"
 
         with patch("src.app.modules.sso_settings.service.crud_sso_settings") as mock_crud:
             # get called twice: before update and after update
-            mock_crud.get = AsyncMock(side_effect=[mock_current, mock_updated])
+            mock_crud.get = AsyncMock(return_value=mock_current)
             mock_crud.update = AsyncMock()
 
             with patch("src.app.modules.sso_settings.service.get_encryption", return_value=mock_encryption):
@@ -187,22 +182,17 @@ class TestSSOSettingsServiceUpdate:
         service = SSOSettingsService()
         mock_db = AsyncMock()
 
-        # First get returns current settings
-        mock_current = MagicMock()
-        mock_current.id = 1
-        mock_current.provider = "google"
-
-        # Second get returns updated settings
-        mock_updated = MagicMock()
-        mock_updated.id = 1
-        mock_updated.provider = "google"
-        mock_updated.additional_config = {}
-        mock_updated.is_enabled = False
-        mock_updated.created_at = datetime.now(UTC)
-        mock_updated.updated_at = datetime.now(UTC)
+        mock_current = {
+            "id": 1,
+            "provider": "google",
+            "additional_config": {},
+            "is_enabled": True,
+            "created_at": datetime.now(UTC),
+            "updated_at": datetime.now(UTC),
+        }
 
         with patch("src.app.modules.sso_settings.service.crud_sso_settings") as mock_crud:
-            mock_crud.get = AsyncMock(side_effect=[mock_current, mock_updated])
+            mock_crud.get = AsyncMock(return_value=mock_current)
             mock_crud.update = AsyncMock()
 
             update = SSOSettingsUpdate(is_enabled=False)

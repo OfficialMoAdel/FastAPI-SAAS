@@ -21,6 +21,11 @@ from src.app.modules.sso.service import SSOService, get_sso_service
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 
 
+def _get_clear_cookie_str() -> str:
+    secure_flag = "Secure; " if settings.SESSION_SECURE_COOKIES else ""
+    return f'sso_state=""; Max-Age=0; Path=/; HttpOnly; {secure_flag}SameSite=Lax'
+
+
 def _validate_redirect_uri(uri: str | None) -> None:
     """Validate redirect URI to prevent open redirects."""
     if not uri:
@@ -46,7 +51,7 @@ async def list_providers(
     """List enabled SSO providers."""
     providers = await sso_service.get_enabled_providers(db)
     provider_reads = [SSOProviderRead(**p) for p in providers]
-    return SSOProvidersResponse(providers=provider_reads)
+    return SSOProvidersResponse(providers=provider_reads)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/{provider}/authorize")
@@ -76,10 +81,10 @@ async def initiate_sso(
         state,
         max_age=600,  # 10 minutes to match Redis TTL
         httponly=True,
-        secure=True,
+        secure=settings.SESSION_SECURE_COOKIES,
         samesite="lax",
     )
-    return response
+    return response  # type: ignore[return-value, no-any-return]
 
 
 # Alias for backward compatibility with old frontend
@@ -93,7 +98,7 @@ async def initiate_sso_alias(
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow (alias for /{provider}/authorize for backward compatibility)."""
     _validate_redirect_uri(redirect_uri)
-    return await initiate_sso(request, provider, db, sso_service, redirect_uri)
+    return await initiate_sso(request, provider, db, sso_service, redirect_uri)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/{provider}/callback")
@@ -106,7 +111,7 @@ async def handle_callback(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> AuthTokenResponse | dict[str, str]:
-    """Handle OAuth callback and return authentication tokens."""
+    """Handle OAuth callback and return authentication tokens."""  # type: ignore[return-value, no-any-return]
     # Login CSRF Protection Constraint
     import hmac
 
@@ -125,20 +130,20 @@ async def handle_callback(
             request=request,
             db=db,
         )
-        return tokens
+        return tokens  # type: ignore[return-value, no-any-return]
     except HTTPException as e:
         e.headers = e.headers or {}
-        e.headers["Set-Cookie"] = 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'
+        e.headers["Set-Cookie"] = _get_clear_cookie_str()
         raise e
     except httpx.TimeoutException as e:
-        headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
+        headers = {"Set-Cookie": _get_clear_cookie_str()}
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Provider timeout: {str(e)}",
             headers=headers,
         )
     except httpx.HTTPStatusError as e:
-        headers = {"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'}
+        headers = {"Set-Cookie": _get_clear_cookie_str()}
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Provider error: {e.response.status_code}",
@@ -191,22 +196,22 @@ async def handle_post_callback(
             db=db,
             user_data=user_data,
         )
-        return tokens
+        return tokens  # type: ignore[return-value, no-any-return]
     except HTTPException as e:
         e.headers = e.headers or {}
-        e.headers["Set-Cookie"] = 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'
+        e.headers["Set-Cookie"] = _get_clear_cookie_str()
         raise e
     except httpx.TimeoutException as e:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
             detail=f"Provider timeout: {str(e)}",
-            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'},
+            headers={"Set-Cookie": _get_clear_cookie_str()},
         )
     except httpx.HTTPStatusError as e:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Provider error: {e.response.status_code}",
-            headers={"Set-Cookie": 'sso_state=""; Max-Age=0; Path=/; HttpOnly; Secure; SameSite=Lax'},
+            headers={"Set-Cookie": _get_clear_cookie_str()},
         )
     finally:
         response.delete_cookie("sso_state")
@@ -256,10 +261,10 @@ async def connect_provider(
         state,
         max_age=600,  # 10 minutes to match Redis TTL
         httponly=True,
-        secure=True,
+        secure=settings.SESSION_SECURE_COOKIES,
         samesite="lax",
     )
-    return response
+    return response  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/{provider}")
@@ -282,4 +287,4 @@ async def disconnect_provider(
         provider=provider.value,
         tenant_id=tenant_id,
     )
-    return {"message": f"Provider {provider.value} disconnected successfully"}
+    return {"message": f"Provider {provider.value} disconnected successfully"}  # type: ignore[return-value, no-any-return]

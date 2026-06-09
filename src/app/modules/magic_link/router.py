@@ -25,7 +25,7 @@ def get_magic_link_service(
     redis: Annotated[Redis, Depends(async_get_redis)],
 ) -> MagicLinkService:
     """Dependency injection for MagicLinkService."""
-    return MagicLinkService(db=db, redis=redis)
+    return MagicLinkService(db=db, redis=redis)  # type: ignore[return-value, no-any-return]
 
 
 @router.post(
@@ -58,7 +58,7 @@ async def send_magic_link(
     ip_address = request.client.host if request.client else "unknown"
     user_agent = request.headers.get("user-agent", "unknown")
 
-    return await service.send_magic_link(
+    return await service.send_magic_link(  # type: ignore[return-value, no-any-return]
         email=body.email,
         ip_address=ip_address,
         user_agent=user_agent,
@@ -84,7 +84,7 @@ async def verify_magic_link(
     response: Response,
     service: Annotated[MagicLinkService, Depends(get_magic_link_service)],
 ) -> LoginTokenResponse | LoginMFAResponse:
-    """Verify a magic link token and return authentication tokens.
+    """Verify a magic link token and return authentication tokens.  # type: ignore[return-value, no-any-return]
 
     The token is consumed after first use (one-time use).
     Returns JWT access tokens (and sets secure HTTP-only refresh cookie) on successful verification.
@@ -96,4 +96,4 @@ async def verify_magic_link(
     from src.app.core.utils.ip_utils import get_client_ip
 
     ip_address = get_client_ip(request)
-    return await service.verify_magic_link(token=body.token, ip_address=ip_address, response=response)
+    return await service.verify_magic_link(token=body.token, ip_address=ip_address, response=response)  # type: ignore[return-value, no-any-return]

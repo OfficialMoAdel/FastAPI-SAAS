@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 from uuid import UUID
 
@@ -305,8 +306,6 @@ class UserService(BaseService[User]):
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
 
-            import asyncio
-
             def _log_task_error(task: asyncio.Task) -> None:
                 """Log errors from background event tasks so they are not silently swallowed."""
                 exc = task.exception() if not task.cancelled() else None
@@ -413,9 +412,9 @@ class UserService(BaseService[User]):
             raise ModelNotFoundError("User", username)
 
         await self._cache_user(db_user)
-        from fastapi.encoders import jsonable_encoder
+        from src.app.modules.users.schemas import UserRead
 
-        return cast(dict[str, Any], jsonable_encoder(db_user))
+        return UserRead.model_validate(db_user).model_dump(mode="json")
 
     async def get(self, user_id: Any) -> dict[str, Any] | None:  # type: ignore[override]
         """Get a user by ID with Redis caching.
@@ -439,12 +438,9 @@ class UserService(BaseService[User]):
         user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if user:
             await self._cache_user(user)
-            cached = await self._get_cached_user(_user_cache_key(user_id))
-            if cached:
-                return cached
-            from fastapi.encoders import jsonable_encoder
+            from src.app.modules.users.schemas import UserRead
 
-            return cast(dict[str, Any], jsonable_encoder(user))
+            return UserRead.model_validate(user).model_dump(mode="json")
         return None
 
     async def get_by_email(self, email: str) -> dict[str, Any] | None:
@@ -469,12 +465,9 @@ class UserService(BaseService[User]):
         user = await self.crud.get(db=self.db, email=email, is_deleted=False)
         if user:
             await self._cache_user(user)
-            cached = await self._get_cached_user(_user_email_cache_key(email))
-            if cached:
-                return cached
-            from fastapi.encoders import jsonable_encoder
+            from src.app.modules.users.schemas import UserRead
 
-            return cast(dict[str, Any], jsonable_encoder(user))
+            return UserRead.model_validate(user).model_dump(mode="json")
         return None
 
     async def update(  # type: ignore[override]

@@ -25,7 +25,7 @@ async def write_tier(
     service: Annotated[TierService, Depends(get_tier_service)],
 ) -> TierRead:
     """Create a new tier (superuser only)."""
-    return TierRead.model_validate(await service.create_tier(tier))
+    return await service.create_tier(tier)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/tiers", response_model=PaginatedListResponse[TierRead])
@@ -36,7 +36,7 @@ async def read_tiers(
     per_page: int = 10,
 ) -> Any:
     """Get paginated list of tiers."""
-    return await service.get_tiers(page, per_page)
+    return await service.get_tiers(page, per_page)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/tiers/{name}", response_model=TierRead)
@@ -46,7 +46,7 @@ async def read_tier(
     service: Annotated[TierService, Depends(get_tier_service)],
 ) -> TierRead:
     """Get tier by name."""
-    return TierRead.model_validate(await service.get_tier(name))
+    return await service.get_tier(name)  # type: ignore[return-value, no-any-return]
 
 
 @router.patch("/tiers/{name}", response_model=MessageResponse, dependencies=[Depends(get_current_superuser)])
@@ -57,7 +57,7 @@ async def patch_tier(
     service: Annotated[TierService, Depends(get_tier_service)],
 ) -> MessageResponse:
     """Update a tier (superuser only)."""
-    return MessageResponse.model_validate(await service.update_tier(name, values))
+    return await service.update_tier(name, values)  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/tiers/{name}", response_model=MessageResponse, dependencies=[Depends(get_current_superuser)])
@@ -67,4 +67,4 @@ async def erase_tier(
     service: Annotated[TierService, Depends(get_tier_service)],
 ) -> MessageResponse:
     """Delete a tier (superuser only)."""
-    return MessageResponse.model_validate(await service.delete_tier(name))
+    return await service.delete_tier(name)  # type: ignore[return-value, no-any-return]

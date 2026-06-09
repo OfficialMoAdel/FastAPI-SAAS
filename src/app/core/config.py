@@ -1,4 +1,3 @@
-import os
 import re
 from enum import Enum
 from typing import Any, Literal
@@ -131,8 +130,9 @@ class CryptSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "CryptSettings":
         """Validate encryption keys are set to prevent runtime failures."""
+        from src.app.core.config import EnvironmentSettings
 
-        env = os.getenv("ENVIRONMENT", "local").lower()
+        env = getattr(EnvironmentSettings().ENVIRONMENT, "value", EnvironmentSettings().ENVIRONMENT).lower()
         if env in ("production", "staging"):
             # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated in production/staging
             if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:

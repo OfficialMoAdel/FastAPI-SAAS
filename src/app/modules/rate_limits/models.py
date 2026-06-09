@@ -5,7 +5,6 @@ from sqlalchemy import DateTime, ForeignKey, Index, Integer, String, UniqueConst
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from src.app.core.db.database import Base
-from src.app.modules.tiers.models import Tier
 
 if TYPE_CHECKING:
     from src.app.modules.tiers.models import Tier

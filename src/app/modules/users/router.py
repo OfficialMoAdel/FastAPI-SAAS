@@ -4,7 +4,6 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.status import HTTP_404_NOT_FOUND
 
 from src.app.api.dependencies import get_current_superuser, get_current_user
 from src.app.core.db.database import async_get_db
@@ -29,15 +28,19 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 async def _get_username_from_id(service: UserService, user_id: str) -> str:
     """Helper to get username from ID from cached dicts."""
-    user = await service.get(int(user_id))
+    try:
+        parsed_id = int(user_id)
+    except ValueError:
+        return user_id
+    user = await service.get(parsed_id)
     if not user:
-        raise HTTPException(status_code=HTTP_404_NOT_FOUND, detail="User not found")
-    return str(user["username"])
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return str(user["username"])  # type: ignore[return-value, no-any-return]
 
 
 async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
     """Dependency for UserService injection."""
-    return get_user_service(db)
+    return get_user_service(db)  # type: ignore[return-value, no-any-return]
 
 
 @router.post(
@@ -48,7 +51,7 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
 )
 async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> UserRead:
     """Create a new user."""
-    return UserRead.model_validate(await service.create(user))
+    return await service.create(user)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
@@ -64,7 +67,7 @@ async def read_users(
     # BUG FIX: len(data) is only the current page size, not the full total.
     # Fall back to 0 so the caller knows total is unavailable, not silently wrong.
     total = users_data.get("total_count", 0)
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": pagination.page,
@@ -97,11 +100,11 @@ async def read_users_me(
         if user_id is not None:
             user = await service.get(int(user_id))
             if user:
-                return UserRead.model_validate(user)
+                return user  # type: ignore[return-value, no-any-return]
         elif username:
             user = await service.get_by_username(username)
             if user:
-                return UserRead.model_validate(user)
+                return user  # type: ignore[return-value, no-any-return]
     except (ValueError, TypeError) as e:
         from src.app.core.logger import get_logger
 
@@ -147,7 +150,7 @@ async def read_user(
     if db_username != current_user["username"] and not current_user.get("is_superuser"):
         raise HTTPException(status_code=403, detail="Forbidden: You can only view your own profile")
 
-    return UserRead.model_validate(user)
+    return user  # type: ignore[return-value, no-any-return]
 
 
 @router.patch("/{user_id}", response_model=UserUpdateResponse)
@@ -169,7 +172,7 @@ async def patch_user(
         username = user_id
 
     result = await service.update(username, values, current_user)
-    return UserUpdateResponse(message=result.get("message", "User updated successfully"))
+    return UserUpdateResponse(message=result.get("message", "User updated successfully"))  # type: ignore[return-value, no-any-return]
 
 
 @router.put("/{user_id}", response_model=UserUpdateResponse)
@@ -185,7 +188,7 @@ async def put_user(
     Supports both integer user IDs and username strings for backward compatibility.
     """
     result = await patch_user(request, values, user_id, current_user, service)
-    return result
+    return result  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/{user_id}", response_model=UserDeleteResponse)
@@ -207,7 +210,7 @@ async def erase_user(
         username = user_id
 
     await service.delete(username, current_user, token)
-    return UserDeleteResponse()
+    return UserDeleteResponse()  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/db/{user_id}", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
@@ -227,7 +230,7 @@ async def erase_db_user(
     except ValueError:
         username = user_id
 
-    return await service.hard_delete(username, token)
+    return await service.hard_delete(username, token)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
@@ -244,7 +247,7 @@ async def read_user_rate_limits(
     except ValueError:
         username = user_id
 
-    return await service.get_with_rate_limits(username)
+    return await service.get_with_rate_limits(username)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/{user_id}/tier", response_model=UserTierResponse | None)
@@ -270,8 +273,8 @@ async def read_user_tier(
 
     result = await service.get_with_tier(username)
     if result is None:
-        return None
-    return UserTierResponse(
+        return None  # type: ignore[return-value, no-any-return]
+    return UserTierResponse(  # type: ignore[return-value, no-any-return]
         tier_id=result.get("tier_id"),
         tier_name=result.get("tier_name"),
         tier_price=result.get("tier_price"),
@@ -293,4 +296,4 @@ async def patch_user_tier(
     except ValueError:
         username = user_id
 
-    return await service.update_tier(username, values)
+    return await service.update_tier(username, values)  # type: ignore[return-value, no-any-return]

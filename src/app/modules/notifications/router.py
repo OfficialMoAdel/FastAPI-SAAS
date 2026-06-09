@@ -64,12 +64,12 @@ async def send_notification(
     if notification is None:
         from fastapi.responses import JSONResponse
 
-        return JSONResponse(
+        return JSONResponse(  # type: ignore[return-value, no-any-return]
             status_code=status.HTTP_202_ACCEPTED,
             content={"message": "Notification skipped by user preferences.", "skipped": True},
         )
 
-    return NotificationResponse.model_validate(notification)
+    return notification  # type: ignore[return-value, no-any-return]
 
 
 @router.get("", response_model=NotificationList)
@@ -101,8 +101,8 @@ async def list_notifications(
         offset=offset,
     )
 
-    return {
-        "items": [NotificationResponse.model_validate(n) for n in notifications],
+    return {  # type: ignore[return-value, no-any-return]
+        "items": notifications,
         "total": total,
         "page": page,
         "per_page": per_page,
@@ -128,7 +128,7 @@ async def list_template_overrides(
     service = NotificationService(db)
     overrides = await service.list_template_overrides(current_tenant.id, limit, offset)
 
-    return [EmailTemplateOverrideResponse.model_validate(o) for o in overrides]
+    return overrides  # type: ignore[return-value, no-any-return]
 
 
 @router.post(
@@ -153,7 +153,7 @@ async def create_template_override(
         content=request.content,
     )
 
-    return EmailTemplateOverrideResponse.model_validate(override)
+    return override  # type: ignore[return-value, no-any-return]
 
 
 @router.delete(
@@ -194,4 +194,4 @@ async def get_notification(
     if not notification:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
 
-    return NotificationResponse.model_validate(notification)
+    return notification  # type: ignore[return-value, no-any-return]

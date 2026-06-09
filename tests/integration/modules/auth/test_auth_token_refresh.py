@@ -92,7 +92,7 @@ class TestTokenRefreshWithCaching:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
         ):
             mock_verify.return_value = mock_token_data
 

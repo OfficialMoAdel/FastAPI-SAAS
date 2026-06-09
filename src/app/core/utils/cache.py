@@ -1018,18 +1018,8 @@ def cache(
                 if pattern_to_invalidate_extra is not None:
                     for pattern in pattern_to_invalidate_extra:
                         formatted_pattern = _format_prefix(pattern, kwargs)
-                        # OPT-8: Use O(1) pattern invalidation if available
-                        # If the pattern was registered via invalidation_patterns, this is O(1).
-                        # However, pattern_to_invalidate_extra historically implies a glob match
-                        # (formatted_pattern + "*").
-                        # To support O(1) invalidation while maintaining backward compatibility:
-                        # We could try to invalidate the pattern exactly as formatted first?
-                        # Or just rely on _delete_keys_by_pattern for now unless we introduce a new arg.
-                        # For now, we keep backward compatibility as safe default.
-                        await _delete_keys_by_pattern(formatted_pattern + "*")
-
-                        # Also attempt to invalidate exact pattern match in the new index
-                        # This allows progressive migration to O(1) without breaking changes
+                        # OPT-8: Use O(1) pattern invalidation
+                        # This avoids the O(N) SCAN operation on the Redis database.
                         await invalidate_by_pattern(formatted_pattern)
 
             return result

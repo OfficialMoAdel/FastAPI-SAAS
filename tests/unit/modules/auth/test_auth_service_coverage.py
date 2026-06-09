@@ -94,7 +94,7 @@ class TestAuthenticateUser:
             }
         )
 
-        with patch("src.app.modules.auth.service.get_user_service", return_value=mock_user_service):
+        with patch("src.app.modules.auth.service.get_service", return_value=mock_user_service):
             with patch("src.app.modules.auth.service.verify_password", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = True
                 result = await auth_service.authenticate_user("test@example.com", "password", mock_db)
@@ -108,7 +108,7 @@ class TestAuthenticateUser:
         mock_user_service = MagicMock()
         mock_user_service.get_user_auth_info = AsyncMock(return_value=None)
 
-        with patch("src.app.modules.auth.service.get_user_service", return_value=mock_user_service):
+        with patch("src.app.modules.auth.service.get_service", return_value=mock_user_service):
             with patch("src.app.modules.auth.service.verify_password", new_callable=AsyncMock) as mock_verify:
                 result = await auth_service.authenticate_user("nonexistent@test.com", "wrongpassword", mock_db)
 
@@ -334,7 +334,7 @@ class TestRefreshAccessToken:
             mock_verify.return_value = mock_user_data
 
             with patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock):
-                with patch("src.app.modules.auth.service.get_user_service", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.get_service", return_value=mock_user_service):
                     with patch(
                         "src.app.modules.auth.service.create_access_token", new_callable=AsyncMock
                     ) as mock_create:
@@ -408,7 +408,7 @@ class TestLogout:
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.modules.auth.service.get_user_service", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.get_service", return_value=mock_user_service):
                     # Should not raise even if user not found
                     result = await auth_service.logout(
                         access_token="access_token",
@@ -440,7 +440,7 @@ class TestLogout:
             with patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify:
                 mock_verify.return_value = mock_user_data
 
-                with patch("src.app.modules.auth.service.get_user_service", return_value=mock_user_service):
+                with patch("src.app.modules.auth.service.get_service", return_value=mock_user_service):
                     with patch("src.app.core.security.session_manager.session_manager") as mock_session_mgr:
                         mock_session_mgr.invalidate_session = AsyncMock(side_effect=Exception("Redis error"))
 

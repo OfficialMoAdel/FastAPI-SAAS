@@ -104,7 +104,8 @@ def mock_existing_user():
     user.profile_image_url = "https://example.com/profile.jpg"
     user.is_deleted = False
     user.is_superuser = False
-    user.tenant_id = 1
+    import uuid
+    user.tenant_id = uuid.uuid4()
     user.tier_id = 1
     user.created_at = datetime.now(UTC)
     user.updated_at = datetime.now(UTC)

@@ -297,10 +297,10 @@ class AISettingsService(BaseService[AISettings]):
             return result_dict
         else:
             await crud_ai_settings.update(db=self.db, object=update_data, id=settings["id"])
-            updated_settings = await crud_ai_settings.get(db=self.db, id=settings["id"])
-            if updated_settings is None:
-                raise ModelNotFoundError("AISettings", settings["id"])
-            return updated_settings
+
+            # Update the dictionary locally instead of fetching again
+            settings.update(update_data)
+            return settings
 
 
 # Dependency injection factories

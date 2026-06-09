@@ -297,7 +297,7 @@ class TestAuthServiceTokenRefresh:
             patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
-            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption
@@ -563,7 +563,7 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
@@ -599,7 +599,7 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
@@ -628,7 +628,7 @@ class TestAuthServiceSecurityBugFixes:
             patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_user_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption

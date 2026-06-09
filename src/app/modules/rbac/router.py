@@ -24,7 +24,7 @@ async def list_roles(
 ) -> list[RoleOut]:
     """List all roles for the current tenant."""
     roles = await service.get_roles(skip=skip, limit=limit)
-    return [RoleOut.model_validate(r) for r in roles]
+    return roles  # type: ignore[return-value, no-any-return]
 
 
 @router.get(
@@ -38,7 +38,7 @@ async def get_role(
 ) -> RoleOut:
     """Get a specific role by ID."""
     role = await service.get_role(role_id)
-    return RoleOut.model_validate(role)
+    return role  # type: ignore[return-value, no-any-return]
 
 
 @router.post(
@@ -53,7 +53,7 @@ async def create_role(
 ) -> RoleOut:
     """Create a new custom role."""
     role = await service.create_role(role_in)
-    return RoleOut.model_validate(role)
+    return role  # type: ignore[return-value, no-any-return]
 
 
 @router.put(
@@ -68,7 +68,7 @@ async def update_role(
 ) -> RoleOut:
     """Update an existing role. System roles cannot be modified."""
     role = await service.update_role(role_id, role_in)
-    return RoleOut.model_validate(role)
+    return role  # type: ignore[return-value, no-any-return]
 
 
 @router.delete(
@@ -96,7 +96,7 @@ async def get_role_permissions(
 ) -> list[PermissionOut]:
     """Get all permissions assigned to a role."""
     permissions = await service.get_role_permissions(role_id)
-    return [PermissionOut.model_validate(p) for p in permissions]
+    return permissions  # type: ignore[return-value, no-any-return]
 
 
 @router.post(

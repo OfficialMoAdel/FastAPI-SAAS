@@ -192,7 +192,8 @@ class SSOService:
             try:
                 token_response = await oauth_provider.exchange_code_for_token(code)
             except Exception as e:
-                raise BadRequestException(f"Failed to exchange code: {str(e)}")
+                logger.error("SSO Code Exchange Failed", error=str(e), provider=provider)
+                raise BadRequestException("Failed to exchange code with provider")
 
             access_token = token_response.get("access_token")
             if not access_token:
@@ -211,7 +212,8 @@ class SSOService:
                 else:
                     user_info = await oauth_provider.get_user_info(access_token)
             except Exception as e:
-                raise BadRequestException(f"Failed to fetch user info: {str(e)}")
+                logger.error("SSO User Info Fetch Failed", error=str(e), provider=provider)
+                raise BadRequestException("Failed to fetch user info from provider")
 
             connection = await crud_user_sso_connections.get_by_provider_user_id(
                 db=db,

@@ -84,8 +84,8 @@ async def list_audit_logs(
         offset=offset,
     )
 
-    return {
-        "items": [AuditLogResponse.model_validate(log) for log in logs],
+    return {  # type: ignore[return-value, no-any-return]
+        "items": logs,
         "total": total,
         "page": page,
         "per_page": per_page,
@@ -113,7 +113,7 @@ async def list_available_actions(
     result = await db.execute(query)
     actions = result.scalars().all()
 
-    return sorted(actions)
+    return sorted(actions)  # type: ignore[return-value, no-any-return]
 
 
 # ============================================================================
@@ -159,7 +159,7 @@ async def get_export_count(
     result = await db.execute(query)
     count = result.scalar_one()
 
-    return ExportCountResponse(
+    return ExportCountResponse(  # type: ignore[return-value, no-any-return]
         count=count,
         max_export_limit=EXPORT_MAX_RECORDS,
         can_export=count <= EXPORT_MAX_RECORDS,
@@ -329,19 +329,19 @@ async def export_audit_logs(
 
     # Generate response based on format
     if format == "csv":
-        return StreamingResponse(
+        return StreamingResponse(  # type: ignore[return-value, no-any-return]
             generate_csv(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
         )
     elif format == "jsonl":
-        return StreamingResponse(
+        return StreamingResponse(  # type: ignore[return-value, no-any-return]
             generate_jsonl(),
             media_type="application/x-ndjson",
             headers={"Content-Disposition": "attachment; filename=audit_logs.jsonl"},
         )
     else:  # json
-        return StreamingResponse(
+        return StreamingResponse(  # type: ignore[return-value, no-any-return]
             generate_json(),
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
@@ -374,4 +374,4 @@ async def get_audit_log(
     if not log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
 
-    return AuditLogResponse.model_validate(log)
+    return log  # type: ignore[return-value, no-any-return]

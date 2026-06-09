@@ -6,12 +6,11 @@ from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, MetaData,
 from sqlalchemy.dialects.postgresql import UUID
 from uuid6 import uuid7  # 126
 
+from src.app.core.config import settings
+from src.app.core.db.database import AsyncSession, async_engine, local_session
 from src.app.core.logger import get_logger
-
-from ..app.core.config import settings
-from ..app.core.db.database import AsyncSession, async_engine, local_session
-from ..app.core.security import get_password_hash
-from ..app.modules.users.models import User
+from src.app.core.security import get_password_hash
+from src.app.modules.users.models import User
 
 logging.basicConfig(level=logging.INFO)
 logger = get_logger(__name__)
@@ -76,5 +75,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(main())
+    asyncio.run(main())

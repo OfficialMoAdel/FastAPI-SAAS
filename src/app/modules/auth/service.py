@@ -3,7 +3,7 @@
 import asyncio
 import random
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 from uuid import UUID
 
 from fastapi import Request, Response
@@ -29,6 +29,7 @@ from src.app.core.security import (
     verify_token,
 )
 from src.app.core.security.tokens import hash_token
+from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules.auth.models import (
     EmailVerificationToken,
@@ -38,7 +39,6 @@ from src.app.modules.auth.models import (
 )
 from src.app.modules.users.crud import crud_users
 from src.app.modules.users.models import User
-from src.app.modules.users.service import get_user_service
 
 logger = get_logger(__name__)
 
@@ -89,7 +89,7 @@ return new_attempts
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         # Use UserService to benefit from auth info caching
-        user_service = get_user_service(db)
+        user_service = get_service("user", db)
         if "@" in username_or_email:
             db_user = await user_service.get_user_auth_info(email=username_or_email)
         else:
@@ -105,7 +105,7 @@ return new_attempts
         if not db_user or not password_valid:
             return None
 
-        return db_user
+        return cast(dict[str, Any], db_user)
 
     async def _publish_login_audit(
         self,
@@ -214,7 +214,7 @@ return new_attempts
 
         if result == -1:
             # Fetch user to get tenant and user ID for audit log
-            user_service = get_user_service(db)
+            user_service = get_service("user", db)
             if "@" in normalized_username:
                 db_user = await user_service.get_user_auth_info(email=normalized_username)
             else:
@@ -403,7 +403,7 @@ return new_attempts
 
         # Fetch user with tier for Zero-DB rate limiting
         # Use UserService to benefit from auth info caching
-        user_service = get_user_service(db)
+        user_service = get_service("user", db)
         if "@" in user_data.username_or_email:
             # Fallback for email-based subjects (rare but safe)
             db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
@@ -544,7 +544,7 @@ return new_attempts
             user_service = None
             if user_data:
                 try:
-                    user_service = get_user_service(db)
+                    user_service = get_service("user", db)
                     if "@" in user_data.username_or_email:
                         db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
                     else:
@@ -661,7 +661,7 @@ return new_attempts
 
         # Invalidate auth cache so new password works immediately, AFTER commit
         # to prevent race condition where concurrent reads see old DB value and re-cache it.
-        user_service = get_user_service(db)
+        user_service = get_service("user", db)
         await user_service._invalidate_user_cache(user)
         await self._delete_user_token_cache(user)
 
@@ -900,7 +900,7 @@ return new_attempts
         await db.commit()
 
         # Invalidate auth cache AFTER commit
-        user_service = get_user_service(db)
+        user_service = get_service("user", db)
         await user_service._invalidate_user_cache(user)
         await self._delete_user_token_cache(user)
 
@@ -1024,7 +1024,7 @@ return new_attempts
         await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True}, commit=False)
 
         # Invalidate auth cache
-        user_service = get_user_service(db)
+        user_service = get_service("user", db)
         await user_service._invalidate_user_cache(user)
 
         # Delete token (it's single use)

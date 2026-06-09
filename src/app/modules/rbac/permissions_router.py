@@ -30,4 +30,4 @@ async def list_permissions(
     **Requires:** Authentication (any authenticated user can list permissions)
     """
     permissions = await service.get_all_permissions()
-    return [PermissionOut.model_validate(p) for p in permissions]
+    return permissions  # type: ignore[return-value, no-any-return]

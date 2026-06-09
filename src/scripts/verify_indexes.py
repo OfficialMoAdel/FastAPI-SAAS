@@ -2,7 +2,7 @@ import asyncio
 
 from sqlalchemy import text
 
-from app.core.config import settings
+from src.app.core.config import settings
 
 
 async def verify():

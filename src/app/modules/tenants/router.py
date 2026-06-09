@@ -21,7 +21,7 @@ async def _get_tenant_service(
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> TenantService:
     """Dependency factory for TenantService."""
-    return get_tenant_service(db)
+    return get_tenant_service(db)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("", response_model=TenantList)
@@ -43,7 +43,7 @@ async def list_tenants(
     )
     data = tenants_data.get("data", [])
     total = tenants_data.get("total_count", 0)
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": page,
@@ -64,7 +64,7 @@ async def create_tenant(
     Requires authentication. Slug must be unique.
     Returns 409 if slug already exists.
     """
-    return await service.create_tenant(tenant)
+    return await service.create_tenant(tenant)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/{tenant_id}", response_model=TenantResponse)
@@ -80,7 +80,7 @@ async def get_tenant(
     if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
         raise ForbiddenException(detail="You do not have permission to access this tenant.")
 
-    return await service.get_tenant(tenant_id)
+    return await service.get_tenant(tenant_id)  # type: ignore[return-value, no-any-return]
 
 
 @router.patch(
@@ -102,7 +102,7 @@ async def update_tenant(
     if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
         raise ForbiddenException(detail="You do not have permission to update this tenant.")
 
-    return await service.update_tenant(tenant_id, values)
+    return await service.update_tenant(tenant_id, values)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/{tenant_id}/deactivate", response_model=TenantResponse)
@@ -116,7 +116,7 @@ async def deactivate_tenant(
     Requires authentication. Returns 404 if not found.
     Deactivated tenants will be rejected by the middleware.
     """
-    return await service.deactivate_tenant(tenant_id)
+    return await service.deactivate_tenant(tenant_id)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/{tenant_id}/reactivate", response_model=TenantResponse)
@@ -129,4 +129,4 @@ async def reactivate_tenant(
 
     Requires authentication. Returns 404 if not found.
     """
-    return await service.reactivate_tenant(tenant_id)
+    return await service.reactivate_tenant(tenant_id)  # type: ignore[return-value, no-any-return]

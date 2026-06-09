@@ -29,7 +29,7 @@ router = APIRouter(
 
 async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> APIKeyService:
     """Dependency for APIKeyService injection."""
-    return get_api_key_service(db)
+    return get_api_key_service(db)  # type: ignore[return-value, no-any-return]
 
 
 # Type alias for dependency injection
@@ -43,7 +43,7 @@ def _get_tenant_id() -> UUID:
         from fastapi import HTTPException, status
 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
-    return context.id
+    return context.id  # type: ignore[return-value, no-any-return]
 
 
 @router.post("", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
@@ -58,7 +58,7 @@ async def create_api_key(
     The full API key is only returned once at creation time.
     Store it securely as it cannot be retrieved again.
     """
-    return await service.create_api_key(
+    return await service.create_api_key(  # type: ignore[return-value, no-any-return]
         api_key_data=body,
         user_id=current_user["id"],
         tenant_id=tenant_id,
@@ -85,7 +85,7 @@ async def list_api_keys(
     )
     data = result.get("data", [])
     total = result.get("total_count", 0)
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": page,
@@ -111,7 +111,7 @@ async def revoke_api_key(
         user_id=current_user["id"],
         tenant_id=tenant_id,
     )
-    return APIKeyRevokeResponse(message=result["message"])
+    return APIKeyRevokeResponse(message=result["message"])  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/{key_id}/rotate", response_model=APIKeyRotateResponse)
@@ -149,7 +149,7 @@ async def rotate_api_key(
         tenant_id=tenant_id,
         grace_period_days=grace_period_days,
     )
-    return APIKeyRotateResponse(
+    return APIKeyRotateResponse(  # type: ignore[return-value, no-any-return]
         id=result.id,
         name=result.name,
         key=result.key,

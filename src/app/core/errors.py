@@ -20,6 +20,7 @@ from sqlalchemy.exc import TimeoutError as SQLAlchemyTimeoutError
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from structlog import get_logger
 
+from src.app.core.exceptions.cache_exceptions import CacheException
 from src.app.modules._base.exceptions import (
     DuplicateError,
     ForbiddenError,
@@ -143,6 +144,19 @@ def setup_exception_handlers(app: FastAPI) -> None:
             code=code,
             message=str(exc.detail) if exc.detail else "An error occurred",
             status_code=exc.status_code,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(CacheException)
+    async def cache_exception_handler(request: Request, exc: CacheException) -> JSONResponse:
+        """Handle custom cache exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+        logger.error("Cache error", error=str(exc), exc_info=True, request_id=request_id)
+        return create_error_response(
+            code=ErrorCode.INTERNAL_ERROR,
+            message="Internal Server Error",
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            details={"error_type": "cache_error"},
             request_id=request_id,
         )
 

@@ -29,6 +29,9 @@ def test_encryption_keys_missing_warning():
 
     with patch.dict(os.environ, {"ENVIRONMENT": "production"}):
         with pytest.raises(ValueError, match="ENCRYPTION_KEY and ENCRYPTION_SALT must be set"):
+            from pydantic import SecretStr
+
+            from src.app.core.config import CryptSettings
             CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
 
 

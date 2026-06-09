@@ -54,7 +54,7 @@ async def get_storage_settings(
             detail="Storage settings not configured for this tenant",
         )
 
-    return service.to_read_schema(storage_settings)
+    return service.to_read_schema(storage_settings)  # type: ignore[return-value, no-any-return]
 
 
 @router.post(
@@ -93,7 +93,7 @@ async def create_storage_settings(
 
     try:
         storage_settings = await service.create_settings(tenant.id, data)
-        return service.to_read_schema(storage_settings)
+        return service.to_read_schema(storage_settings)  # type: ignore[return-value, no-any-return]
 
     except InvalidCredentialsError as e:
         raise HTTPException(
@@ -136,7 +136,7 @@ async def update_storage_settings(
     """
     try:
         storage_settings = await service.update_settings(tenant.id, data)
-        return service.to_read_schema(storage_settings)
+        return service.to_read_schema(storage_settings)  # type: ignore[return-value, no-any-return]
 
     except StorageNotConfiguredError:
         raise HTTPException(

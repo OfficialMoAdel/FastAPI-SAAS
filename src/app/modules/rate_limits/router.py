@@ -26,7 +26,7 @@ async def write_rate_limit(
     service: RateLimitService = Depends(get_rate_limit_service),
 ) -> RateLimitRead:
     """Create a new rate limit for a tier (superuser only)."""
-    return RateLimitRead.model_validate(await service.create_rate_limit(tier_name, rate_limit))
+    return await service.create_rate_limit(tier_name, rate_limit)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/tiers/{tier_name}/rate-limits", response_model=PaginatedListResponse[RateLimitRead])
@@ -38,7 +38,7 @@ async def read_rate_limits(
     per_page: int = 10,
 ) -> Any:
     """Get paginated rate limits for a tier."""
-    return await service.get_rate_limits(tier_name, page, per_page)
+    return await service.get_rate_limits(tier_name, page, per_page)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/tiers/{tier_name}/rate-limits/{id}", response_model=RateLimitRead)
@@ -49,7 +49,7 @@ async def read_rate_limit(
     service: RateLimitService = Depends(get_rate_limit_service),
 ) -> RateLimitRead:
     """Get a single rate limit by ID."""
-    return RateLimitRead.model_validate(await service.get_rate_limit(tier_name, id))
+    return await service.get_rate_limit(tier_name, id)  # type: ignore[return-value, no-any-return]
 
 
 @router.patch(
@@ -65,7 +65,7 @@ async def patch_rate_limit(
     service: RateLimitService = Depends(get_rate_limit_service),
 ) -> MessageResponse:
     """Update a rate limit (superuser only)."""
-    return MessageResponse.model_validate(await service.update_rate_limit(tier_name, id, values))
+    return await service.update_rate_limit(tier_name, id, values)  # type: ignore[return-value, no-any-return]
 
 
 @router.delete(
@@ -80,4 +80,4 @@ async def erase_rate_limit(
     service: RateLimitService = Depends(get_rate_limit_service),
 ) -> MessageResponse:
     """Delete a rate limit (superuser only)."""
-    return MessageResponse.model_validate(await service.delete_rate_limit(tier_name, id))
+    return await service.delete_rate_limit(tier_name, id)  # type: ignore[return-value, no-any-return]

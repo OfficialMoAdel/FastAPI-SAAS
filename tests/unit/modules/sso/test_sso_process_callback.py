@@ -82,7 +82,7 @@ async def test_process_callback_exchange_failed(
     mock_provider_instance.exchange_code_for_token.side_effect = Exception("Exchange error")
     mock_get_provider.return_value = mock_provider_instance
 
-    with pytest.raises(BadRequestException, match="Failed to exchange code: Exchange error"):
+    with pytest.raises(BadRequestException, match="Failed to exchange code with provider"):
         await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code123", "state123")
 
 

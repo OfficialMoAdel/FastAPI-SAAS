@@ -4,7 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
 
-from fastapi import FastAPI, Request, status
+from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
 
@@ -12,7 +12,6 @@ from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
 from src.app.core.cache.warmer import warmer
 from src.app.core.config import EnvironmentOption, settings
-from src.app.core.exceptions.cache_exceptions import CacheException
 from src.app.core.logger import get_logger
 from src.app.core.setup import create_application, lifespan_factory
 from src.app.middleware.attack_detection import AttackDetectionMiddleware
@@ -171,18 +170,6 @@ app = create_application(
     default_response_class=ORJSONResponse,
 )
 
-
-@app.exception_handler(CacheException)
-async def cache_exception_handler(request: Request, exc: CacheException) -> ORJSONResponse:
-    """Handle custom cache exceptions."""
-    from src.app.core.logger import get_logger
-
-    logger = get_logger(__name__)
-    logger.error("Cache error", error=str(exc), exc_info=True)
-    return ORJSONResponse(
-        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-        content={"detail": "Internal Server Error", "error_type": "cache_error"},
-    )
 
 
 # Middleware stack (LIFO - last added runs first on request)

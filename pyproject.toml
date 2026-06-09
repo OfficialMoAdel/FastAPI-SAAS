@@ -45,7 +45,6 @@ dependencies = [
     # Billing & AI (Phase 3/5)
     "stripe>=8.0.0",
     "ollama>=0.3.0",
-    "locust>=2.43.0",
     # Performance (Phase 2)
     "orjson>=3.9.0",
     # Unix-only async event loop (not available on Windows)
@@ -71,6 +70,7 @@ dev = [
     "mypy>=1.8.0",
     "types-redis>=4.6.0",
     "ruff>=0.1.0",
+    "locust>=2.43.0",
 ]
 
 [build-system]

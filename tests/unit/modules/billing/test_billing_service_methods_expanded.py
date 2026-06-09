@@ -56,7 +56,10 @@ async def test_stripe_settings_service_update(mock_crud, mock_get_tenant, mock_d
     result = await service.update_settings(data)
 
     mock_crud.update.assert_awaited_once()
-    assert result == {"id": 1, "stripe_customer_id": "old_cus"}  # Returns updated object from get
+    assert result["id"] == 1
+    assert result["stripe_customer_id"] == "old_cus"
+    assert result["encrypted_secret_key"] == "encrypted_key"
+    assert "updated_at" in result
 
 
 # --- SubscriptionPlanService ---

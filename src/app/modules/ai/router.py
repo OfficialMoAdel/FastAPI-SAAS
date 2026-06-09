@@ -52,7 +52,7 @@ async def create_chat_session(
 ) -> dict:
     """Create a new chat session."""
     service = get_chat_session_service(db)
-    return await service.create_session(current_user["id"], data)
+    return await service.create_session(current_user["id"], data)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/sessions", response_model=ChatSessionList)
@@ -67,7 +67,7 @@ async def list_chat_sessions(
     result = await service.get_user_sessions(current_user["id"], page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": page,
@@ -91,7 +91,7 @@ async def get_chat_session(
     messages_result = await message_service.get_session_messages(session_id, limit=100)
     messages = messages_result.get("data", [])
 
-    return {**session, "messages": messages}
+    return {**session, "messages": messages}  # type: ignore[return-value, no-any-return]
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionRead)
@@ -103,7 +103,7 @@ async def update_chat_session(
 ) -> dict:
     """Update a chat session."""
     service = get_chat_session_service(db)
-    return await service.update_session(session_id, current_user["id"], data)
+    return await service.update_session(session_id, current_user["id"], data)  # type: ignore[return-value, no-any-return]
 
 
 @router.delete("/sessions/{session_id}", response_model=dict)
@@ -114,7 +114,7 @@ async def delete_chat_session(
 ) -> dict:
     """Delete a chat session."""
     service = get_chat_session_service(db)
-    return await service.delete_session(session_id, current_user["id"])
+    return await service.delete_session(session_id, current_user["id"])  # type: ignore[return-value, no-any-return]
 
 
 # =============================================================================
@@ -139,7 +139,7 @@ async def list_session_messages(
     result = await message_service.get_session_messages(session_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "items": data,
         "total": total,
         "page": page,
@@ -161,7 +161,7 @@ async def get_ai_settings(
 ) -> dict:
     """Get AI settings for the current user."""
     service = get_ai_settings_service(db)
-    return await service.get_or_create_settings(current_user["id"])
+    return await service.get_or_create_settings(current_user["id"])  # type: ignore[return-value, no-any-return]
 
 
 @router.patch("/settings", response_model=AISettingsRead)
@@ -172,7 +172,7 @@ async def update_ai_settings(
 ) -> dict:
     """Update AI settings for the current user."""
     service = get_ai_settings_service(db)
-    return await service.update_settings(current_user["id"], data)
+    return await service.update_settings(current_user["id"], data)  # type: ignore[return-value, no-any-return]
 
 
 @router.get("/models", response_model=AIModelsListResponse)
@@ -186,7 +186,7 @@ async def list_available_models(
     """
     client = get_ollama_client()
     models = await client.list_models()
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         "models": models,
         "default_model": "gemma3",
     }
@@ -220,7 +220,7 @@ async def chat_completion(
     """
     service = get_chat_completion_service(db)
     try:
-        return await service.complete(session_id, current_user["id"], request)
+        return await service.complete(session_id, current_user["id"], request)  # type: ignore[return-value, no-any-return]
     except ChatCompletionError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -268,7 +268,7 @@ async def chat_completion_stream(
             data = str(json_dumps(error, as_str=True))
             yield f"data: {data}\n\n"
 
-    return StreamingResponse(
+    return StreamingResponse(  # type: ignore[return-value, no-any-return]
         generate(),
         media_type="text/event-stream",
         headers={

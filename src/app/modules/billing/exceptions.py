@@ -58,34 +58,4 @@ class SubscriptionRequiredError(Exception):
         super().__init__(self.message)
 
 
-class StripeError(Exception):
-    """Raised when a Stripe API error occurs.
-
-    Wraps Stripe SDK exceptions for consistent handling.
-
-    Attributes:
-        message: Human-readable error message.
-        stripe_error_type: Type of Stripe error (e.g., "card_error", "api_error").
-        stripe_error_code: Stripe error code if available.
-    """
-
-    def __init__(
-        self,
-        message: str,
-        stripe_error_type: str = "api_error",
-        stripe_error_code: str | None = None,
-    ):
-        """Initialize StripeError.
-
-        Args:
-            message: Description of the Stripe error.
-            stripe_error_type: Type of Stripe error.
-            stripe_error_code: Stripe error code if available.
-        """
-        self.message = message
-        self.stripe_error_type = stripe_error_type
-        self.stripe_error_code = stripe_error_code
-        super().__init__(self.message)
-
-
-__all__ = ["PaymentRequiredError", "SubscriptionRequiredError", "StripeError"]
+__all__ = ["PaymentRequiredError", "SubscriptionRequiredError"]

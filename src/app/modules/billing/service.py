@@ -167,10 +167,9 @@ class StripeSettingsService(BaseService[StripeSettings]):
             )
             return dict(create_result) if create_result else {}
         else:
-            # Update existing settings
             await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
-            update_result = await crud_stripe_settings.get(db=self.db, id=stripe_settings_record["id"])
-            return dict(update_result) if update_result else {}
+            stripe_settings_record.update(update_data)
+            return dict(stripe_settings_record)
 
 
 def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:

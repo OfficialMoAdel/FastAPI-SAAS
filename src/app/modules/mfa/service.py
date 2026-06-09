@@ -741,7 +741,13 @@ class MFAService:
         import hashlib
         import hmac
 
-        salt = f"{settings.SECRET_KEY.get_secret_value()}_{user_id}".encode()
+        # Use ENCRYPTION_KEY if available, fallback to SECRET_KEY for backward compatibility
+        base_key = (
+            settings.ENCRYPTION_KEY.get_secret_value()
+            if settings.ENCRYPTION_KEY
+            else settings.SECRET_KEY.get_secret_value()
+        )
+        salt = f"{base_key}_{user_id}".encode()
         return hmac.new(salt, code.encode(), hashlib.sha256).hexdigest()
 
     _fernet_instance: Fernet | None = None
@@ -761,15 +767,25 @@ class MFAService:
         # FIXED: Use proper PBKDF2HMAC key derivation with salt
         # instead of simple truncation + null padding (security vulnerability)
 
-        # Use a consistent salt derived from the secret key (not random, for reproducibility)
-        salt = settings.SECRET_KEY.get_secret_value().encode()[:16]
+        # Use a consistent salt derived from ENCRYPTION_SALT or fallback
+        salt_str = (
+            settings.ENCRYPTION_SALT.get_secret_value()
+            if settings.ENCRYPTION_SALT
+            else settings.SECRET_KEY.get_secret_value()
+        )
+        salt = salt_str.encode()[:16]
         kdf = PBKDF2HMAC(
             algorithm=hashes.SHA256(),
             length=32,
             salt=salt,
             iterations=480000,  # OWASP recommended minimum
         )
-        secret = settings.SECRET_KEY.get_secret_value().encode()
+        base_key = (
+            settings.ENCRYPTION_KEY.get_secret_value()
+            if settings.ENCRYPTION_KEY
+            else settings.SECRET_KEY.get_secret_value()
+        )
+        secret = base_key.encode()
         key = base64.urlsafe_b64encode(kdf.derive(secret))
         MFAService._fernet_instance = Fernet(key)
         return MFAService._fernet_instance

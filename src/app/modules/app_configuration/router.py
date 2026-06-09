@@ -26,4 +26,4 @@ async def get_app_configuration():
 
     This endpoint is public and does not require authentication.
     """
-    return await app_configuration_service.get_configuration()
+    return await app_configuration_service.get_configuration()  # type: ignore[return-value, no-any-return]

@@ -173,12 +173,12 @@ class SSOSettingsService:
             return SSOSettingsRead.model_validate(current)
 
         await crud_sso_settings.update(db=db, object=update_data, provider=provider)
-        updated = await crud_sso_settings.get(db=db, provider=provider)
+        current.update(update_data)
 
         # Invalidate cache so subsequent reads pick up the change
         await self._invalidate_provider_cache(provider)
 
-        return SSOSettingsRead.model_validate(updated)
+        return SSOSettingsRead.model_validate(current)
 
     @audit_action("sso_settings.delete", "sso_settings")
     async def delete_settings(

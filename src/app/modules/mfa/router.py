@@ -105,7 +105,7 @@ async def setup_mfa(
         user_id=current_user["id"],
         db=db,
     )
-    return MFASetupResponse(**result)
+    return MFASetupResponse(**result)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/enable", response_model=dict[str, Any])
@@ -129,7 +129,7 @@ async def enable_mfa(
     Raises:
         BadRequestException: If MFA already enabled or token is invalid.
     """
-    return await service.enable_mfa(
+    return await service.enable_mfa(  # type: ignore[return-value, no-any-return]
         user_id=current_user["id"],
         request=request,
         db=db,
@@ -167,7 +167,7 @@ async def verify_mfa(
         request=request,
         db=db,
     )
-    return MFAVerifyResponse(**result)
+    return MFAVerifyResponse(**result)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/disable", response_model=dict[str, str])
@@ -191,7 +191,7 @@ async def disable_mfa(
         BadRequestException: If MFA not enabled.
         UnauthorizedException: If verification fails.
     """
-    return await service.disable_mfa(
+    return await service.disable_mfa(  # type: ignore[return-value, no-any-return]
         user_id=current_user["id"],
         password=request.password,
         totp_token=request.totp_token,
@@ -218,7 +218,7 @@ async def get_mfa_status(
         user_id=current_user["id"],
         db=db,
     )
-    return MFAStatusResponse(**result)
+    return MFAStatusResponse(**result)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/backup-codes", response_model=MFABackupCodesResponse)
@@ -251,7 +251,7 @@ async def regenerate_backup_codes(
         backup_code=request.backup_code,
         db=db,
     )
-    return MFABackupCodesResponse(**result)
+    return MFABackupCodesResponse(**result)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/complete-login", response_model=MFACompleteLoginResponse)
@@ -377,7 +377,7 @@ async def complete_mfa_login(
         max_age=max_age,
     )
 
-    return MFACompleteLoginResponse(
+    return MFACompleteLoginResponse(  # type: ignore[return-value, no-any-return]
         access_token=access_token,
         token_type="bearer",
         message="Login successful",

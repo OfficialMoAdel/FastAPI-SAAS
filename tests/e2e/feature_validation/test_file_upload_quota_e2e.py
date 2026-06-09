@@ -216,14 +216,14 @@ async def test_concurrent_uploads_quota_accuracy(premium_user: dict, client: Asy
     log_step("Initial quota", used=initial_used)
 
     # Step 2: Upload files concurrently
-    log_step("Uploading 5 files concurrently")
+    log_step("Uploading 20 files concurrently")
 
     async def upload_file(index):
         file_data = {"file": (f"concurrent_{index}.txt", io.BytesIO(b"test"), "text/plain")}
         response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
         return response.status_code == 201
 
-    results = await asyncio.gather(*[upload_file(i) for i in range(5)])
+    results = await asyncio.gather(*[upload_file(i) for i in range(20)])
     successful = sum(results)
     log_step("Concurrent uploads completed", successful=successful)
 

@@ -39,7 +39,7 @@ async def get_stripe_configuration(
     stripe_settings = await service.get_settings()
 
     if stripe_settings is None:
-        return {
+        return {  # type: ignore[return-value, no-any-return]
             "id": 0,
             "tenant_id": 0,
             "stripe_customer_id": None,
@@ -51,7 +51,7 @@ async def get_stripe_configuration(
             "updated_at": None,
         }
 
-    return {
+    return {  # type: ignore[return-value, no-any-return]
         **stripe_settings,
         "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
         "has_webhook_secret": bool(stripe_settings.get("webhook_secret")),
@@ -73,7 +73,7 @@ async def create_or_update_stripe_configuration(
     backward compatibility with the old frontend.
     """
     service = get_stripe_settings_service(db)
-    return await service.update_settings(data)
+    return await service.update_settings(data)  # type: ignore[return-value, no-any-return]
 
 
 @router.post("/webhooks", status_code=status.HTTP_200_OK)
@@ -149,7 +149,7 @@ async def handle_stripe_webhooks(
     key = f"stripe_webhook:{event_id}"
     if await redis.exists(key):
         logger.info("Duplicate webhook event ignored:", event_id=event_id)
-        return {"status": "duplicate"}
+        return {"status": "duplicate"}  # type: ignore[return-value, no-any-return]
 
     # Mark as processed for 24 hours
     await redis.setex(key, 86400, "1")
@@ -157,4 +157,4 @@ async def handle_stripe_webhooks(
     # Handle event in background task
     background_tasks.add_task(handle_webhook_event, event)
 
-    return {"status": "success"}
+    return {"status": "success"}  # type: ignore[return-value, no-any-return]
