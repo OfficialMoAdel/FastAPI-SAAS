@@ -24,9 +24,9 @@ async def write_rate_limit(
     tier_name: str,
     rate_limit: RateLimitCreate,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> RateLimitRead:
+) -> Any:
     """Create a new rate limit for a tier (superuser only)."""
-    return await service.create_rate_limit(tier_name, rate_limit)  # type: ignore[return-value, no-any-return]
+    return await service.create_rate_limit(tier_name, rate_limit)
 
 
 @router.get("/tiers/{tier_name}/rate-limits", response_model=PaginatedListResponse[RateLimitRead])
@@ -38,7 +38,7 @@ async def read_rate_limits(
     per_page: int = 10,
 ) -> Any:
     """Get paginated rate limits for a tier."""
-    return await service.get_rate_limits(tier_name, page, per_page)  # type: ignore[return-value, no-any-return]
+    return await service.get_rate_limits(tier_name, page, per_page)
 
 
 @router.get("/tiers/{tier_name}/rate-limits/{id}", response_model=RateLimitRead)
@@ -47,9 +47,9 @@ async def read_rate_limit(
     tier_name: str,
     id: int,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> RateLimitRead:
+) -> Any:
     """Get a single rate limit by ID."""
-    return await service.get_rate_limit(tier_name, id)  # type: ignore[return-value, no-any-return]
+    return await service.get_rate_limit(tier_name, id)
 
 
 @router.patch(
@@ -63,9 +63,9 @@ async def patch_rate_limit(
     id: int,
     values: RateLimitUpdate,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> MessageResponse:
+) -> Any:
     """Update a rate limit (superuser only)."""
-    return await service.update_rate_limit(tier_name, id, values)  # type: ignore[return-value, no-any-return]
+    return await service.update_rate_limit(tier_name, id, values)
 
 
 @router.delete(
@@ -78,6 +78,6 @@ async def erase_rate_limit(
     tier_name: str,
     id: int,
     service: RateLimitService = Depends(get_rate_limit_service),
-) -> MessageResponse:
+) -> Any:
     """Delete a rate limit (superuser only)."""
-    return await service.delete_rate_limit(tier_name, id)  # type: ignore[return-value, no-any-return]
+    return await service.delete_rate_limit(tier_name, id)

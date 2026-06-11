@@ -52,7 +52,7 @@ class AIChatSession(Base):
         init=False,
         cascade="all, delete-orphan",
         order_by="AIChatMessage.created_at",
-        lazy="raise",
+        lazy="selectin",
     )
 
 

@@ -440,14 +440,24 @@ class MFAService:
 
         # We now use fast SHA256 hashing to prevent bcrypt DoS when iterating 10 codes
         hashed_input = await self._hash_backup_code(formatted_code, user_id)
+
+        # Pre-compute old SHA256 hash for legacy fallback
+        import hashlib
+        old_salt = settings.SECRET_KEY.get_secret_value().encode()
+        old_hashed_input = hashlib.sha256(old_salt + formatted_code.encode()).hexdigest()
+
         for stored_hash in mfa_method.backup_codes:
             # Fallback for old bcrypt hashes dynamically
             if stored_hash.startswith("$2b$"):
                 if await verify_password(formatted_code, stored_hash):
                     matched_hash = stored_hash
                     break
-            # Fast SHA256
+            # Fast HMAC-SHA256
             elif hashed_input == stored_hash:
+                matched_hash = stored_hash
+                break
+            # Legacy simple SHA256 fallback
+            elif old_hashed_input == stored_hash:
                 matched_hash = stored_hash
                 break
 

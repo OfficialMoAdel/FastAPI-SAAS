@@ -70,7 +70,7 @@ async def list_passkeys(
     This is a convenience endpoint that wraps /auth/passkey/credentials
     for backward compatibility with the old backend.
     """
-    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])  # type: ignore[return-value, no-any-return]
+    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])
 
 
 @router.delete("/passkeys/{passkey_id}", response_model=PasskeyDeleteResponse)
@@ -85,7 +85,7 @@ async def delete_passkey(
     for backward compatibility with the old backend.
     """
     await passkey_service.delete_credential(db=db, user_id=current_user["id"], credential_id=passkey_id)
-    return PasskeyDeleteResponse(message="Passkey deleted successfully")  # type: ignore[return-value, no-any-return]
+    return PasskeyDeleteResponse(message="Passkey deleted successfully")
 
 
 # ============================================================================
@@ -119,7 +119,7 @@ async def add_ip_to_whitelist(
         added_by=current_user.get("id"),
     )
 
-    return IPListUpdateResponse(  # type: ignore[return-value, no-any-return]
+    return IPListUpdateResponse(
         success=success,
         ip_address=request.ip_address,
         list_type="whitelist",
@@ -147,7 +147,7 @@ async def remove_ip_from_whitelist(
     """
     success = await ip_filter_service.remove_from_whitelist(ip_address)
 
-    return IPListUpdateResponse(  # type: ignore[return-value, no-any-return]
+    return IPListUpdateResponse(
         success=success,
         ip_address=ip_address,
         list_type="whitelist",
@@ -182,7 +182,7 @@ async def add_ip_to_blacklist(
         added_by=current_user.get("id"),
     )
 
-    return IPListUpdateResponse(  # type: ignore[return-value, no-any-return]
+    return IPListUpdateResponse(
         success=success,
         ip_address=request.ip_address,
         list_type="blacklist",
@@ -210,7 +210,7 @@ async def remove_ip_from_blacklist(
     """
     success = await ip_filter_service.remove_from_blacklist(ip_address)
 
-    return IPListUpdateResponse(  # type: ignore[return-value, no-any-return]
+    return IPListUpdateResponse(
         success=success,
         ip_address=ip_address,
         list_type="blacklist",
@@ -260,7 +260,7 @@ async def get_ip_lists(
         for entry in blacklist_raw
     ]
 
-    return IPListsResponse(  # type: ignore[return-value, no-any-return]
+    return IPListsResponse(
         whitelist=whitelist,
         blacklist=blacklist,
         whitelist_enabled=settings.IP_WHITELIST_ENABLED,
@@ -284,7 +284,7 @@ async def get_ip_filter_config(
     Returns the current configuration values for IP filtering.
     Note: Configuration changes require application restart to take effect.
     """
-    return IPFilterConfig(  # type: ignore[return-value, no-any-return]
+    return IPFilterConfig(
         whitelist_enabled=settings.IP_WHITELIST_ENABLED,
         blacklist_enabled=settings.IP_BLACKLIST_ENABLED,
         whitelist_bypass_rate_limit=settings.IP_WHITELIST_BYPASS_RATE_LIMIT,
@@ -323,7 +323,7 @@ async def update_ip_filter_config(
     if config_update.whitelist_bypass_rate_limit is not None:
         settings.IP_WHITELIST_BYPASS_RATE_LIMIT = config_update.whitelist_bypass_rate_limit
 
-    return IPFilterConfig(  # type: ignore[return-value, no-any-return]
+    return IPFilterConfig(
         whitelist_enabled=settings.IP_WHITELIST_ENABLED,
         blacklist_enabled=settings.IP_BLACKLIST_ENABLED,
         whitelist_bypass_rate_limit=settings.IP_WHITELIST_BYPASS_RATE_LIMIT,
@@ -350,7 +350,7 @@ async def get_auto_ban_config(
     Returns the current auto-ban settings including threshold,
     duration, and escalation settings.
     """
-    return AutoBanConfig(  # type: ignore[return-value, no-any-return]
+    return AutoBanConfig(
         enabled=settings.AUTO_BAN_ENABLED,
         threshold=settings.AUTO_BAN_THRESHOLD,
         duration=settings.AUTO_BAN_DURATION,
@@ -389,7 +389,7 @@ async def update_auto_ban_config(
     if config_update.escalation is not None:
         settings.AUTO_BAN_ESCALATION = config_update.escalation
 
-    return AutoBanConfig(  # type: ignore[return-value, no-any-return]
+    return AutoBanConfig(
         enabled=settings.AUTO_BAN_ENABLED,
         threshold=settings.AUTO_BAN_THRESHOLD,
         duration=settings.AUTO_BAN_DURATION,
@@ -424,7 +424,7 @@ async def list_banned_ips(
         for entry in banned_raw
     ]
 
-    return BannedIPsResponse(  # type: ignore[return-value, no-any-return]
+    return BannedIPsResponse(
         banned_ips=banned,
         total_count=len(banned),
     )
@@ -455,7 +455,7 @@ async def manually_ban_ip(
         reason=request.reason or f"Manual ban by admin {current_user.get('id')}",
     )
 
-    return BanActionResponse(  # type: ignore[return-value, no-any-return]
+    return BanActionResponse(
         success=success,
         ip_address=request.ip_address,
         action="banned",
@@ -484,7 +484,7 @@ async def unban_ip_address(
     try:
         ipaddress.ip_address(ip_address)
     except ValueError:
-        return BanActionResponse(  # type: ignore[return-value, no-any-return]
+        return BanActionResponse(
             success=False,
             ip_address=ip_address,
             action="unbanned",
@@ -493,7 +493,7 @@ async def unban_ip_address(
 
     success = await unban_ip(ip_address)
 
-    return BanActionResponse(  # type: ignore[return-value, no-any-return]
+    return BanActionResponse(
         success=success,
         ip_address=ip_address,
         action="unbanned",
@@ -519,12 +519,12 @@ async def get_violation_statistics(
     stats = await get_violation_stats()
 
     if isinstance(stats, dict):
-        return ViolationStats(  # type: ignore[return-value, no-any-return]
+        return ViolationStats(
             total_ips=stats.get("total_ips", 0),
             total_violations=stats.get("total_violations", 0),
         )
 
-    return ViolationStats(  # type: ignore[return-value, no-any-return]
+    return ViolationStats(
         total_ips=0,
         total_violations=0,
     )
@@ -553,7 +553,7 @@ async def get_ip_violation_stats(
     try:
         ipaddress.ip_address(ip_address)
     except ValueError:
-        return IPViolationStats(ip=ip_address, violations=0, total_ips=0, total_violations=0)  # type: ignore[return-value, no-any-return]
+        return IPViolationStats(ip=ip_address, violations=0, total_ips=0, total_violations=0)
 
     stats = await get_violation_stats(ip_address)
     # ban_info = await get_ban_info(ip_address)
@@ -563,7 +563,7 @@ async def get_ip_violation_stats(
     else:
         violations = 0
 
-    return IPViolationStats(  # type: ignore[return-value, no-any-return]
+    return IPViolationStats(
         ip=ip_address,
         violations=violations,
         total_ips=1,

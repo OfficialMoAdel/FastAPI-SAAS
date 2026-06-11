@@ -1,6 +1,6 @@
 """API Keys router - HTTP endpoints for API key management."""
 
-from typing import Annotated
+from typing import Annotated, Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Query, status
@@ -29,7 +29,7 @@ router = APIRouter(
 
 async def _get_api_key_service(db: Annotated[AsyncSession, Depends(async_get_db)]) -> APIKeyService:
     """Dependency for APIKeyService injection."""
-    return get_api_key_service(db)  # type: ignore[return-value, no-any-return]
+    return get_api_key_service(db)
 
 
 # Type alias for dependency injection
@@ -43,7 +43,7 @@ def _get_tenant_id() -> UUID:
         from fastapi import HTTPException, status
 
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
-    return context.id  # type: ignore[return-value, no-any-return]
+    return context.id
 
 
 @router.post("", response_model=APIKeyResponse, status_code=status.HTTP_201_CREATED)
@@ -58,7 +58,7 @@ async def create_api_key(
     The full API key is only returned once at creation time.
     Store it securely as it cannot be retrieved again.
     """
-    return await service.create_api_key(  # type: ignore[return-value, no-any-return]
+    return await service.create_api_key(
         api_key_data=body,
         user_id=current_user["id"],
         tenant_id=tenant_id,
@@ -72,7 +72,7 @@ async def list_api_keys(
     service: APIKeyServiceDep,
     page: int = Query(1, ge=1),
     per_page: int = Query(10, ge=1, le=100),
-) -> dict:
+) -> Any:
     """List API keys for the current user.
 
     Returns key metadata only - the actual keys are never returned after creation.
@@ -85,7 +85,7 @@ async def list_api_keys(
     )
     data = result.get("data", [])
     total = result.get("total_count", 0)
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -111,7 +111,7 @@ async def revoke_api_key(
         user_id=current_user["id"],
         tenant_id=tenant_id,
     )
-    return APIKeyRevokeResponse(message=result["message"])  # type: ignore[return-value, no-any-return]
+    return APIKeyRevokeResponse(message=result["message"])
 
 
 @router.post("/{key_id}/rotate", response_model=APIKeyRotateResponse)
@@ -149,7 +149,7 @@ async def rotate_api_key(
         tenant_id=tenant_id,
         grace_period_days=grace_period_days,
     )
-    return APIKeyRotateResponse(  # type: ignore[return-value, no-any-return]
+    return APIKeyRotateResponse(
         id=result.id,
         name=result.name,
         key=result.key,

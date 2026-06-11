@@ -1,6 +1,6 @@
 """RBAC Router - Role management API endpoints."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, status
 
@@ -21,10 +21,10 @@ async def list_roles(
     service: Annotated[RoleService, Depends(get_role_service)],
     skip: int = 0,
     limit: int = 100,
-) -> list[RoleOut]:
+) -> Any:
     """List all roles for the current tenant."""
     roles = await service.get_roles(skip=skip, limit=limit)
-    return roles  # type: ignore[return-value, no-any-return]
+    return roles
 
 
 @router.get(
@@ -35,10 +35,10 @@ async def list_roles(
 async def get_role(
     role_id: int,
     service: Annotated[RoleService, Depends(get_role_service)],
-) -> RoleOut:
+) -> Any:
     """Get a specific role by ID."""
     role = await service.get_role(role_id)
-    return role  # type: ignore[return-value, no-any-return]
+    return role
 
 
 @router.post(
@@ -50,10 +50,10 @@ async def get_role(
 async def create_role(
     role_in: RoleCreate,
     service: Annotated[RoleService, Depends(get_role_service)],
-) -> RoleOut:
+) -> Any:
     """Create a new custom role."""
     role = await service.create_role(role_in)
-    return role  # type: ignore[return-value, no-any-return]
+    return role
 
 
 @router.put(
@@ -65,10 +65,10 @@ async def update_role(
     role_id: int,
     role_in: RoleUpdate,
     service: Annotated[RoleService, Depends(get_role_service)],
-) -> RoleOut:
+) -> Any:
     """Update an existing role. System roles cannot be modified."""
     role = await service.update_role(role_id, role_in)
-    return role  # type: ignore[return-value, no-any-return]
+    return role
 
 
 @router.delete(
@@ -93,10 +93,10 @@ async def delete_role(
 async def get_role_permissions(
     role_id: int,
     service: Annotated[RoleService, Depends(get_role_service)],
-) -> list[PermissionOut]:
+) -> Any:
     """Get all permissions assigned to a role."""
     permissions = await service.get_role_permissions(role_id)
-    return permissions  # type: ignore[return-value, no-any-return]
+    return permissions
 
 
 @router.post(

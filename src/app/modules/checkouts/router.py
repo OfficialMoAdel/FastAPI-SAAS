@@ -4,7 +4,7 @@ Provides /api/v1/checkouts endpoints for frontend compatibility with old backend
 Delegates to billing module's CheckoutService and UserSubscriptionService.
 """
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Body, Depends, HTTPException, status
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -31,7 +31,7 @@ async def create_checkout(
     data: CheckoutCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> CheckoutSession:
+) -> Any:
     """Create a Stripe checkout session for subscription.
 
     Args:
@@ -43,7 +43,7 @@ async def create_checkout(
         Checkout session with URL to redirect user to Stripe
     """
     service = get_checkout_service(db)
-    return await service.create_session(  # type: ignore[return-value, no-any-return]
+    return await service.create_session(
         user_id=current_user["id"],
         user_email=current_user["email"],
         data=data,
@@ -54,7 +54,7 @@ async def create_checkout(
 async def get_current_subscription(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> UserSubscriptionRead | None:
+) -> Any:
     """Get the current user's active subscription.
 
     Returns the most recent active subscription if one exists.
@@ -75,9 +75,9 @@ async def get_current_subscription(
         # Filter for active subscriptions
         active_subs = [s for s in subscriptions if s.get("status") == "active"]
         if active_subs:
-            return active_subs[0]  # type: ignore[return-value, no-any-return]
+            return active_subs[0]
 
-    return None  # type: ignore[return-value, no-any-return]
+    return None
 
 
 @router.post("/cancel", response_model=UserSubscriptionRead)
@@ -85,7 +85,7 @@ async def cancel_current_subscription(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     subscription_id: Annotated[int | None, Body(embed=True)] = None,
-) -> dict:
+) -> Any:
     """Cancel the user's subscription at period end.
 
     Old frontend compatibility: Accepts subscription_id in request body.
@@ -127,4 +127,4 @@ async def cancel_current_subscription(
             detail="Not authorized to cancel this subscription",
         )
 
-    return await service.cancel_subscription(subscription_id)  # type: ignore[return-value, no-any-return]
+    return await service.cancel_subscription(subscription_id)

@@ -88,7 +88,7 @@ class SubscriptionPlan(Base, kw_only=True):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False)
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="subscription_plan", init=False, lazy="raise"
+        back_populates="subscription_plan", init=False, lazy="selectin"
     )
 
 
@@ -119,7 +119,7 @@ class Product(Base, kw_only=True):
     # Relationships
     tenant: Mapped["Tenant"] = relationship(back_populates="products", init=False)
     pricing_tiers: Mapped[list["Pricing"]] = relationship(
-        back_populates="product", init=False, cascade="all, delete-orphan", lazy="raise"
+        back_populates="product", init=False, cascade="all, delete-orphan", lazy="selectin"
     )
 
 
@@ -207,7 +207,7 @@ class UserSubscription(Base, kw_only=True):
     user: Mapped["User"] = relationship(back_populates="user_subscriptions", init=False)
     subscription_plan: Mapped["SubscriptionPlan"] = relationship(back_populates="user_subscriptions", init=False)
     billing_records: Mapped[list["BillingRecord"]] = relationship(
-        back_populates="user_subscription", init=False, cascade="all, delete-orphan", lazy="raise"
+        back_populates="user_subscription", init=False, cascade="all, delete-orphan", lazy="selectin"
     )
 
 

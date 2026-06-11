@@ -92,7 +92,7 @@ async def stripe_webhook(
     # Handle event directly so that exceptions propagate and Stripe can retry
     await handle_webhook_event(event, background_tasks)
 
-    return {"status": "success"}  # type: ignore[return-value, no-any-return]
+    return {"status": "success"}
 
 
 # =============================================================================
@@ -107,12 +107,12 @@ async def stripe_webhook(
 )
 async def get_stripe_settings(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get Stripe settings for the current tenant (admin only)."""
     service = get_stripe_settings_service(db)
     stripe_settings = await service.get_settings()
     if stripe_settings is None:
-        return {  # type: ignore[return-value, no-any-return]
+        return {
             "id": 0,
             "tenant_id": 0,
             "stripe_customer_id": None,
@@ -123,7 +123,7 @@ async def get_stripe_settings(
             "created_at": None,
             "updated_at": None,
         }
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         **stripe_settings,
         "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
         "has_webhook_secret": bool(stripe_settings.get("webhook_secret")),
@@ -138,10 +138,10 @@ async def get_stripe_settings(
 async def update_stripe_settings(
     data: StripeSettingsUpdate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Update Stripe settings for the current tenant (admin only)."""
     service = get_stripe_settings_service(db)
-    return await service.update_settings(data)  # type: ignore[return-value, no-any-return]
+    return await service.update_settings(data)
 
 
 # =============================================================================
@@ -158,10 +158,10 @@ async def update_stripe_settings(
 async def create_subscription_plan(
     data: SubscriptionPlanCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Create a new subscription plan (admin only)."""
     service = get_subscription_plan_service(db)
-    return await service.create_plan(data)  # type: ignore[return-value, no-any-return]
+    return await service.create_plan(data)
 
 
 @router.get("/plans", response_model=SubscriptionPlanList)
@@ -170,13 +170,13 @@ async def list_subscription_plans(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     is_active: bool | None = Query(None, description="Filter by active status"),
-) -> dict:
+) -> Any:
     """List subscription plans (public for pricing page)."""
     service = get_subscription_plan_service(db)
     result = await service.get_plans(page=page, limit=per_page, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -190,10 +190,10 @@ async def list_subscription_plans(
 async def get_subscription_plan(
     plan_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get a subscription plan by ID."""
     service = get_subscription_plan_service(db)
-    return await service.get_plan(plan_id)  # type: ignore[return-value, no-any-return]
+    return await service.get_plan(plan_id)
 
 
 @router.patch(
@@ -205,10 +205,10 @@ async def update_subscription_plan(
     plan_id: int,
     data: SubscriptionPlanUpdate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Update a subscription plan (admin only)."""
     service = get_subscription_plan_service(db)
-    return await service.update_plan(plan_id, data)  # type: ignore[return-value, no-any-return]
+    return await service.update_plan(plan_id, data)
 
 
 @router.delete(
@@ -223,7 +223,7 @@ async def delete_subscription_plan(
     """Deactivate a subscription plan (admin only)."""
     service = get_subscription_plan_service(db)
     await service.delete_plan(plan_id)
-    return None  # type: ignore[return-value, no-any-return]
+    return None
 
 
 # =============================================================================
@@ -240,10 +240,10 @@ async def delete_subscription_plan(
 async def create_product(
     data: ProductCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Create a new product (admin only)."""
     service = get_product_service(db)
-    return await service.create_product(data)  # type: ignore[return-value, no-any-return]
+    return await service.create_product(data)
 
 
 @router.get("/products", response_model=ProductList)
@@ -252,13 +252,13 @@ async def list_products(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     is_active: bool | None = Query(None, description="Filter by active status"),
-) -> dict:
+) -> Any:
     """List products."""
     service = get_product_service(db)
     result = await service.get_products(page=page, limit=per_page, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -272,10 +272,10 @@ async def list_products(
 async def get_product(
     product_id: int,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get a product by ID."""
     service = get_product_service(db)
-    return await service.get_product(product_id)  # type: ignore[return-value, no-any-return]
+    return await service.get_product(product_id)
 
 
 @router.patch(
@@ -287,10 +287,10 @@ async def update_product(
     product_id: int,
     data: ProductUpdate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Update a product (admin only)."""
     service = get_product_service(db)
-    return await service.update_product(product_id, data)  # type: ignore[return-value, no-any-return]
+    return await service.update_product(product_id, data)
 
 
 @router.post(
@@ -303,10 +303,10 @@ async def add_product_pricing(
     product_id: int,
     data: PricingCreate,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Add a pricing tier to a product (admin only)."""
     service = get_product_service(db)
-    return await service.add_pricing(product_id, data)  # type: ignore[return-value, no-any-return]
+    return await service.add_pricing(product_id, data)
 
 
 # =============================================================================
@@ -323,7 +323,7 @@ async def get_my_subscriptions(
     service = get_user_subscription_service(db)
     result = await service.get_user_subscriptions(current_user["id"])
     data: list[Any] = result.get("data", [])
-    return data  # type: ignore[return-value, no-any-return]
+    return data
 
 
 @router.post("/subscriptions/{subscription_id}/cancel", response_model=UserSubscriptionRead)
@@ -331,7 +331,7 @@ async def cancel_subscription(
     subscription_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Cancel a subscription at period end."""
     service = get_user_subscription_service(db)
     subscription = await service.get_subscription(subscription_id)
@@ -349,7 +349,7 @@ async def cancel_subscription(
             detail="Not authorized to cancel this subscription",
         )
 
-    return await service.cancel_subscription(subscription_id)  # type: ignore[return-value, no-any-return]
+    return await service.cancel_subscription(subscription_id)
 
 
 # =============================================================================
@@ -365,7 +365,7 @@ async def create_checkout_session(
 ) -> CheckoutSession:
     """Create a Stripe checkout session."""
     service = get_checkout_service(db)
-    return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)  # type: ignore[return-value, no-any-return]
+    return await service.create_session(user_id=current_user["id"], user_email=current_user["email"], data=data)
 
 
 class PortalSessionRequest(BaseModel):
@@ -385,7 +385,7 @@ async def create_portal_session(
     """Create a Stripe Customer Portal session."""
     service = get_checkout_service(db)
     url = await service.create_portal_session(return_url=str(body.return_url))
-    return PortalResponse(url=url)  # type: ignore[return-value, no-any-return]
+    return PortalResponse(url=url)
 
 
 @router.get("/records", response_model=BillingRecordList)
@@ -395,7 +395,7 @@ async def list_billing_records(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
     status: str | None = Query(None, description="Filter by status (succeeded, failed, pending, refunded)"),
-) -> dict:
+) -> Any:
     """List billing records for the current user.
 
     Args:
@@ -407,7 +407,7 @@ async def list_billing_records(
     result = await service.get_user_records(current_user["id"], page=page, limit=per_page, status=status)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -422,7 +422,7 @@ async def get_billing_record(
     record_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get a billing record by ID."""
     service = get_billing_record_service(db)
     record = await service.get_record(record_id)
@@ -440,4 +440,4 @@ async def get_billing_record(
             detail="Not authorized to view this record",
         )
 
-    return record  # type: ignore[return-value, no-any-return]
+    return record

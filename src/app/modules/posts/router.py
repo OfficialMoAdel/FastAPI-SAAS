@@ -18,7 +18,7 @@ router = APIRouter(tags=["posts"])
 
 async def _get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostService:
     """Dependency for PostService injection."""
-    return get_post_service(db)  # type: ignore[return-value, no-any-return]
+    return get_post_service(db)
 
 
 @router.post("/{username}/posts", response_model=PostRead, status_code=status.HTTP_201_CREATED)
@@ -34,7 +34,7 @@ async def write_post(
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.create_post(post, current_user)  # type: ignore[return-value, no-any-return]
+    return await service.create_post(post, current_user)
 
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
@@ -50,13 +50,13 @@ async def read_posts(
     service: PostService = Depends(_get_post_service),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
-) -> dict:
+) -> Any:
     """Get paginated list of posts for a user."""
     if current_user.get("username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_posts(current_user["id"], page, per_page)  # type: ignore[return-value, no-any-return]
+    return await service.get_posts(current_user["id"], page, per_page)
 
 
 @router.get("/{username}/posts/{id}", response_model=PostRead)
@@ -73,7 +73,7 @@ async def read_post(
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_post(id, current_user["id"])  # type: ignore[return-value, no-any-return]
+    return await service.get_post(id, current_user["id"])
 
 
 @router.patch("/{username}/posts/{id}", response_model=MessageResponse)
@@ -91,7 +91,7 @@ async def patch_post(
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.update_post(id, values, current_user)  # type: ignore[return-value, no-any-return]
+    return await service.update_post(id, values, current_user)
 
 
 @router.delete("/{username}/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -109,7 +109,7 @@ async def erase_post(
 
         raise ForbiddenException()
     await service.delete_post(id, current_user)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)  # type: ignore[return-value, no-any-return]
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @router.delete(
@@ -123,4 +123,4 @@ async def erase_db_post(
 ) -> Response:
     """Permanently delete a post from database (superuser only)."""
     await service.hard_delete(id)
-    return Response(status_code=status.HTTP_204_NO_CONTENT)  # type: ignore[return-value, no-any-return]
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

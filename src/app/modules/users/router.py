@@ -26,7 +26,7 @@ from src.app.modules.users.service import UserService, get_user_service
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def _get_username_from_id(service: UserService, user_id: str) -> str:
+async def _get_username_from_id(service: UserService, user_id: str) -> Any:
     """Helper to get username from ID from cached dicts."""
     try:
         parsed_id = int(user_id)
@@ -35,12 +35,12 @@ async def _get_username_from_id(service: UserService, user_id: str) -> str:
     user = await service.get(parsed_id)
     if not user:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return str(user["username"])  # type: ignore[return-value, no-any-return]
+    return str(user["username"])
 
 
-async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserService:
+async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> Any:
     """Dependency for UserService injection."""
-    return get_user_service(db)  # type: ignore[return-value, no-any-return]
+    return get_user_service(db)
 
 
 @router.post(
@@ -49,9 +49,9 @@ async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> UserSer
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires_permission(Permission.USERS_MANAGE))],
 )
-async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> UserRead:
+async def write_user(request: Request, user: UserCreate, service: UserService = Depends(_get_user_service)) -> Any:
     """Create a new user."""
-    return await service.create(user)  # type: ignore[return-value, no-any-return]
+    return await service.create(user)
 
 
 @router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
@@ -59,7 +59,7 @@ async def read_users(
     request: Request,
     pagination: PaginationParams = Depends(get_pagination_params),
     service: UserService = Depends(_get_user_service),
-) -> dict:
+) -> Any:
     """Get paginated list of users for the current tenant (superuser only)."""
     users_data = await service.list_users(page=pagination.page, per_page=pagination.per_page, is_deleted=False)
 
@@ -67,7 +67,7 @@ async def read_users(
     # BUG FIX: len(data) is only the current page size, not the full total.
     # Fall back to 0 so the caller knows total is unavailable, not silently wrong.
     total = users_data.get("total_count", 0)
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": pagination.page,
@@ -82,7 +82,7 @@ async def read_users_me(
     request: Request,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> UserRead:
+) -> Any:
     """Get current authenticated user profile.
 
     `get_current_user` returns auth-oriented payload; fetch full user profile
@@ -100,11 +100,11 @@ async def read_users_me(
         if user_id is not None:
             user = await service.get(int(user_id))
             if user:
-                return user  # type: ignore[return-value, no-any-return]
+                return user
         elif username:
             user = await service.get_by_username(username)
             if user:
-                return user  # type: ignore[return-value, no-any-return]
+                return user
     except (ValueError, TypeError) as e:
         from src.app.core.logger import get_logger
 
@@ -119,7 +119,7 @@ async def read_user(
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> UserRead:
+) -> Any:
     """Get user by ID or username (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -150,7 +150,7 @@ async def read_user(
     if db_username != current_user["username"] and not current_user.get("is_superuser"):
         raise HTTPException(status_code=403, detail="Forbidden: You can only view your own profile")
 
-    return user  # type: ignore[return-value, no-any-return]
+    return user
 
 
 @router.patch("/{user_id}", response_model=UserUpdateResponse)
@@ -160,7 +160,7 @@ async def patch_user(
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> UserUpdateResponse:
+) -> Any:
     """Update a user (partial update).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -172,7 +172,7 @@ async def patch_user(
         username = user_id
 
     result = await service.update(username, values, current_user)
-    return UserUpdateResponse(message=result.get("message", "User updated successfully"))  # type: ignore[return-value, no-any-return]
+    return UserUpdateResponse(message=result.get("message", "User updated successfully"))
 
 
 @router.put("/{user_id}", response_model=UserUpdateResponse)
@@ -182,13 +182,13 @@ async def put_user(
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> UserUpdateResponse:
+) -> Any:
     """Update a user (full update, alias for PATCH).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
     result = await patch_user(request, values, user_id, current_user, service)
-    return result  # type: ignore[return-value, no-any-return]
+    return result
 
 
 @router.delete("/{user_id}", response_model=UserDeleteResponse)
@@ -198,7 +198,7 @@ async def erase_user(
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
-) -> UserDeleteResponse:
+) -> Any:
     """Soft delete a user.
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -210,7 +210,7 @@ async def erase_user(
         username = user_id
 
     await service.delete(username, current_user, token)
-    return UserDeleteResponse()  # type: ignore[return-value, no-any-return]
+    return UserDeleteResponse()
 
 
 @router.delete("/db/{user_id}", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
@@ -230,7 +230,7 @@ async def erase_db_user(
     except ValueError:
         username = user_id
 
-    return await service.hard_delete(username, token)  # type: ignore[return-value, no-any-return]
+    return await service.hard_delete(username, token)
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
@@ -247,7 +247,7 @@ async def read_user_rate_limits(
     except ValueError:
         username = user_id
 
-    return await service.get_with_rate_limits(username)  # type: ignore[return-value, no-any-return]
+    return await service.get_with_rate_limits(username)
 
 
 @router.get("/{user_id}/tier", response_model=UserTierResponse | None)
@@ -256,7 +256,7 @@ async def read_user_tier(
     user_id: str,
     current_user: Annotated[dict, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
-) -> UserTierResponse | None:
+) -> Any:
     """Get user's tier information (authenticated users only).
 
     Supports both integer user IDs and username strings for backward compatibility.
@@ -273,8 +273,8 @@ async def read_user_tier(
 
     result = await service.get_with_tier(username)
     if result is None:
-        return None  # type: ignore[return-value, no-any-return]
-    return UserTierResponse(  # type: ignore[return-value, no-any-return]
+        return None
+    return UserTierResponse(
         tier_id=result.get("tier_id"),
         tier_name=result.get("tier_name"),
         tier_price=result.get("tier_price"),
@@ -296,4 +296,4 @@ async def patch_user_tier(
     except ValueError:
         username = user_id
 
-    return await service.update_tier(username, values)  # type: ignore[return-value, no-any-return]
+    return await service.update_tier(username, values)

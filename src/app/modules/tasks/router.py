@@ -35,7 +35,7 @@ async def create_task(
     """
     try:
         result = await task_service.create_task(body.message, tenant_id=str(current_user.tenant_id))
-        return Job(**result)  # type: ignore[return-value, no-any-return]
+        return Job(**result)
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
     except ValueError as e:
@@ -68,6 +68,6 @@ async def get_task(
         result = await task_service.get_task(task_id, tenant_id=str(current_user.tenant_id))
         if result is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
-        return TaskStatus(**result)  # type: ignore[return-value, no-any-return]
+        return TaskStatus(**result)
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")

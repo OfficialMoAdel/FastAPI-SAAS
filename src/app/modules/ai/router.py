@@ -1,6 +1,6 @@
 """AI Features router - HTTP handlers for AI chat operations."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
@@ -49,10 +49,10 @@ async def create_chat_session(
     data: ChatSessionCreate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Create a new chat session."""
     service = get_chat_session_service(db)
-    return await service.create_session(current_user["id"], data)  # type: ignore[return-value, no-any-return]
+    return await service.create_session(current_user["id"], data)
 
 
 @router.get("/sessions", response_model=ChatSessionList)
@@ -61,13 +61,13 @@ async def list_chat_sessions(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(20, ge=1, le=100, description="Items per page"),
-) -> dict:
+) -> Any:
     """List chat sessions for the current user."""
     service = get_chat_session_service(db)
     result = await service.get_user_sessions(current_user["id"], page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -82,7 +82,7 @@ async def get_chat_session(
     session_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get a chat session with its messages."""
     session_service = get_chat_session_service(db)
     message_service = get_chat_message_service(db)
@@ -91,7 +91,7 @@ async def get_chat_session(
     messages_result = await message_service.get_session_messages(session_id, limit=100)
     messages = messages_result.get("data", [])
 
-    return {**session, "messages": messages}  # type: ignore[return-value, no-any-return]
+    return {**session, "messages": messages}
 
 
 @router.patch("/sessions/{session_id}", response_model=ChatSessionRead)
@@ -100,10 +100,10 @@ async def update_chat_session(
     data: ChatSessionUpdate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Update a chat session."""
     service = get_chat_session_service(db)
-    return await service.update_session(session_id, current_user["id"], data)  # type: ignore[return-value, no-any-return]
+    return await service.update_session(session_id, current_user["id"], data)
 
 
 @router.delete("/sessions/{session_id}", response_model=dict)
@@ -111,10 +111,10 @@ async def delete_chat_session(
     session_id: int,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: AsyncSession = Depends(async_get_db),
-) -> dict:
+) -> Any:
     """Delete a chat session."""
     service = get_chat_session_service(db)
-    return await service.delete_session(session_id, current_user["id"])  # type: ignore[return-value, no-any-return]
+    return await service.delete_session(session_id, current_user["id"])
 
 
 # =============================================================================
@@ -129,7 +129,7 @@ async def list_session_messages(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Items per page"),
-) -> dict:
+) -> Any:
     """List messages in a chat session."""
     # First verify session ownership
     session_service = get_chat_session_service(db)
@@ -139,7 +139,7 @@ async def list_session_messages(
     result = await message_service.get_session_messages(session_id, page=page, limit=per_page)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -158,10 +158,10 @@ async def list_session_messages(
 async def get_ai_settings(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Get AI settings for the current user."""
     service = get_ai_settings_service(db)
-    return await service.get_or_create_settings(current_user["id"])  # type: ignore[return-value, no-any-return]
+    return await service.get_or_create_settings(current_user["id"])
 
 
 @router.patch("/settings", response_model=AISettingsRead)
@@ -169,16 +169,16 @@ async def update_ai_settings(
     data: AISettingsUpdate,
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Update AI settings for the current user."""
     service = get_ai_settings_service(db)
-    return await service.update_settings(current_user["id"], data)  # type: ignore[return-value, no-any-return]
+    return await service.update_settings(current_user["id"], data)
 
 
 @router.get("/models", response_model=AIModelsListResponse)
 async def list_available_models(
     current_user: Annotated[dict, Depends(get_current_user)],
-) -> dict:
+) -> Any:
     """List available AI models from Ollama.
 
     Returns a list of model names that are currently available in the
@@ -186,7 +186,7 @@ async def list_available_models(
     """
     client = get_ollama_client()
     models = await client.list_models()
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "models": models,
         "default_model": "gemma3",
     }
@@ -210,7 +210,7 @@ async def chat_completion(
     request: ChatCompletionRequest,
     current_user: RateLimitedUser,
     db: Annotated[AsyncSession, Depends(async_get_db)],
-) -> dict:
+) -> Any:
     """Send a message and get an AI response.
 
     This endpoint sends the user's message to the AI model and returns
@@ -220,7 +220,7 @@ async def chat_completion(
     """
     service = get_chat_completion_service(db)
     try:
-        return await service.complete(session_id, current_user["id"], request)  # type: ignore[return-value, no-any-return]
+        return await service.complete(session_id, current_user["id"], request)
     except ChatCompletionError as e:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -268,7 +268,7 @@ async def chat_completion_stream(
             data = str(json_dumps(error, as_str=True))
             yield f"data: {data}\n\n"
 
-    return StreamingResponse(  # type: ignore[return-value, no-any-return]
+    return StreamingResponse(
         generate(),
         media_type="text/event-stream",
         headers={

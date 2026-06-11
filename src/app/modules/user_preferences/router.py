@@ -37,7 +37,7 @@ async def get_preferences(
         db=db,
         user_id=current_user["id"],
     )
-    return UserPreferencesResponse(**result)  # type: ignore[return-value, no-any-return]
+    return UserPreferencesResponse(**result)
 
 
 @router.patch("/preferences", response_model=UserPreferencesResponse)
@@ -56,7 +56,7 @@ async def update_preferences(
         user_id=current_user["id"],
         updates=updates,
     )
-    return UserPreferencesResponse(**result)  # type: ignore[return-value, no-any-return]
+    return UserPreferencesResponse(**result)
 
 
 @router.patch("/image", response_model=ImageUploadResponse)
@@ -76,7 +76,7 @@ async def upload_profile_image(
         user_id=current_user["id"],
         file=file,
     )
-    return ImageUploadResponse(**result)  # type: ignore[return-value, no-any-return]
+    return ImageUploadResponse(**result)
 
 
 @router.delete("/image", status_code=status.HTTP_204_NO_CONTENT)

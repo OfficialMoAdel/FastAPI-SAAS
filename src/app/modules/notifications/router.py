@@ -64,12 +64,12 @@ async def send_notification(
     if notification is None:
         from fastapi.responses import JSONResponse
 
-        return JSONResponse(  # type: ignore[return-value, no-any-return]
+        return JSONResponse(
             status_code=status.HTTP_202_ACCEPTED,
             content={"message": "Notification skipped by user preferences.", "skipped": True},
         )
 
-    return notification  # type: ignore[return-value, no-any-return]
+    return notification
 
 
 @router.get("", response_model=NotificationList)
@@ -82,7 +82,7 @@ async def list_notifications(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: TenantContext = Depends(get_current_tenant),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> dict:
+) -> Any:
     """
     List notification history for the current tenant.
 
@@ -101,7 +101,7 @@ async def list_notifications(
         offset=offset,
     )
 
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": notifications,
         "total": total,
         "page": page,
@@ -123,12 +123,12 @@ async def list_template_overrides(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: TenantContext = Depends(get_current_tenant),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> list[EmailTemplateOverrideResponse]:
+) -> Any:
     """List all email template overrides for the current tenant with pagination."""
     service = NotificationService(db)
     overrides = await service.list_template_overrides(current_tenant.id, limit, offset)
 
-    return overrides  # type: ignore[return-value, no-any-return]
+    return overrides
 
 
 @router.post(
@@ -142,7 +142,7 @@ async def create_template_override(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: TenantContext = Depends(get_current_tenant),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> EmailTemplateOverrideResponse:
+) -> Any:
     """Create or update an email template override for the current tenant."""
     service = NotificationService(db)
 
@@ -153,7 +153,7 @@ async def create_template_override(
         content=request.content,
     )
 
-    return override  # type: ignore[return-value, no-any-return]
+    return override
 
 
 @router.delete(
@@ -181,7 +181,7 @@ async def get_notification(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: TenantContext = Depends(get_current_tenant),
     current_user: AuthenticatedUser = Depends(get_current_user),
-) -> NotificationResponse:
+) -> Any:
     """Get a single notification by ID."""
     query = select(Notification).where(
         Notification.id == notification_id,
@@ -194,4 +194,4 @@ async def get_notification(
     if not notification:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Notification not found")
 
-    return notification  # type: ignore[return-value, no-any-return]
+    return notification

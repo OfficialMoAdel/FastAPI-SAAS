@@ -61,35 +61,37 @@ class Tenant(Base):
     # - Singleton/scalar associations (storage_settings, stripe_settings) use
     #   lazy="selectin" because they are almost always accessed alongside the tenant
     #   and the extra subquery cost is negligible (one additional tiny query).
-    users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False, lazy="raise")
-    notifications: Mapped[list["Notification"]] = relationship(back_populates="tenant", init=False, lazy="raise")
+    users: Mapped[list["User"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
+    notifications: Mapped[list["Notification"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
     email_template_overrides: Mapped[list["EmailTemplateOverride"]] = relationship(
-        back_populates="tenant", init=False, lazy="raise"
+        back_populates="tenant", init=False, lazy="selectin"
     )
-    webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(back_populates="tenant", init=False, lazy="raise")
+    webhook_endpoints: Mapped[list["WebhookEndpoint"]] = relationship(
+        back_populates="tenant", init=False, lazy="selectin"
+    )
     webhook_deliveries: Mapped[list["WebhookDelivery"]] = relationship(
-        back_populates="tenant", init=False, lazy="raise"
+        back_populates="tenant", init=False, lazy="selectin"
     )
     feature_flag_overrides: Mapped[list["FeatureFlagOverride"]] = relationship(
-        back_populates="tenant", init=False, lazy="raise"
+        back_populates="tenant", init=False, lazy="selectin"
     )
-    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False, lazy="raise")
+    audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
     # Scalar associations — use selectin to avoid N+1 when loading tenant context
     storage_settings: Mapped["StorageSettings | None"] = relationship(
         back_populates="tenant", uselist=False, init=False, lazy="selectin"
     )
-    files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False, lazy="raise")
-    api_keys: Mapped[list["APIKey"]] = relationship(back_populates="tenant", init=False, lazy="raise")
+    files: Mapped[list["File"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
+    api_keys: Mapped[list["APIKey"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
     # Billing & AI relationships (Phase 3/5)
     stripe_settings: Mapped["StripeSettings | None"] = relationship(
         back_populates="tenant", uselist=False, init=False, lazy="selectin"
     )
     subscription_plans: Mapped[list["SubscriptionPlan"]] = relationship(
-        back_populates="tenant", init=False, lazy="raise"
+        back_populates="tenant", init=False, lazy="selectin"
     )
-    products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False, lazy="raise")
-    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False, lazy="raise")
-    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="tenant", init=False, lazy="raise")
+    products: Mapped[list["Product"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
+    ai_chat_sessions: Mapped[list["AIChatSession"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
+    ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(back_populates="tenant", init=False, lazy="selectin")
 
 
 # Ensure all related models are imported so SQLAlchemy's mapper can resolve

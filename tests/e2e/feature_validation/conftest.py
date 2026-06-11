@@ -245,6 +245,8 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
         "ratelimit:*",
         "gcra:*",
         "user:auth:*",
+        "user_sessions_v2:*",
+        "user_sessions_order:*",
     ]
     for pattern in pre_patterns:
         try:

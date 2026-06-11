@@ -51,7 +51,7 @@ async def list_providers(
     """List enabled SSO providers."""
     providers = await sso_service.get_enabled_providers(db)
     provider_reads = [SSOProviderRead(**p) for p in providers]
-    return SSOProvidersResponse(providers=provider_reads)  # type: ignore[return-value, no-any-return]
+    return SSOProvidersResponse(providers=provider_reads)
 
 
 @router.get("/{provider}/authorize")
@@ -84,7 +84,7 @@ async def initiate_sso(
         secure=settings.SESSION_SECURE_COOKIES,
         samesite="lax",
     )
-    return response  # type: ignore[return-value, no-any-return]
+    return response
 
 
 # Alias for backward compatibility with old frontend
@@ -98,7 +98,7 @@ async def initiate_sso_alias(
 ) -> RedirectResponse:
     """Initiate SSO OAuth flow (alias for /{provider}/authorize for backward compatibility)."""
     _validate_redirect_uri(redirect_uri)
-    return await initiate_sso(request, provider, db, sso_service, redirect_uri)  # type: ignore[return-value, no-any-return]
+    return await initiate_sso(request, provider, db, sso_service, redirect_uri)
 
 
 @router.get("/{provider}/callback")
@@ -111,7 +111,7 @@ async def handle_callback(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> AuthTokenResponse | dict[str, str]:
-    """Handle OAuth callback and return authentication tokens."""  # type: ignore[return-value, no-any-return]
+    """Handle OAuth callback and return authentication tokens."""
     # Login CSRF Protection Constraint
     import hmac
 
@@ -130,7 +130,7 @@ async def handle_callback(
             request=request,
             db=db,
         )
-        return tokens  # type: ignore[return-value, no-any-return]
+        return tokens
     except HTTPException as e:
         e.headers = e.headers or {}
         e.headers["Set-Cookie"] = _get_clear_cookie_str()
@@ -196,7 +196,7 @@ async def handle_post_callback(
             db=db,
             user_data=user_data,
         )
-        return tokens  # type: ignore[return-value, no-any-return]
+        return tokens
     except HTTPException as e:
         e.headers = e.headers or {}
         e.headers["Set-Cookie"] = _get_clear_cookie_str()
@@ -264,7 +264,7 @@ async def connect_provider(
         secure=settings.SESSION_SECURE_COOKIES,
         samesite="lax",
     )
-    return response  # type: ignore[return-value, no-any-return]
+    return response
 
 
 @router.delete("/{provider}")
@@ -287,4 +287,4 @@ async def disconnect_provider(
         provider=provider.value,
         tenant_id=tenant_id,
     )
-    return {"message": f"Provider {provider.value} disconnected successfully"}  # type: ignore[return-value, no-any-return]
+    return {"message": f"Provider {provider.value} disconnected successfully"}

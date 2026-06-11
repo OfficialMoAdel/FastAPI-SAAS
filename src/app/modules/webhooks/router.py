@@ -49,7 +49,7 @@ async def list_webhook_endpoints(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> dict:
+) -> Any:
     """List all webhook endpoints for the current tenant."""
     query = select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == current_tenant.id)
 
@@ -72,7 +72,7 @@ async def list_webhook_endpoints(
     result = await db.execute(query)
     endpoints = result.scalars().all()
 
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": endpoints,
         "total": total,
         "page": page,
@@ -93,7 +93,7 @@ async def create_webhook_endpoint(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookEndpointCreateResponse:
+) -> Any:
     """
     Create a new webhook endpoint.
 
@@ -109,7 +109,7 @@ async def create_webhook_endpoint(
         signing_secret=request.secret,
     )
 
-    return endpoint  # type: ignore[return-value, no-any-return]
+    return endpoint
 
 
 @router.get(
@@ -128,7 +128,7 @@ async def list_webhook_deliveries_route(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> dict:
+) -> Any:
     """
     List webhook delivery history.
 
@@ -158,7 +158,7 @@ async def list_webhook_deliveries_route(
     result = await db.execute(query)
     deliveries = result.scalars().all()
 
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": deliveries,
         "total": total,
         "page": page,
@@ -178,7 +178,7 @@ async def get_webhook_endpoint(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookEndpointResponse:
+) -> Any:
     """Get a single webhook endpoint by ID."""
     query = select(WebhookEndpoint).where(
         WebhookEndpoint.id == endpoint_id,
@@ -190,7 +190,7 @@ async def get_webhook_endpoint(
     if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
-    return endpoint  # type: ignore[return-value, no-any-return]
+    return endpoint
 
 
 @router.patch(
@@ -205,7 +205,7 @@ async def update_webhook_endpoint(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookEndpointResponse:
+) -> Any:
     """Update a webhook endpoint."""
     query = select(WebhookEndpoint).where(
         WebhookEndpoint.id == endpoint_id,
@@ -229,7 +229,7 @@ async def update_webhook_endpoint(
     await db.commit()
     await db.refresh(endpoint)
 
-    return endpoint  # type: ignore[return-value, no-any-return]
+    return endpoint
 
 
 @router.delete(
@@ -268,7 +268,7 @@ async def get_webhook_delivery(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookDeliveryResponse:
+) -> Any:
     """Get details of a specific webhook delivery attempt."""
     # Join with webhook_endpoints to enforce tenant isolation
     query = (
@@ -285,7 +285,7 @@ async def get_webhook_delivery(
     if not delivery:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook delivery not found")
 
-    return delivery  # type: ignore[return-value, no-any-return]
+    return delivery
 
 
 @router.post(
@@ -298,7 +298,7 @@ async def retry_webhook_delivery(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookDeliveryResponse:
+) -> Any:
     """
     Manually retry a failed webhook delivery.
 
@@ -328,7 +328,7 @@ async def retry_webhook_delivery(
     await service.retry_delivery(delivery.id)
 
     await db.refresh(delivery)
-    return delivery  # type: ignore[return-value, no-any-return]
+    return delivery
 
 
 @router.post(
@@ -342,7 +342,7 @@ async def test_webhook_endpoint(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> WebhookDeliveryResponse:
+) -> Any:
     """
     Test a webhook endpoint by sending a simulated event.
 
@@ -396,7 +396,7 @@ async def test_webhook_endpoint(
         payload=request.payload,
     )
 
-    return delivery  # type: ignore[return-value, no-any-return]
+    return delivery
 
 
 @router.get(
@@ -409,7 +409,7 @@ async def get_signing_secret(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> SigningSecretViewResponse:
+) -> Any:
     """Get the signing secret for a webhook endpoint (admin only).
 
     This endpoint allows administrators to view the signing secret
@@ -425,7 +425,7 @@ async def get_signing_secret(
     if not result["signing_secret"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No signing secret found for this endpoint")
 
-    return SigningSecretViewResponse(  # type: ignore[return-value, no-any-return]
+    return SigningSecretViewResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],
         signing_secret=result["signing_secret"],
         created_at=result["created_at"],
@@ -443,7 +443,7 @@ async def rotate_signing_secret(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
-) -> SigningSecretRotateResponse:
+) -> Any:
     """Rotate the signing secret for a webhook endpoint.
 
     Generates a new signing secret that takes effect immediately.
@@ -469,7 +469,7 @@ async def rotate_signing_secret(
         grace_period_seconds=request.grace_period_seconds,
     )
 
-    return SigningSecretRotateResponse(  # type: ignore[return-value, no-any-return]
+    return SigningSecretRotateResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],
         new_signing_secret=result["new_signing_secret"],
         rotated_at=result.get("rotated_at"),

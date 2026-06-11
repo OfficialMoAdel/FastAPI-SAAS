@@ -71,7 +71,7 @@ async def register_begin(
         device_type=request.device_type,
         redis=redis,
     )
-    return PasskeyRegistrationOptionsResponse(publicKey=options)  # type: ignore[return-value, no-any-return]
+    return PasskeyRegistrationOptionsResponse(publicKey=options)
 
 
 @router.post("/register/verify", response_model=PasskeyCredentialResponse)
@@ -88,7 +88,7 @@ async def register_complete(
         credential=request.credential,
         redis=redis,
     )
-    return credential  # type: ignore[return-value, no-any-return]
+    return credential
 
 
 @router.get("/credentials", response_model=list[PasskeyCredentialResponse])
@@ -97,7 +97,7 @@ async def list_credentials(
     db: AsyncSession = Depends(async_get_db),
 ):
     """List user's passkey credentials."""
-    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])  # type: ignore[return-value, no-any-return]
+    return await passkey_service.list_credentials(db=db, user_id=current_user["id"])
 
 
 @router.delete("/credentials/{credential_id}", status_code=204)
@@ -136,7 +136,7 @@ async def login_begin(
         redis=redis,
         email=email,
     )
-    return PasskeyAuthenticationOptionsResponse(publicKey=options, challenge_id=challenge_id)  # type: ignore[return-value, no-any-return]
+    return PasskeyAuthenticationOptionsResponse(publicKey=options, challenge_id=challenge_id)
 
 
 @router.post(
@@ -176,4 +176,4 @@ async def login_complete(
             max_age=max_age,
         )
 
-    return LoginTokenResponse(**result)  # type: ignore[return-value, no-any-return]
+    return LoginTokenResponse(**result)

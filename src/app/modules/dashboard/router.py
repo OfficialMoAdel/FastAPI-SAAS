@@ -47,4 +47,4 @@ async def get_dashboard_metrics(
     **Requires:** Authentication (admin or user with dashboard access)
     """
     tenant_id = str(current_user.get("tenant_id"))
-    return await dashboard_service.get_metrics(db=db, tenant_id=tenant_id, time_range=time_range)  # type: ignore[return-value, no-any-return]
+    return await dashboard_service.get_metrics(db=db, tenant_id=tenant_id, time_range=time_range)

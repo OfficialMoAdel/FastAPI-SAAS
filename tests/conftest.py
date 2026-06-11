@@ -1,9 +1,17 @@
 import base64
 import os
 import uuid
+import sys
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
+
+# Force UTF-8 encoding for standard output/error to prevent UnicodeEncodeError crashes on Windows
+if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
+    sys.stdout.reconfigure(encoding='utf-8')
+if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
+    sys.stderr.reconfigure(encoding='utf-8')
+
 
 import pytest
 import pytest_asyncio
@@ -32,7 +40,21 @@ os.environ["ATTACK_DETECTION_ENABLED"] = "false"
 # Enable test mode to use NullPool and prevent event loop closed errors
 os.environ["TESTING"] = "1"
 
-from src.app.core.config import settings
+from src.app.core.config import settings, RedisCacheSettings
+
+# Monkey-patch REDIS_CACHE_URL to use isolated DB indices per worker
+# This prevents Redis key collisions when multiple xdist workers share the same Redis instance
+original_redis_url = RedisCacheSettings.REDIS_CACHE_URL.fget
+def _get_isolated_redis_url(self):
+    base_url = original_redis_url(self)
+    worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
+    db_index = int(worker_id.replace("gw", "")) if worker_id.startswith("gw") else 0
+    # Ensure base_url doesn't already have a path
+    if base_url.count("/") > 2:
+        return base_url
+    return f"{base_url}/{db_index}"
+
+RedisCacheSettings.REDIS_CACHE_URL = property(_get_isolated_redis_url)
 
 # DO NOT import app globally - it causes state pollution in coverage runs
 # from src.app.main import app  # REMOVED - use get_test_app() fixture instead

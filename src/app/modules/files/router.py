@@ -7,6 +7,7 @@ Endpoints require appropriate FILES_* permissions.
 from __future__ import annotations
 
 import mimetypes
+from typing import Any
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
@@ -49,7 +50,7 @@ async def upload_file(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> FileUploadResponse:
+) -> Any:
     """Upload a file to tenant storage.
 
     Validates file type and size against tenant settings.
@@ -95,7 +96,7 @@ async def upload_file(
             size_bytes=size_bytes,
         )
 
-        return FileUploadResponse(  # type: ignore[return-value, no-any-return]
+        return FileUploadResponse(
             id=result.id,
             original_name=result.original_name,
             storage_path=result.storage_path,
@@ -137,7 +138,7 @@ async def list_files(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> dict:
+) -> Any:
     """List files for the current tenant.
 
     Supports pagination and filtering.
@@ -158,7 +159,7 @@ async def list_files(
     data = files_data.get("data", [])
     total = files_data.get("total_count", 0)
 
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": data,
         "total": total,
         "page": page,
@@ -173,7 +174,7 @@ async def get_quota(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> QuotaResponse:
+) -> Any:
     """Get active storage quota and usage.
 
     Returns:
@@ -188,7 +189,7 @@ async def get_quota(
     limit = settings.storage_quota_bytes
     remaining = max(0, limit - used)
 
-    return QuotaResponse(  # type: ignore[return-value, no-any-return]
+    return QuotaResponse(
         used=used,
         limit=limit,
         remaining=remaining,
@@ -205,7 +206,7 @@ async def download_file(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> StreamingResponse:
+) -> Any:
     """Download a file.
 
     Returns the file as a streaming response.
@@ -224,7 +225,7 @@ async def download_file(
 
         # SECURITY FIX: RFC 5987 content-disposition
         filename_encoded = quote(file.original_name)
-        return StreamingResponse(  # type: ignore[return-value, no-any-return]
+        return StreamingResponse(
             service.download_file(tenant.id, file_id, user_id=_user["id"]),
             media_type=file.mime_type,
             headers={
@@ -250,7 +251,7 @@ async def get_file_info(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> FileRead:
+) -> Any:
     """Get file metadata without downloading.
 
     Args:
@@ -264,7 +265,7 @@ async def get_file_info(
     """
     try:
         file = await service.get_file_or_raise(tenant.id, file_id, user_id=_user["id"])
-        return file  # type: ignore[return-value, no-any-return]
+        return file
 
     except FileServiceNotFoundError:
         raise HTTPException(
@@ -284,7 +285,7 @@ async def get_signed_url(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> SignedUrlResponse:
+) -> Any:
     """Get a signed URL for file access.
 
     The URL is valid for the specified duration.
@@ -301,7 +302,7 @@ async def get_signed_url(
     """
     try:
         url = await service.get_signed_url(tenant.id, file_id, expires_in, user_id=_user["id"])
-        return SignedUrlResponse(url=url, expires_in=expires_in)  # type: ignore[return-value, no-any-return]
+        return SignedUrlResponse(url=url, expires_in=expires_in)
 
     except FileServiceNotFoundError:
         raise HTTPException(
@@ -321,7 +322,7 @@ async def update_file(
     tenant: Tenant = Depends(get_current_tenant),
     _user: dict = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
-) -> FileRead:
+) -> Any:
     """Update file metadata.
 
     Args:
@@ -336,7 +337,7 @@ async def update_file(
     """
     try:
         file = await service.update_file(tenant.id, file_id, data, user_id=_user["id"])
-        return file  # type: ignore[return-value, no-any-return]
+        return file
 
     except FileServiceNotFoundError:
         raise HTTPException(
@@ -369,7 +370,7 @@ async def delete_file(
     """
     try:
         await service.delete_file(tenant.id, file_id, user_id=_user["id"])
-        return Response(status_code=status.HTTP_204_NO_CONTENT)  # type: ignore[return-value, no-any-return]
+        return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except FileServiceNotFoundError:
         raise HTTPException(

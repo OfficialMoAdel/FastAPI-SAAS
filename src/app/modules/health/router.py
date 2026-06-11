@@ -32,7 +32,7 @@ async def health() -> JSONResponse:
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
-    return JSONResponse(status_code=http_status, content=response)  # type: ignore[return-value, no-any-return]
+    return JSONResponse(status_code=http_status, content=response)
 
 
 @router.get("/ready", response_model=ReadyCheck)
@@ -77,4 +77,4 @@ async def ready(
         "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
     }
 
-    return JSONResponse(status_code=http_status, content=response)  # type: ignore[return-value, no-any-return]
+    return JSONResponse(status_code=http_status, content=response)

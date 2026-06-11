@@ -1,3 +1,5 @@
+from typing import Any
+
 """Audit Logs API Router."""
 
 import csv
@@ -7,7 +9,7 @@ from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -44,7 +46,7 @@ async def list_audit_logs(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> dict:
+) -> Any:
     """
     List audit logs for the current tenant.
 
@@ -84,7 +86,7 @@ async def list_audit_logs(
         offset=offset,
     )
 
-    return {  # type: ignore[return-value, no-any-return]
+    return {
         "items": logs,
         "total": total,
         "page": page,
@@ -103,7 +105,7 @@ async def list_available_actions(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> list[str]:
+) -> Any:
     """
     Get list of all unique action types for the current tenant.
 
@@ -113,7 +115,7 @@ async def list_available_actions(
     result = await db.execute(query)
     actions = result.scalars().all()
 
-    return sorted(actions)  # type: ignore[return-value, no-any-return]
+    return sorted(actions)
 
 
 # ============================================================================
@@ -137,7 +139,7 @@ async def get_export_count(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> ExportCountResponse:
+) -> Any:
     """
     Get count of records that would be exported.
 
@@ -159,7 +161,7 @@ async def get_export_count(
     result = await db.execute(query)
     count = result.scalar_one()
 
-    return ExportCountResponse(  # type: ignore[return-value, no-any-return]
+    return ExportCountResponse(
         count=count,
         max_export_limit=EXPORT_MAX_RECORDS,
         can_export=count <= EXPORT_MAX_RECORDS,
@@ -191,7 +193,7 @@ async def export_audit_logs(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> StreamingResponse | JSONResponse:
+) -> Any:
     """
     Export audit logs as CSV, JSON, or JSONL.
 
@@ -329,19 +331,19 @@ async def export_audit_logs(
 
     # Generate response based on format
     if format == "csv":
-        return StreamingResponse(  # type: ignore[return-value, no-any-return]
+        return StreamingResponse(
             generate_csv(),
             media_type="text/csv",
             headers={"Content-Disposition": "attachment; filename=audit_logs.csv"},
         )
     elif format == "jsonl":
-        return StreamingResponse(  # type: ignore[return-value, no-any-return]
+        return StreamingResponse(
             generate_jsonl(),
             media_type="application/x-ndjson",
             headers={"Content-Disposition": "attachment; filename=audit_logs.jsonl"},
         )
     else:  # json
-        return StreamingResponse(  # type: ignore[return-value, no-any-return]
+        return StreamingResponse(
             generate_json(),
             media_type="application/json",
             headers={"Content-Disposition": "attachment; filename=audit_logs.json"},
@@ -358,7 +360,7 @@ async def get_audit_log(
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: User = Depends(get_current_user),
-) -> AuditLogResponse:
+) -> Any:
     """
     Get a single audit log entry by ID.
 
@@ -374,4 +376,4 @@ async def get_audit_log(
     if not log:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Audit log not found")
 
-    return log  # type: ignore[return-value, no-any-return]
+    return log
