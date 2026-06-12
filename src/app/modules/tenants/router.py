@@ -77,7 +77,7 @@ async def get_tenant(
 
     Requires authentication. Returns 404 if not found.
     """
-    if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
+    if not _current_user.get("is_superuser") and str(_current_user.get("tenant_id")) != str(tenant_id):
         raise ForbiddenException(detail="You do not have permission to access this tenant.")
 
     return await service.get_tenant(tenant_id)
@@ -99,7 +99,7 @@ async def update_tenant(
     Requires TENANT_UPDATE permission. Returns 404 if not found.
     Can update name and is_active status.
     """
-    if not _current_user.get("is_superuser") and _current_user.get("tenant_id") != tenant_id:
+    if not _current_user.get("is_superuser") and str(_current_user.get("tenant_id")) != str(tenant_id):
         raise ForbiddenException(detail="You do not have permission to update this tenant.")
 
     return await service.update_tenant(tenant_id, values)

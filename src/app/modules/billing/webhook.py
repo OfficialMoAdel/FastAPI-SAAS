@@ -443,9 +443,9 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
 
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
-            select(crud_user_subscriptions.model).where(
-                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-            )
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
+            .with_for_update()
         )
         db_subscription = result.scalar_one_or_none()
 
@@ -556,9 +556,9 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
 
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
-            select(crud_user_subscriptions.model).where(
-                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-            )
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
+            .with_for_update()
         )
         db_subscription = result.scalar_one_or_none()
 
@@ -648,9 +648,9 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
 
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
-            select(crud_user_subscriptions.model).where(
-                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-            )
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
+            .with_for_update()
         )
         db_subscription = result.scalar_one_or_none()
 
@@ -679,6 +679,19 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
     )
 
     async with job_tenant_context(tenant_id) as db:
+        # Check if billing record with stripe_invoice_id already exists to prevent duplicate inserts
+        invoice_id = invoice["id"]
+        exists_record = await crud_billing_records.exists(
+            db=db,
+            stripe_invoice_id=invoice_id,
+        )
+        if exists_record:
+            logger.info(
+                "Billing record with stripe_invoice_id already exists, skipping duplicate insert",
+                stripe_invoice_id=invoice_id,
+            )
+            return
+
         await crud_billing_records.create(
             db=db,
             object=billing_record,
@@ -711,9 +724,9 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
 
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
-            select(crud_user_subscriptions.model).where(
-                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-            )
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
+            .with_for_update()
         )
         db_subscription = result.scalar_one_or_none()
 
@@ -823,9 +836,9 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
 
     async with job_bypass_context("Webhook subscription lookup") as db:
         result = await db.execute(
-            select(crud_user_subscriptions.model).where(
-                crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id
-            )
+            select(crud_user_subscriptions.model)
+            .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
+            .with_for_update()
         )
         db_subscription = result.scalar_one_or_none()
 

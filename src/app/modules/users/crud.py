@@ -12,7 +12,7 @@ from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRe
 
 class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateInternal, UserDelete, UserRead]):
     async def get_user_with_tier_eager(
-        self, db: AsyncSession, *, username: str | None = None, email: str | None = None
+        self, db: AsyncSession, *, id: int | None = None, username: str | None = None, email: str | None = None
     ) -> dict[str, Any] | None:
         """Get user with tier in single query using LEFT JOIN.
 
@@ -20,21 +20,24 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         Args:
             db: Database session
-            username: Username to look up (mutually exclusive with email)
-            email: Email to look up (mutually exclusive with username)
+            id: User ID to look up
+            username: Username to look up (mutually exclusive with email and id)
+            email: Email to look up (mutually exclusive with username and id)
 
         Returns:
             User dict with tier included, or None if not found
 
         Security: Respects tenant isolation via tenant context.
         """
-        if not username and not email:
+        if not id and not username and not email:
             return None
 
         tenant = get_tenant_context()
 
         # Build WHERE clause based on lookup type - case-insensitive
-        if username:
+        if id is not None:
+            lookup_clause = User.id == id
+        elif username:
             lookup_clause = func.lower(User.username) == func.lower(username)
         else:
             lookup_clause = func.lower(User.email) == func.lower(email)

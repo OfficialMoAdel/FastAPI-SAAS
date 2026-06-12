@@ -502,7 +502,12 @@ class UserService(BaseService[User]):
             If new email/username already taken
         """
         # SECURITY FIX: Prevent updating soft-deleted users
-        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        try:
+            parsed_id = int(username)
+            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        except ValueError:
+            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+
         if db_user is None:
             raise ModelNotFoundError("User", username)
 
@@ -529,7 +534,7 @@ class UserService(BaseService[User]):
             if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val):
                 raise DuplicateError("username", values.username)
 
-        await self.crud.update(db=self.db, object=values, username=username)
+        await self.crud.update(db=self.db, object=values, username=db_username)
 
         # Invalidate cache after update
         await self._invalidate_user_cache(db_user)
@@ -565,7 +570,12 @@ class UserService(BaseService[User]):
         ForbiddenException
             If current user doesn't own this account
         """
-        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        try:
+            parsed_id = int(username)
+            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        except ValueError:
+            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+
         if not db_user:
             raise ModelNotFoundError("User", username)
 
@@ -628,7 +638,7 @@ class UserService(BaseService[User]):
         await self._invalidate_user_cache(db_user)
 
         await blacklist_token(token=token, db=self.db)
-        return {"message": "User deleted"}
+        return {"message": "User deleted successfully"}
 
     async def hard_delete(self, username: str, token: str) -> dict[str, str]:
         """Permanently delete a user from database (superuser only).
@@ -651,13 +661,19 @@ class UserService(BaseService[User]):
             If user not found
         """
         # SECURITY FIX: Single query with soft-delete filter (prevents double query)
-        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        try:
+            parsed_id = int(username)
+            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        except ValueError:
+            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+
         if not db_user:
             raise ModelNotFoundError("User", username)
 
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
-        await self.crud.db_delete(db=self.db, username=username)
+        db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
+        await self.crud.db_delete(db=self.db, username=db_username)
         await self._invalidate_user_cache(db_user)
 
         await blacklist_token(token=token, db=self.db)
@@ -684,9 +700,16 @@ class UserService(BaseService[User]):
             If user or tier not found
         """
         # Use service registry for cross-module decoupling
-        db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        try:
+            parsed_id = int(username)
+            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        except ValueError:
+            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+
         if db_user is None:
             raise ModelNotFoundError("User", username)
+
+        db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
 
         # Validate tier exists via registry
         tier_svc = get_service("tier", self.db)
@@ -695,7 +718,7 @@ class UserService(BaseService[User]):
         except ModelNotFoundError:
             raise ModelNotFoundError("Tier", values.tier_id)
 
-        await self.crud.update(db=self.db, object=values.model_dump(), username=username, commit=False)
+        await self.crud.update(db=self.db, object=values.model_dump(), username=db_username, commit=False)
 
         # SECURITY FIX: Increment token_version to invalidate active JWTs
         from sqlalchemy import update as sa_update
@@ -735,11 +758,19 @@ class UserService(BaseService[User]):
         """
         # Eager load User + Tier + RateLimits in single query
         # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
-        stmt = (
-            select(User)
-            .options(joinedload(User.tier).joinedload(Tier.rate_limits))
-            .where(User.username == username, User.is_deleted.is_(False))
-        )
+        try:
+            parsed_id = int(username)
+            stmt = (
+                select(User)
+                .options(joinedload(User.tier).joinedload(Tier.rate_limits))
+                .where(User.id == parsed_id, User.is_deleted.is_(False))
+            )
+        except ValueError:
+            stmt = (
+                select(User)
+                .options(joinedload(User.tier).joinedload(Tier.rate_limits))
+                .where(User.username == username, User.is_deleted.is_(False))
+            )
         # SECURITY FIX: Filter by tenant to prevent cross-tenant data exposure.
         # Without this, a superuser could query any user across all tenants by username.
         tenant = get_current_tenant()
@@ -790,7 +821,11 @@ class UserService(BaseService[User]):
 
         Optimized to use single query via get_user_with_tier_eager.
         """
-        user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
+        try:
+            parsed_id = int(username)
+            user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, id=parsed_id)
+        except ValueError:
+            user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
 
         if not user_with_tier:
             raise ModelNotFoundError("User", username)

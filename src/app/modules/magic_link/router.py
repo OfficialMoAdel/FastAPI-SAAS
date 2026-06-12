@@ -7,25 +7,13 @@ Follows the API contract defined in auth-api.yaml.
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
-from redis.asyncio import Redis
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import rate_limiter_dependency
-from src.app.core.db.database import async_get_db
-from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
-from src.app.modules.magic_link.service import MagicLinkService
+from src.app.modules.magic_link.service import MagicLinkService, get_magic_link_service
 
 router = APIRouter(prefix="/auth/magic-link", tags=["magic-link"])
-
-
-def get_magic_link_service(
-    db: Annotated[AsyncSession, Depends(async_get_db)],
-    redis: Annotated[Redis, Depends(async_get_redis)],
-) -> MagicLinkService:
-    """Dependency injection for MagicLinkService."""
-    return MagicLinkService(db=db, redis=redis)
 
 
 @router.post(

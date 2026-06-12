@@ -21,7 +21,10 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_rbac_cache_hit, record_rbac_cache_miss
-from src.app.core.rbac.dependencies import invalidate_user_permissions_cache
+from src.app.core.rbac.dependencies import (
+    invalidate_user_permissions_cache,
+    invalidate_users_permissions_cache_batch,
+)
 from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
@@ -512,8 +515,8 @@ class RoleService:
             for u in users_records:
                 await user_service._invalidate_user_cache(u)
 
-        for user_id in affected_user_ids:
-            await invalidate_user_permissions_cache(user_id, self.tenant_id)
+        if affected_user_ids:
+            await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
         """Remove a permission from a role."""
@@ -575,8 +578,8 @@ class RoleService:
                 for u in users_records:
                     await user_service._invalidate_user_cache(u)
 
-            for user_id in affected_user_ids:
-                await invalidate_user_permissions_cache(user_id, self.tenant_id)
+            if affected_user_ids:
+                await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def assign_role_to_user(self, user_id: int, role_id: int) -> None:
         """Assign a role to a user within the current tenant.

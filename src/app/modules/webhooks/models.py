@@ -78,6 +78,18 @@ class WebhookEndpoint(Base, UUIDMixin):
         default=None,
         comment="Per-endpoint signing secret for webhook verification (encrypted fernet string)",
     )
+    old_signing_secret: Mapped[str | None] = mapped_column(
+        String(255),
+        nullable=True,
+        default=None,
+        comment="Old signing secret for webhook verification during grace period (encrypted fernet string)",
+    )
+    old_secret_expires_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+        default=None,
+        comment="Expiration timestamp for the old signing secret",
+    )
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

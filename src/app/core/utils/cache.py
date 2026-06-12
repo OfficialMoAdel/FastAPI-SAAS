@@ -828,7 +828,7 @@ async def _delete_keys_by_pattern(pattern: str) -> None:
             )
             break
 
-        cursor, keys = await client.scan(cursor, match=pattern, count=100)
+        cursor, keys = await client.scan(cursor, match=pattern, count=1000)
         if keys:
             await client.delete(*keys)
         if cursor == 0:

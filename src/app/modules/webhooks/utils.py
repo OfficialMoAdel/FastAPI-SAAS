@@ -62,13 +62,18 @@ def verify_webhook_signature(
         hashlib.sha256,
     ).hexdigest()
 
-    # Extract signature from header (format: sha256={sig})
-    actual_signature = signature
-    if signature.startswith("sha256="):
-        actual_signature = signature[7:]
+    # Extract signature from header (format: sha256={sig} or list of those)
+    signatures = [s.strip() for s in signature.split(",")]
 
-    # Timing-safe comparison
-    return hmac.compare_digest(actual_signature, expected)
+    for sig in signatures:
+        actual_signature = sig
+        if sig.startswith("sha256="):
+            actual_signature = sig[7:]
+        # Timing-safe comparison
+        if hmac.compare_digest(actual_signature, expected):
+            return True
+
+    return False
 
 
 def generate_signing_secret() -> str:

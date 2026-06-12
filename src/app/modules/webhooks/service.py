@@ -145,6 +145,29 @@ class WebhookService:
                     continue
 
             signature = self._generate_signature(payload, secret)
+            if (
+                endpoint.old_signing_secret
+                and endpoint.old_secret_expires_at
+                and isinstance(endpoint.old_secret_expires_at, datetime)
+            ):
+                now_utc = datetime.now(UTC)
+                expires_at = endpoint.old_secret_expires_at
+                if expires_at.tzinfo is None:
+                    expires_at = expires_at.replace(tzinfo=UTC)
+                if expires_at > now_utc:
+                    try:
+                        old_secret = decrypt_data(endpoint.old_signing_secret)
+                        import json
+                        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+                        active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+                        old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+                        signature = f"sha256={active_sig},sha256={old_sig}"
+                    except Exception as old_sig_err:
+                        logger.error(
+                            "webhook_old_signing_secret_decryption_failed",
+                            endpoint_id=str(endpoint.id),
+                            error=str(old_sig_err),
+                        )
             now = datetime.now(UTC)
 
             deliveries_data.append(
@@ -227,6 +250,29 @@ class WebhookService:
                 ) from e
 
         signature = self._generate_signature(payload, secret)
+        if (
+            endpoint.old_signing_secret
+            and endpoint.old_secret_expires_at
+            and isinstance(endpoint.old_secret_expires_at, datetime)
+        ):
+            now_utc = datetime.now(UTC)
+            expires_at = endpoint.old_secret_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at > now_utc:
+                try:
+                    old_secret = decrypt_data(endpoint.old_signing_secret)
+                    import json
+                    payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
+                    active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+                    old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
+                    signature = f"sha256={active_sig},sha256={old_sig}"
+                except Exception as old_sig_err:
+                    logger.error(
+                        "webhook_old_signing_secret_decryption_failed",
+                        endpoint_id=str(endpoint.id),
+                        error=str(old_sig_err),
+                    )
 
         delivery = WebhookDelivery(
             webhook_endpoint_id=endpoint.id,
@@ -642,17 +688,19 @@ class WebhookService:
         if not endpoint:
             raise ModelNotFoundError("WebhookEndpoint", endpoint_id)
 
+        # Preserve the old signing secret
+        endpoint.old_signing_secret = endpoint.signing_secret
+
         # Generate new signing secret
         new_secret = generate_signing_secret()
 
         # Record rotation timestamp
         rotated_at = datetime.now(UTC)
-        # ISSUE 18 FIX: Calculate expiration with grace period
+        # Calculate expiration with grace period
         expires_at = rotated_at + timedelta(seconds=grace_period_seconds)
+        endpoint.old_secret_expires_at = expires_at
 
         # Update endpoint with new secret
-        # NOTE: functional grace period requires DB support for old_signing_secret,
-        # but we now correctly return the expiration time in the response.
         endpoint.signing_secret = encrypt_data(new_secret)
 
         await self.db.commit()

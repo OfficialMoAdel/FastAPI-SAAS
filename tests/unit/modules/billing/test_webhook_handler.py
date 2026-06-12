@@ -170,6 +170,7 @@ async def test_handle_invoice_payment_succeeded(
     mock_db.execute = AsyncMock(return_value=mock_result)
 
     mock_crud_billing.create = AsyncMock()
+    mock_crud_billing.exists = AsyncMock(return_value=False)
 
     await handle_invoice_payment_succeeded(event)
 

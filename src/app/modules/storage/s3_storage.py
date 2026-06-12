@@ -64,6 +64,11 @@ class S3Storage(StorageProvider):
 
         self.kwargs = kwargs
 
+    async def close(self) -> None:
+        """Close the S3 client."""
+        if hasattr(self.client, "close"):
+            await asyncio.to_thread(self.client.close)
+
     async def upload(
         self,
         file: BinaryIO,
@@ -144,20 +149,24 @@ class S3Storage(StorageProvider):
         Yields:
             Chunks of file content (8KB each).
         """
-        # Wrap blocking get_object in asyncio.to_thread to avoid blocking event loop
-        response = await asyncio.to_thread(
-            self.client.get_object,
-            Bucket=self.bucket,
-            Key=path,
-        )
+        try:
+            response = await asyncio.to_thread(
+                self.client.get_object,
+                Bucket=self.bucket,
+                Key=path,
+            )
 
-        body = response["Body"]
+            body = response["Body"]
 
-        while True:
-            chunk = await asyncio.to_thread(body.read, 5 * 1024 * 1024)  # 5MB chunks
-            if not chunk:
-                break
-            yield chunk
+            while True:
+                chunk = await asyncio.to_thread(body.read, 5 * 1024 * 1024)  # 5MB chunks
+                if not chunk:
+                    break
+                yield chunk
+        finally:
+            if "body" in locals() and hasattr(body, "close"):
+                # Clean up S3 response body
+                await asyncio.to_thread(body.close)
 
     async def delete(self, path: str) -> StorageResult:
         """Delete a file from S3.
@@ -200,7 +209,14 @@ class S3Storage(StorageProvider):
                 Key=path,
             )
             return True
-        except Exception:
+        except Exception as e:
+            error_code = self._get_error_code(e)
+            if error_code in ("404", "NoSuchKey", "403"):
+                return False
+
+            from src.app.core.logger import get_logger
+
+            get_logger(__name__).error("S3 exists check failed", error=e)
             return False
 
     async def get_url(self, path: str, expires_in: int = 3600) -> str:
@@ -226,8 +242,27 @@ class S3Storage(StorageProvider):
             )
             return str(url)
 
-        except Exception:
+        except Exception as e:
+            from src.app.core.logger import get_logger
+
+            get_logger(__name__).error("S3 get_url failed", error=e)
             return ""
+
+    def _get_error_code(self, exc: Exception) -> str | None:
+        """Extract AWS error code from botocore ClientError or test mock errors."""
+        if hasattr(exc, "response"):
+            response = getattr(exc, "response")
+            if isinstance(response, dict):
+                error = response.get("Error")
+                if isinstance(error, dict):
+                    return str(error.get("Code"))
+        if hasattr(exc, "error_response"):
+            response = getattr(exc, "error_response")
+            if isinstance(response, dict):
+                error = response.get("Error")
+                if isinstance(error, dict):
+                    return str(error.get("Code"))
+        return None
 
 
 __all__ = ["S3Storage"]

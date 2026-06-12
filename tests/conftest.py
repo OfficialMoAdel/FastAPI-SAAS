@@ -1,7 +1,7 @@
 import base64
 import os
-import uuid
 import sys
+import uuid
 from collections.abc import AsyncGenerator, Callable, Generator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
@@ -40,7 +40,7 @@ os.environ["ATTACK_DETECTION_ENABLED"] = "false"
 # Enable test mode to use NullPool and prevent event loop closed errors
 os.environ["TESTING"] = "1"
 
-from src.app.core.config import settings, RedisCacheSettings
+from src.app.core.config import RedisCacheSettings, settings
 
 # Monkey-patch REDIS_CACHE_URL to use isolated DB indices per worker
 # This prevents Redis key collisions when multiple xdist workers share the same Redis instance
@@ -298,12 +298,14 @@ def reset_singletons():
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
     from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
     from src.app.core.utils.rate_limit import reset_rate_limiter
+    from src.app.core.security.jwt_utils import clear_jwt_key_cache
 
     # Pre-test reset
     reset_rate_limiter()
     reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
+    clear_jwt_key_cache()
 
     yield
 
@@ -312,6 +314,7 @@ def reset_singletons():
     reset_gcra_rate_limiter()
     reset_token_blacklist_cache()
     reset_event_bus()
+    clear_jwt_key_cache()
 
 
 @pytest.fixture(autouse=True)

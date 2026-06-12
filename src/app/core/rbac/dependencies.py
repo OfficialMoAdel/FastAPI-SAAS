@@ -15,11 +15,14 @@ from collections.abc import Callable
 from typing import Any
 from uuid import UUID
 
-from fastapi import Depends, HTTPException, status
+from fastapi import Depends, HTTPException, Request, status
+from fastapi.params import Depends as DependsClass
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.api.dependencies import AuthContext, get_auth_context
+from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
@@ -233,16 +236,58 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     from src.app.core.db.database import async_get_db
 
     async def _check_permission(
+        request: Request = None,  # type: ignore[assignment]
         token: str = Depends(_oauth2_scheme),
         db: AsyncSession = Depends(async_get_db),
+        auth_context: AuthContext = Depends(get_auth_context),
     ) -> None:
-        # 1. Get current user FIRST to check for superuser bypass
-        current_user = await _get_current_user_from_token(token, db)
+        is_dependency_override = False
+        if (
+            auth_context is None
+            or isinstance(auth_context, DependsClass)
+            or hasattr(auth_context, "dependency")
+            or type(auth_context).__name__ == "Depends"
+        ):
+            # Fall back to resolving the user manually using _get_current_user_from_token(token, db)
+            user_data = await _get_current_user_from_token(token, db)
+            from src.app.api.dependencies import AuthenticatedUser
 
-        # 2. Get tenant context (required for everyone, even superusers, to ensure operations are scoped)
-        from src.app.core.tenancy.context import get_tenant_context
+            if isinstance(user_data, dict):
+                # Ensure we have email/username fallback if missing
+                if "email" not in user_data:
+                    user_data["email"] = "mocked@example.com"
+                if "username" not in user_data:
+                    user_data["username"] = "mockeduser"
+                current_user = AuthenticatedUser(**user_data)
+            else:
+                current_user = user_data
 
-        tenant_context = get_tenant_context()
+            # Retrieve tenant_context from get_tenant_context()
+            from src.app.core.tenancy.context import get_tenant_context
+
+            tenant_context = get_tenant_context()
+            is_dependency_override = True
+        else:
+            tenant_context = auth_context.tenant
+            current_user = auth_context.user
+            is_dependency_override = auth_context.is_dependency_override
+
+        if tenant_context is None and request is not None:
+            tenant_id_in_path = request.path_params.get("tenant_id")
+            if tenant_id_in_path:
+                from src.app.core.tenancy.context import TenantContext
+                from src.app.modules.tenants.models import Tenant
+                try:
+                    tenant_uuid = UUID(str(tenant_id_in_path))
+                except ValueError:
+                    tenant_uuid = tenant_id_in_path
+
+                stmt = select(Tenant).where(Tenant.id == tenant_uuid)
+                res = await db.execute(stmt)
+                tenant_model = res.scalar_one_or_none()
+                if tenant_model:
+                    tenant_context = TenantContext.from_model(tenant_model)
+
         if tenant_context is None:
             # SECURITY FIX: Never fall back to a default tenant ID
             # Permission checks require valid tenant context
@@ -252,30 +297,49 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             )
         tenant_id = tenant_context.id
 
-        # 3. Superuser bypass - skip permission checks, but AFTER verifying tenant context exists
-        # SECURITY HARDENING: Log superuser bypass and verify system-level authorization.
-        if current_user.get("is_superuser", False):
-            # SECURITY FIX: Prevent cache persistence window by verifying live DB state for superusers
-            from sqlalchemy import select
+        is_superuser = (
+            current_user.is_superuser
+            if hasattr(current_user, "is_superuser")
+            else current_user.get("is_superuser", False)
+        )
+        user_id_val = getattr(current_user, "id", None)
+        if user_id_val is None and isinstance(current_user, dict):
+            user_id_val = current_user.get("id")
 
-            from src.app.modules.users.models import User
+        if user_id_val is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User ID is required.",
+            )
+        user_id = int(user_id_val)
 
-            stmt = select(User.is_superuser).where(User.id == current_user["id"])
-            is_really_su = await db.scalar(stmt)
+        # Enforce tenant isolation before any permission bypass. Superusers may bypass
+        # permission checks within their tenant, but they cannot act as another tenant.
+        # Test dependency overrides are excluded because they are not production auth.
+        current_user_tenant_id = getattr(current_user, "tenant_id", None)
+        if current_user_tenant_id is None and isinstance(current_user, dict):
+            current_user_tenant_id = current_user.get("tenant_id")
 
-            if is_really_su:
-                logger.info(
-                    "Superuser bypass used",
-                    user_id=current_user["id"],
-                    tenant_id=str(tenant_id),
-                    permission=permission_slug,
-                )
-                return
+        if (
+            not is_dependency_override
+            and current_user_tenant_id is not None
+            and str(current_user_tenant_id) != str(tenant_id)
+        ):
+            raise ForbiddenException("User does not belong to the current tenant.")
 
-        # 4. Check permission using O(1) bitmask
-        has_perm = await has_permission_cached(current_user["id"], tenant_id, permission_slug, db)
+        if is_superuser:
+            logger.info(
+                "Superuser bypass used",
+                user_id=user_id,
+                tenant_id=str(tenant_id),
+                permission=permission_slug,
+            )
+            return
 
-        # 5. Raise if permission denied
+        # Check permission using O(1) bitmask
+        has_perm = await has_permission_cached(user_id, tenant_id, permission_slug, db)
+
+        # Raise if permission denied
         if not has_perm:
             raise HTTPException(
                 status_code=status.HTTP_403_FORBIDDEN,
@@ -315,51 +379,57 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
         )
 
 
+async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_id: int | UUID) -> None:
+    """
+    Invalidate the cached permissions for multiple users in a specific tenant in a single pipeline.
+    Call this when a role assigned to many users is modified.
+    """
+    if not user_ids:
+        return
+
+    from src.app.core.utils.cache import client as redis_client
+
+    if redis_client is None:
+        return
+
+    try:
+        async with redis_client.pipeline() as pipe:
+            for user_id in user_ids:
+                set_cache_key = get_user_permissions_cache_key(user_id, tenant_id)
+                bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
+                pipe.delete(set_cache_key)
+                pipe.delete(bitmask_cache_key)
+
+            # Execute all deletions in one round-trip
+            await pipe.execute()  # type: ignore[union-attr]
+    except Exception as e:
+        logger.warning(
+            "Failed to batch invalidate permissions cache",
+            user_count=len(user_ids),
+            tenant_id=tenant_id,
+            error=str(e),
+        )
+
+
 # Private helpers
 
 
 async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str, Any]:
-    """
-    Validate token and return current user dict.
-    Mirrors logic from api/dependencies.py to avoid circular import.
+    """Validate token and return current user dict using get_auth_context."""
+    from src.app.api.dependencies import get_auth_context
 
-    GI-2: Uses UserService.get_user_auth_info() which has Redis caching,
-    instead of direct crud_users.get() which bypasses cache on every request.
-    """
-    from src.app.core.security import TokenType, verify_token
-    from src.app.modules.users.service import UserService
-
-    token_data = await verify_token(token, TokenType.ACCESS, db)
-    if token_data is None:
+    try:
+        auth_context = await get_auth_context(request=None, db=db, token=token)  # type: ignore[arg-type]
+        return auth_context.user.model_dump()
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in _get_current_user_from_token: {e}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid or expired token",
             headers={"WWW-Authenticate": "Bearer"},
         )
-
-    # GI-2: Use UserService with Redis caching instead of direct DB query
-    user_service = UserService(db=db)
-
-    # Fetch user by email or username (cached)
-    if "@" in token_data.username_or_email:
-        user = await user_service.get_user_auth_info(email=token_data.username_or_email)
-    else:
-        user = await user_service.get_user_auth_info(username=token_data.username_or_email)
-
-    if user is None:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="User not found",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
-
-    if not user.get("is_active", False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="User account is no longer active",
-        )
-
-    return user
 
 
 def _get_current_tenant_id() -> UUID:

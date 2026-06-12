@@ -6,18 +6,21 @@ Handles token generation, email queueing, and token verification.
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Annotated, Any
 
+from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.security import (
     create_access_token,
     create_refresh_token,
 )
 from src.app.core.security.tokens import MagicLinkManager
+from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.exceptions import (
     InvalidMagicLinkError,
@@ -124,8 +127,13 @@ class MagicLinkService:
                 ip_address=ip_address,
                 user_agent=user_agent,
             )
-        except Exception:
+        except Exception as e:
             logger.error("Failed to store magic link in DB", exc_info=True)
+            from fastapi import HTTPException, status
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Internal server error: unable to generate secure login link."
+            ) from e
 
         # Queue email for delivery (async task)
         await self._queue_magic_link_email(
@@ -375,6 +383,7 @@ class MagicLinkService:
 
             from src.app.core.security.jwt_utils import extract_jti_unverified
             from src.app.core.security.session_manager import session_manager as global_session_manager
+
             session_id = extract_jti_unverified(access_token) or access_token[:32]
 
             device_info_str = json.dumps({"user_agent": "Magic Link Login", "ip": "Unknown"})
@@ -395,7 +404,10 @@ class MagicLinkService:
         }
 
 
-async def get_magic_link_service(db: AsyncSession, redis: Redis) -> MagicLinkService:
+async def get_magic_link_service(
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    redis: Annotated[Redis, Depends(async_get_redis)],
+) -> MagicLinkService:
     """Factory function for dependency injection.
 
     Args:

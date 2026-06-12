@@ -25,7 +25,7 @@ def _mock_eval_success(final_count: int = 1, evicted_data: list[bytes] | None = 
 
 def _mock_eval_already_exists() -> AsyncMock:
     """Create a mock eval that returns Lua already_exists result."""
-    return AsyncMock(return_value=[b"already_exists"])
+    return AsyncMock(return_value=[b"already_exists", b"0"])
 
 
 @pytest.fixture
@@ -49,7 +49,7 @@ def mock_redis():
     # Scan operation (for migration)
     redis.scan = AsyncMock(return_value=(0, []))
     # Lua eval - default: success with 1 active session, no evictions
-    redis.eval = _mock_eval_success(final_count=1)
+    redis.evalsha = _mock_eval_success(final_count=1)
 
     # Setup pipeline mock - still needed for invalidate_session, invalidate_all_sessions
     pipe_mock = MagicMock()
@@ -97,7 +97,7 @@ class TestSessionManagerHashOperations:
         # Assert
         assert result["registered"] is True
         # Verify Lua eval was called (atomic operation)
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_get_sessions_uses_hgetall(self, session_manager, mock_redis):
@@ -200,7 +200,7 @@ class TestSessionManagerRaceConditionFix:
         mock_redis = AsyncMock()
         mock_redis.hexists = AsyncMock(return_value=False)
         # Lua eval returns success for each call
-        mock_redis.eval = _mock_eval_success(final_count=1)
+        mock_redis.evalsha = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=10)
         user_id = "user123"
@@ -216,7 +216,7 @@ class TestSessionManagerRaceConditionFix:
         # Assert - all sessions registered
         assert all(r["registered"] for r in results)
         # Verify eval was used for atomic operations (1 call per session)
-        assert mock_redis.eval.call_count == 10
+        assert mock_redis.evalsha.call_count == 10
 
     @pytest.mark.asyncio
     async def test_no_deserialization_on_create(self, session_manager, mock_redis):
@@ -231,7 +231,7 @@ class TestSessionManagerRaceConditionFix:
         # Assert - no GET operation (Lua script handles everything atomically)
         mock_redis.get.assert_not_called()
         # eval should be called (atomic Lua script)
-        mock_redis.eval.assert_called()
+        mock_redis.evalsha.assert_called()
 
 
 class TestSessionManagerTTL:
@@ -253,7 +253,7 @@ class TestSessionManagerTTL:
 
         # Assert - eval was called (TTL is set atomically inside Lua)
         assert result["registered"] is True
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
 
 class TestSessionManagerDataIntegrity:
@@ -297,7 +297,7 @@ class TestSessionManagerSessionLimit:
         """Verify oldest sessions are evicted when limit is reached (via Lua)."""
         # Arrange
         evicted_session_data = b'{"session_id": "session1", "created_at": "2024-01-01T00:00:00"}'
-        mock_redis.eval = _mock_eval_success(
+        mock_redis.evalsha = _mock_eval_success(
             final_count=3,
             evicted_data=[evicted_session_data],
         )
@@ -314,7 +314,7 @@ class TestSessionManagerSessionLimit:
         assert result["invalidated_sessions"][0]["session_id"] == "session1"
 
         # Verify eval was called (atomic eviction + registration)
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
 
 class TestSessionManagerInvalidation:
@@ -409,7 +409,7 @@ class TestSessionManagerExistingSessionCheck:
         user_id = "user123"
         session_id = "session_abc"
         # Lua returns already_exists when HEXISTS is true
-        mock_redis.eval = _mock_eval_already_exists()
+        mock_redis.evalsha = _mock_eval_already_exists()
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=5)
 
@@ -430,6 +430,7 @@ class TestSessionManagerZSETMigration:
         # Arrange - create fresh mock with proper scan setup
         mock_redis = AsyncMock()
         mock_redis.scan = AsyncMock(return_value=(0, ["user_sessions_v2:123"]))
+        mock_redis.evalsha = AsyncMock(return_value=[b"success", b"0"])
         mock_redis.hgetall = AsyncMock(
             return_value={
                 "sess1": '{"session_id": "sess1", "created_at": "2024-01-01T00:00:00+00:00"}',

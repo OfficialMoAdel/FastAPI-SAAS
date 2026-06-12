@@ -46,7 +46,7 @@ class TestSessionPipelineOptimization:
         redis = AsyncMock()
         redis.hexists = AsyncMock(return_value=False)
         # Default: success with 1 active session, no evictions (under limit)
-        redis.eval = _mock_eval_success(final_count=6)
+        redis.evalsha = _mock_eval_success(final_count=6)
         return redis
 
     @pytest.fixture
@@ -63,7 +63,7 @@ class TestSessionPipelineOptimization:
             b'{"session_id": "old_session_1", "device_info": "Chrome"}',
             b'{"session_id": "old_session_2", "device_info": "Firefox"}',
         ]
-        mock_redis.eval = _mock_eval_success(final_count=4, evicted_data=evicted_data)
+        mock_redis.evalsha = _mock_eval_success(final_count=4, evicted_data=evicted_data)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
             mock_settings.SESSION_USE_PIPELINE_EVICTION = True
@@ -76,11 +76,11 @@ class TestSessionPipelineOptimization:
                     device_info="Safari",
                 )
 
-                # Should have called record_session_eviction with roundtrip count
+                # Should have called record_session_eviction with evicted count
                 mock_record.assert_called_once()
-                roundtrips = mock_record.call_args[0][0]
-                # Lua script: 1 roundtrip for entire operation
-                assert roundtrips == 1, f"Expected 1 roundtrip with Lua, got {roundtrips}"
+                evicted_count = mock_record.call_args[0][0]
+                # Lua script evicted 2 sessions
+                assert evicted_count == 2, f"Expected 2 evicted sessions, got {evicted_count}"
 
     @pytest.mark.asyncio
     async def test_no_eviction_when_under_limit(self, session_manager: Any, mock_redis: AsyncMock) -> None:
@@ -103,7 +103,7 @@ class TestSessionPipelineOptimization:
     async def test_eviction_with_data(self, session_manager: Any, mock_redis: AsyncMock) -> None:
         """Test that evicted session data is returned correctly from Lua."""
         evicted_data = [b'{"session_id": "old_session"}']
-        mock_redis.eval = _mock_eval_success(final_count=5, evicted_data=evicted_data)
+        mock_redis.evalsha = _mock_eval_success(final_count=5, evicted_data=evicted_data)
 
         with patch("src.app.core.security.session_manager.settings") as mock_settings:
             mock_settings.SESSION_USE_PIPELINE_EVICTION = True
@@ -123,7 +123,7 @@ class TestSessionPipelineOptimization:
     @pytest.mark.asyncio
     async def test_already_exists_returns_early(self, mock_redis: AsyncMock) -> None:
         """Test that existing session returns already_exists."""
-        mock_redis.eval = AsyncMock(return_value=[b"already_exists"])
+        mock_redis.evalsha = AsyncMock(return_value=[b"already_exists"])
         manager = SessionManager(max_sessions=5)
         manager._redis_client = mock_redis
 
@@ -145,7 +145,7 @@ class TestSessionEvictionMetrics:
         redis = AsyncMock()
         redis.hexists = AsyncMock(return_value=False)
         evicted_data = [b'{"session_id": "old"}']
-        redis.eval = _mock_eval_success(final_count=5, evicted_data=evicted_data)
+        redis.evalsha = _mock_eval_success(final_count=5, evicted_data=evicted_data)
         return redis
 
     @pytest.mark.asyncio
@@ -185,7 +185,7 @@ class TestSessionFeatureFlagToggle:
         redis = AsyncMock()
         redis.hexists = AsyncMock(return_value=False)
         evicted_data = [b'{"session_id": "old"}']
-        redis.eval = _mock_eval_success(final_count=5, evicted_data=evicted_data)
+        redis.evalsha = _mock_eval_success(final_count=5, evicted_data=evicted_data)
         return redis
 
     @pytest.mark.asyncio
@@ -204,7 +204,7 @@ class TestSessionFeatureFlagToggle:
                 await manager.register_session(user_id=1, session_id="new")
 
                 # Lua eval is used regardless of feature flag
-                mock_redis_simple.eval.assert_called_once()
+                mock_redis_simple.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_feature_flag_false_also_uses_eval(self, mock_redis_simple: AsyncMock) -> None:
@@ -225,4 +225,4 @@ class TestSessionFeatureFlagToggle:
                 await manager.register_session(user_id=1, session_id="new")
 
                 # Lua eval is used regardless of feature flag
-                mock_redis_simple.eval.assert_called_once()
+                mock_redis_simple.evalsha.assert_called_once()

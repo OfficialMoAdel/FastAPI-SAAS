@@ -236,3 +236,11 @@ def get_ollama_client() -> OllamaClient:
     if _ollama_client is None:
         _ollama_client = OllamaClient()
     return _ollama_client
+
+
+async def close_ollama_client() -> None:
+    """Close the Ollama client singleton."""
+    global _ollama_client
+    if _ollama_client is not None:
+        await _ollama_client.close()
+        _ollama_client = None

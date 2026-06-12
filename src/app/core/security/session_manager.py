@@ -57,6 +57,8 @@ class SessionManager:
         """
         self._redis_client = redis_client
         self._max_sessions = max_sessions
+        self._lua_script_registered: Any = None
+        self._lua_script_sha: str | None = None
 
     def set_redis_client(self, redis_client: Any) -> None:
         """Set Redis client for session tracking.
@@ -167,21 +169,47 @@ class SessionManager:
 
         invalidated_sessions: list[dict[str, Any]] = []
         try:
-            result = cast(
-                Any,
-                await self._redis_client.eval(
-                    lua_script,
-                    2,
-                    zset_key,
-                    hash_key,
-                    self._max_sessions,
-                    session_id,
-                    json_dumps(new_session, as_str=True),
-                    timestamp,
-                    self.SESSION_TTL_SECONDS,
-                    settings.SESSION_MAX_EVICTION_BATCH_SIZE,
-                ),
-            )
+            # N-7: Optimize Lua script execution using EVALSHA
+            if not hasattr(self, "_lua_script_sha") or not self._lua_script_sha:
+                import hashlib
+                self._lua_script_sha = hashlib.sha1(lua_script.encode("utf-8")).hexdigest()
+
+            try:
+                result = cast(
+                    Any,
+                    await self._redis_client.evalsha(
+                        self._lua_script_sha,
+                        2,
+                        zset_key,
+                        hash_key,
+                        self._max_sessions,
+                        session_id,
+                        json_dumps(new_session, as_str=True),
+                        timestamp,
+                        self.SESSION_TTL_SECONDS,
+                        settings.SESSION_MAX_EVICTION_BATCH_SIZE,
+                    ),
+                )
+            except Exception as e:
+                # Fallback to eval if script is not loaded
+                if "NOSCRIPT" in str(e):
+                    result = cast(
+                        Any,
+                        await self._redis_client.eval(
+                            lua_script,
+                            2,
+                            zset_key,
+                            hash_key,
+                            self._max_sessions,
+                            session_id,
+                            json_dumps(new_session, as_str=True),
+                            timestamp,
+                            self.SESSION_TTL_SECONDS,
+                            settings.SESSION_MAX_EVICTION_BATCH_SIZE,
+                        ),
+                    )
+                else:
+                    raise e
 
             if result and result[0] in (b"already_exists", "already_exists"):
                 return {"registered": True, "already_exists": True}
@@ -195,7 +223,7 @@ class SessionManager:
                         if isinstance(data, bytes):
                             data = data.decode("utf-8")
                         invalidated_sessions.append(json_loads(data))
-                    record_session_eviction(1)  # 1 Lua roundtrip
+                    record_session_eviction(len(invalidated_sessions))  # Actual count of evicted sessions
             else:
                 final_count = 0
         except Exception as e:

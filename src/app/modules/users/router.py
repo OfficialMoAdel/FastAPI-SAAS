@@ -26,18 +26,6 @@ from src.app.modules.users.service import UserService, get_user_service
 router = APIRouter(prefix="/users", tags=["users"])
 
 
-async def _get_username_from_id(service: UserService, user_id: str) -> Any:
-    """Helper to get username from ID from cached dicts."""
-    try:
-        parsed_id = int(user_id)
-    except ValueError:
-        return user_id
-    user = await service.get(parsed_id)
-    if not user:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
-    return str(user["username"])
-
-
 async def _get_user_service(db: AsyncSession = Depends(async_get_db)) -> Any:
     """Dependency for UserService injection."""
     return get_user_service(db)
@@ -165,13 +153,7 @@ async def patch_user(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
-    result = await service.update(username, values, current_user)
+    result = await service.update(user_id, values, current_user)
     return UserUpdateResponse(message=result.get("message", "User updated successfully"))
 
 
@@ -203,14 +185,8 @@ async def erase_user(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
-    await service.delete(username, current_user, token)
-    return UserDeleteResponse()
+    result = await service.delete(user_id, current_user, token)
+    return UserDeleteResponse(message=result.get("message", "User deleted successfully"))
 
 
 @router.delete("/db/{user_id}", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
@@ -224,13 +200,7 @@ async def erase_db_user(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
-    return await service.hard_delete(username, token)
+    return await service.hard_delete(user_id, token)
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
@@ -241,13 +211,7 @@ async def read_user_rate_limits(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
-    return await service.get_with_rate_limits(username)
+    return await service.get_with_rate_limits(user_id)
 
 
 @router.get("/{user_id}/tier", response_model=UserTierResponse | None)
@@ -261,17 +225,15 @@ async def read_user_tier(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
     # SECURITY FIX: IDOR check - ensure user can only view their own tier (or is superuser)
-    if username != current_user["username"] and not current_user.get("is_superuser"):
+    if (
+        user_id != current_user["username"]
+        and str(user_id) != str(current_user.get("id"))
+        and not current_user.get("is_superuser")
+    ):
         raise HTTPException(status_code=403, detail="Forbidden: You can only view your own tier")
 
-    result = await service.get_with_tier(username)
+    result = await service.get_with_tier(user_id)
     if result is None:
         return None
     return UserTierResponse(
@@ -290,10 +252,4 @@ async def patch_user_tier(
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    # Try to get by ID first, then fall back to username
-    try:
-        username = await _get_username_from_id(service, user_id)
-    except ValueError:
-        username = user_id
-
-    return await service.update_tier(username, values)
+    return await service.update_tier(user_id, values)

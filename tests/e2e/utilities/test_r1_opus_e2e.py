@@ -578,6 +578,7 @@ class TestFullOptimizationFlow:
         redis.zpopmin = zpopmin
         redis.hget = hget
         redis.eval = eval_lua
+        redis.evalsha = eval_lua
 
         def pipeline():
             pipe = MagicMock()

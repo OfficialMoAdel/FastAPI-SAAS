@@ -47,7 +47,7 @@ class TestZSETEvictionOrder:
         # Arrange
         evicted_data = b'{"session_id": "oldest_session", "created_at": "2024-01-01T00:00:00"}'
         mock_redis = AsyncMock()
-        mock_redis.eval = _mock_eval_success(
+        mock_redis.evalsha = _mock_eval_success(
             final_count=3,
             evicted_data=[evicted_data],
         )
@@ -64,14 +64,14 @@ class TestZSETEvictionOrder:
         assert result["invalidated_sessions"][0]["session_id"] == "oldest_session"
 
         # Verify eval was called (atomic Lua eviction)
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_no_eviction_when_under_limit(self):
         """Verify no eviction when under session limit."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.eval = _mock_eval_success(final_count=3)
+        mock_redis.evalsha = _mock_eval_success(final_count=3)
 
         manager = SessionManager(redis_client=mock_redis, max_sessions=5)
 
@@ -95,7 +95,7 @@ class TestZSETHashConsistency:
         """Verify register_session atomically updates both ZSET and Hash via Lua."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.eval = _mock_eval_success(final_count=1)
+        mock_redis.evalsha = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis)
 
@@ -104,7 +104,7 @@ class TestZSETHashConsistency:
 
         # Assert - Lua script atomically updates both structures
         assert result["registered"] is True
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_invalidate_removes_from_both(self):
@@ -164,7 +164,7 @@ class TestZSETTTLPropagation:
         """Verify TTL is set atomically on both ZSET and Hash by Lua script."""
         # Arrange
         mock_redis = AsyncMock()
-        mock_redis.eval = _mock_eval_success(final_count=1)
+        mock_redis.evalsha = _mock_eval_success(final_count=1)
 
         manager = SessionManager(redis_client=mock_redis)
 
@@ -173,7 +173,7 @@ class TestZSETTTLPropagation:
 
         # Assert - Lua script handles TTL atomically
         assert result["registered"] is True
-        mock_redis.eval.assert_called_once()
+        mock_redis.evalsha.assert_called_once()
 
 
 class TestZSETCountOperations:
