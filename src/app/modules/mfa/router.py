@@ -350,6 +350,7 @@ async def complete_mfa_login(
 
         from src.app.core.security.jwt_utils import extract_jti_unverified
         from src.app.core.security.session_manager import session_manager as global_session_manager
+
         session_id = extract_jti_unverified(access_token) or access_token[:32]
 
         client_ip = fastapi_request.client.host if fastapi_request and fastapi_request.client else "Unknown"

@@ -643,3 +643,55 @@ async def _mark_notification_failed(notification_id: str | None, tenant_id: str 
                 await service.mark_failed(UUID(notification_id), reason)
     except Exception as e:
         logger.error("failed_to_mark_notification_failed", notification_id=notification_id, error=str(e))
+
+
+@event_bus.subscribe("notification.request")
+async def handle_notification_request_event(data: dict[str, Any]) -> None:
+    """Handle request to generate and send an email notification.
+
+    Args:
+        data: Event payload with request details:
+            - to_email: Recipient email address
+            - template_name: Name of the template
+            - context: Template context variables
+            - tenant_id: Optional tenant ID
+            - user_id: Optional user ID
+    """
+    to_email = data.get("to_email")
+    template_name = data.get("template_name")
+
+    if not to_email or not template_name:
+        logger.warning("notification_request_missing_data", data=data)
+        return
+
+    tenant_id_str = data.get("tenant_id")
+    from uuid import UUID
+
+    tenant_id = UUID(tenant_id_str) if tenant_id_str else None
+
+    try:
+        from src.app.core.db.database import local_session
+        from src.app.core.db.rls import rls_context
+
+        async with local_session() as db:
+            if tenant_id_str:
+                async with rls_context(db, tenant_id_str):
+                    service = NotificationService(db)
+                    await service.send_email(
+                        tenant_id=tenant_id,
+                        to_email=to_email,
+                        template_name=template_name,
+                        context=data.get("context", {}),
+                        user_id=data.get("user_id"),
+                    )
+            else:
+                service = NotificationService(db)
+                await service.send_email(
+                    tenant_id=tenant_id,
+                    to_email=to_email,
+                    template_name=template_name,
+                    context=data.get("context", {}),
+                    user_id=data.get("user_id"),
+                )
+    except Exception as e:
+        logger.error("failed_to_process_notification_request", error=str(e))

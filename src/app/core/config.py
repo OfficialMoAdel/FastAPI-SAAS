@@ -484,7 +484,7 @@ class RedisQueueSettings(BaseSettings):
 
 
 class DefaultRateLimitSettings(BaseSettings):
-    DEFAULT_RATE_LIMIT_LIMIT: int = 10
+    DEFAULT_RATE_LIMIT_LIMIT: int = 100
     DEFAULT_RATE_LIMIT_PERIOD: int = 3600
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
@@ -495,7 +495,7 @@ class DefaultRateLimitSettings(BaseSettings):
 
 
 class CRUDAdminSettings(BaseSettings):
-    CRUD_ADMIN_ENABLED: bool = True
+    CRUD_ADMIN_ENABLED: bool = False
     CRUD_ADMIN_MOUNT_PATH: str = "/admin"
 
     CRUD_ADMIN_ALLOWED_IPS_LIST: list[str] | None = None
@@ -635,8 +635,8 @@ class R1UnifiedSettings(BaseSettings):
     Reduced to 60 seconds to prevent delay in invalidation.
     """
 
-    RBAC_CACHE_TTL_SECONDS: int = 86400
-    """TTL in seconds for RBAC permission cache. Default 24 hours (86400 seconds)."""
+    RBAC_CACHE_TTL_SECONDS: int = 3600
+    """TTL in seconds for RBAC permission cache. Default 1 hour (3600 seconds)."""
 
     # Circuit breaker settings
     CIRCUIT_BREAKER_USE_DOUBLE_CHECK: bool = True

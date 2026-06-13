@@ -168,6 +168,7 @@ class AIProviderFactory:
     async def shutdown_all(cls) -> None:
         """Close all cached provider instances and their connections."""
         import asyncio
+
         for provider in list(cls._instances.values()):
             if hasattr(provider, "close"):
                 if asyncio.iscoroutinefunction(provider.close):

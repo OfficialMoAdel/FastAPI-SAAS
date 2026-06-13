@@ -37,8 +37,6 @@ from src.app.modules.auth.models import (
     generate_reset_token,
     generate_verification_token,
 )
-from src.app.modules.users.crud import crud_users
-from src.app.modules.users.models import User
 
 logger = get_logger(__name__)
 
@@ -474,6 +472,7 @@ return new_attempts
 
             from src.app.core.security.jwt_utils import extract_jti_unverified
             from src.app.core.security.session_manager import session_manager as global_session_manager
+
             session_id = extract_jti_unverified(new_access_token) or new_access_token[:32]
 
             client_ip = request.client.host if request and request.client else "Unknown"
@@ -551,9 +550,9 @@ return new_attempts
                         db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
                     if db_user:
-
                         from src.app.core.security.jwt_utils import extract_jti_unverified
                         from src.app.core.security.session_manager import session_manager as global_session_manager
+
                         session_id = extract_jti_unverified(access_token) or access_token[:32]
                         await global_session_manager.invalidate_session(db_user["id"], session_id)
                 except Exception as e:
@@ -631,7 +630,8 @@ return new_attempts
         """
         # SECURITY FIX: Only active users can change their password
         # Ensure we properly fallback to False when checking active status in cached payload manually
-        user = await crud_users.get(db=db, id=user_id, is_deleted=False, is_active=True)
+        user_service = get_service("user", db)
+        user = await user_service.crud.get(db=db, id=user_id, is_deleted=False, is_active=True)
         if not user:
             raise UnauthorizedException("User not found.")
 
@@ -651,7 +651,7 @@ return new_attempts
 
         # Hash and update new password
         new_hashed = await get_password_hash(new_password)
-        await crud_users.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
+        await user_service.crud.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
 
         # SECURITY FIX: Invalidate ALL user sessions
         await self._invalidate_all_user_sessions(user, db)
@@ -701,6 +701,8 @@ return new_attempts
         """
         user_id = user.get("id")
 
+        user_service = get_service("user", db)
+        User = user_service.model
         # Update DB - increment token_version
         await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
         # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
@@ -768,7 +770,8 @@ return new_attempts
         """
         # BUG FIX: Also require is_active=True to prevent inactive accounts from
         # resetting their password without going through account reactivation.
-        user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
+        user_service = get_service("user", db)
+        user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
 
         # Always return success to prevent email enumeration
         if user:
@@ -783,28 +786,24 @@ return new_attempts
             logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
 
             reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
-
             # BUG FIX: Previously published directly to "notification.send" with keys
             # `template_name` and `context`. The only subscriber requires `notification_id`,
             # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the
             # event to be silently dropped → password reset emails were NEVER sent.
-            # Fix: delegate to NotificationService.send_email() which handles template
-            # rendering, creates a Notification DB record, and emits the correctly-shaped event.
-            from uuid import UUID as _UUID
-
-            from src.app.modules.notifications.service import NotificationService
-
-            notification_service = NotificationService(db)
-            await notification_service.send_email(
-                tenant_id=_UUID(str(user["tenant_id"])) if user.get("tenant_id") else None,
-                to_email=email,
-                template_name="password_reset",
-                context={
-                    "username": user["username"],
-                    "reset_link": reset_link,
-                    "valid_minutes": 60,
+            # Fix: delegate to "notification.request" event which NotificationService listens to.
+            await event_bus.publish(
+                "notification.request",
+                {
+                    "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
+                    "to_email": email,
+                    "template_name": "password_reset",
+                    "context": {
+                        "reset_link": reset_link,
+                        "username": user["username"],
+                    },
+                    "user_id": user["id"],
                 },
-                user_id=user["id"],
+                priority=EventPriority.NORMAL,
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention
@@ -863,7 +862,8 @@ return new_attempts
             raise UnauthorizedException("Invalid password reset token.")
 
         # SECURITY FIX: Get user WITHOUT is_deleted filter to check account status
-        user = await crud_users.get(db=db, id=reset_token.user_id)
+        user_service = get_service("user", db)
+        user = await user_service.crud.get(db=db, id=reset_token.user_id)
         if not user:
             raise UnauthorizedException("Invalid password reset token.")
 
@@ -892,7 +892,9 @@ return new_attempts
 
         # Update password
         new_hashed = await get_password_hash(new_password)
-        await crud_users.update(db=db, id=reset_token.user_id, object={"hashed_password": new_hashed}, commit=False)
+        await user_service.crud.update(
+            db=db, id=reset_token.user_id, object={"hashed_password": new_hashed}, commit=False
+        )
 
         # Invalidate ALL user sessions after password reset
         await self._invalidate_all_user_sessions(user, db)
@@ -930,7 +932,8 @@ return new_attempts
 
         # BUG FIX: Also require is_active=True to prevent inactive accounts from
         # verifying emails (which could restore account access without going through reactivation).
-        user = await crud_users.get(db=db, email=email, is_deleted=False, is_active=True)
+        user_service = get_service("user", db)
+        user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
 
         is_email_verified = (
             user.get("is_email_verified", False)
@@ -1009,7 +1012,8 @@ return new_attempts
             raise UnauthorizedException("Verification token has expired.")
 
         # Get user
-        user = await crud_users.get(db=db, id=verification_token.user_id, is_deleted=False)
+        user_service = get_service("user", db)
+        user = await user_service.crud.get(db=db, id=verification_token.user_id, is_deleted=False)
         if not user:
             raise UnauthorizedException("User not found.")
 
@@ -1021,7 +1025,9 @@ return new_attempts
             raise UnauthorizedException("This account is inactive. Please contact support.")
 
         # Update user status
-        await crud_users.update(db=db, id=verification_token.user_id, object={"is_email_verified": True}, commit=False)
+        await user_service.crud.update(
+            db=db, id=verification_token.user_id, object={"is_email_verified": True}, commit=False
+        )
 
         # Invalidate auth cache
         user_service = get_service("user", db)

@@ -38,7 +38,9 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["tenant_id"], ["tenants.id"], name=op.f("fk_ai_chat_sessions_tenant_id"), ondelete="CASCADE"
         ),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_ai_chat_sessions_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_ai_chat_sessions_user_id"), ondelete="CASCADE"
+        ),
     )
     op.create_index("ix_ai_chat_sessions_uuid", "ai_chat_sessions", ["uuid"], unique=True)
     op.create_index("idx_ai_chat_sessions_tenant", "ai_chat_sessions", ["tenant_id"])

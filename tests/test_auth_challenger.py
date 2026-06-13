@@ -19,12 +19,14 @@ from src.app.core.security import create_access_token
 MOCK_TENANT_A_ID = UUID("00000000-0000-0000-0000-00000000000a")
 MOCK_TENANT_B_ID = UUID("00000000-0000-0000-0000-00000000000b")
 
+
 @asynccontextmanager
 async def mock_get_redis_client():
     mock_client = AsyncMock()
     mock_client.exists = AsyncMock(return_value=0)
     mock_client.get = AsyncMock(return_value=None)
     yield mock_client
+
 
 @pytest.mark.asyncio
 async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None:
@@ -93,7 +95,7 @@ async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None
                 headers={
                     "Authorization": f"Bearer {token}",
                     "X-Tenant-ID": "tenant-a",
-                }
+                },
             )
 
     # Assert request was successful (200 OK or 404 depending on db query inside endpoint, but auth should pass)
@@ -175,7 +177,7 @@ async def test_superuser_tenant_isolation_blocked(get_test_app) -> None:
                 headers={
                     "Authorization": f"Bearer {token}",
                     "X-Tenant-ID": "tenant-b",
-                }
+                },
             )
 
     # Assert response is 403 Forbidden due to tenant mismatch

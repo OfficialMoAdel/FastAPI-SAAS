@@ -172,6 +172,7 @@ class SessionManager:
             # N-7: Optimize Lua script execution using EVALSHA
             if not hasattr(self, "_lua_script_sha") or not self._lua_script_sha:
                 import hashlib
+
                 self._lua_script_sha = hashlib.sha1(lua_script.encode("utf-8")).hexdigest()
 
             try:
@@ -192,7 +193,7 @@ class SessionManager:
                 )
             except Exception as e:
                 # Fallback to eval if script is not loaded
-                if "NOSCRIPT" in str(e):
+                if "NOSCRIPT" in str(e) or "No matching script" in str(e):
                     result = cast(
                         Any,
                         await self._redis_client.eval(

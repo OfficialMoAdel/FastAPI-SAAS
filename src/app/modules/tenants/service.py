@@ -208,6 +208,10 @@ class TenantService(BaseService[Tenant]):
         # FIXED: Cache the newly created tenant for immediate lookup
         await self._cache_tenant(created_tenant)
 
+        # Invalidate the negative cache so newly created tenants aren't hidden
+        if redis_client and tenant.slug:
+            await redis_client.delete(f"tenant:negative:{tenant.slug}")
+
         logger.info(
             "Tenant created | id=%s | slug=%s | name=%s",
             result["id"],

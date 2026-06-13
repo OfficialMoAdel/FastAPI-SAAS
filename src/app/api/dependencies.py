@@ -362,17 +362,17 @@ async def _verify_optional_bearer_token(
 
         token_type = cached_payload.get("token_type")
         if token_type != TokenType.ACCESS:
-            raise UnauthorizedException("User not authenticated.")
+            return None
 
         username_or_email = cached_payload.get("sub")
         if not username_or_email:
-            raise UnauthorizedException("User not authenticated.")
+            return None
         token_data = cached_payload
         payload_version = cached_payload.get("token_version", 0)
     else:
         token_data = await verify_token(token_value, TokenType.ACCESS, db)
         if token_data is None:
-            raise UnauthorizedException("Invalid or expired token.")
+            return None
 
         jti = getattr(token_data, "jti", None)
         if await _is_token_blacklisted_with_fallback(token_value, jti, db):
@@ -443,15 +443,9 @@ async def get_optional_auth_context(
 
     try:
         return await _verify_optional_bearer_token(token_value, db, request, current_tenant)
-    except HTTPException as e:
-        # Only swallow and return None for token verification/revocation errors
-        if "token" in str(e.detail).lower() or "revoked" in str(e.detail).lower():
-            return None
-        # Propagate user validation (inactive, deleted, tenant mismatch, version mismatch) errors
-        raise
     except Exception as e:
         logger.error(f"Error in get_optional_auth_context token verification: {e}")
-        return None
+        raise
 
 
 async def get_optional_user(

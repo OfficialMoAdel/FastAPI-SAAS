@@ -105,6 +105,7 @@ def mock_existing_user():
     user.is_deleted = False
     user.is_superuser = False
     import uuid
+
     user.tenant_id = uuid.uuid4()
     user.tier_id = 1
     user.created_at = datetime.now(UTC)

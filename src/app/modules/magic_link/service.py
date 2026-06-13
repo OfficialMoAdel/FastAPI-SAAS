@@ -130,9 +130,10 @@ class MagicLinkService:
         except Exception as e:
             logger.error("Failed to store magic link in DB", exc_info=True)
             from fastapi import HTTPException, status
+
             raise HTTPException(
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Internal server error: unable to generate secure login link."
+                detail="Internal server error: unable to generate secure login link.",
             ) from e
 
         # Queue email for delivery (async task)

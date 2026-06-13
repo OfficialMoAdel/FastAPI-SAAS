@@ -49,12 +49,19 @@ async def read_users(
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Get paginated list of users for the current tenant (superuser only)."""
-    users_data = await service.list_users(page=pagination.page, per_page=pagination.per_page, is_deleted=False)
+    offset = (pagination.page - 1) * pagination.per_page
+    users_data = await service.crud.get_multi(
+        db=service.db,
+        offset=offset,
+        limit=pagination.per_page,
+        is_deleted=False,
+        return_as_model=False,
+    )
 
-    data = users_data.get("data", [])
+    data = users_data.get("data", []) if isinstance(users_data, dict) else users_data
     # BUG FIX: len(data) is only the current page size, not the full total.
     # Fall back to 0 so the caller knows total is unavailable, not silently wrong.
-    total = users_data.get("total_count", 0)
+    total = users_data.get("total_count", 0) if isinstance(users_data, dict) else len(data)
     return {
         "items": data,
         "total": total,

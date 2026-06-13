@@ -97,7 +97,9 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_user_preferences")),
-        sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_user_preferences_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["user_id"], ["users.id"], name=op.f("fk_user_preferences_user_id"), ondelete="CASCADE"
+        ),
     )
     op.create_index("idx_user_preferences_user_id", "user_preferences", ["user_id"], unique=True)
     op.create_index("idx_user_preferences_quiet_hours", "user_preferences", ["quiet_hours_enabled"])

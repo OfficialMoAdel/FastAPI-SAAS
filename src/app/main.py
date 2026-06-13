@@ -171,22 +171,21 @@ app = create_application(
 )
 
 
-
 # Middleware stack (LIFO - last added runs first on request)
 # Request flow:
-#   GZip → QueryProfiler → IPFilter → AttackDetection → BodyLimit
-#     → Security → Tenant → RateLimit → RequestID → Handler
+#   GZip → QueryProfiler → IPFilter → BodyLimit → AttackDetection
+#     → SecurityHeaders → Tenant → RateLimit → RequestID → Handler
 # Response flow:
-#   Handler → RequestID → RateLimit → Tenant → Security
-#     → BodyLimit → AttackDetection → IPFilter → QueryProfiler → GZip
+#   Handler → RequestID → RateLimit → Tenant → SecurityHeaders
+#     → AttackDetection → BodyLimit → IPFilter → QueryProfiler → GZip
 #
 # Key ordering decisions:
 # - RequestID: Added first = innermost (closest to handler for accurate tracing)
 # - RateLimit: Rate limiting before expensive processing
 # - Tenant: Extract tenant context for multi-tenant features
+# - SecurityHeaders: Add security headers to all responses
+# - AttackDetection: Detect attacks after body limit to prevent large payload parsing attacks
 # - BodyLimit: Reject oversized requests early
-# - Security: Add security headers to all responses
-# - AttackDetection: Detect attacks early, after IPFilter to allow whitelist bypass
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
@@ -224,14 +223,20 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Add JWT Bearer security scheme
+    # Add JWT Bearer and API Key security schemes
     openapi_schema["components"]["securitySchemes"] = {
         "bearerAuth": {
             "type": "http",
             "scheme": "bearer",
             "bearerFormat": "JWT",
             "description": "Enter JWT token obtained from /api/v1/auth/login",
-        }
+        },
+        "ApiKeyAuth": {
+            "type": "apiKey",
+            "in": "header",
+            "name": "X-API-Key",
+            "description": "Enter API Key",
+        },
     }
 
     # Identify paths that explicitly depend on authentication
@@ -246,7 +251,16 @@ def custom_openapi():
             is_auth_dep = isinstance(dep, Security)
             if not is_auth_dep and hasattr(dep, "dependency") and callable(dep.dependency):
                 dep_name = dep.dependency.__name__
-                if dep_name in ("get_current_user", "get_current_superuser", "get_current_active_user"):
+                if dep_name in (
+                    "get_current_user",
+                    "get_current_superuser",
+                    "get_current_active_user",
+                    "get_user_by_api_key",
+                    "get_optional_user",
+                    "get_optional_auth_context",
+                    "verify_tenant_access",
+                    "requires_api_key_scope",
+                ) or dep_name.startswith("RequirePermission"):
                     is_auth_dep = True
 
             if is_auth_dep and hasattr(route, "path"):
@@ -260,7 +274,9 @@ def custom_openapi():
             if method.get("security"):
                 continue
             if is_protected:
+                # Add both bearerAuth and ApiKeyAuth as OR conditions
                 method.setdefault("security", []).append({"bearerAuth": []})
+                method["security"].append({"ApiKeyAuth": []})
 
     app.openapi_schema = openapi_schema
     return app.openapi_schema

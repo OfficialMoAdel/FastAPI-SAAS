@@ -169,11 +169,13 @@ def lifespan_factory(
 
             # Close SSO HTTP client pool
             from src.app.modules.sso.http_client import close_sso_http_client
+
             await close_sso_http_client()
 
             # Close Webhook HTTP client pool
             try:
                 from src.app.modules.webhooks.http_client import close_webhook_http_client
+
                 await close_webhook_http_client()
             except ImportError:
                 pass
@@ -181,12 +183,14 @@ def lifespan_factory(
             # Close AI providers
             try:
                 from src.app.modules.ai.factory import AIProviderFactory
+
                 await AIProviderFactory.shutdown_all()
             except ImportError:
                 pass
 
             try:
                 from src.app.modules.ai.ollama_client import close_ollama_client
+
                 await close_ollama_client()
             except ImportError:
                 pass

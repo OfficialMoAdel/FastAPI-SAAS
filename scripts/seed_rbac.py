@@ -30,10 +30,7 @@ async def seed_permissions() -> None:
         count = 0
         for perm in PermissionEnum:
             if perm.value not in existing_permissions:
-                new_perm = Permission(
-                    slug=perm.value,
-                    description=perm.name.replace("_", " ").title()
-                )
+                new_perm = Permission(slug=perm.value, description=perm.name.replace("_", " ").title())
                 db.add(new_perm)
                 count += 1
 

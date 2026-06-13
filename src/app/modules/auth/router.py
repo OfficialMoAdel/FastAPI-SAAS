@@ -33,7 +33,6 @@ from src.app.modules.auth.schemas import (
     SessionListResponse,
 )
 from src.app.modules.auth.service import AuthService
-from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserRead
 from src.app.modules.users.service import UserService
 
@@ -97,7 +96,7 @@ async def register(
     request: Request,
     user: UserCreate,
     user_service: Annotated[UserService, Depends(_get_user_service)],
-) -> User:
+) -> Any:
     """Register a new user account."""
     return await user_service.create(user)
 

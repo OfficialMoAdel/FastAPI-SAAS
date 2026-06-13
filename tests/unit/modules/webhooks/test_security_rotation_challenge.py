@@ -1,14 +1,16 @@
 import time
 from datetime import UTC, datetime, timedelta
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 from uuid import uuid4
+
 import pytest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.security.encryption import decrypt_data, encrypt_data
 from src.app.modules.webhooks.models import WebhookEndpoint
 from src.app.modules.webhooks.service import WebhookService
-from src.app.modules.webhooks.utils import verify_webhook_signature, generate_signing_secret
-from src.app.core.security.encryption import encrypt_data, decrypt_data
+from src.app.modules.webhooks.utils import verify_webhook_signature
+
 
 @pytest.fixture
 def mock_db():
@@ -18,9 +20,11 @@ def mock_db():
     db.refresh = AsyncMock()
     return db
 
+
 @pytest.fixture
 def webhook_service(mock_db):
     return WebhookService(mock_db)
+
 
 @pytest.mark.asyncio
 async def test_rotate_signing_secret_saves_old(webhook_service, mock_db):
@@ -62,6 +66,7 @@ async def test_rotate_signing_secret_saves_old(webhook_service, mock_db):
     assert new_raw_secret != old_raw_secret
     assert decrypt_data(endpoint.signing_secret) == new_raw_secret
 
+
 @pytest.mark.asyncio
 async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_db):
     """Test that trigger_webhooks generates dual signatures when within grace period."""
@@ -90,6 +95,7 @@ async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_
 
     # We need to mock DB insert execute returning the created delivery
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
     mock_delivery = MagicMock(spec=WebhookDelivery)
     mock_delivery.id = uuid4()
     mock_delivery.status = WebhookDeliveryStatus.PENDING
@@ -107,12 +113,13 @@ async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_
     # So we can inspect deliveries_data inside values()
     insert_stmt = mock_db.execute.call_args[0][0]
     inserted_values = insert_stmt.compile().params
-    
+
     # Alternatively, let's look at the generated signature by looking at trigger_webhooks implementation
     # Let's verify dual signature matches expected: sha256={active_sig},sha256={old_sig}
-    import json
-    import hmac
     import hashlib
+    import hmac
+    import json
+
     payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
     expected_active_sig = hmac.new(active_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
     expected_old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
@@ -122,6 +129,7 @@ async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_
     assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), active_secret) is True
     assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), old_secret) is True
     assert verify_webhook_signature(payload_bytes, expected_dual_sig, int(time.time()), "wrong_secret") is False
+
 
 @pytest.mark.asyncio
 async def test_trigger_webhooks_single_signature_after_expiration(webhook_service, mock_db):
@@ -151,6 +159,7 @@ async def test_trigger_webhooks_single_signature_after_expiration(webhook_servic
 
     # Mock DB insert returning the created delivery
     from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus
+
     mock_delivery = MagicMock(spec=WebhookDelivery)
     mock_delivery.id = uuid4()
     mock_delivery.status = WebhookDeliveryStatus.PENDING
@@ -173,9 +182,10 @@ async def test_trigger_webhooks_single_signature_after_expiration(webhook_servic
     # Let's see if we can get it from compile
     compiled = call_args.compile()
     # Let's verify via manual check:
-    import json
-    import hmac
     import hashlib
+    import hmac
+    import json
+
     payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
     expected_active_sig = hmac.new(active_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
     expected_single_sig = f"sha256={expected_active_sig}"

@@ -670,6 +670,17 @@ class UserService(BaseService[User]):
         if not db_user:
             raise ModelNotFoundError("User", username)
 
+        # SECURITY FIX: Ensure the user belongs to the current tenant if one exists
+        from src.app.core.tenancy.context import get_current_tenant
+
+        current_tenant = get_current_tenant()
+        if current_tenant:
+            db_tenant_id = db_user.tenant_id if not isinstance(db_user, dict) else db_user.get("tenant_id")
+            if db_tenant_id and str(db_tenant_id) != str(current_tenant.id):
+                from src.app.core.exceptions.http_exceptions import ForbiddenException
+
+                raise ForbiddenException("You do not have permission to delete this user.")
+
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]

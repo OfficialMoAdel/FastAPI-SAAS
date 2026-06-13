@@ -277,6 +277,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             if tenant_id_in_path:
                 from src.app.core.tenancy.context import TenantContext
                 from src.app.modules.tenants.models import Tenant
+
                 try:
                     tenant_uuid = UUID(str(tenant_id_in_path))
                 except ValueError:

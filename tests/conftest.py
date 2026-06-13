@@ -7,10 +7,10 @@ from typing import Any
 from unittest.mock import AsyncMock, Mock, patch
 
 # Force UTF-8 encoding for standard output/error to prevent UnicodeEncodeError crashes on Windows
-if sys.stdout and hasattr(sys.stdout, 'reconfigure'):
-    sys.stdout.reconfigure(encoding='utf-8')
-if sys.stderr and hasattr(sys.stderr, 'reconfigure'):
-    sys.stderr.reconfigure(encoding='utf-8')
+if sys.stdout and hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8")
+if sys.stderr and hasattr(sys.stderr, "reconfigure"):
+    sys.stderr.reconfigure(encoding="utf-8")
 
 
 import pytest
@@ -45,6 +45,8 @@ from src.app.core.config import RedisCacheSettings, settings
 # Monkey-patch REDIS_CACHE_URL to use isolated DB indices per worker
 # This prevents Redis key collisions when multiple xdist workers share the same Redis instance
 original_redis_url = RedisCacheSettings.REDIS_CACHE_URL.fget
+
+
 def _get_isolated_redis_url(self):
     base_url = original_redis_url(self)
     worker_id = os.environ.get("PYTEST_XDIST_WORKER", "gw0")
@@ -53,6 +55,7 @@ def _get_isolated_redis_url(self):
     if base_url.count("/") > 2:
         return base_url
     return f"{base_url}/{db_index}"
+
 
 RedisCacheSettings.REDIS_CACHE_URL = property(_get_isolated_redis_url)
 
@@ -295,10 +298,10 @@ def reset_singletons():
     """
     # Import reset functions - these are added for test isolation
     from src.app.core.events import reset_event_bus
+    from src.app.core.security.jwt_utils import clear_jwt_key_cache
     from src.app.core.security.token_blacklist_cache import reset_token_blacklist_cache
     from src.app.core.utils.gcra_rate_limit import reset_gcra_rate_limiter
     from src.app.core.utils.rate_limit import reset_rate_limiter
-    from src.app.core.security.jwt_utils import clear_jwt_key_cache
 
     # Pre-test reset
     reset_rate_limiter()

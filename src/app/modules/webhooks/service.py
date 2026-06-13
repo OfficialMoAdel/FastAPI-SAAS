@@ -158,6 +158,7 @@ class WebhookService:
                     try:
                         old_secret = decrypt_data(endpoint.old_signing_secret)
                         import json
+
                         payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
                         active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
                         old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
@@ -263,6 +264,7 @@ class WebhookService:
                 try:
                     old_secret = decrypt_data(endpoint.old_signing_secret)
                     import json
+
                     payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
                     active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
                     old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
@@ -417,6 +419,21 @@ class WebhookService:
                 endpoint_url=endpoint.url,
                 error=str(e),
             )
+
+            from src.app.core.events import EventPriority
+
+            await event_bus.publish(
+                "audit.log",
+                {
+                    "action": "webhook.ssrf_blocked",
+                    "tenant_id": str(endpoint.tenant_id),
+                    "entity_type": "webhook_delivery",
+                    "entity_id": str(delivery_id),
+                    "details": {"endpoint_url": endpoint.url, "error": str(e)},
+                },
+                priority=EventPriority.NORMAL,
+            )
+
             delivery.status = WebhookDeliveryStatus.FAILED
             delivery.response_body = f"SSRF protection: {e}"
             await self.db.commit()

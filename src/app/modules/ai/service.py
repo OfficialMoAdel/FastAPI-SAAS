@@ -529,7 +529,11 @@ class ChatCompletionService:
                                     max_retries=max_retries,
                                     error=str(e),
                                 )
-                                await asyncio.sleep(2 * (attempt + 1))
+                                import random
+
+                                base_delay = 2 * (2**attempt)  # 2, 4, 8 seconds
+                                jitter = random.uniform(0, 1)
+                                await asyncio.sleep(base_delay + jitter)
                             else:
                                 logger.error(
                                     "Failed to save AI chat response in background task after all retries", error=str(e)

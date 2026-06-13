@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 if TYPE_CHECKING:
     from src.app.modules.rate_limits.service import RateLimitService
+    from src.app.modules.storage_settings.service import StorageSettingsService
     from src.app.modules.tiers.service import TierService
     from src.app.modules.users.service import UserService
 
@@ -112,6 +113,7 @@ def _register_default_services() -> None:
     # Import here to avoid circular imports at module load time
     from src.app.modules.api_keys.service import APIKeyService
     from src.app.modules.rate_limits.service import RateLimitService
+    from src.app.modules.storage_settings.service import StorageSettingsService
     from src.app.modules.tiers.service import TierService
     from src.app.modules.users.service import UserService
 
@@ -119,6 +121,7 @@ def _register_default_services() -> None:
     _SERVICE_FACTORIES["rate_limit"] = lambda db: RateLimitService(db)
     _SERVICE_FACTORIES["user"] = lambda db: UserService(db)
     _SERVICE_FACTORIES["api_key"] = lambda db: APIKeyService(db)
+    _SERVICE_FACTORIES["storage_settings"] = lambda db: StorageSettingsService(db)
 
 
 # Type aliases for IDE support
@@ -138,3 +141,8 @@ def get_rate_limit_service(db: AsyncSession) -> "RateLimitService":
 def get_user_service(db: AsyncSession) -> "UserService":
     """Get UserService instance (typed helper)."""
     return cast("UserService", get_service("user", db))
+
+
+def get_storage_settings_service(db: AsyncSession) -> "StorageSettingsService":
+    """Get StorageSettingsService instance (typed helper)."""
+    return cast("StorageSettingsService", get_service("storage_settings", db))

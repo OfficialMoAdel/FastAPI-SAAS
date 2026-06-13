@@ -13,9 +13,9 @@ from src.app.core.config import CryptSettings, R1UnifiedSettings
 
 
 def test_rbac_cache_ttl_default():
-    """Verify RBAC cache TTL default is 24 hours (86400 seconds)."""
+    """Verify RBAC cache TTL default is 1 hour (3600 seconds)."""
     settings = R1UnifiedSettings()
-    assert settings.RBAC_CACHE_TTL_SECONDS == 86400
+    assert settings.RBAC_CACHE_TTL_SECONDS == 3600
 
 
 # ==================== Config Secrets ====================
@@ -32,6 +32,7 @@ def test_encryption_keys_missing_warning():
             from pydantic import SecretStr
 
             from src.app.core.config import CryptSettings
+
             CryptSettings(SECRET_KEY=SecretStr("s" * 32), ENCRYPTION_KEY=None, ENCRYPTION_SALT=None)
 
 

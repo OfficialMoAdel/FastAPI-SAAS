@@ -443,6 +443,7 @@ class MFAService:
 
         # Pre-compute old SHA256 hash for legacy fallback
         import hashlib
+
         old_salt = settings.SECRET_KEY.get_secret_value().encode()
         old_hashed_input = hashlib.sha256(old_salt + formatted_code.encode()).hexdigest()
 

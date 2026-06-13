@@ -9,6 +9,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
@@ -18,7 +19,6 @@ from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.crud import crud_api_keys
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
-from src.app.modules.audit_logs.service import AuditLogService
 
 logger = get_logger(__name__)
 
@@ -120,18 +120,22 @@ class APIKeyService(BaseService[APIKey]):
         await self.db.refresh(key_record)
 
         # Audit log the creation
-        audit_service = AuditLogService(self.db)
-        await audit_service.create_log(
-            tenant_id=tenant_id,
-            action="api_key.created",
-            entity_type="api_key",
-            entity_id=str(key_record.id),
-            user_id=user_id,
-            details={
-                "key_name": key_record.name,
-                "key_prefix": key_record.key_prefix,
-                "expires_at": key_record.expires_at.isoformat() if key_record.expires_at else None,
-                "scopes": api_key_data.scopes,
+        from src.app.core.events import event_bus
+
+        await event_bus.publish(
+            "audit.log",
+            {
+                "tenant_id": str(tenant_id),
+                "action": "api_key.created",
+                "entity_type": "api_key",
+                "entity_id": str(key_record.id),
+                "user_id": user_id,
+                "details": {
+                    "key_name": key_record.name,
+                    "key_prefix": key_record.key_prefix,
+                    "expires_at": key_record.expires_at.isoformat() if key_record.expires_at else None,
+                    "scopes": api_key_data.scopes,
+                },
             },
         )
 
@@ -243,17 +247,21 @@ class APIKeyService(BaseService[APIKey]):
         )
 
         # Audit log the revocation
-        audit_service = AuditLogService(self.db)
-        await audit_service.create_log(
-            tenant_id=tenant_id,
-            action="api_key.revoked",
-            entity_type="api_key",
-            entity_id=str(key_id),
-            user_id=user_id,
-            details={
-                "key_name": api_key_name,
-                "key_prefix": api_key_prefix,
-                "was_active": api_key_is_active,
+        from src.app.core.events import event_bus
+
+        await event_bus.publish(
+            "audit.log",
+            {
+                "tenant_id": str(tenant_id),
+                "action": "api_key.revoked",
+                "entity_type": "api_key",
+                "entity_id": str(key_id),
+                "user_id": user_id,
+                "details": {
+                    "key_name": api_key_name,
+                    "key_prefix": api_key_prefix,
+                    "was_active": api_key_is_active,
+                },
             },
         )
 
@@ -514,23 +522,27 @@ class APIKeyService(BaseService[APIKey]):
             await redis_client.delete(self._get_cache_key(old_key_hashed))
 
         # Audit log the rotation
-        audit_service = AuditLogService(self.db)
-        await audit_service.create_log(
-            tenant_id=tenant_id,
-            action="api_key.rotated",
-            entity_type="api_key",
-            entity_id=str(new_key_record.id),
-            user_id=user_id,
-            details={
-                "old_key_id": api_key_id,
-                "old_key_name": api_key_name,
-                "old_key_prefix": api_key_prefix,
-                "new_key_id": new_key_record.id,
-                "new_key_name": new_key_record.name,
-                "new_key_prefix": new_key_record.key_prefix,
-                "grace_period_days": grace_period_days,
-                "old_key_expires_at": grace_expires_at.isoformat(),
+
+        await event_bus.publish(
+            "audit.log",
+            {
+                "action": "api_key.rotated",
+                "entity_type": "api_key",
+                "entity_id": str(new_key_record.id),
+                "tenant_id": str(tenant_id),
+                "user_id": str(user_id) if user_id else None,
+                "details": {
+                    "old_key_id": api_key_id,
+                    "old_key_name": api_key_name,
+                    "old_key_prefix": api_key_prefix,
+                    "new_key_id": new_key_record.id,
+                    "new_key_name": new_key_record.name,
+                    "new_key_prefix": new_key_record.key_prefix,
+                    "grace_period_days": grace_period_days,
+                    "old_key_expires_at": grace_expires_at.isoformat(),
+                },
             },
+            priority=EventPriority.NORMAL,
         )
 
         logger.info(

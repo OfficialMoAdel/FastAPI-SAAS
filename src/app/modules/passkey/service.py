@@ -737,6 +737,7 @@ class PasskeyService:
 
             from src.app.core.security.jwt_utils import extract_jti_unverified
             from src.app.core.security.session_manager import session_manager as global_session_manager
+
             session_id = extract_jti_unverified(access_token) or access_token[:32]
 
             device_info_str = json.dumps({"user_agent": "Passkey Login", "ip": "Unknown"})
