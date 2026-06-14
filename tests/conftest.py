@@ -222,6 +222,103 @@ def get_test_app():
     # Clear any existing dependency overrides from previous tests
     app.dependency_overrides.clear()
 
+    # --- INJECT TEST-AWARE MOCKS ---
+    # This replaces the logic that was removed from src.app.api.dependencies in production.
+    # It allows tests to patch `_get_current_user_from_token` or override `get_current_user`
+    # and bypass token validation without polluting production code with `Mock` checks.
+    from unittest.mock import Mock
+
+    from fastapi import Depends, Request
+    from sqlalchemy.ext.asyncio import AsyncSession
+
+    from src.app.api.dependencies import (
+        _create_auth_context,
+        get_auth_context,
+        get_current_user,
+        get_optional_auth_context,
+        get_optional_user,
+        get_user_by_api_key,
+    )
+    from src.app.core.db.database import async_get_db
+    from src.app.core.security import oauth2_scheme
+
+    async def _test_aware_get_auth_context(
+        request: Request,
+        db: AsyncSession = Depends(async_get_db),
+        token: str = Depends(oauth2_scheme),
+    ):
+        from src.app.core.rbac.dependencies import _get_current_user_from_token
+        from src.app.core.tenancy.context import get_current_tenant
+        current_tenant = get_current_tenant()
+
+        # 1. If tests override get_current_user, respect it
+        if get_current_user in app.dependency_overrides:
+            override_func = app.dependency_overrides[get_current_user]
+            import inspect
+            user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
+            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+
+        # 2. If tests patch _get_current_user_from_token, use it
+        if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
+            mocked_user = await _get_current_user_from_token(token, db)
+            from src.app.api.dependencies import AuthenticatedUser
+            if isinstance(mocked_user, dict):
+                if "email" not in mocked_user:
+                    mocked_user["email"] = "mocked@example.com"
+                if "username" not in mocked_user:
+                    mocked_user["username"] = "mockeduser"
+                user_obj = AuthenticatedUser(**mocked_user)
+            else:
+                user_obj = mocked_user
+            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+
+        # 3. Otherwise call real original dependency
+        return await get_auth_context(request=request, db=db, token=token)
+
+    async def _test_aware_get_optional_auth_context(
+        request: Request,
+        db: AsyncSession = Depends(async_get_db),
+        api_key_user=Depends(get_user_by_api_key),
+    ):
+        from src.app.core.rbac.dependencies import _get_current_user_from_token
+        from src.app.core.tenancy.context import get_current_tenant
+        current_tenant = get_current_tenant()
+
+        # 1. If tests override get_current_user or get_optional_user, respect it
+        for dep in (get_current_user, get_optional_user):
+            if dep in app.dependency_overrides:
+                override_func = app.dependency_overrides[dep]
+                import inspect
+                user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
+                if user_obj is None:
+                    return None
+                return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+
+        # 2. If tests patch _get_current_user_from_token, use it
+        if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
+            auth_header = request.headers.get("Authorization") if request is not None else None
+            token_value = ""
+            if auth_header:
+                _, _, token_value = auth_header.partition(" ")
+            mocked_user = await _get_current_user_from_token(token_value, db)
+            from src.app.api.dependencies import AuthenticatedUser
+            if isinstance(mocked_user, dict):
+                if "email" not in mocked_user:
+                    mocked_user["email"] = "mocked@example.com"
+                if "username" not in mocked_user:
+                    mocked_user["username"] = "mockeduser"
+                user_obj = AuthenticatedUser(**mocked_user)
+            else:
+                user_obj = mocked_user
+            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+
+        # 3. Otherwise call real original dependency
+        return await get_optional_auth_context(request=request, db=db, api_key_user=api_key_user)
+
+    app.dependency_overrides[get_auth_context] = _test_aware_get_auth_context
+    app.dependency_overrides[get_optional_auth_context] = _test_aware_get_optional_auth_context
+
+
     yield app
 
     # Cleanup after test

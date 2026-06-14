@@ -16,6 +16,9 @@ from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 
+# Keep a strong reference to background tasks to prevent garbage collection mid-execution
+_background_tasks = set()
+
 
 @asynccontextmanager
 async def job_tenant_context(
@@ -101,7 +104,7 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
             import asyncio
 
             from src.app.core.events import event_bus
-            asyncio.create_task(
+            task = asyncio.create_task(
                 event_bus.publish(
                     "audit.log",
                     {
@@ -113,6 +116,8 @@ async def job_bypass_context(reason: str) -> AsyncGenerator[AsyncSession, None]:
                     },
                 )
             )
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
             yield session
 

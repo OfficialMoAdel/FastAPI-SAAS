@@ -1,5 +1,4 @@
 from typing import Annotated, Any
-from unittest.mock import Mock
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -122,35 +121,18 @@ async def get_auth_context(
             token = ""
 
     if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        # Avoid MagicMock auto-creation returning True
-        if not isinstance(request.app, Mock) and not hasattr(request.app, "mock_add_spec"):
-            from src.app.api.dependencies import get_current_user
+        from src.app.api.dependencies import get_current_user
 
-            if get_current_user in request.app.dependency_overrides:
-                override_func = request.app.dependency_overrides[get_current_user]
-                import inspect
+        if get_current_user in request.app.dependency_overrides:
+            override_func = request.app.dependency_overrides[get_current_user]
+            import inspect
 
-                if inspect.iscoroutinefunction(override_func):
-                    user_obj = await override_func()
-                else:
-                    user_obj = override_func()
-                current_tenant = get_tenant_context()
-                return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
-
-    from src.app.core.rbac.dependencies import _get_current_user_from_token
-
-    if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
-        mocked_user = await _get_current_user_from_token(token, db)
-        current_tenant = get_tenant_context()
-        if isinstance(mocked_user, dict):
-            if "email" not in mocked_user:
-                mocked_user["email"] = "mocked@example.com"
-            if "username" not in mocked_user:
-                mocked_user["username"] = "mockeduser"
-            user_obj = AuthenticatedUser(**mocked_user)
-        else:
-            user_obj = mocked_user
-        return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+            if inspect.iscoroutinefunction(override_func):
+                user_obj = await override_func()
+            else:
+                user_obj = override_func()
+            current_tenant = get_tenant_context()
+            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
 
     cached_payload = get_cached_jwt_payload(request) if request is not None else None
     token_data: Any
@@ -308,40 +290,20 @@ async def _handle_auth_mocks(
 ) -> tuple[bool, AuthContext | None]:
     """Helper to handle test mocks and dependency overrides."""
     if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        # Avoid MagicMock auto-creation returning True for hasattr/membership check when not intended in tests
-        if not isinstance(request.app, Mock) and not hasattr(request.app, "mock_add_spec"):
-            from src.app.api.dependencies import get_current_user, get_optional_user
+        from src.app.api.dependencies import get_current_user, get_optional_user
 
-            for dep in (get_current_user, get_optional_user):
-                if dep in request.app.dependency_overrides:
-                    override_func = request.app.dependency_overrides[dep]
-                    import inspect
+        for dep in (get_current_user, get_optional_user):
+            if dep in request.app.dependency_overrides:
+                override_func = request.app.dependency_overrides[dep]
+                import inspect
 
-                    if inspect.iscoroutinefunction(override_func):
-                        user_obj = await override_func()
-                    else:
-                        user_obj = override_func()
-                    if user_obj is None:
-                        return True, None
-                    return True, await _create_auth_context(user_obj, None, current_tenant, db)
-
-    from src.app.core.rbac.dependencies import _get_current_user_from_token
-
-    if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
-        auth_header = request.headers.get("Authorization") if request is not None else None
-        token_value = ""
-        if auth_header:
-            _, _, token_value = auth_header.partition(" ")
-        mocked_user = await _get_current_user_from_token(token_value, db)
-        if isinstance(mocked_user, dict):
-            if "email" not in mocked_user:
-                mocked_user["email"] = "mocked@example.com"
-            if "username" not in mocked_user:
-                mocked_user["username"] = "mockeduser"
-            user_obj = AuthenticatedUser(**mocked_user)
-        else:
-            user_obj = mocked_user
-        return True, await _create_auth_context(user_obj, None, current_tenant, db)
+                if inspect.iscoroutinefunction(override_func):
+                    user_obj = await override_func()
+                else:
+                    user_obj = override_func()
+                if user_obj is None:
+                    return True, None
+                return True, await _create_auth_context(user_obj, None, current_tenant, db)
 
     return False, None
 
@@ -358,7 +320,7 @@ async def _verify_optional_bearer_token(
     if cached_payload:
         jti = cached_payload.get("jti")
         if await _is_token_blacklisted_with_fallback(token_value, jti, db):
-            raise UnauthorizedException("Token has been revoked.")
+            return None
 
         token_type = cached_payload.get("token_type")
         if token_type != TokenType.ACCESS:
@@ -370,13 +332,16 @@ async def _verify_optional_bearer_token(
         token_data = cached_payload
         payload_version = cached_payload.get("token_version", 0)
     else:
-        token_data = await verify_token(token_value, TokenType.ACCESS, db)
+        try:
+            token_data = await verify_token(token_value, TokenType.ACCESS, db)
+        except Exception:
+            return None
         if token_data is None:
             return None
 
         jti = getattr(token_data, "jti", None)
         if await _is_token_blacklisted_with_fallback(token_value, jti, db):
-            raise UnauthorizedException("Token has been revoked.")
+            return None
 
         username_or_email = token_data.username_or_email
         payload_version = getattr(token_data, "token_version", 0) or 0
@@ -388,20 +353,20 @@ async def _verify_optional_bearer_token(
         user = await user_service.get_user_auth_info(username=username_or_email)
 
     if not user:
-        raise UnauthorizedException("User not found.")
+        return None
 
     if not user.get("is_active", False):
-        raise UnauthorizedException("User account is no longer active.")
+        return None
     if user.get("is_deleted", False):
-        raise UnauthorizedException("User account has been deleted.")
+        return None
 
     user_version = user.get("token_version", 0)
     if payload_version != user_version:
-        raise UnauthorizedException("Session expired. Please log in again.")
+        return None
 
     if current_tenant:
         if str(user.get("tenant_id")) != str(current_tenant.id):
-            raise ForbiddenException("User does not belong to the current tenant.")
+            return None
 
     return await _create_auth_context(user, token_data, current_tenant, db)
 
@@ -439,13 +404,13 @@ async def get_optional_auth_context(
 
     token_type_val, _, token_value = auth_header.partition(" ")
     if token_type_val.lower() != "bearer" or not token_value:
-        raise UnauthorizedException("Invalid authorization header format.")
+        return None
 
     try:
         return await _verify_optional_bearer_token(token_value, db, request, current_tenant)
     except Exception as e:
         logger.error(f"Error in get_optional_auth_context token verification: {e}")
-        raise
+        return None
 
 
 async def get_optional_user(

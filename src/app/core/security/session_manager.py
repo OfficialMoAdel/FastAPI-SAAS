@@ -48,6 +48,8 @@ class SessionManager:
     # Session TTL in seconds (24 hours)
     SESSION_TTL_SECONDS = 86400
 
+    _lua_script_sha: str | None = None
+
     def __init__(self, redis_client: Any = None, max_sessions: int = DEFAULT_MAX_SESSIONS) -> None:
         """Initialize session manager.
 
@@ -58,7 +60,6 @@ class SessionManager:
         self._redis_client = redis_client
         self._max_sessions = max_sessions
         self._lua_script_registered: Any = None
-        self._lua_script_sha: str | None = None
 
     def set_redis_client(self, redis_client: Any) -> None:
         """Set Redis client for session tracking.
@@ -170,16 +171,16 @@ class SessionManager:
         invalidated_sessions: list[dict[str, Any]] = []
         try:
             # N-7: Optimize Lua script execution using EVALSHA
-            if not hasattr(self, "_lua_script_sha") or not self._lua_script_sha:
+            if not SessionManager._lua_script_sha:
                 import hashlib
 
-                self._lua_script_sha = hashlib.sha1(lua_script.encode("utf-8")).hexdigest()
+                SessionManager._lua_script_sha = hashlib.sha1(lua_script.encode("utf-8")).hexdigest()
 
             try:
                 result = cast(
                     Any,
                     await self._redis_client.evalsha(
-                        self._lua_script_sha,
+                        SessionManager._lua_script_sha,
                         2,
                         zset_key,
                         hash_key,

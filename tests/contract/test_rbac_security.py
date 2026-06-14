@@ -18,7 +18,7 @@ MOCK_TENANT_ID = UUID("00000000-0000-0000-0000-000000000001")
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncClient:
+async def client(get_test_app) -> AsyncClient:
     """Create async HTTP client."""
     # Mock Redis cache client used by RateLimiter via cache.client
     mock_redis = AsyncMock()
@@ -34,7 +34,7 @@ async def client() -> AsyncClient:
     mock_redis.pipeline = MagicMock(return_value=AsyncMock())  # For cache write
 
     with patch("src.app.core.utils.cache.client", mock_redis):
-        transport = ASGITransport(app=app)
+        transport = ASGITransport(app=get_test_app)
         async with AsyncClient(transport=transport, base_url="http://test") as ac:
             yield ac
 

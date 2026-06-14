@@ -70,7 +70,7 @@ class TestRBACRolesAccess:
     """Test permission-based access control for role endpoints."""
 
     @pytest.mark.asyncio
-    async def test_unauthenticated_request_returns_401(self, mock_tenant):
+    async def test_unauthenticated_request_returns_401(self, mock_tenant, get_test_app):
         """Requests without auth should return 401."""
         with patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",
@@ -78,7 +78,7 @@ class TestRBACRolesAccess:
             return_value=mock_tenant,
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.get(
@@ -88,7 +88,7 @@ class TestRBACRolesAccess:
                 assert response.status_code == 401
 
     @pytest.mark.asyncio
-    async def test_superuser_bypasses_permission_check(self, mock_superuser, mock_tenant, mock_role):
+    async def test_superuser_bypasses_permission_check(self, mock_superuser, mock_tenant, mock_role, get_test_app):
         """Superusers should bypass permission checks."""
         with (
             patch(
@@ -113,7 +113,7 @@ class TestRBACRolesAccess:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.get(
@@ -129,7 +129,7 @@ class TestRBACRolesAccess:
                 assert isinstance(data, list)
 
     @pytest.mark.asyncio
-    async def test_user_without_permission_returns_403(self, mock_regular_user, mock_tenant):
+    async def test_user_without_permission_returns_403(self, mock_regular_user, mock_tenant, get_test_app):
         """Users without ROLES_READ permission should get 403."""
         with (
             patch(
@@ -149,7 +149,7 @@ class TestRBACRolesAccess:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.get(
@@ -167,7 +167,7 @@ class TestRBACRolesCRUD:
     """Test role CRUD operations."""
 
     @pytest.mark.asyncio
-    async def test_create_role_success(self, mock_superuser, mock_tenant):
+    async def test_create_role_success(self, mock_superuser, mock_tenant, get_test_app):
         """Test creating a new role."""
         created_role = MagicMock()
         created_role.id = 10
@@ -199,7 +199,7 @@ class TestRBACRolesCRUD:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.post(
@@ -217,7 +217,7 @@ class TestRBACRolesCRUD:
                 assert data["id"] == 10
 
     @pytest.mark.asyncio
-    async def test_get_role_by_id(self, mock_superuser, mock_tenant, mock_role):
+    async def test_get_role_by_id(self, mock_superuser, mock_tenant, mock_role, get_test_app):
         """Test getting a role by ID."""
         with (
             patch(
@@ -242,7 +242,7 @@ class TestRBACRolesCRUD:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.get(
@@ -259,7 +259,7 @@ class TestRBACRolesCRUD:
                 assert data["name"] == "Test Role"
 
     @pytest.mark.asyncio
-    async def test_get_nonexistent_role_returns_404(self, mock_superuser, mock_tenant):
+    async def test_get_nonexistent_role_returns_404(self, mock_superuser, mock_tenant, get_test_app):
         """Test getting a role that doesn't exist."""
         with (
             patch(
@@ -284,7 +284,7 @@ class TestRBACRolesCRUD:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.get(
@@ -300,7 +300,7 @@ class TestRBACRolesCRUD:
                 )
 
     @pytest.mark.asyncio
-    async def test_update_role_success(self, mock_superuser, mock_tenant):
+    async def test_update_role_success(self, mock_superuser, mock_tenant, get_test_app):
         """Test updating a role."""
         updated_role = MagicMock()
         updated_role.id = 1
@@ -332,7 +332,7 @@ class TestRBACRolesCRUD:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.put(
@@ -349,7 +349,7 @@ class TestRBACRolesCRUD:
                 assert data["name"] == "Updated Role"
 
     @pytest.mark.asyncio
-    async def test_delete_role_success(self, mock_superuser, mock_tenant):
+    async def test_delete_role_success(self, mock_superuser, mock_tenant, get_test_app):
         """Test deleting a role."""
         with (
             patch(
@@ -374,7 +374,7 @@ class TestRBACRolesCRUD:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.delete(
@@ -392,7 +392,7 @@ class TestRBACRolesValidation:
     """Test input validation for role endpoints."""
 
     @pytest.mark.asyncio
-    async def test_create_role_missing_name_returns_422(self, mock_superuser, mock_tenant):
+    async def test_create_role_missing_name_returns_422(self, mock_superuser, mock_tenant, get_test_app):
         """Test that missing name field returns validation error."""
         with (
             patch(
@@ -412,7 +412,7 @@ class TestRBACRolesValidation:
             ),
         ):
             async with AsyncClient(
-                transport=ASGITransport(app=app),
+                transport=ASGITransport(app=get_test_app),
                 base_url="http://test",
             ) as client:
                 response = await client.post(

@@ -303,7 +303,7 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
     flush_limit = min(AUDIT_LOG_BATCH_SIZE, max_flush_per_run)
 
     # Atomically read and trim the bounded buffer window in a single pipeline.
-    async with redis_cache.client.pipeline(transaction=False) as pipe:
+    async with redis_cache.client.pipeline() as pipe:
         pipe.lrange(AUDIT_LOG_BUFFER_KEY, 0, flush_limit - 1)
         pipe.ltrim(AUDIT_LOG_BUFFER_KEY, flush_limit, -1)
         results = await pipe.execute()

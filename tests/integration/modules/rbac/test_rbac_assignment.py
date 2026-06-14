@@ -20,10 +20,10 @@ TEST_USER_AGENT = "TestClient/1.0"
 
 
 @pytest_asyncio.fixture
-async def client():
+async def client(get_test_app):
     """Create async test client with proper headers."""
     async with AsyncClient(
-        transport=ASGITransport(app=app),
+        transport=ASGITransport(app=get_test_app),
         base_url="http://test",
     ) as ac:
         ac.headers["User-Agent"] = TEST_USER_AGENT

@@ -103,10 +103,9 @@ async def test_case_2_suspended_user_token(mock_request, mock_db, mock_tenant):
         mock_user_service.get_user_auth_info.return_value = user_dict
         MockUserService.return_value = mock_user_service
 
-        with pytest.raises((UnauthorizedException, ForbiddenException, HTTPException)) as exc_info:
-            await get_optional_auth_context(mock_request, db=mock_db)
+        result = await get_optional_auth_context(mock_request, db=mock_db)
 
-        assert exc_info.value.status_code in (401, 403)
+        assert result is None
 
 
 @pytest.mark.asyncio
@@ -138,10 +137,9 @@ async def test_case_3_deleted_user_token(mock_request, mock_db, mock_tenant):
         mock_user_service.get_user_auth_info.return_value = user_dict
         MockUserService.return_value = mock_user_service
 
-        with pytest.raises((UnauthorizedException, ForbiddenException, HTTPException)) as exc_info:
-            await get_optional_auth_context(mock_request, db=mock_db)
+        result = await get_optional_auth_context(mock_request, db=mock_db)
 
-        assert exc_info.value.status_code in (401, 403)
+        assert result is None
 
 
 @pytest.mark.asyncio
@@ -174,10 +172,9 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
         mock_user_service.get_user_auth_info.return_value = user_dict
         MockUserService.return_value = mock_user_service
 
-        with pytest.raises((UnauthorizedException, ForbiddenException, HTTPException)) as exc_info:
-            await get_optional_auth_context(mock_request, db=mock_db)
+        result = await get_optional_auth_context(mock_request, db=mock_db)
 
-        assert exc_info.value.status_code in (401, 403)
+        assert result is None
 
 
 @pytest.mark.asyncio
@@ -209,7 +206,6 @@ async def test_case_5_tenant_mismatch(mock_request, mock_db, mock_tenant):
         mock_user_service.get_user_auth_info.return_value = user_dict
         MockUserService.return_value = mock_user_service
 
-        with pytest.raises((ForbiddenException, HTTPException)) as exc_info:
-            await get_optional_auth_context(mock_request, db=mock_db)
+        result = await get_optional_auth_context(mock_request, db=mock_db)
 
-        assert exc_info.value.status_code == 403
+        assert result is None
