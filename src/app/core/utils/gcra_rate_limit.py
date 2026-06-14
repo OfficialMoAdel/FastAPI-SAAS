@@ -195,7 +195,7 @@ class GCRARateLimiter:
 
             # Calculate emission interval (time between requests)
             period_ms = period * 1000
-            emission_interval_ms = max(1, int(period_ms / limit)) if limit > 0 else 0
+            emission_interval_ms = max(1, round(period_ms / limit)) if limit > 0 else 0
             now_ms = time.time() * 1000
 
             # Execute atomic GCRA check

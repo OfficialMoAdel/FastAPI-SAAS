@@ -163,8 +163,8 @@ async def test_restore_rls_context_with_tenant():
     mock_conn = AsyncMock()
     await async_func(mock_conn)
 
-    # RLS now always sets tenant, user, and bypass variables (3 calls)
-    assert mock_conn.execute.call_count == 3
+    # RLS now always sets tenant, user, and bypass variables in a single call
+    assert mock_conn.execute.call_count == 1
     # First call sets the tenant ID with parameterized query
     first_call = mock_conn.execute.call_args_list[0]
     assert "$1" in str(first_call[0][0])
@@ -185,7 +185,7 @@ async def test_restore_rls_context_without_tenant():
     mock_conn = AsyncMock()
     await async_func(mock_conn)
 
-    assert mock_conn.execute.call_count == 3
+    assert mock_conn.execute.call_count == 1
 
 
 @pytest.mark.asyncio

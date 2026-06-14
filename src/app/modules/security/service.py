@@ -195,6 +195,45 @@ class IPFilterService:
                 return bool(exists > 0)
         return False
 
+    async def check_ip_status(self, ip_address: str) -> tuple[bool, bool]:
+        """Check both blacklist and whitelist status in a single Redis pipeline.
+
+        Returns:
+            tuple[bool, bool]: (is_blacklisted, is_whitelisted)
+        """
+        if not settings.IP_BLACKLIST_ENABLED and not settings.IP_WHITELIST_ENABLED:
+            return False, False
+
+        black_key = f"{self.BLACKLIST_PREFIX}{ip_address}"
+        white_key = f"{self.WHITELIST_PREFIX}{ip_address}"
+
+        async with get_redis_client() as client:
+            if client:
+                async with client.pipeline() as pipe:
+                    if settings.IP_BLACKLIST_ENABLED:
+                        pipe.exists(black_key)
+                    if settings.IP_WHITELIST_ENABLED:
+                        pipe.exists(white_key)
+
+                    results = await pipe.execute()
+                    
+                    idx = 0
+                    is_blacklisted = False
+                    is_whitelisted = False
+                    
+                    if settings.IP_BLACKLIST_ENABLED:
+                        if results and idx < len(results):
+                            is_blacklisted = bool(results[idx] > 0)
+                        idx += 1
+                        
+                    if settings.IP_WHITELIST_ENABLED:
+                        if results and idx < len(results):
+                            is_whitelisted = bool(results[idx] > 0)
+                        
+                    return is_blacklisted, is_whitelisted
+
+        return False, False
+
     async def get_whitelist(self) -> list[dict[str, Any]]:
         """Get all whitelisted IP addresses.
 

@@ -139,7 +139,10 @@ async def get_auth_context(
 
     if cached_payload:
         jti = cached_payload.get("jti")
-        if await _is_token_blacklisted_with_fallback(token, jti, db):
+        if getattr(request.state, "is_token_blacklisted", False) or (
+            not hasattr(request.state, "is_token_blacklisted")
+            and await _is_token_blacklisted_with_fallback(token, jti, db)
+        ):
             raise UnauthorizedException("Token has been revoked.")
 
         token_type = cached_payload.get("token_type")
@@ -155,10 +158,6 @@ async def get_auth_context(
         token_data = await verify_token(token, TokenType.ACCESS, db)
         if token_data is None:
             raise UnauthorizedException("User not authenticated.")
-
-        jti = getattr(token_data, "jti", None)
-        if await _is_token_blacklisted_with_fallback(token, jti, db):
-            raise UnauthorizedException("Token has been revoked.")
 
         username_or_email = token_data.username_or_email
         payload_version = getattr(token_data, "token_version", 0) or 0
@@ -319,7 +318,10 @@ async def _verify_optional_bearer_token(
 
     if cached_payload:
         jti = cached_payload.get("jti")
-        if await _is_token_blacklisted_with_fallback(token_value, jti, db):
+        if getattr(request.state, "is_token_blacklisted", False) or (
+            not hasattr(request.state, "is_token_blacklisted")
+            and await _is_token_blacklisted_with_fallback(token_value, jti, db)
+        ):
             return None
 
         token_type = cached_payload.get("token_type")
@@ -337,10 +339,6 @@ async def _verify_optional_bearer_token(
         except Exception:
             return None
         if token_data is None:
-            return None
-
-        jti = getattr(token_data, "jti", None)
-        if await _is_token_blacklisted_with_fallback(token_value, jti, db):
             return None
 
         username_or_email = token_data.username_or_email

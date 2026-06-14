@@ -25,6 +25,12 @@ async def mock_get_redis_client():
     mock_client = AsyncMock()
     mock_client.exists = AsyncMock(return_value=0)
     mock_client.get = AsyncMock(return_value=None)
+    
+    fake_pipeline = AsyncMock()
+    fake_pipeline.__aenter__.return_value = fake_pipeline
+    fake_pipeline.execute = AsyncMock(return_value=[False, False])
+    mock_client.pipeline = MagicMock(return_value=fake_pipeline)
+    
     yield mock_client
 
 
@@ -88,6 +94,7 @@ async def test_auth_single_db_lookup_and_single_jwt_decode(get_test_app) -> None
             patch("src.app.modules.security.service.get_redis_client", new=mock_get_redis_client),
             patch("src.app.core.security.token_blacklist_cache.is_token_blacklisted", AsyncMock(return_value=False)),
             patch("src.app.core.security.is_token_blacklisted", AsyncMock(return_value=False)),
+            patch("src.app.middleware.rate_limit.is_token_blacklisted", AsyncMock(return_value=False)),
         ):
             # Send GET request to /api/v1/audit-logs (protected by get_current_user and requires_permission)
             response = await client.get(
@@ -170,6 +177,7 @@ async def test_superuser_tenant_isolation_blocked(get_test_app) -> None:
             patch("src.app.modules.security.service.get_redis_client", new=mock_get_redis_client),
             patch("src.app.core.security.token_blacklist_cache.is_token_blacklisted", AsyncMock(return_value=False)),
             patch("src.app.core.security.is_token_blacklisted", AsyncMock(return_value=False)),
+            patch("src.app.middleware.rate_limit.is_token_blacklisted", AsyncMock(return_value=False)),
         ):
             # Send GET request to Tenant B endpoint (/api/v1/audit-logs) with Tenant A's token
             response = await client.get(

@@ -139,7 +139,7 @@ class TestWhitelistEnforcement:
         mock_request.state = state_obj
 
         with (
-            patch.object(middleware._filter_service, "is_whitelisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
             response = await middleware.dispatch(mock_request, call_next)
@@ -154,7 +154,7 @@ class TestWhitelistEnforcement:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_whitelisted", return_value=False),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, False)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
             response = await middleware.dispatch(mock_request, call_next)
@@ -183,7 +183,7 @@ class TestBlacklistEnforcement:
         call_next = AsyncMock()
 
         with (
-            patch.object(middleware._filter_service, "is_blacklisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event"),
         ):
@@ -199,7 +199,7 @@ class TestBlacklistEnforcement:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_blacklisted", return_value=False),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
         ):
             response = await middleware.dispatch(mock_request, call_next)
@@ -314,7 +314,7 @@ class TestSecurityEventLogging:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_whitelisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
             patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
         ):
@@ -330,7 +330,7 @@ class TestSecurityEventLogging:
         call_next = AsyncMock()
 
         with (
-            patch.object(middleware._filter_service, "is_blacklisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
         ):
@@ -383,7 +383,7 @@ class TestExemptPathBehavior:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_blacklisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_BLACKLIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True),
         ):
             response = await middleware.dispatch(mock_request, call_next)
@@ -401,7 +401,7 @@ class TestEdgeCases:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_whitelisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", True),
         ):
             response = await middleware.dispatch(mock_request, call_next)
@@ -430,7 +430,7 @@ class TestEdgeCases:
         call_next = AsyncMock(return_value=mock_response)
 
         with (
-            patch.object(middleware._filter_service, "is_whitelisted", return_value=True),
+            patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
             response = await middleware.dispatch(mock_request, call_next)

@@ -8,7 +8,7 @@ Success Criteria:
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 
 import pytest
 import pytest_asyncio
@@ -31,6 +31,11 @@ async def async_client():
     mock_redis.delete = AsyncMock(return_value=True)
     mock_redis.aclose = AsyncMock()
 
+    fake_pipeline = AsyncMock()
+    fake_pipeline.__aenter__.return_value = fake_pipeline
+    fake_pipeline.execute = AsyncMock(return_value=[False, False])
+    mock_redis.pipeline = MagicMock(return_value=fake_pipeline)
+
     # Mock rate limiter
     mock_rate_check = AsyncMock(return_value=(False, 0))
 
@@ -38,6 +43,7 @@ async def async_client():
     mock_filter_service = AsyncMock()
     mock_filter_service.is_blacklisted = AsyncMock(return_value=False)
     mock_filter_service.is_whitelisted = AsyncMock(return_value=True)
+    mock_filter_service.check_ip_status = AsyncMock(return_value=(False, False))
 
     @asynccontextmanager
     async def mock_redis_context():

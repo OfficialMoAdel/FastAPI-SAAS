@@ -258,6 +258,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
         if user_id and token:
             is_blacklisted = await is_token_blacklisted(token)
+            request.state.is_token_blacklisted = is_blacklisted
             if is_blacklisted:
                 # Token is blacklisted - downgrade to anonymous limits
                 logger.info(

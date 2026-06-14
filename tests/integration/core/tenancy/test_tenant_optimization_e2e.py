@@ -65,6 +65,11 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
     fake_redis.get.return_value = None
     fake_redis.setex = AsyncMock()
     fake_redis.set = AsyncMock()
+    
+    fake_pipeline = AsyncMock()
+    fake_pipeline.__aenter__.return_value = fake_pipeline
+    fake_pipeline.execute = AsyncMock(return_value=[False, False])
+    fake_redis.pipeline = MagicMock(return_value=fake_pipeline)
 
     from src.app.core.utils import cache
 

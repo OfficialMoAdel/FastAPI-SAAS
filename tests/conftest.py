@@ -1062,6 +1062,16 @@ class FakeRedisPipeline:
 
         return method
 
+    def exists(self, *keys):
+        """Queue an exists command."""
+        self._commands.append(("exists", *keys))
+        return self
+
+    def hset(self, key, mapping=None):
+        """Queue a hset command."""
+        self._commands.append(("hset", key, mapping))
+        return self
+
     def zscore(self, key, member):
         """Queue a zscore command."""
         self._commands.append(("zscore", key, member))
@@ -1123,7 +1133,13 @@ class FakeRedisPipeline:
         """Execute all queued commands and return results."""
         results = []
         for cmd in self._commands:
-            if cmd[0] == "zscore":
+            if cmd[0] == "exists":
+                result = await self.redis.exists(*cmd[1:])
+                results.append(result)
+            elif cmd[0] == "hset":
+                result = await self.redis.hset(cmd[1], mapping=cmd[2])
+                results.append(result)
+            elif cmd[0] == "zscore":
                 result = await self.redis.zscore(cmd[1], cmd[2])
                 results.append(result)
             elif cmd[0] == "zadd":

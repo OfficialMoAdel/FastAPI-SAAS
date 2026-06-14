@@ -16,6 +16,11 @@ def mock_redis_lifespan():
     mock_redis = AsyncMock()
     mock_redis.exists.return_value = 0  # Not blacklisted
     mock_redis.get.return_value = None
+    
+    fake_pipeline = AsyncMock()
+    fake_pipeline.__aenter__.return_value = fake_pipeline
+    fake_pipeline.execute = AsyncMock(return_value=[False, False])
+    mock_redis.pipeline = MagicMock(return_value=fake_pipeline)
 
     with (
         patch("src.app.core.setup.create_redis_queue_pool", new_callable=AsyncMock),

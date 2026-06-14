@@ -123,11 +123,11 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                         media_type="application/json",
                     )
 
-        # Check blacklist first (override whitelist)
-        if settings.IP_BLACKLIST_ENABLED:
-            is_blacklisted = await self._filter_service.is_blacklisted(client_ip)
+        # Check blacklist and whitelist in a single Redis pipeline
+        if settings.IP_BLACKLIST_ENABLED or settings.IP_WHITELIST_ENABLED:
+            is_blacklisted, is_whitelisted = await self._filter_service.check_ip_status(client_ip)
 
-            if is_blacklisted:
+            if settings.IP_BLACKLIST_ENABLED and is_blacklisted:
                 event = create_security_event(
                     event_type=SecurityEventType.IP_BLOCKED,
                     client_ip=client_ip,
@@ -143,11 +143,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                     media_type="application/json",
                 )
 
-        # Check whitelist (if enabled and not blacklisted)
-        if settings.IP_WHITELIST_ENABLED:
-            is_whitelisted = await self._filter_service.is_whitelisted(client_ip)
-
-            if is_whitelisted:
+            if settings.IP_WHITELIST_ENABLED and is_whitelisted:
                 # Log whitelisted access for audit trail
                 event = create_security_event(
                     event_type=SecurityEventType.IP_WHITELISTED,

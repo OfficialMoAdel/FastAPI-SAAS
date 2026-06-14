@@ -22,11 +22,11 @@ def get_router() -> APIRouter:
     if _cached_router is not None:
         return _cached_router
 
-    from src.app.api.v1 import router as v1_router
+    from src.app.api.v1 import get_v1_router
 
     main_router = APIRouter(prefix="/api")
     main_router.include_router(monitoring_router, tags=["monitoring"])
-    main_router.include_router(v1_router)
+    main_router.include_router(get_v1_router())
 
     _cached_router = main_router
     return main_router
