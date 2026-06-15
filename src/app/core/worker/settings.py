@@ -11,7 +11,6 @@ from src.app.core.worker.functions import (
     sample_background_task,
     shutdown,
     startup,
-    sync_bloom_filter_task,
 )
 from src.app.modules.notifications.service import send_email_task
 
@@ -38,7 +37,6 @@ class WorkerSettings:
         deliver_webhook_task,
         migrate_sessions_task,
         flush_audit_logs_task,
-        sync_bloom_filter_task,
         process_event_handler,  # FIXED: Was missing - handles async event bus events
         send_email_task,  # FIXED: Was missing - handles email notifications
     ]
@@ -55,8 +53,6 @@ class WorkerSettings:
     cron_jobs = [
         # Flush audit logs every 30 seconds for low-latency batching (60s timeout for high-volume flushes)
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
-        # Sync Bloom filter every 5 minutes for multi-instance consistency (30s timeout)
-        cron(sync_bloom_filter_task, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}, timeout=30),
     ]
 
     # Concurrency and timeout settings (configurable via environment)

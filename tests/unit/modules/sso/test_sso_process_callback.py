@@ -44,7 +44,7 @@ def mock_mfa_service_dependency():
 @patch("src.app.core.utils.cache.client")
 async def test_process_callback_invalid_state(mock_redis, mock_get_manager, service, mock_db, mock_request):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = None
+    mock_manager.consume.return_value = None
     mock_get_manager.return_value = mock_manager
 
     with pytest.raises(BadRequestException, match="Invalid or expired state parameter"):
@@ -56,7 +56,7 @@ async def test_process_callback_invalid_state(mock_redis, mock_get_manager, serv
 @patch("src.app.core.utils.cache.client")
 async def test_process_callback_provider_mismatch(mock_redis, mock_get_manager, service, mock_db, mock_request):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = {"provider": "github"}
+    mock_manager.consume.return_value = {"provider": "github"}
     mock_get_manager.return_value = mock_manager
 
     with pytest.raises(BadRequestException, match="State provider mismatch"):
@@ -72,7 +72,7 @@ async def test_process_callback_exchange_failed(
     mock_get_provider, mock_get_settings, mock_redis, mock_get_manager, service, mock_db, mock_request
 ):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = {
+    mock_manager.consume.return_value = {
         "provider": SSOProvider.GOOGLE.value,
         "redirect_uri": "http://test",
     }
@@ -109,7 +109,7 @@ async def test_process_callback_success(
     mock_request,
 ):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = {
+    mock_manager.consume.return_value = {
         "provider": SSOProvider.GOOGLE.value,
         "redirect_uri": "http://test",
         "extra_data": {},
@@ -187,7 +187,7 @@ async def test_process_callback_connect_mode(
     mock_request,
 ):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = {
+    mock_manager.consume.return_value = {
         "provider": SSOProvider.GITHUB.value,
         "redirect_uri": "http://test",
         "extra_data": {"connect_mode": True, "user_id": 2},
@@ -273,7 +273,7 @@ async def test_process_callback_apple_custom_flow(
     mock_request,
 ):
     mock_manager = AsyncMock()
-    mock_manager.validate_state.return_value = {
+    mock_manager.consume.return_value = {
         "provider": SSOProvider.APPLE.value,
         "redirect_uri": "http://test",
     }

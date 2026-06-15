@@ -117,30 +117,6 @@ async def flush_audit_logs_task(ctx: dict) -> str:
     return f"Flushed {total} audit logs."
 
 
-@monitor_job("sync_bloom_filter_task")
-async def sync_bloom_filter_task(ctx: dict) -> str:
-    """Periodic task to sync Bloom filter from Redis.
-
-    Should be scheduled as a cron job (every 5 minutes).
-    Ensures all instances have consistent Bloom filter state for token blacklist.
-
-    System task - requires RLS bypass.
-    """
-    from src.app.core.security.bloom_filter import sync_bloom_filter_from_redis
-
-    logger.info("Starting Bloom filter sync task")
-
-    async with job_bypass_context("Syncing bloom filter from Redis"):
-        try:
-            count = await sync_bloom_filter_from_redis()
-            if count > 0:
-                logger.info(f"Synced {count} tokens to Bloom filter")
-            return f"Synced {count} tokens to Bloom filter."
-        except Exception as e:
-            logger.error(f"Bloom filter sync failed: {e}")
-            raise
-
-
 # -------- base functions --------
 async def startup(ctx: Worker) -> None:
     logger.info("Worker Started")

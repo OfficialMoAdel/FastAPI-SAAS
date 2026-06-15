@@ -48,14 +48,14 @@ async def test_get_authorization_url_success(
     mock_get_tenant.return_value = mock_tenant
 
     mock_manager = AsyncMock()
-    mock_manager.create_state.return_value = "state-token-123"
     mock_get_manager.return_value = mock_manager
 
-    auth_url, state = await service.get_authorization_url(mock_db, mock_request, SSOProvider.GOOGLE)
+    with patch("src.app.core.security.tokens.TokenGenerator.generate_sso_state", return_value="state-token-123"):
+        auth_url, state = await service.get_authorization_url(mock_db, mock_request, SSOProvider.GOOGLE)
 
     assert state == "state-token-123"
     assert "accounts.google.com/o/oauth2/v2/auth" in auth_url
-    mock_manager.create_state.assert_awaited_once()
+    mock_manager.create.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -226,7 +226,7 @@ async def test_get_authorization_url_custom_redirect(mock_get_settings, service,
     with patch("src.app.modules.sso.service.get_tenant_context", return_value=mock_tenant):
         with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_manager:
             mock_manager_instance = AsyncMock()
-            mock_manager_instance.create_state.return_value = "state-token"
+            mock_manager_instance.create = AsyncMock()
             mock_manager.return_value = mock_manager_instance
 
             auth_url, state = await service.get_authorization_url(
@@ -256,16 +256,17 @@ async def test_get_authorization_url_connect_mode(mock_get_settings, service, mo
     with patch("src.app.modules.sso.service.get_tenant_context", return_value=mock_tenant):
         with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_manager:
             mock_manager_instance = AsyncMock()
-            mock_manager_instance.create_state.return_value = "state-token"
+            mock_manager_instance.create = AsyncMock()
             mock_manager.return_value = mock_manager_instance
 
-            auth_url, state = await service.get_authorization_url(
-                mock_db,
-                mock_request,
-                SSOProvider.GOOGLE,
-                connect_mode=True,
-                user_id=123,
-            )
+            with patch("src.app.core.security.tokens.TokenGenerator.generate_sso_state", return_value="state-token"):
+                auth_url, state = await service.get_authorization_url(
+                    mock_db,
+                    mock_request,
+                    SSOProvider.GOOGLE,
+                    connect_mode=True,
+                    user_id=123,
+                )
 
             assert "state-token" in state
 

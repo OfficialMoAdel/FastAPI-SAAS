@@ -54,12 +54,17 @@ class TestAppleSSOFlowIntegration:
         """Create a valid SSO state token for testing."""
         from src.app.core.security.tokens import get_sso_state_manager
 
+        from src.app.core.security.tokens import TokenGenerator
         # mocked redis passed directly
         sso_manager = get_sso_state_manager(mock_redis)
 
-        state = await sso_manager.create_state(
-            provider=provider,
-            redirect_uri=f"http://testserver/api/v1/account/sso/{provider}/callback",
+        state = TokenGenerator.generate_sso_state()
+        await sso_manager.create(
+            token=state,
+            data={
+                "provider": provider,
+                "redirect_uri": f"http://testserver/api/v1/account/sso/{provider}/callback",
+            }
         )
         return state
 

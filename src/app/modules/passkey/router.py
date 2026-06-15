@@ -5,7 +5,6 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
-from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
@@ -165,15 +164,7 @@ async def login_complete(
     # Set the refresh token as an HttpOnly, Secure cookie
     refresh_token = result.pop("refresh_token", None)
     if refresh_token:
-        max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="strict" if is_production else "lax",
-            max_age=max_age,
-        )
+        from src.app.core.security.login_helpers import set_refresh_cookie
+        set_refresh_cookie(response, refresh_token)
 
     return LoginTokenResponse(**result)

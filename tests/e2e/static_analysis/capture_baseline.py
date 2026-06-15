@@ -679,32 +679,6 @@ async def measure_security_baseline(report: BaselineReport) -> None:
     except Exception as e:
         report.add_error(f"Token blacklist analysis failed: {e}")
 
-    # Check bloom filter sync
-    try:
-        bloom_path = Path("src/app/core/security/bloom_filter.py")
-        if bloom_path.exists():
-            content = bloom_path.read_text()
-
-            has_periodic_sync = "periodic" in content.lower() or "schedule" in content.lower()
-            has_arq_task = "@arq_task" in content or "arq" in content.lower()
-
-            report.add_metric(
-                "security",
-                "bloom_filter_periodic_sync",
-                MetricResult(
-                    name="bloom_filter_periodic_sync",
-                    value=has_periodic_sync or has_arq_task,
-                    unit="bool",
-                    details={
-                        "has_periodic": has_periodic_sync,
-                        "has_arq": has_arq_task,
-                        "issue": "Multi-instance deployments need periodic sync",
-                    },
-                ),
-            )
-
-    except Exception as e:
-        report.add_error(f"Bloom filter analysis failed: {e}")
 
 
 # =============================================================================

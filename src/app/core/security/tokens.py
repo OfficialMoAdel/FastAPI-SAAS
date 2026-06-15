@@ -31,11 +31,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
-from typing import Any, cast
 
 from redis.asyncio import Redis
 
-from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
@@ -121,290 +119,39 @@ class TokenGenerator:
         return f"{prefix}_{secrets.token_urlsafe(TokenGenerator.API_KEY_LENGTH)}"
 
 
-class SSOStateManager:
-    """Async SSO state management with Redis.
-
-    Manages OAuth state parameters with:
-    - One-time use enforcement
-    - 10-minute expiration
-    - Provider and redirect metadata storage
-    - Audit logging
-    """
-
-    # Expiration time (seconds)
-    STATE_EXPIRY = 600  # 10 minutes
-
-    def __init__(self, redis: Redis):
-        """Initialize SSO state manager.
-
-        Args:
-            redis: Async Redis client instance.
-        """
-        self._redis = redis
-
-    async def create_state(
-        self,
-        provider: str,
-        redirect_uri: str,
-        extra_data: dict[str, Any] | None = None,
-    ) -> str:
-        """Create and store SSO state for OAuth flow.
-
-        Args:
-            provider: OAuth provider name (google, github, etc.).
-            redirect_uri: Callback URI after OAuth.
-            extra_data: Additional metadata to store.
-
-        Returns:
-            Generated state token.
-        """
-        state = TokenGenerator.generate_sso_state()
-
-        # Build state data
-        state_data: dict[str, Any] = {
-            "provider": provider,
-            "redirect_uri": redirect_uri,
-        }
-        if extra_data:
-            state_data["extra_data"] = extra_data
-
-        # Store in Redis with expiration
-        key = f"sso_state:{state}"
-        await self._redis.setex(
-            key,
-            self.STATE_EXPIRY,
-            json_dumps(state_data, as_str=True),
-        )
-
-        logger.debug(
-            "Created SSO state",
-            extra={
-                "operation": "create_sso_state",
-                "provider": provider,
-                "expiry_seconds": self.STATE_EXPIRY,
-            },
-        )
-
-        return state
-
-    async def validate_state(self, state: str) -> dict[str, Any] | None:
-        """Validate SSO state (one-time use, 10-min expiry).
-
-        Args:
-            state: The state parameter from the OAuth callback.
-
-        Returns:
-            State metadata dict if valid, None if expired/used/invalid.
-        """
-        key = f"sso_state:{state}"
-
-        # Get and delete state data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
-
-        if data is None:
-            logger.debug(
-                "SSO state validation failed: not found or expired",
-                extra={"operation": "validate_sso_state", "found": False},
-            )
-            return None
-
-        try:
-            state_data = cast(dict[str, Any], json_loads(data))
-            logger.debug(
-                "SSO state validated successfully",
-                extra={
-                    "operation": "validate_sso_state",
-                    "provider": state_data.get("provider"),
-                },
-            )
-            return state_data
-        except ValueError:
-            logger.warning(
-                "SSO state validation failed: invalid JSON",
-                extra={"operation": "validate_sso_state"},
-            )
-            return None
-
-
-class MagicLinkManager:
-    """Async magic link token management with Redis.
-
-    Manages magic link tokens with:
-    - One-time use enforcement
-    - 15-minute expiration
-    - Email and action metadata storage
-    - Audit logging
-    """
-
-    # Expiration time (seconds)
-    TOKEN_EXPIRY = 900  # 15 minutes
-
-    def __init__(self, redis: Redis):
-        """Initialize magic link manager.
-
-        Args:
-            redis: Async Redis client instance.
-        """
-        self._redis = redis
-
-    async def create_token(
-        self,
-        email: str,
-        action: str,
-        extra_data: dict[str, Any] | None = None,
-    ) -> str:
-        """Create and store magic link token.
-
-        Args:
-            email: Target email address.
-            action: Token action (login, verify, reset).
-            extra_data: Additional metadata to store.
-
-        Returns:
-            Generated token.
-        """
-        token = TokenGenerator.generate_magic_link_token()
-
-        # Build token data
-        token_data: dict[str, Any] = {
-            "email": email,
-            "action": action,
-        }
-        if extra_data:
-            token_data["extra_data"] = extra_data
-
-        # Hash token before storing in Redis to prevent plaintext exposure
-        hashed_token = hash_token(token)
-
-        # Store in Redis with expiration
-        key = f"magic_link:{hashed_token}"
-        await self._redis.setex(
-            key,
-            self.TOKEN_EXPIRY,
-            json_dumps(token_data, as_str=True),
-        )
-
-        logger.debug(
-            "Created magic link token",
-            extra={
-                "operation": "create_magic_link",
-                "action": action,
-                "expiry_seconds": self.TOKEN_EXPIRY,
-            },
-        )
-
-        return token
-
-    async def peek_token(self, token: str) -> dict[str, Any] | None:
-        """Peek at a magic link token without consuming it.
-
-        Args:
-            token: The magic link token to peek at.
-
-        Returns:
-            Token metadata dict if valid, None if expired/used/invalid.
-        """
-        hashed_token = hash_token(token)
-        key = f"magic_link:{hashed_token}"
-
-        data = await self._redis.get(key)
-
-        if data is None:
-            return None
-
-        try:
-            return cast(dict[str, Any], json_loads(data))
-        except ValueError:
-            return None
-
-    async def consume_token(self, token: str) -> bool:
-        """Consume a magic link token (delete it).
-
-        Args:
-            token: The magic link token to consume.
-
-        Returns:
-            True if the token was successfully consumed, False if it was already gone.
-        """
-        hashed_token = hash_token(token)
-        key = f"magic_link:{hashed_token}"
-
-        # delete returns the number of keys removed (1 if it existed, 0 otherwise)
-        result = await self._redis.delete(key)
-        return int(result) > 0 if result is not None else False
-
-    async def validate_token(self, token: str) -> dict[str, Any] | None:
-        """Validate magic link token (one-time use, 15-min expiry).
-
-        Args:
-            token: The magic link token to validate.
-
-        Returns:
-            Token metadata dict if valid, None if expired/used/invalid.
-        """
-        hashed_token = hash_token(token)
-        key = f"magic_link:{hashed_token}"
-
-        # Get and delete token data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
-
-        if data is None:
-            logger.debug(
-                "Magic link validation failed: not found or expired",
-                extra={"operation": "validate_magic_link", "found": False},
-            )
-            return None
-
-        try:
-            token_data = cast(dict[str, Any], json_loads(data))
-            logger.debug(
-                "Magic link validated successfully",
-                extra={
-                    "operation": "validate_magic_link",
-                    "action": token_data.get("action"),
-                },
-            )
-            return token_data
-        except ValueError:
-            logger.warning(
-                "Magic link validation failed: invalid JSON",
-                extra={"operation": "validate_magic_link"},
-            )
-            return None
-
+from src.app.core.security.pending_token_store import PendingTokenStore
 
 # Dependency injection factories
 
-
-def get_sso_state_manager(redis: Redis) -> SSOStateManager:
-    """Get SSOStateManager instance for dependency injection.
-
-    Args:
-        redis: Async Redis client from dependency.
-
-    Returns:
-        SSOStateManager instance.
-
-    Example:
-        @router.get("/auth/google")
-        async def google_login(
-            redis: Redis = Depends(get_redis_client),
-            sso_manager: SSOStateManager = Depends(
-                lambda r=Depends(get_redis_client): get_sso_state_manager(r)
-            )
-        ):
-            state = await sso_manager.create_state(...)
-    """
-    return SSOStateManager(redis=redis)
-
-
-def get_magic_link_manager(redis: Redis) -> MagicLinkManager:
-    """Get MagicLinkManager instance for dependency injection.
+def get_sso_state_manager(redis: Redis) -> PendingTokenStore:
+    """Get PendingTokenStore instance for SSO state dependency injection.
 
     Args:
         redis: Async Redis client from dependency.
 
     Returns:
-        MagicLinkManager instance.
+        PendingTokenStore instance configured for SSO state.
     """
-    return MagicLinkManager(redis=redis)
+    return PendingTokenStore(
+        redis=redis,
+        prefix="sso_state",
+        ttl_seconds=600,  # 10 minutes
+        hash_token=False
+    )
+
+
+def get_magic_link_manager(redis: Redis) -> PendingTokenStore:
+    """Get PendingTokenStore instance for Magic Link dependency injection.
+
+    Args:
+        redis: Async Redis client from dependency.
+
+    Returns:
+        PendingTokenStore instance configured for magic links.
+    """
+    return PendingTokenStore(
+        redis=redis,
+        prefix="magic_link",
+        ttl_seconds=900,  # 15 minutes
+        hash_token=True
+    )

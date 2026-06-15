@@ -298,9 +298,9 @@ class TestMagicLinkTokenExpiry:
     @pytest.mark.asyncio
     async def test_token_expires_after_15_minutes(self, fake_redis, mock_db):
         """Verify tokens expire after 15 minutes (per spec)."""
-        from src.app.core.security.tokens import MagicLinkManager
+        from src.app.core.security.tokens import get_magic_link_manager
 
-        manager = MagicLinkManager(redis=fake_redis)
+        manager = get_magic_link_manager(redis=fake_redis)
 
         # Token expiry should be 900 seconds (15 minutes)
-        assert manager.TOKEN_EXPIRY == 900
+        assert manager.ttl == 900

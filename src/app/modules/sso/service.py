@@ -113,10 +113,18 @@ class SSOService:
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
-        state = await sso_state_manager.create_state(
-            provider=provider,
-            redirect_uri=redirect_uri,
-            extra_data=extra_data if extra_data else None,
+        from src.app.core.security.tokens import TokenGenerator
+        state = TokenGenerator.generate_sso_state()
+        state_data: dict[str, Any] = {
+            "provider": provider,
+            "redirect_uri": redirect_uri,
+        }
+        if extra_data:
+            state_data["extra_data"] = extra_data
+
+        await sso_state_manager.create(
+            token=state,
+            data=state_data,
         )
 
         oauth_provider = self._get_provider_instance(provider, settings_data, redirect_uri)
@@ -146,7 +154,7 @@ class SSOService:
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
-        state_data = await sso_state_manager.validate_state(state)
+        state_data = await sso_state_manager.consume(state)
 
         if not state_data:
             raise BadRequestException("Invalid or expired state parameter")
@@ -344,15 +352,21 @@ class SSOService:
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
             if mfa_enabled:
-                from src.app.core.security import MFAPendingTokenManager
+                from src.app.core.security import get_mfa_pending_token_manager
+                from src.app.core.security.tokens import TokenGenerator
                 from src.app.core.utils.cache import client as mfa_redis_client
                 from src.app.core.utils.ip_utils import get_client_ip
 
-                mfa_token_manager = MFAPendingTokenManager(mfa_redis_client)
-                mfa_token = await mfa_token_manager.create_token(
-                    user_id=normalized_user["id"],
-                    username=normalized_user.get("username") or normalized_user.get("email"),
-                    ip_address=get_client_ip(request),
+                mfa_token_store = get_mfa_pending_token_manager(mfa_redis_client)
+                mfa_token = TokenGenerator.generate_magic_link_token()
+                await mfa_token_store.create(
+                    token=mfa_token,
+                    data={
+                        "user_id": normalized_user["id"],
+                        "username": normalized_user.get("username") or normalized_user.get("email"),
+                        "ip_address": get_client_ip(request),
+                        "scope": "mfa_pending",
+                    }
                 )
                 return {
                     "mfa_required": True,

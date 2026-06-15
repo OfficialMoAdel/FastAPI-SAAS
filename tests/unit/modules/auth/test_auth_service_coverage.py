@@ -244,17 +244,21 @@ class TestLogin:
                 mock_mfa_instance = MagicMock()
                 mock_mfa_instance.is_mfa_enabled = AsyncMock(return_value=True)
                 with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_instance):
-                    with patch("src.app.modules.auth.service.MFAPendingTokenManager") as mock_token_manager:
+                    with patch(
+                        "src.app.modules.auth.service.get_mfa_pending_token_manager"
+                    ) as mock_token_manager_factory:
                         mock_manager_instance = MagicMock()
-                        mock_token_manager.return_value = mock_manager_instance
-                        mock_manager_instance.create_token = AsyncMock(return_value="mfa_token_123")
+                        mock_token_manager_factory.return_value = mock_manager_instance
+                        mock_manager_instance.create = AsyncMock()
 
-                        result = await auth_service.login(
-                            "mfauser", "password", mock_response, mock_request, mock_db, mock_redis
-                        )
+                        with patch("src.app.core.security.tokens.TokenGenerator.generate_magic_link_token") as mock_gen:
+                            mock_gen.return_value = "mfa_token_123"
+                            result = await auth_service.login(
+                                "mfauser", "password", mock_response, mock_request, mock_db, mock_redis
+                            )
 
-                        assert result["mfa_required"] is True
-                        assert result["mfa_token"] == "mfa_token_123"
+                            assert result["mfa_required"] is True
+                            assert result["mfa_token"] == "mfa_token_123"
 
 
 # ============================================================================

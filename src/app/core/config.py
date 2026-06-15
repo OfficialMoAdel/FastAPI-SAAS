@@ -362,13 +362,6 @@ class ClientSideCacheSettings(BaseSettings):
 class SecuritySettings(BaseSettings):
     """Security and performance optimization settings."""
 
-    # Bloom Filter Hash Function Selection
-    # xxhash is 10-20x faster than SHA256 for bloom filter operations
-    # Can be disabled for rollback by setting BLOOM_FILTER_USE_XXHASH=false
-    BLOOM_FILTER_USE_XXHASH: bool = Field(
-        default=True,
-        description="Use xxhash for bloom filter (10-20x faster) vs SHA256 (legacy)",
-    )
 
     # IP Filtering Configuration
     # Enable/disable IP whitelist checking. When enabled, only IPs in the whitelist are allowed.

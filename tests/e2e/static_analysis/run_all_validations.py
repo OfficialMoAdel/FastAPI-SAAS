@@ -159,25 +159,6 @@ async def validate_token_cache_collision() -> dict[str, Any]:
     return result
 
 
-async def validate_bloom_sync() -> dict[str, Any]:
-    """Validate Bloom filter has periodic sync task."""
-    from src.app.core.worker.functions import sync_bloom_filter_task
-    from src.app.core.worker.settings import WorkerSettings
-
-    in_functions = sync_bloom_filter_task in WorkerSettings.functions
-    cron_funcs = [job.coroutine for job in WorkerSettings.cron_jobs]
-    in_cron = sync_bloom_filter_task in cron_funcs
-
-    result = {
-        "name": "Bloom Filter Sync",
-        "optimization": "P2-3: Periodic sync via ARQ cron",
-        "passed": in_functions and in_cron,
-        "evidence": {
-            "task_registered": in_functions,
-            "cron_configured": in_cron,
-        },
-    }
-    return result
 
 
 async def validate_cache_pipeline() -> dict[str, Any]:
@@ -246,7 +227,6 @@ async def run_all_validations() -> dict[str, Any]:
         validate_audit_batching,
         validate_webhook_n1_fix,
         validate_token_cache_collision,
-        validate_bloom_sync,
         validate_cache_pipeline,
         validate_tenant_serialization,
     ]

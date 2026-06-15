@@ -30,26 +30,6 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
 
-async def benchmark_bloom_filter() -> dict:
-    """Benchmark current Bloom Filter SHA256 hash performance."""
-    from app.core.security.bloom_filter import BloomFilter
-
-    bf = BloomFilter(100_000, 0.01)
-    token = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"  # noqa: E501
-
-    # Benchmark single hash operation
-    single_hash_ns = timeit.timeit(lambda: bf._hash_values(token), number=10000) / 10000 * 1e9
-
-    # Benchmark might_contain (common case)
-    bf.add(token)
-    contain_check_ns = timeit.timeit(lambda: bf.might_contain(token), number=10000) / 10000 * 1e9
-
-    return {
-        "bloom_sha256_hash_ns": round(single_hash_ns, 2),
-        "bloom_might_contain_ns": round(contain_check_ns, 2),
-        "hash_function": "SHA256",
-        "hash_count": bf._hash_count,
-    }
 
 
 async def benchmark_session_eviction() -> dict:
@@ -177,9 +157,6 @@ async def capture_baseline() -> dict:
         },
     }
 
-    # Run all benchmarks
-    print("  -> Bloom Filter (SHA256 hash)...")
-    results.update(await benchmark_bloom_filter())
 
     print("  -> Session Manager (O(n) eviction)...")
     results.update(await benchmark_session_eviction())
@@ -212,8 +189,6 @@ async def main():
 
     print(f"\nBaseline metrics saved to: {output_file}")
     print("\nSummary:")
-    print(f"  - Bloom Filter hash: {baseline.get('bloom_sha256_hash_ns', 'N/A')} ns")
-    print(f"  - Bloom might_contain: {baseline.get('bloom_might_contain_ns', 'N/A')} ns")
     print(f"  - Session eviction: {baseline.get('session_evict_at_limit_ms', 'N/A')} ms")
     print(f"  - Bitmask decode: {baseline.get('bitmask_decode_full_us', 'N/A')} us")
 

@@ -50,23 +50,25 @@ class TestConnectProviderService:
 
             with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_state_mgr:
                 mock_manager = MagicMock()
-                mock_manager.create_state = AsyncMock(return_value="test-state")
+                mock_manager.create = AsyncMock()
                 mock_state_mgr.return_value = mock_manager
 
                 with patch("src.app.modules.sso.service.get_tenant_context") as mock_tenant:
                     mock_tenant.return_value = MagicMock(id=uuid.uuid4())
 
-                    await service.get_authorization_url(
-                        db=mock_db,
-                        request=mock_request,
-                        provider="google",
-                        connect_mode=True,
-                        user_id=123,
-                    )
+                    with patch("src.app.core.security.tokens.TokenGenerator.generate_sso_state", return_value="test-state"):
+                        await service.get_authorization_url(
+                            db=mock_db,
+                            request=mock_request,
+                            provider="google",
+                            connect_mode=True,
+                            user_id=123,
+                        )
 
-                    # Verify user_id is stored in extra_data for connect flow
-                    call_args = mock_manager.create_state.call_args
-                    extra_data = call_args.kwargs.get("extra_data", {})
+                    # Verify user_id is stored in data for connect flow
+                    call_args = mock_manager.create.call_args
+                    data = call_args.kwargs.get("data", {})
+                    extra_data = data.get("extra_data", {})
                     assert extra_data.get("user_id") == 123
                     assert extra_data.get("connect_mode") is True
 

@@ -16,13 +16,13 @@ from fastapi import APIRouter, Depends, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
-from src.app.core.config import EnvironmentOption, settings
+from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
 from src.app.core.security import (
-    MFAPendingTokenManager,
     create_access_token,
     create_refresh_token,
+    get_mfa_pending_token_manager,
 )
 from src.app.core.utils import cache as _redis_cache
 from src.app.core.utils.rate_limit import rate_limiter
@@ -292,10 +292,10 @@ async def complete_mfa_login(
 
     client_ip = get_client_ip(fastapi_request)
 
-    token_manager = MFAPendingTokenManager(_redis_cache.client)
-    token_data = await token_manager.validate_token(request.mfa_token, ip_address=client_ip)
+    token_store = get_mfa_pending_token_manager(_redis_cache.client)
+    token_data = await token_store.consume(request.mfa_token)
 
-    if not token_data:
+    if not token_data or token_data.get("ip_address") != client_ip or token_data.get("scope") != "mfa_pending":
         raise UnauthorizedException("Invalid or expired MFA pending token")
 
     user_id = token_data.get("user_id")
@@ -342,41 +342,13 @@ async def complete_mfa_login(
         create_refresh_token(data=token_data_payload),
     )
 
+    from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
+
     # Set refresh token cookie
-    max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
+    set_refresh_cookie(response, refresh_token)
 
-    try:
-        import json
-
-        from src.app.core.security.jwt_utils import extract_jti_unverified
-        from src.app.core.security.session_manager import session_manager as global_session_manager
-
-        session_id = extract_jti_unverified(access_token) or access_token[:32]
-
-        client_ip = fastapi_request.client.host if fastapi_request and fastapi_request.client else "Unknown"
-
-        user_agent = fastapi_request.headers.get("user-agent", "Unknown") if fastapi_request else "Unknown"
-        device_info_str = json.dumps({"user_agent": user_agent, "ip": client_ip})
-
-        await global_session_manager.register_session(
-            user_id=user["id"],
-            session_id=session_id,
-            device_info=device_info_str,
-        )
-    except Exception as e:
-        import structlog
-
-        logger = structlog.get_logger()
-        logger.warning("mfa_session_registration_failed", error=str(e))
-    is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-    response.set_cookie(
-        key="refresh_token",
-        value=refresh_token,
-        httponly=True,
-        secure=True,
-        samesite="strict" if is_production else "lax",
-        max_age=max_age,
-    )
+    # Register session
+    await register_login_session(user_id=user["id"], access_token=access_token, request=fastapi_request, verify=False)
 
     return MFACompleteLoginResponse(
         access_token=access_token,

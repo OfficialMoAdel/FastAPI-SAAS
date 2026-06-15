@@ -199,7 +199,7 @@ class TestMFARateLimiting:
             side_effect=mock_check_mfa_rate_limit,
         ):
             with patch(
-                "src.app.core.security.MFAPendingTokenManager.validate_token",
+                "src.app.core.security.pending_token_store.PendingTokenStore.consume",
                 new_callable=AsyncMock,
                 return_value=None,
             ):
@@ -284,7 +284,7 @@ class TestMFARateLimiting:
             side_effect=mock_check_mfa_rate_limit,
         ):
             with patch(
-                "src.app.core.security.MFAPendingTokenManager.validate_token",
+                "src.app.core.security.pending_token_store.PendingTokenStore.consume",
                 new_callable=AsyncMock,
                 return_value=None,
             ):

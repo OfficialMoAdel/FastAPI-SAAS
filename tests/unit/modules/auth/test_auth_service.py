@@ -345,7 +345,7 @@ class TestAuthServiceTokenRefresh:
             assert call_kwargs["value"] == "new_refresh_token"
             assert call_kwargs["httponly"] is True
             assert call_kwargs["secure"] is True
-            assert call_kwargs["samesite"] == "strict"
+            assert call_kwargs["samesite"] == "lax"
 
 
 class TestAuthServiceLogout:

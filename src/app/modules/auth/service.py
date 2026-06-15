@@ -14,16 +14,16 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
-from src.app.core.config import EnvironmentOption, settings
+from src.app.core.config import settings
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security import (
-    MFAPendingTokenManager,
     TokenType,
     blacklist_token,
     blacklist_tokens,
     create_access_token,
     create_refresh_token,
+    get_mfa_pending_token_manager,
     get_password_hash,
     verify_password,
     verify_token,
@@ -254,11 +254,17 @@ return new_attempts
             client_ip = get_client_ip(request)
 
             # Generate MFA pending token
-            mfa_token_manager = MFAPendingTokenManager(redis)
-            mfa_token = await mfa_token_manager.create_token(
-                user_id=user["id"],
-                username=user["username"],
-                ip_address=client_ip,
+            from src.app.core.security.tokens import TokenGenerator
+            mfa_token_store = get_mfa_pending_token_manager(redis)
+            mfa_token = TokenGenerator.generate_magic_link_token()
+            await mfa_token_store.create(
+                token=mfa_token,
+                data={
+                    "user_id": user["id"],
+                    "username": user["username"],
+                    "ip_address": client_ip,
+                    "scope": "mfa_pending",
+                }
             )
 
             # Return partial authentication response
@@ -317,58 +323,17 @@ return new_attempts
             create_access_token(data=token_data, expires_delta=access_token_expires),
             create_refresh_token(data=token_data),
         )
-        max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
 
         # Cookie security settings based on environment
-        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-        # SECURITY FIX: Always use secure=True for refresh tokens
-        # Prevents transmission over HTTP in any environment
-        response.set_cookie(
-            key="refresh_token",
-            value=refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="strict" if is_production else "lax",
-            max_age=max_age,
-        )
+        from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
+
+        set_refresh_cookie(response, refresh_token)
 
         # Audit log success
         await self._publish_login_audit(request, username, True, tenant_id=user["tenant_id"], user_id=user["id"])
 
         # Register session for tracking using the singleton session_manager
-        try:
-            # Extract jti from access token for session ID
-            import json
-
-            from src.app.core.security.jwt_utils import decode_jwt_token, validate_jwt_length
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            # SECURITY: Validate token length and verify signature for session registration
-            # Even if we just created the token, using verified decode prevents session fixation
-            # and ensures we only track tokens we actually signed.
-            if not validate_jwt_length(access_token):
-                logger.warning("JWT decode blocked: token too long")
-                decoded_token: dict[str, Any] = {}
-            else:
-                decoded_token = await decode_jwt_token(access_token) or {}
-            session_id = decoded_token.get("jti", access_token[:32])
-            client_ip = request.client.host if request.client else "Unknown"
-
-            # Store session info as structured JSON instead of fragile delimited string
-            device_info_data = {
-                "user_agent": request.headers.get("user-agent", "Unknown"),
-                "ip": client_ip,
-            }
-            device_info_str = json.dumps(device_info_data)
-
-            await global_session_manager.register_session(
-                user_id=user["id"],
-                session_id=session_id,
-                device_info=device_info_str,
-            )
-        except Exception as e:
-            # Session registration failure should not block login
-            logger.warning("session_registration_failed", error=str(e))
+        await register_login_session(user_id=user["id"], access_token=access_token, request=request, verify=True)
 
         return {"access_token": access_token, "token_type": "bearer"}
 
@@ -453,41 +418,13 @@ return new_attempts
             logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
 
         # Cookie security settings based on environment
-        max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-        is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-        # Cookie security settings
-        # SECURITY FIX: Always use secure=True for refresh tokens
-        # Prevents transmission over HTTP in any environment
-        response.set_cookie(
-            key="refresh_token",
-            value=new_refresh_token,
-            httponly=True,
-            secure=True,
-            samesite="strict" if is_production else "lax",
-            max_age=max_age,
+        from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
+
+        set_refresh_cookie(response, new_refresh_token)
+
+        await register_login_session(
+            user_id=db_user["id"], access_token=new_access_token, request=request, verify=False
         )
-
-        try:
-            import json
-
-            from src.app.core.security.jwt_utils import extract_jti_unverified
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            session_id = extract_jti_unverified(new_access_token) or new_access_token[:32]
-
-            client_ip = request.client.host if request and request.client else "Unknown"
-
-            device_info_str = json.dumps(
-                {"user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown", "ip": client_ip}
-            )
-
-            await global_session_manager.register_session(
-                user_id=db_user["id"],
-                session_id=session_id,
-                device_info=device_info_str,
-            )
-        except Exception as e:
-            logger.warning("session_registration_failed", error=str(e))
 
         return {"access_token": new_access_token, "token_type": "bearer"}
 

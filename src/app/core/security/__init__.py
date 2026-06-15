@@ -450,98 +450,21 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
 # MFA pending token constants (configured via environment)
 
 
-class MFAPendingTokenManager:
-    """Manager for MFA pending tokens.
-
-    These tokens are issued after successful password authentication
-    when MFA is enabled. They allow completion of the login flow
-    with MFA verification.
-
-    Features:
-    - 5-minute expiration
-    - One-time use
-    - Limited scope (only valid for MFA verification)
-    """
-
-    def __init__(self, redis: Redis):
-        """Initialize MFA pending token manager.
-
-        Args:
-            redis: Async Redis client instance.
-        """
-        self._redis = redis
-
-    async def create_token(self, user_id: int, username: str, ip_address: str) -> str:
-        """Create and store MFA pending token.
-
-        Args:
-            user_id: ID of the user pending MFA.
-            username: Username for the pending login.
-            ip_address: Client IP address to bind to the token.
-
-        Returns:
-            Generated MFA pending token.
-        """
-        token = TokenGenerator.generate_magic_link_token()
-
-        # Build token data
-        token_data = {
-            "user_id": user_id,
-            "username": username,
-            "ip_address": ip_address,
-            "scope": "mfa_pending",
-        }
-
-        # Store in Redis with expiration
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode()).hexdigest()
-        key = f"mfa_pending:{hashed_token}"
-        await self._redis.setex(
-            key,
-            settings.MFA_PENDING_EXPIRY_SECONDS,
-            json_dumps(token_data, as_str=True),
-        )
-
-        return token
-
-    async def validate_token(self, token: str, ip_address: str) -> dict[str, Any] | None:
-        """Validate MFA pending token (one-time use, 5-min expiry) and IP binding.
-
-        Args:
-            token: The MFA pending token to validate.
-            ip_address: The client IP address validating the token.
-
-        Returns:
-            Token metadata dict if valid, None if expired/used/invalid/IP mismatch.
-        """
-        import hashlib
-
-        hashed_token = hashlib.sha256(token.encode()).hexdigest()
-        key = f"mfa_pending:{hashed_token}"
-
-        # Get and delete token data atomically to prevent race conditions
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
-
-        if data is None:
-            return None
-
-        try:
-            token_data = cast(dict[str, Any], json_loads(data))
-            if token_data.get("ip_address") != ip_address:
-                return None
-            return token_data
-        except orjson.JSONDecodeError:
-            return None
+from src.app.core.security.pending_token_store import PendingTokenStore
 
 
-def get_mfa_pending_token_manager(redis: Redis) -> MFAPendingTokenManager:
-    """Get MFAPendingTokenManager instance for dependency injection.
+def get_mfa_pending_token_manager(redis: Redis) -> PendingTokenStore:
+    """Get PendingTokenStore configured for MFA pending tokens.
 
     Args:
         redis: Async Redis client from dependency.
 
     Returns:
-        MFAPendingTokenManager instance.
+        PendingTokenStore instance configured for MFA.
     """
-    return MFAPendingTokenManager(redis=redis)
+    return PendingTokenStore(
+        redis=redis,
+        prefix="mfa_pending",
+        ttl_seconds=settings.MFA_PENDING_EXPIRY_SECONDS,
+        hash_token=True
+    )

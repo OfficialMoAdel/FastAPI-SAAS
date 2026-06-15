@@ -6,11 +6,14 @@ Handles token generation, email queueing, and token verification.
 
 from __future__ import annotations
 
-from typing import Annotated, Any
+from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from src.app.core.security.pending_token_store import PendingTokenStore
 
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
@@ -19,7 +22,7 @@ from src.app.core.security import (
     create_access_token,
     create_refresh_token,
 )
-from src.app.core.security.tokens import MagicLinkManager
+from src.app.core.security.tokens import get_magic_link_manager
 from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.exceptions import (
@@ -105,14 +108,19 @@ class MagicLinkService:
 
         # Generate and store token in Redis
         manager = self._get_magic_link_manager()
-        token = await manager.create_token(
-            email=email,
-            action="login",
-            extra_data={
-                "user_id": user["id"],
-                "ip_address": ip_address,
-                "user_agent": user_agent,
-            },
+        from src.app.core.security.tokens import TokenGenerator
+        token = TokenGenerator.generate_magic_link_token()
+        await manager.create(
+            token=token,
+            data={
+                "email": email,
+                "action": "login",
+                "extra_data": {
+                    "user_id": user["id"],
+                    "ip_address": ip_address,
+                    "user_agent": user_agent,
+                }
+            }
         )
 
         # Store in database for audit trail with hashed token (H-14)
@@ -180,7 +188,7 @@ class MagicLinkService:
         # Validate token in Redis (one-time use)
         manager = self._get_magic_link_manager()
         # Non-destructive read to preserve token if MFA check fails
-        token_data = await manager.peek_token(token)
+        token_data = await manager.peek(token)
 
         if token_data is None:
             # Token not found - could be expired or already used
@@ -211,7 +219,7 @@ class MagicLinkService:
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
 
         # MFA check succeeded, now safely consume the token
-        if not await manager.consume_token(token):
+        if not await manager.delete(token):
             # Token was consumed concurrently
             raise InvalidMagicLinkError("Token expired or already used")
 
@@ -226,14 +234,20 @@ class MagicLinkService:
             logger.error("Failed to mark magic link used in DB", exc_info=True)
 
         if mfa_enabled:
-            from src.app.core.security import MFAPendingTokenManager
+            from src.app.core.security import get_mfa_pending_token_manager
+            from src.app.core.security.tokens import TokenGenerator
 
             # Generate MFA pending token
-            mfa_token_manager = MFAPendingTokenManager(self.redis)
-            mfa_token = await mfa_token_manager.create_token(
-                user_id=user["id"],
-                username=str(user.get("username") or user.get("email") or ""),
-                ip_address=ip_address,
+            mfa_token_store = get_mfa_pending_token_manager(self.redis)
+            mfa_token = TokenGenerator.generate_magic_link_token()
+            await mfa_token_store.create(
+                token=mfa_token,
+                data={
+                    "user_id": user["id"],
+                    "username": str(user.get("username") or user.get("email") or ""),
+                    "ip_address": ip_address,
+                    "scope": "mfa_pending",
+                }
             )
 
             logger.info(
@@ -257,18 +271,8 @@ class MagicLinkService:
         # Set cookie if response is provided
         refresh_token = tokens.pop("refresh_token", None)
         if response and refresh_token:
-            from src.app.core.config import EnvironmentOption
-
-            max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-            is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
-            response.set_cookie(
-                key="refresh_token",
-                value=refresh_token,
-                httponly=True,
-                secure=True,
-                samesite="strict" if is_production else "lax",
-                max_age=max_age,
-            )
+            from src.app.core.security.login_helpers import set_refresh_cookie
+            set_refresh_cookie(response, refresh_token)
 
         logger.info(
             "Magic link verified successfully",
@@ -280,13 +284,13 @@ class MagicLinkService:
 
         return LoginTokenResponse(**tokens)
 
-    def _get_magic_link_manager(self) -> MagicLinkManager:
-        """Get MagicLinkManager instance.
+    def _get_magic_link_manager(self) -> PendingTokenStore:
+        """Get PendingTokenStore instance.
 
         Returns:
-            MagicLinkManager with Redis client.
+            PendingTokenStore with Redis client.
         """
-        return MagicLinkManager(redis=self.redis)
+        return get_magic_link_manager(redis=self.redis)
 
     async def _get_user_by_email(self, email: str) -> dict[str, Any] | None:
         """Get user by email address with tier eager-loaded.

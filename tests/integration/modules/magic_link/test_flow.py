@@ -57,14 +57,18 @@ class TestMagicLinkE2EFlow:
             patch(
                 "src.app.modules.magic_link.service.MagicLinkService._get_magic_link_manager",
             ) as mock_manager,
+            patch(
+                "src.app.core.security.tokens.TokenGenerator.generate_magic_link_token",
+                return_value="test_magic_link_token_12345678901234567890",
+            ),
         ):
             # Setup mock user as dict (service uses dict-style access)
             mock_get_user.return_value = test_user_data
 
-            # Setup mock manager to return token
+            # Setup mock manager
             mock_token = "test_magic_link_token_12345678901234567890"
             mock_magic_link_manager = AsyncMock()
-            mock_magic_link_manager.create_token.return_value = mock_token
+            mock_magic_link_manager.create = AsyncMock()
             mock_manager.return_value = mock_magic_link_manager
 
             # Send magic link request
@@ -97,7 +101,7 @@ class TestMagicLinkE2EFlow:
             mock_get_user.return_value = user_data_with_delete
 
             mock_magic_link_manager = AsyncMock()
-            mock_magic_link_manager.validate_token.return_value = {
+            mock_magic_link_manager.consume.return_value = {
                 "email": email,
                 "action": "login",
             }
@@ -200,29 +204,33 @@ class TestMagicLinkSecurityConstraints:
     @pytest.mark.asyncio
     async def test_magic_link_single_use(self):
         """Verify tokens can only be used once (consumed on first use)."""
-        from src.app.core.security.tokens import MagicLinkManager
+        from src.app.core.security.tokens import get_magic_link_manager
         from tests.conftest import FakeRedis
 
         redis = FakeRedis()
-        manager = MagicLinkManager(redis=redis)
+        manager = get_magic_link_manager(redis=redis)
 
         # Create token
-        token = await manager.create_token(
-            email="test@example.com",
-            action="login",
+        token = "test_token_123"
+        await manager.create(
+            token=token,
+            data={"email": "test@example.com", "action": "login"},
         )
 
         # First validation should succeed
-        result = await manager.validate_token(token)
+        result = await manager.consume(token)
         assert result is not None
         assert result["email"] == "test@example.com"
 
         # Second validation should fail (token consumed)
-        result = await manager.validate_token(token)
+        result = await manager.consume(token)
         assert result is None
 
     def test_magic_link_expiry_is_15_minutes(self):
         """Verify token expiry is set to 15 minutes per spec."""
-        from src.app.core.security.tokens import MagicLinkManager
+        from src.app.core.security.tokens import get_magic_link_manager
+        from tests.conftest import FakeRedis
 
-        assert MagicLinkManager.TOKEN_EXPIRY == 900  # 15 minutes in seconds
+        manager = get_magic_link_manager(redis=FakeRedis())
+
+        assert manager.ttl == 900  # 15 minutes in seconds

@@ -17,7 +17,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.core.rbac.bitmask import PermissionBitmask
-from src.app.core.security.bloom_filter import BloomFilter
 from src.app.core.security.session_manager import SessionManager
 
 logger = logging.getLogger(__name__)
@@ -60,81 +59,6 @@ def e2e_results():
     results.save()
 
 
-class TestBloomFilterIntegration:
-    """E2E tests for Bloom Filter with xxhash optimization."""
-
-    def test_bloom_filter_add_and_check(self, e2e_results):
-        """Verify bloom filter add and contains work end-to-end."""
-        bf = BloomFilter(expected_items=10000, false_positive_rate=0.01)
-
-        # Simulate real JWT tokens
-        tokens = [f"eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.{i}.signature" for i in range(1000)]
-
-        # Add tokens
-        start = time.perf_counter()
-        for token in tokens:
-            bf.add(token)
-        add_time_ms = (time.perf_counter() - start) * 1000
-
-        # Check tokens
-        start = time.perf_counter()
-        hits = sum(1 for token in tokens if bf.might_contain(token))
-        check_time_ms = (time.perf_counter() - start) * 1000
-
-        logger.info(f"Added {len(tokens)} tokens in {add_time_ms:.2f}ms")
-        logger.info(f"Checked {len(tokens)} tokens in {check_time_ms:.2f}ms")
-        logger.info(f"Hits: {hits}/{len(tokens)}")
-
-        e2e_results.add(
-            "bloom_filter_add_check",
-            "PASS",
-            {
-                "tokens": len(tokens),
-                "add_time_ms": round(add_time_ms, 2),
-                "check_time_ms": round(check_time_ms, 2),
-                "hits": hits,
-            },
-        )
-
-        # All added tokens should be found
-        assert hits == len(tokens), f"Expected all hits, got {hits}/{len(tokens)}"
-
-    def test_bloom_filter_false_positive_rate(self, e2e_results):
-        """Verify false positive rate is within bounds."""
-        bf = BloomFilter(expected_items=10000, false_positive_rate=0.01)
-
-        # Add tokens
-        added = set()
-        for i in range(10000):
-            token = f"token_added_{i}"
-            bf.add(token)
-            added.add(token)
-
-        # Check tokens that were NOT added
-        false_positives = 0
-        total_checks = 10000
-        for i in range(total_checks):
-            token = f"token_NOT_added_{i}"
-            if token not in added and bf.might_contain(token):
-                false_positives += 1
-
-        fp_rate = false_positives / total_checks
-
-        logger.info(f"False positives: {false_positives}/{total_checks} ({fp_rate:.4f})")
-
-        e2e_results.add(
-            "bloom_filter_fp_rate",
-            "PASS" if fp_rate <= 0.02 else "WARN",
-            {
-                "false_positives": false_positives,
-                "total_checks": total_checks,
-                "fp_rate": round(fp_rate, 4),
-                "expected_rate": 0.01,
-            },
-        )
-
-        # Allow 2x expected rate for variance
-        assert fp_rate <= 0.02, f"FP rate {fp_rate} exceeds 2x expected (0.02)"
 
 
 class TestSessionManagerIntegration:
@@ -443,47 +367,6 @@ class TestJWTPEMCachingIntegration:
             assert key1 is key2, "Cache should return same object"
 
 
-class TestBitarrayBloomIntegration:
-    """E2E tests for bitarray-backed Bloom Filter."""
-
-    def test_bitarray_bloom_operations(self, e2e_results):
-        """Verify bitarray-backed bloom filter works correctly."""
-        from bitarray import bitarray
-
-        bf = BloomFilter(expected_items=100000, false_positive_rate=0.01)
-
-        # Verify internal structure uses bitarray
-        assert isinstance(bf._bit_array, bitarray), "Should use bitarray"
-
-        # Add tokens
-        tokens = [f"token_{i}" for i in range(10000)]
-        for token in tokens:
-            bf.add(token)
-
-        # Check fill ratio (should use count())
-        fill_ratio = bf.fill_ratio
-        logger.info(f"Fill ratio: {fill_ratio:.4f}")
-
-        # Check size_bytes (should use buffer_info())
-        size_bytes = bf.size_bytes
-        logger.info(f"Size bytes: {size_bytes}")
-
-        # Verify all tokens found
-        found = sum(1 for token in tokens if bf.might_contain(token))
-
-        e2e_results.add(
-            "bitarray_bloom_operations",
-            "PASS",
-            {
-                "tokens_added": len(tokens),
-                "tokens_found": found,
-                "fill_ratio": round(fill_ratio, 4),
-                "size_bytes": size_bytes,
-                "uses_bitarray": True,
-            },
-        )
-
-        assert found == len(tokens), f"All tokens should be found, got {found}"
 
 
 class TestFullOptimizationFlow:
@@ -661,35 +544,26 @@ class TestFullOptimizationFlow:
     async def test_complete_auth_simulation(self, e2e_results, mock_redis_flow):
         """Simulate complete auth flow exercising all optimizations."""
         # Setup components
-        bf = BloomFilter(expected_items=10000, false_positive_rate=0.01)
         sm = SessionManager(redis_client=mock_redis_flow, max_sessions=5)
 
         user_id = 42
         results = {}
 
         # 1. Login simulation (creates token, registers session)
-        token = "jwt_token_for_user_42_abc123"
         start = time.perf_counter()
         await sm.register_session(user_id=user_id, session_id="sess_1", device_info="Chrome/Windows")
         login_ms = (time.perf_counter() - start) * 1000
         results["login_ms"] = round(login_ms, 2)
         logger.info(f"Login: {login_ms:.2f}ms")
 
-        # 2. Auth check simulation (bloom filter check)
-        start = time.perf_counter()
-        is_blacklisted = bf.might_contain(token)  # Should be False (not in bloom)
-        bloom_check_ns = (time.perf_counter() - start) * 1e9
-        results["bloom_check_ns"] = round(bloom_check_ns, 1)
-        logger.info(f"Bloom check: {bloom_check_ns:.1f}ns, blacklisted={is_blacklisted}")
-
-        # 3. Session validation
+        # 2. Session validation
         start = time.perf_counter()
         is_valid = await sm.is_session_valid(user_id, "sess_1")
         session_check_ms = (time.perf_counter() - start) * 1000
         results["session_check_ms"] = round(session_check_ms, 2)
         logger.info(f"Session check: {session_check_ms:.2f}ms, valid={is_valid}")
 
-        # 4. Permission check (bitmask decode)
+        # 3. Permission check (bitmask decode)
         all_perms = list(PermissionBitmask.get_all_permissions().keys())
         user_permissions = set(all_perms[:3]) if len(all_perms) >= 3 else set(all_perms)
         mask = PermissionBitmask.encode(user_permissions)
@@ -699,17 +573,12 @@ class TestFullOptimizationFlow:
         results["decode_ns"] = round(decode_ns, 1)
         logger.info(f"Permission decode: {decode_ns:.1f}ns")
 
-        # 5. Logout simulation (blacklist token, invalidate session)
+        # 4. Logout simulation (invalidate session)
         start = time.perf_counter()
-        bf.add(token)  # Add to bloom filter
         await sm.invalidate_session(user_id, "sess_1")
         logout_ms = (time.perf_counter() - start) * 1000
         results["logout_ms"] = round(logout_ms, 2)
         logger.info(f"Logout: {logout_ms:.2f}ms")
-
-        # 6. Verify token now blacklisted
-        is_now_blacklisted = bf.might_contain(token)
-        results["token_blacklisted"] = is_now_blacklisted
 
         e2e_results.add(
             "complete_auth_simulation",
@@ -717,7 +586,5 @@ class TestFullOptimizationFlow:
             results,
         )
 
-        assert not is_blacklisted, "Token should not be blacklisted before logout"
         assert is_valid, "Session should be valid after login"
         assert decoded == user_permissions, "Permissions should decode correctly"
-        assert is_now_blacklisted, "Token should be blacklisted after logout"
