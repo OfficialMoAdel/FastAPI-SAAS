@@ -23,31 +23,23 @@ class TestUserPreferencesAPIContract:
         )
         assert response.status_code != 404, "PATCH /user/me/preferences not found"
 
-    def test_preferences_requires_authentication(self, client: TestClient):
+    def test_preferences_requires_authentication(self, unauthenticated_client: TestClient):
         """Verify preferences endpoints require authentication."""
-        from src.app.api.dependencies import get_current_user
-        from src.app.main import app
+        # GET without auth, but WITH tenant header
+        # TenantMiddleware runs before auth, so we need satisfied tenant check to reach auth check
+        response = unauthenticated_client.get(
+            "/api/v1/user/me/preferences",
+            headers={"X-Tenant-ID": "test-tenant-integration"},
+        )
+        assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
 
-        # Temporarily remove override to test actual auth logic
-        overrides = app.dependency_overrides.copy()
-        app.dependency_overrides.pop(get_current_user, None)
-
-        try:
-            # GET without auth, but WITH tenant header
-            # TenantMiddleware runs before auth, so we need satisfied tenant check to reach auth check
-            response = client.get("/api/v1/user/me/preferences", headers={"X-Tenant-ID": "test-tenant-integration"})
-            assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
-
-            # PATCH without auth
-            response = client.patch(
-                "/api/v1/user/me/preferences",
-                json={"theme": "dark"},
-                headers={"X-Tenant-ID": "test-tenant-integration"},
-            )
-            assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
-        finally:
-            # Restore overrides
-            app.dependency_overrides = overrides
+        # PATCH without auth
+        response = unauthenticated_client.patch(
+            "/api/v1/user/me/preferences",
+            json={"theme": "dark"},
+            headers={"X-Tenant-ID": "test-tenant-integration"},
+        )
+        assert response.status_code == 401, f"Expected 401, got {response.status_code}: {response.text}"
 
 
 class TestUserPreferencesGetContract:

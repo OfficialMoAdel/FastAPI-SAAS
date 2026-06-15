@@ -13,8 +13,6 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from src.app.main import app
-
 # Test user-agent to avoid IP filter blocking
 TEST_USER_AGENT = "TestClient/1.0"
 

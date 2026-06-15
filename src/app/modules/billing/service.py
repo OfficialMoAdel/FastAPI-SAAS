@@ -153,6 +153,11 @@ class StripeSettingsService(BaseService[StripeSettings]):
             # encrypt_column returns a string, store as-is (not .encode())
             update_data["encrypted_secret_key"] = encrypted
 
+        # Encrypt the webhook secret if provided
+        if "webhook_secret" in update_data and update_data["webhook_secret"]:
+            encrypted_ws = self._encryption.encrypt_column(update_data.pop("webhook_secret"))
+            update_data["encrypted_webhook_secret"] = encrypted_ws
+
         update_data["updated_at"] = datetime.now(UTC)
 
         if stripe_settings_record is None:
@@ -616,7 +621,6 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             db=self.db,
             object={
                 "cancel_at_period_end": True,
-                "canceled_at": datetime.now(UTC),
                 "updated_at": datetime.now(UTC),
             },
             id=subscription_id,
@@ -779,15 +783,7 @@ class CheckoutService:
 
         import stripe
 
-        try:
-            import asyncio
-
-            # Lightweight API call to validate the key
-            await asyncio.to_thread(stripe.Account.retrieve, api_key=api_key)
-        except stripe.error.AuthenticationError:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Invalid Stripe API key configured"
-            )
+        # stripe.Account.retrieve was removed as it adds synchronous latency per checkout
 
         # Get Plan
         plan_service = SubscriptionPlanService(self.db)

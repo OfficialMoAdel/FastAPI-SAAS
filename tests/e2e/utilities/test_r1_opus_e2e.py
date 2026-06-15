@@ -408,6 +408,7 @@ class TestJWTPEMCachingIntegration:
         # Mock HS256 settings
         mock_settings = MagicMock()
         mock_settings.JWT_PRIVATE_KEY = None
+        mock_settings.JWT_PUBLIC_KEY = None
         mock_settings.SECRET_KEY = MagicMock()
         mock_settings.SECRET_KEY.get_secret_value.return_value = "test_secret"
 

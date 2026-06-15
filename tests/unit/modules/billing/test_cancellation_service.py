@@ -174,8 +174,7 @@ class TestCancellationService:
                 call_args = mock_update.call_args
                 update_data = call_args.kwargs.get("object", {})
                 assert update_data.get("cancel_at_period_end") is True
-                assert "canceled_at" in update_data
-                assert update_data["canceled_at"] is not None
+                assert "canceled_at" not in update_data
 
 
 class TestCancellationWithStripe:

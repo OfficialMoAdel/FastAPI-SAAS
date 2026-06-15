@@ -80,7 +80,7 @@ def _get_algorithm() -> str:
     Returns:
         Algorithm string: 'RS256' for asymmetric or 'HS256' for symmetric.
     """
-    return "RS256" if settings.JWT_PRIVATE_KEY else "HS256"
+    return "RS256" if (settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY) else "HS256"
 
 
 def _get_verification_key() -> str:
@@ -93,7 +93,7 @@ def _get_verification_key() -> str:
         For RS256, prefer _get_parsed_verification_key() which returns
         a pre-parsed key object for better performance.
     """
-    if settings.JWT_PRIVATE_KEY:
+    if settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY:
         # RS256: Use public key for verification
         return str(settings.JWT_PUBLIC_KEY or "")
     # HS256: Use symmetric secret
@@ -124,7 +124,7 @@ def _get_parsed_verification_key() -> JWTPublicKey | str:
         - Private key never cached
         - lru_cache(maxsize=1) = singleton per process
     """
-    if settings.JWT_PRIVATE_KEY:
+    if settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY:
         # RS256: Pre-parse public key
         key_pem = settings.JWT_PUBLIC_KEY or ""
         if key_pem:

@@ -75,7 +75,7 @@ async def get_current_subscription(
     # Return the first active subscription (most recent)
     if subscriptions:
         # Filter for active subscriptions
-        active_subs = [s for s in subscriptions if s.get("status") == "active"]
+        active_subs = [s for s in subscriptions if s.get("status") in {"active", "trialing", "past_due"}]
         if active_subs:
             return dict(active_subs[0])
 
@@ -110,7 +110,7 @@ async def cancel_current_subscription(
     if subscription_id is None:
         result = await service.get_user_subscriptions(current_user["id"])
         subscriptions = result.get("data", [])
-        active_subs = [s for s in subscriptions if s.get("status") == "active"]
+        active_subs = [s for s in subscriptions if s.get("status") in {"active", "trialing", "past_due"}]
 
         if not active_subs:
             raise HTTPException(
@@ -123,7 +123,10 @@ async def cancel_current_subscription(
     # Verify the subscription belongs to the current user
     subscription = await service.get_subscription(subscription_id)
 
-    if subscription["user_id"] != current_user["id"]:
+    if (
+        subscription["user_id"] != current_user["id"]
+        or str(subscription.get("tenant_id")) != str(current_user.get("tenant_id"))
+    ):
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Not authorized to cancel this subscription",

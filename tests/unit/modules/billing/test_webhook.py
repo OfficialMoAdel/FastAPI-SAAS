@@ -219,10 +219,12 @@ async def test_handle_webhook_event_invoice_payment_failed():
     with (
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_billing_records.exists", new_callable=AsyncMock) as mock_exists,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
         patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
+        mock_exists.return_value = False
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
@@ -350,10 +352,12 @@ async def test_handle_webhook_event_charge_refunded():
     with (
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
+        patch("src.app.modules.billing.webhook.crud_billing_records.exists", new_callable=AsyncMock) as mock_exists,
         patch("src.app.modules.billing.webhook.crud_billing_records.create", new_callable=AsyncMock) as mock_create,
         patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
         patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):
+        mock_exists.return_value = False
         mock_to_thread.return_value = mock_invoice
 
         # Mock bypass db

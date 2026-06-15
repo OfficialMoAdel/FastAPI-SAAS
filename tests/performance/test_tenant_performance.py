@@ -8,7 +8,7 @@ Success Criteria:
 import asyncio
 import time
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 import pytest_asyncio

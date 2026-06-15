@@ -35,7 +35,7 @@ class StripeSettings(Base, kw_only=True):
     stripe_customer_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     stripe_account_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
     encrypted_secret_key: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
-    webhook_secret: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
+    encrypted_webhook_secret: Mapped[str | None] = mapped_column(Text, nullable=True, default=None)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
     created_at: Mapped[datetime] = mapped_column(

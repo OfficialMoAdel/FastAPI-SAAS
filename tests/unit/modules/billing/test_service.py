@@ -266,7 +266,6 @@ class TestUserSubscriptionService:
 
             call_args = mock_crud.update.call_args
             assert call_args.kwargs["object"]["cancel_at_period_end"] is True
-            assert call_args.kwargs["object"]["canceled_at"] is not None
 
     @pytest.mark.asyncio
     async def test_cancel_subscription_raises_not_found(self, mock_db):

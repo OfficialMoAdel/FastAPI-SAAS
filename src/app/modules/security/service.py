@@ -216,20 +216,20 @@ class IPFilterService:
                         pipe.exists(white_key)
 
                     results = await pipe.execute()
-                    
+
                     idx = 0
                     is_blacklisted = False
                     is_whitelisted = False
-                    
+
                     if settings.IP_BLACKLIST_ENABLED:
                         if results and idx < len(results):
                             is_blacklisted = bool(results[idx] > 0)
                         idx += 1
-                        
+
                     if settings.IP_WHITELIST_ENABLED:
                         if results and idx < len(results):
                             is_whitelisted = bool(results[idx] > 0)
-                        
+
                     return is_blacklisted, is_whitelisted
 
         return False, False

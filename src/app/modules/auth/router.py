@@ -121,7 +121,7 @@ async def refresh_access_token(
 async def logout(
     response: Response,
     request: Request,
-    access_token: str = Depends(oauth2_scheme),
+    access_token: str | None = Depends(oauth2_scheme),
     refresh_token: str | None = Cookie(None, alias="refresh_token"),
     db: AsyncSession = Depends(async_get_db),
     auth_service: AuthService = Depends(_get_auth_service),

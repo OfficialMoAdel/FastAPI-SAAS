@@ -52,7 +52,7 @@ def _get_signing_key() -> str:
     return str(settings.SECRET_KEY.get_secret_value())
 
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login", auto_error=False)
 api_key_scheme = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 # Export settings constants for module-level access
@@ -307,7 +307,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     )
 
 
-async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSession) -> None:
+async def blacklist_tokens(access_token: str | None, refresh_token: str | None, db: AsyncSession) -> None:
     """Blacklist both access and refresh tokens.
 
     Validates token signature before blacklisting to prevent database pollution.
@@ -315,9 +315,9 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
 
     Parameters
     ----------
-    access_token: str
+    access_token: str | None
         The access token to blacklist
-    refresh_token: str
+    refresh_token: str | None
         The refresh token to blacklist
     db: AsyncSession
         Database session for performing database operations.
@@ -325,6 +325,8 @@ async def blacklist_tokens(access_token: str, refresh_token: str, db: AsyncSessi
     tokens_for_cache: list[tuple[str, datetime]] = []
 
     for token in [access_token, refresh_token]:
+        if not token:
+            continue
         try:
             payload = await asyncio.to_thread(
                 jwt.decode,

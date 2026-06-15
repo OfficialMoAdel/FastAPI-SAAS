@@ -65,6 +65,7 @@ MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA0Z3VS5JJcds3xfn/ygWyf8Adw5gKOLxMBZ
         # Mock HS256 settings (no private key)
         mock_settings = MagicMock()
         mock_settings.JWT_PRIVATE_KEY = None
+        mock_settings.JWT_PUBLIC_KEY = None
         mock_settings.SECRET_KEY = MagicMock()
         mock_settings.SECRET_KEY.get_secret_value.return_value = "my_secret_key"
 
@@ -93,6 +94,7 @@ class TestCacheClearUtility:
         # Mock settings
         mock_settings = MagicMock()
         mock_settings.JWT_PRIVATE_KEY = None
+        mock_settings.JWT_PUBLIC_KEY = None
         mock_settings.SECRET_KEY = MagicMock()
         mock_settings.SECRET_KEY.get_secret_value.return_value = "secret1"
 

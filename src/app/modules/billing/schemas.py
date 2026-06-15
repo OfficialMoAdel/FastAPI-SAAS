@@ -32,7 +32,9 @@ class StripeSettingsCreateInternal(StripeSettingsCreate):
     tenant_id: UUID
     # BUG FIX: encrypt_column returns a hex-encoded str, not bytes.
     encrypted_secret_key: str | None = None
+    encrypted_webhook_secret: str | None = None
     updated_at: datetime | None = None
+    webhook_secret: str | None = Field(default=None, exclude=True)
 
 
 class StripeSettingsUpdate(BaseUpdate):
@@ -340,7 +342,7 @@ class CheckoutCreate(BaseCreate):
     def validate_urls(self) -> "CheckoutCreate":
         frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
         if not frontend_url:
-            return self  # If no frontend URL configured, skip validation
+            raise ValueError("FRONTEND_URL must be configured to validate checkout URLs")
 
         parsed_frontend = urlparse(frontend_url)
         for field_name in ["success_url", "cancel_url"]:

@@ -122,8 +122,9 @@ async def handle_stripe_webhooks(
             logger.info("Looking up webhook secret for Stripe account:", stripe_account_id=stripe_account_id)
             async with local_session() as db:
                 stripe_settings = await crud_stripe_settings.get_by_account_id(db, stripe_account_id)
-                if stripe_settings and stripe_settings.webhook_secret:
-                    webhook_secret = stripe_settings.webhook_secret
+                if stripe_settings and stripe_settings.encrypted_webhook_secret:
+                    from src.app.core.security.encryption import CredentialEncryption
+                    webhook_secret = CredentialEncryption().decrypt_column(stripe_settings.encrypted_webhook_secret)
     except Exception as e:
         logger.warning("Failed to lookup tenant webhook secret", error=e)
 

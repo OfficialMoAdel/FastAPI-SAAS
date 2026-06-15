@@ -108,14 +108,7 @@ async def test_trigger_webhooks_dual_signature_generation(webhook_service, mock_
     res = await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
     assert len(res) == 1
 
-    # Grab the signature passed to DB insert
-    # The insert is done via: stmt = insert(WebhookDelivery).values(deliveries_data).returning(WebhookDelivery)
-    # So we can inspect deliveries_data inside values()
-    insert_stmt = mock_db.execute.call_args[0][0]
-    inserted_values = insert_stmt.compile().params
-
-    # Alternatively, let's look at the generated signature by looking at trigger_webhooks implementation
-    # Let's verify dual signature matches expected: sha256={active_sig},sha256={old_sig}
+    # Verify dual signature matches expected: sha256={active_sig},sha256={old_sig}
     import hashlib
     import hmac
     import json
@@ -172,16 +165,7 @@ async def test_trigger_webhooks_single_signature_after_expiration(webhook_servic
     await webhook_service.trigger_webhooks(tenant_id, event_type, payload)
 
     # The signature should only be the active signature because old has expired
-    # Let's inspect the compiled insert query parameters
-    call_args = mock_db.execute.call_args[0][0]
-    # To get parameters in SQLAlchemy statement without compiling:
-    # insert_values = call_args.parameters
-    # Wait, in the code:
-    # deliveries_data = [{"signature": ...}, ...]
-    # insert(WebhookDelivery).values(deliveries_data)
-    # Let's see if we can get it from compile
-    compiled = call_args.compile()
-    # Let's verify via manual check:
+    # Verify via manual check:
     import hashlib
     import hmac
     import json

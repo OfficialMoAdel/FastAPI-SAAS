@@ -25,12 +25,12 @@ async def mock_get_redis_client():
     mock_client = AsyncMock()
     mock_client.exists = AsyncMock(return_value=0)
     mock_client.get = AsyncMock(return_value=None)
-    
+
     fake_pipeline = AsyncMock()
     fake_pipeline.__aenter__.return_value = fake_pipeline
     fake_pipeline.execute = AsyncMock(return_value=[False, False])
     mock_client.pipeline = MagicMock(return_value=fake_pipeline)
-    
+
     yield mock_client
 
 

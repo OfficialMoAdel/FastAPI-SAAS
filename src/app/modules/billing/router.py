@@ -112,9 +112,12 @@ async def get_stripe_settings(
     service = get_stripe_settings_service(db)
     stripe_settings = await service.get_settings()
     if stripe_settings is None:
+        from src.app.core.tenancy.context import get_tenant_context
+        tenant = get_tenant_context()
+        tenant_id = tenant.id if tenant else None
         return {
             "id": 0,
-            "tenant_id": 0,
+            "tenant_id": tenant_id,
             "stripe_customer_id": None,
             "stripe_account_id": None,
             "is_active": False,
@@ -126,7 +129,7 @@ async def get_stripe_settings(
     return {
         **stripe_settings,
         "has_secret_key": bool(stripe_settings.get("encrypted_secret_key")),
-        "has_webhook_secret": bool(stripe_settings.get("webhook_secret")),
+        "has_webhook_secret": bool(stripe_settings.get("encrypted_webhook_secret")),
     }
 
 

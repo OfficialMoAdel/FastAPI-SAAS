@@ -4,14 +4,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import UUID
 
 import pytest
-from fastapi import HTTPException, Request
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import (
     AuthContext,
     get_optional_auth_context,
 )
-from src.app.core.exceptions.http_exceptions import ForbiddenException, UnauthorizedException
 
 
 @pytest.fixture

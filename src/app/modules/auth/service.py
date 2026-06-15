@@ -493,7 +493,7 @@ return new_attempts
 
     async def logout(
         self,
-        access_token: str,
+        access_token: str | None,
         refresh_token: str | None,
         response: Response,
         request: Request,
@@ -503,7 +503,7 @@ return new_attempts
 
         Parameters
         ----------
-        access_token : str
+        access_token : str | None
             Access token to blacklist
         refresh_token : Optional[str]
             Refresh token from cookie
@@ -530,10 +530,11 @@ return new_attempts
 
             # Try to get user info from token before blacklisting to log who logged out
             user_data = None
-            try:
-                user_data = await verify_token(access_token, TokenType.ACCESS, db)
-            except (UnauthorizedException, ExpiredSignatureError):
-                pass  # Token expired or invalid, proceed with logout anyway
+            if access_token:
+                try:
+                    user_data = await verify_token(access_token, TokenType.ACCESS, db)
+                except (UnauthorizedException, ExpiredSignatureError):
+                    pass  # Token expired or invalid, proceed with logout anyway
 
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
@@ -549,7 +550,7 @@ return new_attempts
                     else:
                         db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
-                    if db_user:
+                    if db_user and access_token:
                         from src.app.core.security.jwt_utils import extract_jti_unverified
                         from src.app.core.security.session_manager import session_manager as global_session_manager
 

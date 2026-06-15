@@ -144,4 +144,4 @@ async def test_checkout_service_create_session(
 
     assert result.checkout_url == "https://checkout.stripe.com/c/pay/cs_test_123"
     assert result.session_id == "cs_test_123"
-    assert mock_to_thread.await_count == 2
+    assert mock_to_thread.await_count == 1

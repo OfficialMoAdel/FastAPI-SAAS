@@ -6,7 +6,7 @@ This file contains:
 """
 
 from tempfile import SpooledTemporaryFile
-from unittest.mock import AsyncMock, patch, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -63,7 +63,7 @@ def mock_redis_lifespan():
     mock_redis = AsyncMock()
     mock_redis.exists.return_value = 0
     mock_redis.get.return_value = None
-    
+
     fake_pipeline = AsyncMock()
     fake_pipeline.__aenter__.return_value = fake_pipeline
     fake_pipeline.execute = AsyncMock(return_value=[False, False])

@@ -460,20 +460,9 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         subscription_id = db_subscription.id
 
     # Map Stripe status to our status
-    status_map: dict[str, SubscriptionStatus] = {
-        "active": "active",
-        "past_due": "past_due",
-        "canceled": "canceled",
-        "unpaid": "past_due",
-        "incomplete": "past_due",
-        "incomplete_expired": "expired",
-        "trialing": "trialing",
-        # Added: Stripe "paused" (billing cycle retry disabled by merchant)
-        "paused": "past_due",
-    }
-    # BUG FIX: Default was "active" which granted access for any unseen Stripe status.
-    # Now defaults to "past_due" (conservative/fail-closed).
-    new_status: SubscriptionStatus = status_map.get(subscription["status"], "past_due")
+    from src.app.modules.billing.lifecycle import map_stripe_status
+
+    new_status: SubscriptionStatus = map_stripe_status(subscription["status"]) # type: ignore
 
     # Update subscription
     update_data = UserSubscriptionUpdate(
@@ -572,10 +561,11 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
 
+    canceled_at_ts = subscription.get("canceled_at")
     # Update subscription to canceled/expired
     update_data = UserSubscriptionUpdate(
         status="canceled",
-        canceled_at=datetime.now(UTC),
+        canceled_at=datetime.fromtimestamp(canceled_at_ts, UTC) if canceled_at_ts else datetime.now(UTC),
     )
 
     async with job_tenant_context(tenant_id) as db:
@@ -755,6 +745,18 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
     )
 
     async with job_tenant_context(tenant_id) as db:
+        # Check if billing record with stripe_invoice_id already exists to prevent duplicate inserts
+        if await crud_billing_records.exists(
+            db=db,
+            stripe_invoice_id=invoice["id"],
+            status="failed",
+        ):
+            logger.info(
+                "Failed billing record with stripe_invoice_id already exists, skipping duplicate insert",
+                stripe_invoice_id=invoice["id"],
+            )
+            return
+
         # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
         lock_result = await db.execute(
             select(crud_user_subscriptions.model)
@@ -868,6 +870,16 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
     )
 
     async with job_tenant_context(tenant_id) as db:
+        # Check if refund billing record already exists to prevent duplicate inserts
+        # Use description matching or amount/status for idempotency since we don't have a refund ID column
+        if await crud_billing_records.exists(
+            db=db,
+            stripe_payment_intent_id=stripe_payment_intent_id,
+            status="refunded",
+        ):
+            logger.info("Refund billing record already exists, skipping duplicate insert")
+            return
+
         await crud_billing_records.create(
             db=db,
             object=billing_record,
