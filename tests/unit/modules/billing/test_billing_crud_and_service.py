@@ -253,10 +253,14 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     if existing2:
         await crud_stripe_settings.db_delete(db=db_session, id=existing2["id"])
 
-    data2 = {"stripe_customer_id": "cus_t2", "tenant_id": tenant2_id, "is_active": True}
-    obj2 = StripeSettingsCreateInternal(**data2)
-    s2 = await crud_stripe_settings.create(db=db_session, object=obj2, schema_to_select=StripeSettingsRead)
-    s2_id = s2["id"]
+    from src.app.core.tenancy.context import TenantContext
+    mock_ctx_2 = TenantContext(tenant_id=tenant2_id, tenant_slug="tenant-2", tenant_name="Tenant 2", is_active=True)
+
+    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+        data2 = {"stripe_customer_id": "cus_t2", "tenant_id": tenant2_id, "is_active": True}
+        obj2 = StripeSettingsCreateInternal(**data2)
+        s2 = await crud_stripe_settings.create(db=db_session, object=obj2, schema_to_select=StripeSettingsRead)
+        s2_id = s2["id"]
 
     # Verify isolation
     # Get for tenant 1 should return s1

@@ -41,7 +41,7 @@ _bcrypt_executor = ThreadPoolExecutor(max_workers=settings.BCRYPT_THREAD_POOL_SI
 # Ensure thread pool is properly shutdown on exit
 atexit.register(_bcrypt_executor.shutdown, wait=True)
 
-from src.app.core.security.jwt_utils import _get_verification_key
+from src.app.core.security.jwt_utils import _get_parsed_verification_key
 
 
 @lru_cache(maxsize=1)
@@ -194,7 +194,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         payload = await asyncio.to_thread(
             jwt.decode,
             token,
-            _get_verification_key(),
+            _get_parsed_verification_key(),
             algorithms=[settings.ALGORITHM],
             audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
         )
@@ -331,7 +331,7 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
             payload = await asyncio.to_thread(
                 jwt.decode,
                 token,
-                _get_verification_key(),
+                _get_parsed_verification_key(),
                 algorithms=[settings.ALGORITHM],
                 audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             )
@@ -404,7 +404,7 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
         payload = await asyncio.to_thread(
             jwt.decode,
             token,
-            _get_verification_key(),
+            _get_parsed_verification_key(),
             algorithms=[settings.ALGORITHM],
             audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
         )
@@ -423,10 +423,23 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
                     if tenant:
                         tenant_id = tenant.id
                     else:
-                        # Fallback for system tokens or tokens without tenant_id
-                        import uuid
+                        from sqlalchemy import select
 
-                        tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
+                        from src.app.modules.users.models import User
+
+                        sub = payload.get("sub")
+                        if sub:
+                            stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
+                            result = await db.execute(stmt)
+                            tenant_id = result.scalar()
+
+                        if not tenant_id:
+                            _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                            # If we truly cannot find it, we can't satisfy the FK constraint.
+                            # Defaulting to the dummy UUID will fail if the DB enforces FKs.
+                            import uuid
+
+                            tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
 
                 await crud_token_blacklist.create(
                     db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)

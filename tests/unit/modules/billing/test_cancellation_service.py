@@ -79,11 +79,12 @@ class TestCancellationService:
                     new_callable=AsyncMock,
                 ):
                     with patch("src.app.modules.billing.service.settings") as mock_settings:
-                        mock_settings.STRIPE_SECRET_KEY = None
-                        result = await service.cancel_subscription(subscription_id=1)
+                        mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
+                        with patch("stripe.Subscription.modify"):
+                            result = await service.cancel_subscription(subscription_id=1)
 
-                        assert result["cancel_at_period_end"] is True
-                        assert result["canceled_at"] is not None
+                            assert result["cancel_at_period_end"] is True
+                            assert result["canceled_at"] is not None
 
     @pytest.mark.asyncio
     async def test_cancel_subscription_not_found(self, mock_db_session):
@@ -134,11 +135,12 @@ class TestCancellationService:
                     new_callable=AsyncMock,
                 ):
                     with patch("src.app.modules.billing.service.settings") as mock_settings:
-                        mock_settings.STRIPE_SECRET_KEY = None
-                        # Should still update (idempotent operation)
-                        result = await service.cancel_subscription(subscription_id=1)
-                        # Subscription is returned after update
-                        assert result is not None
+                        mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
+                        with patch("stripe.Subscription.modify"):
+                            # Should still update (idempotent operation)
+                            result = await service.cancel_subscription(subscription_id=1)
+                            # Subscription is returned after update
+                            assert result is not None
 
     @pytest.mark.asyncio
     async def test_cancel_subscription_sets_canceled_at_timestamp(self, mock_db_session, mock_tenant):

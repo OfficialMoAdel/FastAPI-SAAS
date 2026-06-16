@@ -130,15 +130,31 @@ def lifespan_factory(
                 await create_tables()
 
             # Warm caches after DB and Redis are ready
+            import asyncio
+
             from src.app.core.utils.cache_warming import warm_caches
 
-            try:
-                await warm_caches()
-            except Exception as e:
-                # Log but don't fail startup - caches will be populated on-demand
+            async def _warm_caches_background() -> None:
                 from src.app.core.logger import get_logger
+                logger = get_logger(__name__)
+                try:
+                    if cache.client:
+                        # Distributed lock to prevent all workers from hitting DB simultaneously
+                        lock_key = "system:startup:cache_warmup_lock"
+                        acquired = await cache.client.set(lock_key, "1", nx=True, ex=300)
+                        if acquired:
+                            logger.info("Acquired startup cache warming lock, starting warmup...")
+                            await warm_caches()
+                            logger.info("Startup cache warmup complete.")
+                        else:
+                            logger.debug("Another worker is handling cache warmup, skipping.")
+                    else:
+                        await warm_caches()
+                except Exception as e:
+                    logger.warning("Cache warming failed: %s", e)
 
-                get_logger(__name__).warning("Cache warming failed: %s", e)
+            # Fire and forget
+            asyncio.create_task(_warm_caches_background())
 
             initialization_complete.set()
 

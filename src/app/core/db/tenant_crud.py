@@ -121,15 +121,14 @@ class TenantAwareCRUD(
                 except (ValueError, TypeError) as exc:
                     raise ValueError(f"Invalid tenant_id format: {tenant_id!r}. Must be a valid UUID.") from exc
 
-            # Inject tenant_id if not already present
+            # Inject tenant_id if not already present, or overwrite if maliciously provided
             if isinstance(object, dict):
                 # Ensure we don't mutate the original dictionary
                 object = dict(object)
-                if not object.get("tenant_id"):
-                    object["tenant_id"] = tenant_id
+                object["tenant_id"] = tenant_id
             elif isinstance(object, BaseModel):
-                # Only set if the field exists and is None/empty
-                if hasattr(object, "tenant_id") and getattr(object, "tenant_id", None) is None:
+                # Forcibly overwrite tenant_id to prevent cross-tenant data creation
+                if hasattr(object, "tenant_id"):
                     object.tenant_id = tenant_id
         else:
             raise RuntimeError("Tenant-scoped create executed without an active tenant context")

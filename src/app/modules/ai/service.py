@@ -153,6 +153,7 @@ class ChatSessionService(BaseService[AIChatSession]):
         session_data["tenant_id"] = tenant.id
         session_data["user_id"] = user_id
         result = await crud_chat_sessions.create(db=self.db, object=session_data)  # type: ignore
+        await self.db.commit()
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session(self, session_id: int, user_id: int) -> dict[str, Any]:
@@ -180,6 +181,7 @@ class ChatSessionService(BaseService[AIChatSession]):
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
         await crud_chat_sessions.update(db=self.db, object=update_data, id=session_id)
+        await self.db.commit()
         result = await crud_chat_sessions.get(db=self.db, id=session_id)
         if result is None:
             raise ModelNotFoundError("ChatSession", session_id)
@@ -189,8 +191,18 @@ class ChatSessionService(BaseService[AIChatSession]):
         """Delete a chat session."""
         await self.get_session(session_id, user_id)
         await crud_chat_sessions.db_delete(db=self.db, id=session_id)
+        await self.db.commit()
         return {"message": "Chat session deleted"}
 
+
+from pydantic import BaseModel
+
+
+class ChatMessageInternal(BaseModel):
+    session_id: int
+    role: str
+    content: str
+    token_count: int | None = None
 
 class ChatMessageService(BaseService[AIChatMessage]):
     """Service for managing chat messages."""
@@ -202,14 +214,6 @@ class ChatMessageService(BaseService[AIChatMessage]):
         self, session_id: int, data: ChatMessageCreate, token_count: int | None = None
     ) -> dict[str, Any]:
         """Add a message to a chat session."""
-        # Use ChatMessageInternal schema that includes session_id
-        from pydantic import BaseModel
-
-        class ChatMessageInternal(BaseModel):
-            session_id: int
-            role: str
-            content: str
-            token_count: int | None = None
 
         # Role is already a string (Literal type)
         internal_data = ChatMessageInternal(
@@ -219,6 +223,7 @@ class ChatMessageService(BaseService[AIChatMessage]):
             token_count=token_count,
         )
         result = await crud_chat_messages.create(db=self.db, object=internal_data.model_dump())  # type: ignore
+        await self.db.commit()
         return result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
 
     async def get_session_messages(self, session_id: int, page: int = 1, limit: int = 50) -> dict[str, Any]:
@@ -263,6 +268,7 @@ class AISettingsService(BaseService[AISettings]):
             create_data["user_id"] = user_id
             create_data["tenant_id"] = tenant_id
             result = await crud_ai_settings.create(db=self.db, object=create_data)  # type: ignore
+            await self.db.commit()
             settings = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             settings["user_id"] = user_id
             settings["tenant_id"] = tenant_id
@@ -294,9 +300,11 @@ class AISettingsService(BaseService[AISettings]):
             result_dict = result if isinstance(result, dict) else {"id": getattr(result, "id", None)}
             result_dict["user_id"] = user_id
             result_dict["tenant_id"] = tenant_id
+            await self.db.commit()
             return result_dict
         else:
             await crud_ai_settings.update(db=self.db, object=update_data, id=settings["id"])
+            await self.db.commit()
 
             # Update the dictionary locally instead of fetching again
             settings.update(update_data)
@@ -450,12 +458,20 @@ class ChatCompletionService:
         messages_result = await self._message_service.get_session_messages(session_id, limit=50)
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
-        temperature = request.temperature or user_settings.get("temperature", 0.7)
-        max_tokens = request.max_tokens or user_settings.get("max_tokens", 2048)
+        temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
+        max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        history = [{"role": m["role"], "content": m["content"]} for m in messages_result.get("data", [])]
-        history.append({"role": "user", "content": request.message})
+        # Prevent prompt injection by wrapping user messages in strict delimiters
+        history = []
+        for m in messages_result.get("data", []):
+            content = m["content"]
+            if m["role"] == "user" and not content.startswith("```"):
+                content = f"```\n{content}\n```"
+            history.append({"role": m["role"], "content": content})
+
+        sanitized_message = request.message.strip()
+        history.append({"role": "user", "content": f"```\n{sanitized_message}\n```"})
 
         history = truncate_context(
             messages=history,

@@ -218,6 +218,15 @@ class UserService(BaseService[User]):
                         f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
+                        f"tenant:{tenant_id_str}:user:{username}:token_version",
+                        f"tenant:{tenant_id_str}:user:{email}:token_version",
+                    ]
+                )
+            else:
+                keys.extend(
+                    [
+                        f"user:{username}:token_version",
+                        f"user:{email}:token_version",
                     ]
                 )
 

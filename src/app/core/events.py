@@ -860,8 +860,6 @@ async def process_event_handler(
         # This ensures RLS-protected operations in background tasks work correctly.
         meta = data.get("_event_meta", {})
         tenant_info = meta.get("tenant")
-        tenant_context_set = False
-
         if tenant_info:
             try:
                 from uuid import UUID
@@ -878,7 +876,6 @@ async def process_event_handler(
                     is_active=tenant_info["is_active"],
                 )
                 set_current_tenant(tenant_context)
-                tenant_context_set = True
                 logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
             except Exception as e:
                 logger.error("Failed to restore tenant context in worker - moving to DLQ", error=str(e))
@@ -972,8 +969,7 @@ async def process_event_handler(
             raise  # Re-raise for ARQ retry logic
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
-            if tenant_context_set:
-                from src.app.core.tenancy.context import clear_tenant_context
+            from src.app.core.tenancy.context import clear_tenant_context
 
-                clear_tenant_context()
-                logger.debug("Tenant context cleared after background task")
+            clear_tenant_context()
+            logger.debug("Tenant context cleared after background task")

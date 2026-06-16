@@ -52,9 +52,7 @@ class TestAppleSSOFlowIntegration:
     # Helper methods
     async def _create_valid_state(self, mock_redis, provider: str) -> str:
         """Create a valid SSO state token for testing."""
-        from src.app.core.security.tokens import get_sso_state_manager
-
-        from src.app.core.security.tokens import TokenGenerator
+        from src.app.core.security.tokens import TokenGenerator, get_sso_state_manager
         # mocked redis passed directly
         sso_manager = get_sso_state_manager(mock_redis)
 

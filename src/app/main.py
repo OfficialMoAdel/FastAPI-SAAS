@@ -157,8 +157,12 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # Initialize admin interface if it exists
         if admin:
-            # Initialize admin database and setup
-            await admin.initialize()
+            try:
+                # Initialize admin database and setup
+                await admin.initialize()
+                logger.info("Admin interface initialized successfully")
+            except Exception as e:
+                logger.error("Failed to initialize admin interface", error=str(e))
 
         yield
 
@@ -223,8 +227,9 @@ def custom_openapi():
         routes=app.routes,
     )
 
-    # Add JWT Bearer and API Key security schemes
-    openapi_schema["components"]["securitySchemes"] = {
+    components = openapi_schema.setdefault("components", {})
+    security_schemes = components.setdefault("securitySchemes", {})
+    security_schemes.update({
         "bearerAuth": {
             "type": "http",
             "scheme": "bearer",
@@ -237,7 +242,7 @@ def custom_openapi():
             "name": "X-API-Key",
             "description": "Enter API Key",
         },
-    }
+    })
 
     # Identify paths that explicitly depend on authentication
     protected_paths = set()
@@ -257,9 +262,6 @@ def custom_openapi():
                     "get_current_active_user",
                     "get_user_by_api_key",
                     "get_optional_user",
-                    "get_optional_auth_context",
-                    "verify_tenant_access",
-                    "requires_api_key_scope",
                 ) or dep_name.startswith("RequirePermission"):
                     is_auth_dep = True
 

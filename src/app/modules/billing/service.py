@@ -651,6 +651,15 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                     else getattr(settings, "STRIPE_SECRET_KEY", None)
                 )
 
+            if not api_key:
+                logger.error("Stripe API key missing for subscription cancellation")
+                await self.db.rollback()
+                from fastapi import HTTPException, status
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Billing service is misconfigured. Cannot communicate with Stripe.",
+                )
+
             if api_key:
                 try:
                     # Wrap sync Stripe call in thread to avoid blocking event loop
@@ -666,6 +675,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                 except stripe.error.StripeError as e:
                     logger.error("Failed to cancel Stripe subscription", error=e)
                     await self.db.rollback()
+                    from fastapi import HTTPException, status
                     raise HTTPException(
                         status_code=status.HTTP_400_BAD_REQUEST,
                         detail=f"Failed to cancel subscription in Stripe: {str(e)}",

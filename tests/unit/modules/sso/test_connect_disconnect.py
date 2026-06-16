@@ -56,7 +56,10 @@ class TestConnectProviderService:
                 with patch("src.app.modules.sso.service.get_tenant_context") as mock_tenant:
                     mock_tenant.return_value = MagicMock(id=uuid.uuid4())
 
-                    with patch("src.app.core.security.tokens.TokenGenerator.generate_sso_state", return_value="test-state"):
+                    with patch(
+                        "src.app.core.security.tokens.TokenGenerator.generate_sso_state",
+                        return_value="test-state"
+                    ):
                         await service.get_authorization_url(
                             db=mock_db,
                             request=mock_request,

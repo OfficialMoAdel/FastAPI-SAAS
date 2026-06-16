@@ -233,11 +233,11 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
+            MAX_SCAN_SIZE = 128 * 1024
             content_length_str = request.headers.get("content-length")
             if content_length_str:
                 try:
-                    max_body = getattr(settings, "MAX_BODY_SIZE", 10 * 1024 * 1024)
-                    if int(content_length_str) > max_body:
+                    if int(content_length_str) > MAX_SCAN_SIZE:
                         skip_body = True
                         logger.debug(
                             "Skipping attack scan of oversized body | content-length=%s",
@@ -248,13 +248,6 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             if not skip_body:
                 try:
-                    MAX_SCAN_SIZE = 128 * 1024
-
-                    content_length = request.headers.get("content-length")
-                    if content_length and int(content_length) > MAX_SCAN_SIZE:
-                        logger.warning("Content-Length exceeded maximum scan size of %d bytes", MAX_SCAN_SIZE)
-                        raise BodyScanError(f"Request body exceeded maximum scan size of {MAX_SCAN_SIZE} bytes")
-
                     body_chunks: list[bytes] = []
                     body_size = 0
 
@@ -262,7 +255,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         body_chunks.append(chunk)
                         body_size += len(chunk)
                         if body_size > MAX_SCAN_SIZE:
-                            # SECURITY FIX: If the body exceeds the maximum scan size, we must reject it.
+                            # Instead of rejecting, we just stop buffering and let the request continue,
+                            # but we can't easily reconstruct the stream. We'll raise BodyScanError
+                            # which now bypasses the scan instead of returning 413.
                             logger.warning("Request body exceeded maximum scan size of %d bytes", MAX_SCAN_SIZE)
                             raise BodyScanError(f"Request body exceeded maximum scan size of {MAX_SCAN_SIZE} bytes")
 
@@ -384,15 +379,20 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Mode: ban - add to blacklist and return 403 Forbidden
         if self._mode == "ban":
-            # Add IP to blacklist
-            await self._filter_service.add_to_blacklist(
-                ip_address=client_ip,
-                reason=f"Auto-banned for {detected_attacks[0]['attack_type']} attack",
-            )
-
-            logger.warning(
-                "IP auto-banned | ip=%s | attack=%s | mode=ban", client_ip, detected_attacks[0]["attack_type"]
-            )
+            from datetime import UTC, datetime, timedelta
+            try:
+                # Add IP to blacklist with a 24-hour expiration to prevent permanent bans from false positives
+                await self._filter_service.add_to_blacklist(
+                    ip_address=client_ip,
+                    reason=f"Auto-banned for {detected_attacks[0]['attack_type']} attack",
+                    expires_at=datetime.now(UTC) + timedelta(days=1),
+                )
+                logger.warning(
+                    "IP auto-banned | ip=%s | attack=%s | mode=ban", client_ip, detected_attacks[0]["attack_type"]
+                )
+            except Exception as e:
+                logger.error("Failed to add IP to blacklist during ban: %s", str(e))
+                # Fall back to block behavior but still return 403
 
             return Response(
                 content='{"detail":"Forbidden - Attack detected and IP banned"}',
@@ -411,6 +411,10 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         self._mode = getattr(settings, "ATTACK_DETECTION_MODE", "log")
         self._log_full_request = getattr(settings, "ATTACK_DETECTION_LOG_FULL_REQUEST", False)
         self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
+
+        if self._mode not in ("log", "block", "ban"):
+            logger.error("Invalid ATTACK_DETECTION_MODE '%s', falling back to 'log'", self._mode)
+            self._mode = "log"
 
         # Skip if attack detection is disabled
         if not self._enabled:
