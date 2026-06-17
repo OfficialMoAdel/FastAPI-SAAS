@@ -486,7 +486,7 @@ class TestCacheWarmingOptimizationE2E:
 
     def test_cache_warming_no_decode(self) -> None:
         """Verify cache warming doesn't decode orjson output."""
-        from src.app.core.utils.cache_warming import warm_tenant_cache
+        from src.app.core.cache.warmer import warm_tenant_cache
 
         source = inspect.getsource(warm_tenant_cache)
 

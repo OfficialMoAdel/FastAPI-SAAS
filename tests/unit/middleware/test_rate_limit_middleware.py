@@ -116,7 +116,7 @@ class TestBlacklistIntegration:
             mock_blacklist.return_value = True  # Token is blacklisted
 
             # Mock verify_token
-            with patch("src.app.api.dependencies.verify_token") as mock_verify:
+            with patch("src.app.api.deps.auth.verify_token") as mock_verify:
                 mock_verify.return_value = MagicMock(username_or_email="test@example.com")
 
                 # Should raise HTTPException for blacklisted token

@@ -51,7 +51,7 @@ def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # DON'T mock rate limiter - let tests control it
         patch(
             "src.app.middleware.tenant.TenantMiddleware._get_tenant_by_slug",

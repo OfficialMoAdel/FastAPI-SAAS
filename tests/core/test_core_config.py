@@ -6,7 +6,9 @@ import pytest
 from pydantic import SecretStr
 from redis.asyncio import ConnectionPool
 
-from src.app.core import redis_factory, setup
+from src.app.core import setup
+from src.app.core.cache import manager as redis_factory
+from src.app.core.cache.manager import cache_manager
 from src.app.core.config import CryptSettings, R1UnifiedSettings
 
 # ==================== Config Defaults ====================
@@ -73,7 +75,7 @@ async def test_redis_factory_singleton():
     assert pool1.connection_kwargs.get("decode_responses") is False
 
     await redis_factory.close_redis_pool()
-    assert redis_factory._redis_pool is None
+    assert cache_manager._pool is None
 
 
 @pytest.mark.asyncio
@@ -82,8 +84,8 @@ async def test_setup_uses_shared_pool():
     # Mock redis_factory.get_redis_pool
     mock_pool = Mock(spec=ConnectionPool)
 
-    # Use patch.object since we have the module imported
-    with patch.object(redis_factory, "get_redis_pool", new_callable=AsyncMock) as mock_get_pool:
+    # Use patch since get_redis_pool is imported directly into setup
+    with patch("src.app.core.setup.get_redis_pool", new_callable=AsyncMock) as mock_get_pool:
         mock_get_pool.return_value = mock_pool
 
         # We also need to mock redis.Redis and ArqRedis to avoid real connection attempts

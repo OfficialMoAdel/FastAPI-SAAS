@@ -552,7 +552,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
         patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
@@ -607,7 +607,7 @@ def unauthenticated_client(get_test_app) -> Generator[TestClient, Any, None]:
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         patch_setting("RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
@@ -666,7 +666,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
         patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
@@ -862,7 +862,7 @@ async def full_mock_context(get_test_app):
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
         patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
@@ -911,7 +911,7 @@ async def unauthenticated_mock_context(get_test_app):
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         # Force fixed_window algorithm to use the mocked rate_limiter.check_rate_limit
         patch("src.app.middleware.rate_limit.settings.rate_limit.RATE_LIMIT_ALGORITHM", "fixed_window"),
         patch(
@@ -1587,8 +1587,8 @@ def mock_redis(request):
         patch("src.app.modules.sso_settings.service.redis_client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
-        patch("src.app.core.redis_factory.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
-        patch("src.app.core.redis_factory.close_redis_pool", new=AsyncMock()),  # Add this
+        patch("src.app.core.cache.manager.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
+        patch("src.app.core.cache.manager.close_redis_pool", new=AsyncMock()),  # Add this
     ):
         # Keep session manager bound to the same Redis backend used by this test
         session_manager.set_redis_client(fake_redis)
@@ -1622,7 +1622,7 @@ async def init_real_redis_async(request):
     # Initialize real Redis client
     import redis.asyncio as redis
 
-    from src.app.core import redis_factory
+    from src.app.core.cache import manager as redis_factory
     from src.app.core.security.session_manager import session_manager
     from src.app.core.utils import cache
     from src.app.core.utils.gcra_rate_limit import GCRARateLimiter
@@ -1634,7 +1634,7 @@ async def init_real_redis_async(request):
     # Also reset GCRA rate limiter which caches script SHAs per connection
     cache.client = None
     cache.pool = None
-    redis_factory._redis_pool = None
+    redis_factory.cache_manager._pool = None
     session_manager.set_redis_client(None)
 
     # Reset GCRA rate limiter to force fresh initialization
@@ -1673,7 +1673,7 @@ async def init_real_redis_async(request):
     # (the event loop may be closing and we can't operate on closed loops)
     cache.client = None
     cache.pool = None
-    redis_factory._redis_pool = None
+    redis_factory.cache_manager._pool = None
     gcra_module.gcra_rate_limiter = None
     session_manager.set_redis_client(None)
 

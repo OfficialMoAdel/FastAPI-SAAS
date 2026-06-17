@@ -1,0 +1,58 @@
+from typing import Annotated
+
+from fastapi import Depends, Request
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from src.app.api.deps.auth import AuthenticatedUser, get_optional_user
+from src.app.core.config import settings
+from src.app.core.db.database import async_get_db
+from src.app.core.exceptions.http_exceptions import RateLimitException
+from src.app.core.logger import get_logger
+from src.app.core.utils.rate_limit import rate_limiter
+from src.app.modules.rate_limits.crud import crud_rate_limits
+from src.app.modules.rate_limits.schemas import RateLimitRead, sanitize_path
+
+logger = get_logger(__name__)
+
+async def rate_limiter_dependency(
+    request: Request,
+    db: Annotated[AsyncSession, Depends(async_get_db)],
+    user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)] = None,
+) -> None:
+    if hasattr(request.app.state, "initialization_complete"):
+        await request.app.state.initialization_complete.wait()
+
+    DEFAULT_LIMIT = settings.DEFAULT_RATE_LIMIT_LIMIT
+    DEFAULT_PERIOD = settings.DEFAULT_RATE_LIMIT_PERIOD
+
+    path = sanitize_path(request.url.path)
+    if user:
+        user_id = user["id"]
+        tier = user.get("tier")
+        if tier:
+            rate_limit = await crud_rate_limits.get(
+                db=db, tier_id=tier["id"], path=path, schema_to_select=RateLimitRead
+            )
+            if rate_limit:
+                limit, period = rate_limit["limit"], rate_limit["period"]
+            else:
+                logger.warning(
+                    "path_rate_limit_missing_using_default",
+                    user_id=user_id,
+                    tier_name=tier["name"],
+                    path=path,
+                )
+                limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
+        else:
+            logger.warning("User has no assigned tier. Applying default rate limit.", user_id=user_id)
+            limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
+    else:
+        if request.client and request.client.host:
+            user_id = f"unknown:{request.client.host}"
+        else:
+            user_id = "unknown"
+        limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
+
+    is_limited = await rate_limiter.is_rate_limited(db=db, user_id=user_id, path=path, limit=limit, period=period)
+    if is_limited:
+        raise RateLimitException("Rate limit exceeded.")

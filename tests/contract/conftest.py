@@ -73,7 +73,7 @@ async def contract_mock_context(get_contract_test_app):
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,
@@ -107,7 +107,7 @@ async def unauthenticated_contract_context(get_contract_test_app):
 
     with (
         patch("src.app.core.setup.create_tables", new_callable=AsyncMock),
-        patch("src.app.core.utils.cache_warming.warm_caches", new_callable=AsyncMock),
+        patch("src.app.core.cache.warmer.warm_caches", new_callable=AsyncMock),
         patch(
             "src.app.core.utils.rate_limit.rate_limiter.check_rate_limit",
             new_callable=AsyncMock,

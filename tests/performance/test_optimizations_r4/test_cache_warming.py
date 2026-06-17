@@ -15,7 +15,7 @@ import time
 
 import pytest
 
-from src.app.core.utils.cache_warming import (
+from src.app.core.cache.warmer import (
     TENANT_CACHE_TTL,
     TIER_CACHE_TTL,
     CacheWarmingResult,
@@ -195,7 +195,7 @@ class TestP12CacheWarmingInLifespan:
         source = inspect.getsource(lifespan_factory)
 
         # Verify cache warming is imported and called
-        assert "cache_warming" in source, "cache_warming not imported in lifespan_factory"
+        assert "warmer" in source, "warmer not imported in lifespan_factory"
         assert "warm_caches" in source, "warm_caches not called in lifespan_factory"
 
     def test_lifespan_with_admin_uses_lifespan_factory(self) -> None:

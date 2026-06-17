@@ -14,7 +14,8 @@ import pytest
 from fastapi import Request
 from redis.asyncio import ConnectionPool
 
-from src.app.core import redis_factory, setup
+from src.app.core import setup
+from src.app.core.cache import manager as redis_factory
 from src.app.core.config import settings
 from src.app.core.utils import cache as cache_module
 from src.app.core.utils.cache import cache, get_with_lock
@@ -146,7 +147,7 @@ async def test_redis_consolidation_single_pool():
     # We also need to mock disconnect since close_redis_pool calls it
     mock_pool_instance.disconnect = AsyncMock()
 
-    with patch("src.app.core.redis_factory.ConnectionPool.from_url", return_value=mock_pool_instance) as mock_from_url:
+    with patch("src.app.core.cache.manager.ConnectionPool.from_url", return_value=mock_pool_instance) as mock_from_url:
         pool1 = await redis_factory.get_redis_pool()
         pool2 = await redis_factory.get_redis_pool()
 
@@ -180,7 +181,7 @@ async def test_setup_uses_shared_pool():
 
     mock_pool = MagicMock(spec=ConnectionPool)
 
-    with patch.object(redis_factory, "get_redis_pool", new_callable=AsyncMock) as mock_get_pool:
+    with patch("src.app.core.setup.get_redis_pool", new_callable=AsyncMock) as mock_get_pool:
         mock_get_pool.return_value = mock_pool
 
         # Patch where it is used in setup.py
@@ -207,7 +208,7 @@ async def test_no_connection_leaks_under_load():
     mock_pool_instance = MagicMock(spec=ConnectionPool)
     mock_pool_instance.disconnect = AsyncMock()
 
-    with patch("src.app.core.redis_factory.ConnectionPool.from_url", return_value=mock_pool_instance) as mock_from_url:
+    with patch("src.app.core.cache.manager.ConnectionPool.from_url", return_value=mock_pool_instance) as mock_from_url:
         await redis_factory.get_redis_pool()
         kwargs = mock_from_url.call_args[1]
         assert kwargs["max_connections"] == settings.REDIS_CACHE_MAX_CONNECTIONS

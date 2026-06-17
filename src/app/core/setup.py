@@ -12,7 +12,7 @@ from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
 from src.app.api.dependencies import get_current_superuser
-from src.app.core import redis_factory
+from src.app.core.cache.manager import close_redis_pool, get_redis_pool
 from src.app.core.config import (
     EnvironmentOption,
     Settings,
@@ -54,7 +54,7 @@ async def create_redis_cache_pool() -> None:
     """Initialize Redis cache pool and client."""
     # P2-2: Use shared connection pool from factory
     if cache.pool is None:
-        cache.pool = await redis_factory.get_redis_pool()
+        cache.pool = await get_redis_pool()
 
     # Cache client needs string decoding
     # Note: The shared pool is raw (bytes), but client overrides decoding
@@ -79,7 +79,7 @@ async def close_redis_cache_pool() -> None:
 async def create_redis_queue_pool() -> None:
     """Initialize ARQ queue pool."""
     # P2-2: Reuse the shared connection pool for ARQ
-    pool = await redis_factory.get_redis_pool()
+    pool = await get_redis_pool()
 
     # Create ArqRedis using the same pool
     # ARQ uses default decoding (bytes) which matches the pool
@@ -132,7 +132,7 @@ def lifespan_factory(
             # Warm caches after DB and Redis are ready
             import asyncio
 
-            from src.app.core.utils.cache_warming import warm_caches
+            from src.app.core.cache.warmer import warm_caches
 
             async def _warm_caches_background() -> None:
                 from src.app.core.logger import get_logger
@@ -181,7 +181,7 @@ def lifespan_factory(
                 await close_redis_queue_pool()
 
             # Close the shared Redis connection pool AFTER clients are closed
-            await redis_factory.close_redis_pool()
+            await close_redis_pool()
 
             # Close SSO HTTP client pool
             from src.app.modules.sso.http_client import close_sso_http_client

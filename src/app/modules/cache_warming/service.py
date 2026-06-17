@@ -13,12 +13,12 @@ from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.logger import get_logger
-from src.app.core.utils.cache_warming import (
+from src.app.core.cache.warmer import (
     CacheWarmingResult,
     warm_tenant_cache,
     warm_tier_cache,
 )
+from src.app.core.logger import get_logger
 
 logger = get_logger(__name__)
 

@@ -7,15 +7,32 @@ with error handling and statistics tracking.
 import asyncio
 import time
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache_warming import CacheWarmingResult
+from src.app.modules.tenants.models import Tenant
+from src.app.modules.tiers.models import Tier
 
 logger = get_logger(__name__)
 
 DEFAULT_TIMEOUT = 30.0
+
+# Cache TTLs (in seconds)
+TENANT_CACHE_TTL = 3600  # 1 hour
+TIER_CACHE_TTL = 3600  # 1 hour
+
+@dataclass
+class CacheWarmingResult:
+    """Results from cache warming operation."""
+
+    tenants_cached: int = 0
+    tiers_cached: int = 0
+    duration_ms: float = 0.0
+    errors: list[str] | None = None
 
 
 class CacheWarmer:
@@ -31,19 +48,7 @@ class CacheWarmer:
     def register(
         self, name: str
     ) -> Callable[[Callable[[AsyncSession], Awaitable[int]]], Callable[[AsyncSession], Awaitable[int]]]:
-        """Decorator to register a cache warmer.
-
-        Args:
-            name: Unique name for the warmer.
-
-        Returns:
-            Decorator function.
-
-        Example:
-            @warmer.register("tenant")
-            async def warm_tenants(session: AsyncSession) -> int:
-                ...
-        """
+        """Decorator to register a cache warmer."""
 
         def decorator(func: Callable[[AsyncSession], Awaitable[int]]) -> Callable[[AsyncSession], Awaitable[int]]:
             if name in self._warmers:
@@ -59,25 +64,17 @@ class CacheWarmer:
         session: AsyncSession,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> CacheWarmingResult:
-        """Warm all registered caches.
-
-        Args:
-            session: Database session to use for warming.
-            timeout: Maximum time per warmer in seconds.
-
-        Returns:
-            CacheWarmingResult with detailed results.
-        """
+        """Warm all registered caches."""
         start_time = time.time()
         result = CacheWarmingResult()
         errors: list[str] = []
 
         logger.info("[START] Cache warming started at | warmers=", start_time=start_time, val=len(self._warmers))
 
-        for name, warmer in self._warmers.items():
+        for name, warmer_fn in self._warmers.items():
             warmer_start = time.time()
             try:
-                cached_count: int = await asyncio.wait_for(warmer(session), timeout=timeout)
+                cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
                 warmer_duration = time.time() - warmer_start
                 logger.info(
                     "[SUCCESS] Warmer=%s | items=%d | duration=%.2fs",
@@ -132,16 +129,7 @@ class CacheWarmer:
         session: AsyncSession,
         timeout: float = DEFAULT_TIMEOUT,
     ) -> CacheWarmingResult:
-        """Warm a specific cache.
-
-        Args:
-            name: Name of the warmer to execute.
-            session: Database session to use.
-            timeout: Maximum time in seconds.
-
-        Returns:
-            CacheWarmingResult with results.
-        """
+        """Warm a specific cache."""
         result = CacheWarmingResult()
         errors: list[str] = []
 
@@ -150,11 +138,11 @@ class CacheWarmer:
             logger.error("[UNKNOWN] Warmer= | error=", name=name, error_msg=error_msg)
             return CacheWarmingResult(errors=[error_msg])
 
-        warmer = self._warmers[name]
+        warmer_fn = self._warmers[name]
         start_time = time.time()
 
         try:
-            cached_count: int = await asyncio.wait_for(warmer(session), timeout=timeout)
+            cached_count: int = await asyncio.wait_for(warmer_fn(session), timeout=timeout)
             duration = time.time() - start_time
             logger.info(
                 "[SUCCESS] Warmer=%s | items=%d | duration=%.2fs",
@@ -195,29 +183,136 @@ class CacheWarmer:
         return result
 
     def list_warmers(self) -> list[str]:
-        """Get list of registered warmer names.
-
-        Returns:
-            List of warmer names.
-        """
+        """Get list of registered warmer names."""
         return list(self._warmers.keys())
 
     def has_warmer(self, name: str) -> bool:
-        """Check if a warmer is registered.
-
-        Args:
-            name: Name of the warmer.
-
-        Returns:
-            True if warmer exists, False otherwise.
-        """
+        """Check if a warmer is registered."""
         return name in self._warmers
 
 
 warmer = CacheWarmer()
 
 
+# Specific warming functions
+
+@warmer.register("tenant")
+async def warm_tenant_cache(session: AsyncSession) -> int:
+    """Preload all active tenant slugs into Redis cache."""
+    from src.app.core.utils.cache import client as redis_client
+
+    if redis_client is None:
+        logger.warning("Redis client not available, skipping tenant cache warming")
+        return 0
+
+    import orjson
+
+    stmt = select(Tenant).where(Tenant.is_active.is_(True))
+    result = await session.execute(stmt)
+    tenants = result.scalars().all()
+
+    cached_count = 0
+    try:
+        async with redis_client.pipeline() as pipe:
+            for tenant in tenants:
+                cache_key = f"tenant:slug:{tenant.slug}"
+                cache_data = orjson.dumps(
+                    {
+                        "id": str(tenant.id),
+                        "slug": tenant.slug,
+                        "name": tenant.name,
+                        "is_active": tenant.is_active,
+                        "feature_flags": tenant.feature_flags,
+                        "storage_usage_bytes": tenant.storage_usage_bytes,
+                        "file_count": tenant.file_count,
+                    }
+                )
+                pipe.setex(cache_key, TENANT_CACHE_TTL, cache_data)
+            await pipe.execute()
+        cached_count = len(tenants)
+        logger.info("Cache warming completed: tenants", cached_count=cached_count)
+    except Exception as e:
+        logger.error("Cache warming failed", error=e)
+        return 0
+
+    return cached_count
+
+
+@warmer.register("tier")
+async def warm_tier_cache(session: AsyncSession) -> int:
+    """Preload all tier names into Redis cache."""
+    from src.app.core.utils.cache import client as redis_client
+
+    if redis_client is None:
+        logger.warning("Redis client not available, skipping tier cache warming")
+        return 0
+
+    stmt = select(Tier)
+    result = await session.execute(stmt)
+    tiers = result.scalars().all()
+
+    cached_count = 0
+    try:
+        async with redis_client.pipeline() as pipe:
+            for tier in tiers:
+                cache_key = f"tier:name:{tier.id}"
+                pipe.setex(cache_key, TIER_CACHE_TTL, tier.name)
+            await pipe.execute()
+        cached_count = len(tiers)
+        logger.info("Tier cache warming completed: tiers", cached_count=cached_count)
+    except Exception as e:
+        logger.error("Tier cache warming failed", error=e)
+        return 0
+
+    return cached_count
+
+
+async def warm_caches() -> CacheWarmingResult:
+    """Warm all caches on application startup."""
+    start_time = time.perf_counter()
+    result = CacheWarmingResult()
+    errors: list[str] = []
+
+    try:
+        async with local_session() as session:
+            try:
+                result.tenants_cached = await warm_tenant_cache(session)
+                logger.info("Cached active tenants", count=result.tenants_cached)
+            except Exception as e:
+                error_msg = f"Tenant cache warming failed: {e}"
+                logger.error("Tenant cache warming failed", error=str(e))
+                errors.append(error_msg)
+
+            try:
+                result.tiers_cached = await warm_tier_cache(session)
+                logger.info("Cached pricing tiers", count=result.tiers_cached)
+            except Exception as e:
+                error_msg = f"Tier cache warming failed: {e}"
+                logger.error("Tier cache warming failed", error=str(e))
+                errors.append(error_msg)
+
+    except Exception as e:
+        error_msg = f"Cache warming failed: {e}"
+        logger.error("Cache warming failed", error=str(e))
+        errors.append(error_msg)
+
+    result.duration_ms = (time.perf_counter() - start_time) * 1000
+    result.errors = errors if errors else None
+
+    logger.info(
+        "Cache warming complete",
+        tenants_cached=result.tenants_cached,
+        tiers_cached=result.tiers_cached,
+        duration_ms=round(result.duration_ms, 2),
+    )
+
+    return result
+
 __all__ = [
     "CacheWarmer",
     "warmer",
+    "CacheWarmingResult",
+    "warm_tenant_cache",
+    "warm_tier_cache",
+    "warm_caches",
 ]

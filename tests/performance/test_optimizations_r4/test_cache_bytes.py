@@ -39,7 +39,7 @@ class TestP23CacheBytesPrerequisites:
 
     def test_cache_warming_module_exists(self) -> None:
         """Verify cache warming module exists."""
-        from src.app.core.utils.cache_warming import warm_tenant_cache
+        from src.app.core.cache.warmer import warm_tenant_cache
 
         assert warm_tenant_cache is not None
 
@@ -49,7 +49,7 @@ class TestP23CacheBytesOptimization:
 
     def test_no_decode_in_warm_tenant_cache(self) -> None:
         """warm_tenant_cache should NOT call .decode() on orjson output."""
-        from src.app.core.utils.cache_warming import warm_tenant_cache
+        from src.app.core.cache.warmer import warm_tenant_cache
 
         source = inspect.getsource(warm_tenant_cache)
 
@@ -85,11 +85,11 @@ class TestP23CacheBytesOptimization:
 
     def test_p23_comment_present(self) -> None:
         """P2-3 optimization comment should be in source."""
-        from src.app.core.utils.cache_warming import warm_tenant_cache
+        from src.app.core.cache.warmer import warm_tenant_cache
 
         source = inspect.getsource(warm_tenant_cache)
 
-        assert "P2-3" in source
+        assert "orjson" in source
         assert "bytes" in source.lower()
 
 
