@@ -32,14 +32,16 @@ from src.app.core.security.tokens import _GETDEL_LUA, TokenGenerator
 
 _jwt_logger = get_logger(__name__)
 
-# Dedicated thread pool for bcrypt operations to prevent event loop blocking
-# bcrypt.checkpw takes ~50-100ms depending on rounds, so we use a thread pool
-# to avoid blocking the async event loop during high-concurrency authentication
-# L3: Thread pool size is now configurable via BCRYPT_THREAD_POOL_SIZE setting
-_bcrypt_executor = ThreadPoolExecutor(max_workers=settings.BCRYPT_THREAD_POOL_SIZE, thread_name_prefix="bcrypt_auth")
+_bcrypt_executor: ThreadPoolExecutor | None = None
 
-# Ensure thread pool is properly shutdown on exit
-atexit.register(_bcrypt_executor.shutdown, wait=True)
+def _get_bcrypt_executor() -> ThreadPoolExecutor:
+    global _bcrypt_executor
+    if _bcrypt_executor is None:
+        _bcrypt_executor = ThreadPoolExecutor(
+            max_workers=settings.BCRYPT_THREAD_POOL_SIZE,
+            thread_name_prefix="bcrypt_auth"
+        )
+    return _bcrypt_executor
 
 from src.app.core.security.jwt_utils import _get_parsed_verification_key
 
@@ -77,7 +79,7 @@ async def verify_password(plain_password: str, hashed_password: str) -> bool:
     try:
         loop = asyncio.get_running_loop()
         result: bool = await loop.run_in_executor(
-            _bcrypt_executor, bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
+            _get_bcrypt_executor(), bcrypt.checkpw, plain_password.encode(), hashed_password.encode()
         )
         return result
     except (ValueError, TypeError) as e:
@@ -95,7 +97,7 @@ async def get_password_hash(password: str) -> str:
     """
     loop = asyncio.get_running_loop()
     hashed: bytes = await loop.run_in_executor(
-        _bcrypt_executor, bcrypt.hashpw, password.encode(), bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
+        _get_bcrypt_executor(), bcrypt.hashpw, password.encode(), bcrypt.gensalt(rounds=settings.BCRYPT_ROUNDS)
     )
     return hashed.decode()
 
@@ -366,27 +368,38 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
                                 # But this should never happen for valid tokens.
                                 continue
 
-                    # Store full token in DB for backward compatibility
-                    await crud_token_blacklist.create(
-                        db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
-                    )
+                    # Accumulate tokens for bulk insert
+                    from uuid import UUID
+                    
+                    from src.app.core.db.token_blacklist import TokenBlacklist
+
+                    # Ensure tenant_id is a UUID object (since Pydantic isn't auto-converting it here)
+                    if isinstance(tenant_id, str):
+                        tenant_id = UUID(tenant_id)
+                    
+                    # Add full token
+                    db.add(TokenBlacklist(token=token, expires_at=expires_at, tenant_id=tenant_id))
 
                     if jti:
-                        # SECURITY FIX: Also store JTI-prefixed key in DB.
-                        # This allows the DB fallback in verify_token() to find JTI-blacklisted tokens
-                        # even when Redis is unavailable (Redis stores only jti:{jti}, not the full token).
                         jti_key = f"jti:{jti}"
-                        await crud_token_blacklist.create(
-                            db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
-                        )
+                        db.add(TokenBlacklist(token=jti_key, expires_at=expires_at, tenant_id=tenant_id))
 
                     # Cache by JTI if available for precise blacklisting
                     cache_key = jti_key if jti else token
                     tokens_for_cache.append((cache_key, expires_at))
-                except IntegrityError:
-                    await db.rollback()
+                except Exception as e:
+                    _jwt_logger.warning("Error preparing token for blacklist", error=str(e))
         except JWTError as e:
             _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
+
+    if tokens_for_cache:
+        try:
+            await db.flush()
+        except IntegrityError:
+            await db.rollback()
+            # If bulk insert fails due to a conflict, we skip DB blacklisting
+            # (the token is already blacklisted in DB) but still update cache
+            _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
 
     # Bulk add to Redis cache
     if tokens_for_cache:
@@ -435,11 +448,10 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
 
                         if not tenant_id:
                             _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
-                            # If we truly cannot find it, we can't satisfy the FK constraint.
-                            # Defaulting to the dummy UUID will fail if the DB enforces FKs.
-                            import uuid
-
-                            tenant_id = uuid.UUID("00000000-0000-0000-0000-000000000000")
+                            raise ValueError(
+                                "Cannot blacklist token: tenant_id could not be determined. "
+                                "Ensure user has a valid tenant association."
+                            )
 
                 await crud_token_blacklist.create(
                     db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)

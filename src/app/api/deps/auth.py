@@ -109,7 +109,7 @@ async def get_auth_context(
     token: str = Depends(oauth2_scheme),
 ) -> AuthContext:
     """Get current authenticated user's context, cached per request by FastAPI."""
-    if token is None or hasattr(token, "dependency") or type(token).__name__ == "Depends":
+    if not token or not isinstance(token, str):
         auth_header = request.headers.get("Authorization") if request is not None else None
         if auth_header:
             _, _, token = auth_header.partition(" ")
@@ -198,19 +198,14 @@ async def get_current_user(
     auth_context: Annotated[AuthContext, Depends(get_auth_context)],
 ) -> AuthenticatedUser:
     """Get current authenticated user by consuming get_auth_context."""
-    if token is None or hasattr(token, "dependency") or type(token).__name__ == "Depends":
+    if not token or not isinstance(token, str):
         auth_header = request.headers.get("Authorization") if request is not None else None
         if auth_header:
             _, _, token = auth_header.partition(" ")
         else:
             token = ""
 
-    if (
-        auth_context is None
-        or isinstance(auth_context, DependsClass)
-        or hasattr(auth_context, "dependency")
-        or type(auth_context).__name__ == "Depends"
-    ):
+    if not auth_context or not isinstance(auth_context, AuthContext):
         auth_context = await get_auth_context(request, db, token)
     return auth_context.user
 

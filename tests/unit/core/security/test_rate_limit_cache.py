@@ -4,7 +4,6 @@ import pytest
 
 from src.app.core.security.rate_limit_cache import (
     POLICY_KEY_PREFIX,
-    cache_tier_policy,
     get_tier_policy,
     invalidate_tier_policy,
     warm_policy_cache,
@@ -21,32 +20,7 @@ def mock_redis():
         yield mock
 
 
-@pytest.mark.asyncio
-async def test_cache_tier_policy_success(mock_redis) -> None:
-    policies = [{"limit": 100, "window": 60}]
 
-    result = await cache_tier_policy(1, policies)
-
-    assert result is True
-    mock_redis.setex.assert_called_once()
-    args, kwargs = mock_redis.setex.call_args
-    assert args[0] == f"{POLICY_KEY_PREFIX}1"
-    assert isinstance(args[1], int)  # ttl
-    assert '"limit"' in args[2]
-
-
-@pytest.mark.asyncio
-async def test_cache_tier_policy_no_redis() -> None:
-    with patch("src.app.core.security.rate_limit_cache.redis_client", None):
-        result = await cache_tier_policy(1, [])
-        assert result is False
-
-
-@pytest.mark.asyncio
-async def test_cache_tier_policy_exception(mock_redis) -> None:
-    mock_redis.setex.side_effect = Exception("Redis error")
-    result = await cache_tier_policy(1, [])
-    assert result is False
 
 
 @pytest.mark.asyncio

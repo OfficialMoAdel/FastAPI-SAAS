@@ -166,6 +166,17 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
         yield
 
+        # Shutdown bcrypt executor
+        try:
+            from src.app.core.security import _bcrypt_executor
+            if _bcrypt_executor is not None:
+                _bcrypt_executor.shutdown(wait=True)
+                import src.app.core.security
+                src.app.core.security._bcrypt_executor = None
+                logger.info("Bcrypt thread pool shutdown successfully")
+        except Exception as e:
+            logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
+
 
 app = create_application(
     router=get_router(),

@@ -273,7 +273,7 @@ class MFAService:
             )
             # Handle potential bytes return from redis.eval
             result = int(raw_result) if raw_result is not None else 0
-        except (TypeError, ValueError, Exception) as e:
+        except Exception as e:
             from src.app.core.config import settings
 
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":

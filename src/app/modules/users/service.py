@@ -613,6 +613,10 @@ class UserService(BaseService[User]):
         user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
         user_tenant_id = db_user.get("tenant_id") if isinstance(db_user, dict) else getattr(db_user, "tenant_id", None)
 
+        # SECURITY FIX: Blacklist token before DB operation to ensure a mid-flight crash
+        # doesn't leave a deleted user with a valid token.
+        await blacklist_token(token=token, db=self.db)
+
         await self.db.execute(
             sa_update(User)
             .where(User.id == user_id_val)
@@ -646,7 +650,6 @@ class UserService(BaseService[User]):
 
         await self._invalidate_user_cache(db_user)
 
-        await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted successfully"}
 
     async def hard_delete(self, username: str, token: str) -> dict[str, str]:
@@ -692,11 +695,14 @@ class UserService(BaseService[User]):
 
         # SECURITY FIX: Delete user BEFORE invalidating cache
         # Prevents stale cache if DB operation fails
+
+        # SECURITY FIX: Blacklist token before DB operation
+        await blacklist_token(token=token, db=self.db)
+
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
         await self.crud.db_delete(db=self.db, username=db_username)
         await self._invalidate_user_cache(db_user)
 
-        await blacklist_token(token=token, db=self.db)
         return {"message": "User deleted from the database"}
 
     async def update_tier(self, username: str, values: UserTierUpdate) -> dict[str, str]:

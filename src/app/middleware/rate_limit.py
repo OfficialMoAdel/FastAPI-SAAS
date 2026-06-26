@@ -117,7 +117,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limit, period, key = await self._get_rate_limit_config(request)
 
         # Check rate limit using configured algorithm
-        use_gcra = getattr(settings, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
+        use_gcra = getattr(settings.rate_limit, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
 
         if use_gcra:
             gcra = get_gcra_rate_limiter()

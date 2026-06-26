@@ -74,6 +74,10 @@ class AppSettings(BaseSettings):
     PAGINATION_DEFAULT_PER_PAGE: int = Field(default=20, ge=1, le=100, description="Default items per page")
     PAGINATION_MAX_PER_PAGE: int = Field(default=100, ge=1, le=1000, description="Maximum items per page")
 
+    WEBHOOK_ALLOW_INTERNAL_URLS: bool = Field(
+        default=False, description="Allow webhooks to target internal IPs (RFC1918 etc)"
+    )
+
 
 class CryptSettings(BaseSettings):
     SECRET_KEY: SecretStr | None
@@ -779,6 +783,39 @@ class Settings(BaseSettings):
             )
 
         return self
+
+    @property
+    def POSTGRES_URI(self) -> str:
+        return self.postgres.POSTGRES_URI
+
+    @property
+    def REDIS_CACHE_URL(self) -> str:
+        return self.redis_cache.REDIS_CACHE_URL
+
+    @property
+    def EFFECTIVE_POOL_SIZE(self) -> int:
+        return self.postgres.EFFECTIVE_POOL_SIZE
+
+    @property
+    def SECRET_KEY(self) -> SecretStr:
+        assert self.crypt.SECRET_KEY is not None
+        return self.crypt.SECRET_KEY
+
+    @property
+    def ALGORITHM(self) -> str:
+        return self.crypt.ALGORITHM
+
+    @property
+    def BCRYPT_THREAD_POOL_SIZE(self) -> int:
+        return self.crypt.BCRYPT_THREAD_POOL_SIZE
+
+    @property
+    def ENVIRONMENT(self) -> Any:
+        return self.env.ENVIRONMENT
+
+    @property
+    def CORS_ORIGINS(self) -> list[str]:
+        return self.cors.CORS_ORIGINS
 
     @property
     def _delegation_map(self) -> dict[str, str]:

@@ -19,28 +19,6 @@ POLICY_KEY_PREFIX = "rate_limit:policy:tier:"
 POLICY_INDEX_KEY = "rate_limit:policies:all"
 
 
-async def cache_tier_policy(tier_id: int, policies: list[dict[str, Any]]) -> bool:
-    """Cache rate limit policies for a tier.
-
-    Args:
-        tier_id: The tier ID
-        policies: List of rate limit policy dicts
-
-    Returns:
-        True if cached successfully
-    """
-    if redis_client is None:
-        return False
-
-    try:
-        key = f"{POLICY_KEY_PREFIX}{tier_id}"
-        ttl = getattr(settings, "RATE_LIMIT_POLICY_TTL", 3600)
-        await redis_client.setex(key, ttl, json_dumps(policies, as_str=True))  # Configurable TTL
-        return True
-    except Exception as e:
-        logger.warning("Failed to cache tier policy", error=e)
-        return False
-
 
 async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
     """Get cached rate limit policies for a tier.

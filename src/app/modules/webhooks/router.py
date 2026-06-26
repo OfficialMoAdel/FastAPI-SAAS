@@ -119,7 +119,7 @@ async def create_webhook_endpoint(
 )
 async def list_webhook_deliveries_route(
     endpoint_id: UUID | None = Query(None, description="Filter by endpoint ID"),
-    status: WebhookDeliveryStatus | None = Query(None, description="Filter by status"),
+    delivery_status: WebhookDeliveryStatus | None = Query(None, alias="status", description="Filter by status"),
     event_type: str | None = Query(None, description="Filter by event type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
@@ -138,8 +138,8 @@ async def list_webhook_deliveries_route(
 
     if endpoint_id:
         query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
-    if status:
-        query = query.where(WebhookDelivery.status == status)
+    if delivery_status:
+        query = query.where(WebhookDelivery.status == delivery_status)
     if event_type:
         query = query.where(WebhookDelivery.event_type == event_type)
     if start_date:
@@ -372,6 +372,9 @@ async def test_webhook_endpoint(
     limit = rate_limit_config.limit if rate_limit_config else 10
     period = rate_limit_config.period if rate_limit_config else 60
 
+    # Rate limit check happens BEFORE endpoint lookup intentionally.
+    # This prevents timing-based endpoint enumeration attacks, though it
+    # means 404s still consume rate limit quota.
     is_limited, _ = await rate_limiter.check_rate_limit(f"webhook:test:{current_tenant.id}", limit, period)
     if is_limited:
         raise HTTPException(

@@ -319,7 +319,7 @@ class TestWebhookDelivery:
         create_resp = await async_client.post(
             "/api/v1/webhooks/",
             json={
-                "url": "https://invalid-url-that-does-not-exist.example.com/webhook",
+                "url": "https://example.com/webhook",
                 "event_type": "test.event",
             },
             headers=auth_headers,

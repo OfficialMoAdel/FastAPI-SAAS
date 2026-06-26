@@ -327,7 +327,12 @@ class TenantService(BaseService[Tenant]):
         if is_active is not None:
             kwargs["is_active"] = is_active
 
-        result: dict[str, Any] = await self.crud.get_multi(**kwargs)
+        from src.app.core.db.rls import bypass_rls
+
+        # Explicit bypass: superuser endpoint lists all tenants across the platform
+        async with bypass_rls(self.db, reason="list_tenants (superuser)"):
+            result: dict[str, Any] = await self.crud.get_multi(**kwargs)
+
         return result
 
     async def update_tenant(

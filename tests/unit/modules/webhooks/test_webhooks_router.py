@@ -127,7 +127,7 @@ async def test_list_webhook_deliveries_route(mock_db, mock_tenant, mock_user):
 
     result = await list_webhook_deliveries_route(
         endpoint_id=None,
-        status=None,
+        delivery_status=None,
         event_type=None,
         start_date=None,
         end_date=None,

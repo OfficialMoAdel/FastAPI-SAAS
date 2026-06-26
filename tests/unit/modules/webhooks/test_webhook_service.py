@@ -81,9 +81,10 @@ class TestWebhookServiceEndpoints:
         """Test creating a new webhook endpoint."""
         tenant_id = "tenant-uuid"
 
-        with patch("src.app.modules.webhooks.service.encrypt_data", return_value="encrypted"):
+        with patch("src.app.modules.webhooks.service.encrypt_data", return_value="encrypted"), \
+             patch("src.app.modules.webhooks.service.validate_webhook_url", return_value="192.168.1.1"):
             result = await webhook_service.create_endpoint(
-                tenant_id=tenant_id, url="https://test.com", event_type="user.created", secret="mysecret"
+                tenant_id=tenant_id, url="https://test.com", event_type="user.created"
             )
 
             assert result.url == "https://test.com"

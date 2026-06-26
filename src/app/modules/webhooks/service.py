@@ -59,15 +59,28 @@ class WebhookService:
         tenant_id: UUID,
         url: str,
         event_type: str,
-        secret: str | None = None,
         signing_secret: str | None = None,
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
-        # Encrypt the secret if provided, or generate a random one
+        from fastapi import HTTPException, status
+
+        from src.app.core.config import settings
+
+        # SECURITY FIX: Validate SSRF at create time to prevent persisting bad URLs
+        if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
+            try:
+                await validate_webhook_url(url)
+            except SSRFProtectionError as e:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=f"Webhook URL rejected: {str(e)}"
+                )
+
+        # Generate a random secret for the endpoint (deprecated/auto-generated)
         import secrets as secrets_module
 
-        actual_secret = secret if secret else secrets_module.token_urlsafe(32)
+        actual_secret = secrets_module.token_urlsafe(32)
         encrypted_secret = encrypt_data(actual_secret)
 
         # Generate signing_secret if not provided (64 chars = 256 bits)
@@ -87,7 +100,7 @@ class WebhookService:
         await self.db.commit()
         await self.db.refresh(endpoint)
 
-        logger.info("Created webhook endpoint for tenant : ->", tenant_id=tenant_id, event_type=event_type, url=url)
+        logger.info("webhook_endpoint_created", tenant_id=tenant_id, event_type=event_type, url=url)
         return endpoint
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
@@ -214,7 +227,7 @@ class WebhookService:
                     )
 
         logger.info(
-            "Triggered webhooks for event in tenant", val=len(deliveries), event_type=event_type, tenant_id=tenant_id
+            "webhooks_triggered", deliveries_count=len(deliveries), event_type=event_type, tenant_id=tenant_id
         )
         return deliveries
 
