@@ -352,10 +352,14 @@ class SSOService:
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
             if mfa_enabled:
+
                 from src.app.core.security import get_mfa_pending_token_manager
                 from src.app.core.security.tokens import TokenGenerator
                 from src.app.core.utils.cache import client as mfa_redis_client
                 from src.app.core.utils.ip_utils import get_client_ip
+
+                if not mfa_redis_client:
+                    raise BadRequestException("Authentication service unavailable")
 
                 mfa_token_store = get_mfa_pending_token_manager(mfa_redis_client)
                 mfa_token = TokenGenerator.generate_magic_link_token()
@@ -371,7 +375,7 @@ class SSOService:
                 return {
                     "mfa_required": True,
                     "mfa_token": mfa_token,
-                    "expires_in": settings.MFA_PENDING_EXPIRY_SECONDS,
+                    "expires_in": int(settings.MFA_PENDING_EXPIRY_SECONDS),
                     "message": "MFA verification required",
                 }
 
@@ -395,32 +399,12 @@ class SSOService:
             )
 
             try:
-                import json
-
-                import jwt
-
-                from src.app.core.security.jwt_utils import (
-                    _get_algorithm,
-                    _get_parsed_verification_key,
-                    validate_jwt_length,
-                )
-
-                if not validate_jwt_length(access_token):
-                    decoded_token = {}
-                else:
-                    alg = _get_algorithm()
-                    key = _get_parsed_verification_key()
-                    decoded_token = jwt.decode(access_token, key, algorithms=[alg])
-                session_id = decoded_token.get("jti", access_token[:32])
-
-                device_info_str = json.dumps({"user_agent": "SSO Login", "ip": "Unknown"})
-
-                from src.app.core.security.session_manager import session_manager as global_session_manager
-
-                await global_session_manager.register_session(
+                from src.app.core.security.login_helpers import register_login_session
+                await register_login_session(
                     user_id=normalized_user["id"],
-                    session_id=session_id,
-                    device_info=device_info_str,
+                    access_token=access_token,
+                    request=request,
+                    verify=True,
                 )
             except Exception as e:
                 logger.warning("session_registration_failed", error=str(e))

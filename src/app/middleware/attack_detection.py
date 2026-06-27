@@ -152,9 +152,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         attack scanning). Now we require either an exact match or a true sub-path
         (path starts with exempt + "/").
         """
-        if path in EXEMPT_PATHS:
+        import posixpath
+        normalized_path = posixpath.normpath(path)
+
+        if normalized_path in EXEMPT_PATHS:
             return True
-        return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
+        return any(normalized_path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
 
     @staticmethod
     def _sanitize_input(content: bytes) -> bytes:

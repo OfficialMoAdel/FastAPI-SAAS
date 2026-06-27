@@ -44,7 +44,7 @@ class TestTenantPermissions:
     ) -> None:
         """Test that regular users CAN access their own tenant."""
         # Update mock user to match the real tenant ID created by fixture
-        from src.app.api.dependencies import get_current_user
+        from src.app.api.deps import get_current_user
         from tests.conftest import MockUser
 
         fake_regular_user = MockUser(

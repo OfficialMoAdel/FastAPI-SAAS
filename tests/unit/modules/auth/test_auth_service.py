@@ -293,6 +293,7 @@ class TestAuthServiceTokenRefresh:
         # Mock settings to simulate production environment
         with (
             patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.core.security.login_helpers.settings") as mock_helpers_settings,
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
             patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
@@ -305,6 +306,8 @@ class TestAuthServiceTokenRefresh:
             mock_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
             mock_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
             mock_settings.ACCESS_TOKEN_EXPIRE_MINUTES = 30
+            mock_helpers_settings.ENVIRONMENT = EnvironmentOption.PRODUCTION
+            mock_helpers_settings.REFRESH_TOKEN_EXPIRE_DAYS = 7
 
             mock_verify.return_value = mock_token_data
             mock_create_access.return_value = "new_access_token"
@@ -345,7 +348,7 @@ class TestAuthServiceTokenRefresh:
             assert call_kwargs["value"] == "new_refresh_token"
             assert call_kwargs["httponly"] is True
             assert call_kwargs["secure"] is True
-            assert call_kwargs["samesite"] == "lax"
+            assert call_kwargs["samesite"] == "strict"
 
 
 class TestAuthServiceLogout:

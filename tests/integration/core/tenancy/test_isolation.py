@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from uuid6 import uuid7
 
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.main import app
 from src.app.modules.posts.models import Post

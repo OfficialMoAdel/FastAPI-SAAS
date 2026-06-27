@@ -424,7 +424,11 @@ class WebhookService:
 
         # Validate URL for SSRF protection before making request
         try:
-            validated_ip = await validate_webhook_url(endpoint.url)
+            from src.app.core.config import settings
+            if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
+                validated_ip = await validate_webhook_url(endpoint.url)
+            else:
+                validated_ip = None
         except SSRFProtectionError as e:
             logger.error(
                 "webhook_ssrf_blocked",

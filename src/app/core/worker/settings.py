@@ -55,7 +55,7 @@ class WorkerSettings:
         # Flush audit logs every 30 seconds for low-latency batching (60s timeout for high-volume flushes)
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
         # Recover stuck webhook deliveries every 5 minutes
-        cron(recover_stuck_deliveries, minute={0, 5, 10, 15, 20, 25, 30, 35, 40, 45, 50, 55}),
+        cron(recover_stuck_deliveries, minute=set(range(0, 60, 5))),
     ]
 
     # Concurrency and timeout settings (configurable via environment)

@@ -53,7 +53,7 @@ async def contract_mock_context(get_contract_test_app):
     fake_tenant.slug = "test-tenant-contract"
     fake_tenant.is_active = True
 
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     fake_superuser = MockUser(
@@ -166,7 +166,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
 async def superuser_token_headers(get_contract_test_app, contract_mock_context):
     """Headers for superuser requests."""
     app = get_contract_test_app
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
 
     fake_superuser = MockUser(
         id=1,
@@ -188,7 +188,7 @@ async def superuser_token_headers(get_contract_test_app, contract_mock_context):
 async def regular_user_token_headers(get_contract_test_app, contract_mock_context):
     """Headers for regular user requests (non-superuser)."""
     app = get_contract_test_app
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
 
     fake_regular_user = MockUser(
         id=2,

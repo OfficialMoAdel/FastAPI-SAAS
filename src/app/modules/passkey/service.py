@@ -44,14 +44,7 @@ from src.app.modules.passkey.schemas import PasskeyCredentialCreate
 
 logger = get_logger(__name__)
 
-# Lua script for atomic GETDEL (get and delete) to prevent race conditions.
-_GETDEL_LUA = """
-    local value = redis.call('GET', KEYS[1])
-    if value then
-        redis.call('DEL', KEYS[1])
-    end
-    return value
-"""
+from src.app.core.utils.redis_utils import _GETDEL_LUA
 
 # Constants
 CHALLENGE_TTL = 300  # 5 minutes

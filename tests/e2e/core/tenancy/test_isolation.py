@@ -144,7 +144,7 @@ class TestTenantIsolationE2E:
         logger.info("=" * 80)
 
         # Mock authentication for both tenants
-        from src.app.api.dependencies import get_current_user
+        from src.app.api.deps import get_current_user
         from tests.conftest import MockUser
 
         # List users as Tenant A
@@ -241,7 +241,7 @@ class TestTenantIsolationE2E:
         logger.info("=" * 80)
 
         # Mock authentication
-        from src.app.api.dependencies import get_current_user
+        from src.app.api.deps import get_current_user
         from src.app.main import app
         from tests.conftest import MockUser
 
@@ -365,7 +365,7 @@ class TestTenantIsolationE2E:
         logger.info("=" * 80)
 
         # Mock authentication
-        from src.app.api.dependencies import get_current_user
+        from src.app.api.deps import get_current_user
         from src.app.main import app
         from tests.conftest import MockUser
 
@@ -471,7 +471,7 @@ class TestTenantIsolationE2E:
         logger.info("=" * 80)
 
         # Mock authentication
-        from src.app.api.dependencies import get_current_user
+        from src.app.api.deps import get_current_user
         from src.app.main import app
         from tests.conftest import MockUser
 
@@ -623,7 +623,7 @@ class TestTenantIsolationE2E:
                     base_url="http://testserver",
                 ) as client:
                     # Mock authentication
-                    from src.app.api.dependencies import get_current_user
+                    from src.app.api.deps import get_current_user
                     from tests.conftest import MockUser
 
                     results: list[dict[str, Any]] = []

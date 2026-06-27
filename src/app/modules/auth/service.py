@@ -279,7 +279,7 @@ return new_attempts
             return {
                 "mfa_required": True,
                 "mfa_token": mfa_token,
-                "expires_in": str(settings.MFA_PENDING_EXPIRY_SECONDS),
+                "expires_in": int(settings.MFA_PENDING_EXPIRY_SECONDS),
                 "message": "MFA verification required",
             }
 
@@ -682,8 +682,14 @@ return new_attempts
                         f"tenant:{tenant_id}:user:{email}:token_version" if tenant_id else f"user:{email}:token_version"
                     )
                 if keys:
-                    await redis_client.delete(*keys)
-                    logger.debug("deleted_user_token_cache", user_id=user_id, keys=keys)
+                    # Fix P0.2: Forcefully overwrite the cache with the new token version
+                    # to prevent stale-read race conditions that could allow old tokens.
+                    new_version = user.get("token_version", 0) + 1
+                    async with redis_client.pipeline() as pipe:
+                        for key in keys:
+                            pipe.set(key, str(new_version), ex=300)
+                        await pipe.execute()
+                    logger.debug("overwrote_user_token_cache", user_id=user_id, keys=keys)
         except Exception as e:
             logger.warning("Failed to delete token_version cache", user_id=user_id, error=str(e))
 

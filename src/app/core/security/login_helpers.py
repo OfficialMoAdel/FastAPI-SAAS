@@ -3,6 +3,7 @@
 import json
 from typing import Any
 
+import redis
 from fastapi import Request, Response
 from structlog import get_logger
 
@@ -27,7 +28,7 @@ def set_refresh_cookie(response: Response, refresh_token: str) -> None:
         key="refresh_token",
         value=refresh_token,
         httponly=True,
-        secure=True,
+        secure=is_production,
         samesite="strict" if is_production else "lax",
         max_age=max_age,
     )
@@ -72,5 +73,5 @@ async def register_login_session(
             session_id=session_id,
             device_info=device_info_str,
         )
-    except Exception as e:
+    except redis.exceptions.RedisError as e:
         logger.warning("session_registration_failed", error=str(e))

@@ -17,13 +17,22 @@ logger = get_logger("recover_webhooks")
 
 async def main() -> None:
     """Run the recovery job manually."""
+    if not settings.REDIS_QUEUE_HOST:
+        logger.error("REDIS_QUEUE_HOST is not configured")
+        return
+
     redis_settings = RedisSettings(
         host=settings.REDIS_QUEUE_HOST,
         port=settings.REDIS_QUEUE_PORT,
         password=settings.REDIS_QUEUE_PASSWORD.get_secret_value() if settings.REDIS_QUEUE_PASSWORD else None,
     )
 
-    redis = await create_pool(redis_settings)
+    try:
+        redis = await create_pool(redis_settings)
+    except Exception as e:
+        logger.error("Failed to connect to Redis queue", error=str(e))
+        return
+
     ctx: dict[str, Any] = {"redis": redis}
 
     logger.info("Starting manual webhook delivery recovery")

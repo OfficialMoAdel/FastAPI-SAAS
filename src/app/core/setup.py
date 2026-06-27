@@ -130,7 +130,6 @@ def lifespan_factory(
                 await create_tables()
 
             # Warm caches after DB and Redis are ready
-            import asyncio
 
             from src.app.core.cache.warmer import warm_caches
 
@@ -153,8 +152,9 @@ def lifespan_factory(
                 except Exception as e:
                     logger.warning("Cache warming failed: %s", e)
 
-            # Fire and forget
-            asyncio.create_task(_warm_caches_background())
+            # Fire and forget with safe error handling and hard reference
+            from src.app.core.utils.background_task import create_safe_task
+            create_safe_task(_warm_caches_background(), name="cache_warming_startup")
 
             initialization_complete.set()
 

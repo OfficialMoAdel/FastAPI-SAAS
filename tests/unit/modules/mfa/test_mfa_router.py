@@ -17,7 +17,7 @@ from src.app.core.exceptions.http_exceptions import RateLimitException
 @pytest.fixture
 def client_with_rate_limit(get_test_app) -> Generator[TestClient, None, None]:
     """Client fixture with rate limiting enabled for MFA tests."""
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     app = get_test_app

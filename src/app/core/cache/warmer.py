@@ -269,44 +269,13 @@ async def warm_tier_cache(session: AsyncSession) -> int:
 
 async def warm_caches() -> CacheWarmingResult:
     """Warm all caches on application startup."""
-    start_time = time.perf_counter()
-    result = CacheWarmingResult()
-    errors: list[str] = []
-
     try:
         async with local_session() as session:
-            try:
-                result.tenants_cached = await warm_tenant_cache(session)
-                logger.info("Cached active tenants", count=result.tenants_cached)
-            except Exception as e:
-                error_msg = f"Tenant cache warming failed: {e}"
-                logger.error("Tenant cache warming failed", error=str(e))
-                errors.append(error_msg)
-
-            try:
-                result.tiers_cached = await warm_tier_cache(session)
-                logger.info("Cached pricing tiers", count=result.tiers_cached)
-            except Exception as e:
-                error_msg = f"Tier cache warming failed: {e}"
-                logger.error("Tier cache warming failed", error=str(e))
-                errors.append(error_msg)
-
+            return await warmer.warm_all(session)
     except Exception as e:
         error_msg = f"Cache warming failed: {e}"
         logger.error("Cache warming failed", error=str(e))
-        errors.append(error_msg)
-
-    result.duration_ms = (time.perf_counter() - start_time) * 1000
-    result.errors = errors if errors else None
-
-    logger.info(
-        "Cache warming complete",
-        tenants_cached=result.tenants_cached,
-        tiers_cached=result.tiers_cached,
-        duration_ms=round(result.duration_ms, 2),
-    )
-
-    return result
+        return CacheWarmingResult(errors=[error_msg])
 
 __all__ = [
     "CacheWarmer",

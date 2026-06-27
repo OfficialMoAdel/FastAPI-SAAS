@@ -372,16 +372,12 @@ class ChatCompletionService:
         max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        # Prevent prompt injection by wrapping user messages in strict delimiters
         history = []
         for m in messages_result.get("data", []):
-            content = m["content"]
-            if m["role"] == "user" and not content.startswith("```"):
-                content = f"```\n{content}\n```"
-            history.append({"role": m["role"], "content": content})
+            history.append({"role": m["role"], "content": m["content"]})
 
         sanitized_message = request.message.strip()
-        history.append({"role": "user", "content": f"```\n{sanitized_message}\n```"})
+        history.append({"role": "user", "content": sanitized_message})
 
         history = truncate_context(
             messages=history,
@@ -462,16 +458,12 @@ class ChatCompletionService:
         max_tokens = request.max_tokens if request.max_tokens is not None else user_settings.get("max_tokens", 2048)
         system_prompt = user_settings.get("system_prompt")
 
-        # Prevent prompt injection by wrapping user messages in strict delimiters
         history = []
         for m in messages_result.get("data", []):
-            content = m["content"]
-            if m["role"] == "user" and not content.startswith("```"):
-                content = f"```\n{content}\n```"
-            history.append({"role": m["role"], "content": content})
+            history.append({"role": m["role"], "content": m["content"]})
 
         sanitized_message = request.message.strip()
-        history.append({"role": "user", "content": f"```\n{sanitized_message}\n```"})
+        history.append({"role": "user", "content": sanitized_message})
 
         history = truncate_context(
             messages=history,
@@ -493,6 +485,10 @@ class ChatCompletionService:
         # Use list accumulation to avoid O(n²) string concatenation
         response_chunks = []
         token_count = None
+        stream_completed = False
+
+        from src.app.core.tenancy.context import get_tenant_context
+        current_tenant = get_tenant_context()
 
         try:
             async for chunk in self.ollama.chat_stream(
@@ -506,6 +502,7 @@ class ChatCompletionService:
                 if content:
                     response_chunks.append(content)
                 if chunk.get("done"):
+                    stream_completed = True
                     token_count = chunk.get("token_count")
                 yield chunk
 
@@ -515,14 +512,17 @@ class ChatCompletionService:
         finally:
             # Phase 3: Get fresh session for writing response safely in the background
             full_response = "".join(response_chunks)
-            if full_response:
+            if full_response and stream_completed:
 
-                async def _save_response(resp_content: str, resp_tokens: int | None) -> None:
+                async def _save_response(resp_content: str, resp_tokens: int | None, tenant_ctx: Any) -> None:
                     import asyncio
 
                     max_retries = 3
                     for attempt in range(max_retries):
                         try:
+                            if tenant_ctx:
+                                from src.app.core.tenancy.context import set_tenant_context
+                                set_tenant_context(tenant_ctx)
                             async with local_session() as fresh_db:
                                 message_service = ChatMessageService(fresh_db)
                                 await message_service.add_message(
@@ -555,10 +555,9 @@ class ChatCompletionService:
                                     "Failed to save AI chat response in background task after all retries", error=str(e)
                                 )
 
-                # Ensure partial chunks are explicitly routed to database, even if task was cancelled mid-stream
                 from src.app.core.utils.background_task import create_safe_task
 
-                create_safe_task(_save_response(full_response, token_count))
+                create_safe_task(_save_response(full_response, token_count, current_tenant))
 
 
 class ChatCompletionError(Exception):

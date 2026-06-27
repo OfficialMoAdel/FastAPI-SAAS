@@ -10,7 +10,6 @@ Performance Benefits:
 - Centralized timeout and retry configuration
 """
 
-from typing import Any
 
 import httpx
 
@@ -115,24 +114,3 @@ async def close_webhook_http_client() -> None:
         logger.debug("Closed shared webhook HTTP client")
 
 
-async def webhook_http_post(
-    url: str,
-    *,
-    json: dict[str, Any] | None = None,
-    headers: dict[str, str] | None = None,
-) -> httpx.Response:
-    """Make HTTP POST request using shared webhook client.
-
-    Args:
-        url: Target URL for webhook delivery
-        json: JSON payload to send
-        headers: Optional headers to include
-
-    Returns:
-        httpx.Response object
-
-    Raises:
-        httpx.HTTPError: On connection/timeout errors
-    """
-    client = await get_webhook_http_client()
-    return await client.post(url, json=json, headers=headers)

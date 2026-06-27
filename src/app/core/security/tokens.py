@@ -15,14 +15,14 @@ Features:
 Usage:
     # Via dependency injection (recommended)
     from src.app.core.security.tokens import get_sso_state_manager
+    from src.app.core.security.pending_token_store import PendingTokenStore
 
     @router.get("/auth/google")
     async def google_login(
-        sso_manager: SSOStateManager = Depends(get_sso_state_manager)
+        sso_manager: PendingTokenStore = Depends(get_sso_state_manager)
     ):
-        state = await sso_manager.create_state(
-            provider="google",
-            redirect_uri=str(request.url)
+        state = await sso_manager.create_token(
+            {"provider": "google", "redirect_uri": str(request.url)}
         )
         ...
 """
@@ -136,7 +136,7 @@ def get_sso_state_manager(redis: Redis) -> PendingTokenStore:
         redis=redis,
         prefix="sso_state",
         ttl_seconds=600,  # 10 minutes
-        hash_token=False
+        use_hash=False
     )
 
 
@@ -153,5 +153,5 @@ def get_magic_link_manager(redis: Redis) -> PendingTokenStore:
         redis=redis,
         prefix="magic_link",
         ttl_seconds=900,  # 15 minutes
-        hash_token=True
+        use_hash=True
     )

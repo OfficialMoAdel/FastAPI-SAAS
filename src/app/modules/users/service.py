@@ -210,6 +210,7 @@ class UserService(BaseService[User]):
             ]
 
             # Only build tenant-scoped keys when tenant_id is available
+            token_keys = []
             if tenant_id is not None:
                 tenant_id_str = str(tenant_id)
                 keys.extend(
@@ -218,19 +219,46 @@ class UserService(BaseService[User]):
                         f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
+                    ]
+                )
+                token_keys.extend(
+                    [
                         f"tenant:{tenant_id_str}:user:{username}:token_version",
                         f"tenant:{tenant_id_str}:user:{email}:token_version",
                     ]
                 )
             else:
-                keys.extend(
+                token_keys.extend(
                     [
                         f"user:{username}:token_version",
                         f"user:{email}:token_version",
                     ]
                 )
 
-            await cache.client.delete(*keys)
+            if keys:
+                await cache.client.delete(*keys)
+
+            if token_keys:
+                # Forcefully overwrite token_version to prevent stale-read race conditions
+                # where an old token_version is re-cached right after invalidation.
+                # In users/service, if the token_version was incremented (e.g. deletion, tier change)
+                # it's usually `user.token_version + 1`. For normal profile updates, it's unchanged.
+                # To be safe, we assume it incremented, as an artificially higher version just logs out the user
+                # which is acceptable on profile changes that trigger invalidation.
+                # If it's a dict, use .get, otherwise getattr
+                if isinstance(user, dict):
+                    current_version = user.get("token_version", 0)
+                else:
+                    current_version = getattr(user, "token_version", 0)
+
+                # We bump by 1 assuming an update happened. If not, this acts as a global logout
+                # for the user, which is safe for security.
+                new_version = current_version + 1
+
+                async with cache.client.pipeline(transaction=False) as pipe:
+                    for key in token_keys:
+                        pipe.set(key, str(new_version), ex=300)
+                    await pipe.execute()
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)

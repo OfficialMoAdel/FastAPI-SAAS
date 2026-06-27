@@ -117,8 +117,6 @@ async def get_auth_context(
             token = ""
 
     if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        from src.app.api.dependencies import get_current_user
-
         if get_current_user in request.app.dependency_overrides:
             override_func = request.app.dependency_overrides[get_current_user]
             import inspect
@@ -271,8 +269,6 @@ async def _handle_auth_mocks(
 ) -> tuple[bool, AuthContext | None]:
     """Helper to handle test mocks and dependency overrides."""
     if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        from src.app.api.dependencies import get_current_user, get_optional_user
-
         for dep in (get_current_user, get_optional_user):
             if dep in request.app.dependency_overrides:
                 override_func = request.app.dependency_overrides[dep]
@@ -413,7 +409,9 @@ async def get_optional_user(
 def requires_api_key_scope(required_scope: str) -> Any:
     """Dependency to check if the current API key has the required scope."""
 
-    def dependency(current_user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)]) -> AuthenticatedUser:
+    async def dependency(
+        current_user: Annotated[AuthenticatedUser | None, Depends(get_optional_user)],
+    ) -> AuthenticatedUser:
         if current_user is None:
             raise UnauthorizedException("Not authenticated")
 

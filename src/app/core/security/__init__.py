@@ -1,19 +1,15 @@
 import asyncio
-import atexit
-import json
-import logging
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
-from typing import Any, cast
+from typing import Any
 
 import bcrypt
 import jwt
-import orjson
+from cachetools import TTLCache
 from fastapi.security import APIKeyHeader, OAuth2PasswordBearer
 from jwt.exceptions import PyJWTError as JWTError
-from pydantic import SecretStr
 from redis.asyncio import Redis
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,7 +24,11 @@ from src.app.core.security.token_blacklist_cache import (
     add_tokens_to_blacklist,
     is_token_blacklisted,
 )
-from src.app.core.security.tokens import _GETDEL_LUA, TokenGenerator
+from src.app.core.security.tokens import TokenGenerator
+
+# P2.21: In-memory short-TTL cache for DB token lookups to prevent thundering herds on Redis miss
+_db_fallback_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=5)
+_in_flight_db_checks: dict[str, asyncio.Task[bool]] = {}
 
 _jwt_logger = get_logger(__name__)
 
@@ -169,6 +169,36 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     return encoded_jwt
 
 
+async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> bool | None:
+    """Helper to perform DB fallback check for token blacklisting."""
+    try:
+        cache_key = jti if jti else token
+        if cache_key in _db_fallback_cache:
+            return _db_fallback_cache[cache_key]
+        elif cache_key in _in_flight_db_checks:
+            return await _in_flight_db_checks[cache_key]
+
+        async def _check_db() -> bool:
+            _is_bl = False
+            if jti:
+                _is_bl = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
+            if not _is_bl:
+                _is_bl = await crud_token_blacklist.exists(db, token=token)
+            return _is_bl
+
+        task = asyncio.create_task(_check_db())
+        _in_flight_db_checks[cache_key] = task
+        try:
+            is_blacklisted = await task
+            _db_fallback_cache[cache_key] = is_blacklisted
+            return is_blacklisted
+        finally:
+            _in_flight_db_checks.pop(cache_key, None)
+    except Exception as e:
+        _jwt_logger.error("DB fallback failed during token verification. Failing closed.", error=str(e))
+        return None
+
+
 async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSession) -> TokenData | None:
     """Verify a JWT token and return TokenData if valid.
 
@@ -231,19 +261,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         _jwt_logger.warning(
             "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
         )
-        try:
-            is_blacklisted = False
-            if jti:
-                # SECURITY FIX: Check by JTI-prefixed key (stored in DB by blacklist_token/blacklist_tokens)
-                is_blacklisted = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
-            if not is_blacklisted:
-                # Also check full token hash for backward compatibility with older blacklisted tokens
-                is_blacklisted = await crud_token_blacklist.exists(db, token=token)
-        except Exception as e:
-            _jwt_logger.error("DB fallback failed during token verification. Failing closed.", error=str(e))
-            return None
-
-        if is_blacklisted:
+        is_blacklisted = await _check_db_fallback(jti, token, db)
+        if is_blacklisted is None or is_blacklisted is True:
             return None
 
     # SECURITY FIX: Check token_version for session invalidation on password change
@@ -309,6 +328,30 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     )
 
 
+async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession) -> Any | None:
+    """Helper to resolve tenant_id for a token from payload, context, or DB."""
+    tenant_id = payload.get("tenant_id")
+    if tenant_id:
+        return tenant_id
+
+    from src.app.core.tenancy.context import get_tenant_context
+    tenant = get_tenant_context()
+    if tenant:
+        return tenant.id
+
+    from sqlalchemy import select
+
+    from src.app.modules.users.models import User
+
+    sub = payload.get("sub")
+    if sub:
+        stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
+        result = await db.execute(stmt)
+        return result.scalar()
+
+    return None
+
+
 async def blacklist_tokens(access_token: str | None, refresh_token: str | None, db: AsyncSession) -> None:
     """Blacklist both access and refresh tokens.
 
@@ -346,37 +389,21 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
                 try:
                     # BUG FIX: tenant_id is now required for blacklisting (Issue 17)
                     if not tenant_id:
-                        from src.app.core.tenancy.context import get_tenant_context
+                        tenant_id = await _resolve_tenant_id_for_token(payload, db)
 
-                        tenant = get_tenant_context()
-                        if tenant:
-                            tenant_id = tenant.id
-                        else:
-                            from sqlalchemy import select
-
-                            from src.app.modules.users.models import User
-
-                            sub = payload.get("sub")
-                            if sub:
-                                stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
-                                result = await db.execute(stmt)
-                                tenant_id = result.scalar()
-
-                            if not tenant_id:
-                                _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
-                                # If we truly cannot find it, we can't satisfy the FK constraint.
-                                # But this should never happen for valid tokens.
-                                continue
+                        if not tenant_id:
+                            _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                            continue
 
                     # Accumulate tokens for bulk insert
                     from uuid import UUID
-                    
+
                     from src.app.core.db.token_blacklist import TokenBlacklist
 
                     # Ensure tenant_id is a UUID object (since Pydantic isn't auto-converting it here)
                     if isinstance(tenant_id, str):
                         tenant_id = UUID(tenant_id)
-                    
+
                     # Add full token
                     db.add(TokenBlacklist(token=token, expires_at=expires_at, tenant_id=tenant_id))
 
@@ -394,9 +421,9 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
 
     if tokens_for_cache:
         try:
-            await db.flush()
+            async with db.begin_nested():
+                await db.flush()
         except IntegrityError:
-            await db.rollback()
             # If bulk insert fails due to a conflict, we skip DB blacklisting
             # (the token is already blacklisted in DB) but still update cache
             _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
@@ -430,44 +457,32 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
             try:
                 # BUG FIX: tenant_id is now required for blacklisting (Issue 17)
                 if not tenant_id:
-                    from src.app.core.tenancy.context import get_tenant_context
+                    tenant_id = await _resolve_tenant_id_for_token(payload, db)
 
-                    tenant = get_tenant_context()
-                    if tenant:
-                        tenant_id = tenant.id
-                    else:
-                        from sqlalchemy import select
+                    if not tenant_id:
+                        _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                        raise ValueError(
+                            "Cannot blacklist token: tenant_id could not be determined. "
+                            "Ensure user has a valid tenant association."
+                        )
 
-                        from src.app.modules.users.models import User
-
-                        sub = payload.get("sub")
-                        if sub:
-                            stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
-                            result = await db.execute(stmt)
-                            tenant_id = result.scalar()
-
-                        if not tenant_id:
-                            _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
-                            raise ValueError(
-                                "Cannot blacklist token: tenant_id could not be determined. "
-                                "Ensure user has a valid tenant association."
-                            )
-
-                await crud_token_blacklist.create(
-                    db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
-                )
-                if jti:
-                    # SECURITY FIX: Also store JTI-prefixed key in DB for Redis-outage fallback.
-                    jti_key = f"jti:{jti}"
+                async with db.begin_nested():
                     await crud_token_blacklist.create(
-                        db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
+                        db, object=TokenBlacklistCreate(token=token, expires_at=expires_at, tenant_id=tenant_id)
                     )
+                    if jti:
+                        # SECURITY FIX: Also store JTI-prefixed key in DB for Redis-outage fallback.
+                        jti_key = f"jti:{jti}"
+                        await crud_token_blacklist.create(
+                            db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
+                        )
+                if jti:
                     await add_token_to_blacklist(jti_key, expires_at)
                 else:
                     # Fallback for tokens without JTI (backward compatibility)
                     await add_token_to_blacklist(token, expires_at)
             except IntegrityError:
-                await db.rollback()
+                _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))
 
@@ -491,5 +506,5 @@ def get_mfa_pending_token_manager(redis: Redis) -> PendingTokenStore:
         redis=redis,
         prefix="mfa_pending",
         ttl_seconds=settings.MFA_PENDING_EXPIRY_SECONDS,
-        hash_token=True
+        use_hash=True
     )

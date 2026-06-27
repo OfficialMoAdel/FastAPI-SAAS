@@ -42,7 +42,7 @@ class LoginMFAResponse(BaseModel):
 
     mfa_required: bool
     mfa_token: str
-    expires_in: str
+    expires_in: int
     message: str
 
 

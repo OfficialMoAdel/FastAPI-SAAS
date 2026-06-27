@@ -3,6 +3,8 @@
 Consolidates Redis connection pooling, cache warming, and core cache operations.
 """
 
+import asyncio
+
 from redis.asyncio import ConnectionPool, Redis
 
 from src.app.core.cache.warmer import CacheWarmer, warmer
@@ -18,19 +20,22 @@ class CacheManager:
 
     def __init__(self) -> None:
         self._pool: ConnectionPool | None = None
+        self._lock = asyncio.Lock()
         self.warmer: CacheWarmer = warmer
 
     async def get_pool(self) -> ConnectionPool:
         """Get or create the shared Redis connection pool."""
         if self._pool is None:
-            self._pool = ConnectionPool.from_url(
-                settings.REDIS_CACHE_URL,
-                max_connections=settings.REDIS_CACHE_MAX_CONNECTIONS,
-                socket_timeout=settings.REDIS_CACHE_SOCKET_TIMEOUT,
-                socket_connect_timeout=settings.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
-                retry_on_timeout=True,
-                decode_responses=False,
-            )
+            async with self._lock:
+                if self._pool is None:
+                    self._pool = ConnectionPool.from_url(
+                        settings.REDIS_CACHE_URL,
+                        max_connections=settings.redis_cache.REDIS_CACHE_MAX_CONNECTIONS,
+                        socket_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_TIMEOUT,
+                        socket_connect_timeout=settings.redis_cache.REDIS_CACHE_SOCKET_CONNECT_TIMEOUT,
+                        retry_on_timeout=True,
+                        decode_responses=False,
+                    )
         return self._pool
 
     async def close_pool(self) -> None:

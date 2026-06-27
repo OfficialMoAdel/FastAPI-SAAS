@@ -110,7 +110,7 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
         app.dependency_overrides[async_get_db] = override_get_db
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test", headers=headers) as ac:
-            from src.app.api.dependencies import get_current_user
+            from src.app.api.deps import get_current_user
 
             # 1. Login as Alpha - use dict for current_user
             app.dependency_overrides[get_current_user] = lambda: alpha_user_dict

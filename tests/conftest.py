@@ -231,14 +231,14 @@ def get_test_app():
     from fastapi import Depends, Request
     from sqlalchemy.ext.asyncio import AsyncSession
 
-    from src.app.api.dependencies import (
-        _create_auth_context,
+    from src.app.api.deps import (
         get_auth_context,
         get_current_user,
         get_optional_auth_context,
         get_optional_user,
         get_user_by_api_key,
     )
+    from src.app.api.deps.auth import _create_auth_context
     from src.app.core.db.database import async_get_db
     from src.app.core.security import oauth2_scheme
 
@@ -261,7 +261,7 @@ def get_test_app():
         # 2. If tests patch _get_current_user_from_token, use it
         if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
             mocked_user = await _get_current_user_from_token(token, db)
-            from src.app.api.dependencies import AuthenticatedUser
+            from src.app.api.deps import AuthenticatedUser
             if isinstance(mocked_user, dict):
                 if "email" not in mocked_user:
                     mocked_user["email"] = "mocked@example.com"
@@ -301,7 +301,7 @@ def get_test_app():
             if auth_header:
                 _, _, token_value = auth_header.partition(" ")
             mocked_user = await _get_current_user_from_token(token_value, db)
-            from src.app.api.dependencies import AuthenticatedUser
+            from src.app.api.deps import AuthenticatedUser
             if isinstance(mocked_user, dict):
                 if "email" not in mocked_user:
                     mocked_user["email"] = "mocked@example.com"
@@ -524,7 +524,7 @@ def client(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser for auth
@@ -640,7 +640,7 @@ def client_auth(get_test_app) -> Generator[TestClient, Any, None]:
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser with dict-like access for routes using current_user["id"]
@@ -834,7 +834,7 @@ async def full_mock_context(get_test_app):
     fake_tenant.is_active = True
     fake_tenant.tier_id = 1
 
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
     from src.app.core.db.database import async_get_db
 
     # Mock superuser with dict-like access for routes using current_user["id"]
@@ -982,7 +982,7 @@ async def unauthenticated_async_client(get_test_app, unauthenticated_mock_contex
 async def superuser_token_headers(get_test_app, full_mock_context):
     """Headers for superuser requests (overrides get_current_user)."""
     app = get_test_app
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
 
     # Create superuser mock using MockUser
     fake_superuser = MockUser(
@@ -1019,7 +1019,7 @@ async def superuser_token_headers(get_test_app, full_mock_context):
 async def regular_user_token_headers(get_test_app, full_mock_context):
     """Headers for regular user requests (non-superuser)."""
     app = get_test_app
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
 
     # Create regular user (NOT superuser)
     fake_regular_user = MockUser(
@@ -1459,7 +1459,7 @@ class FakeRedis:
         - Token blacklist scripts: Check blacklist status
         """
         # Detect GETDEL pattern: "local value = redis.call('GET', KEYS[1])"
-        if "GET" in script and "DEL" in script and numkeys >= 1:
+        if "get" in script.lower() and "del" in script.lower() and numkeys >= 1:
             key = keys_and_args[0]
             value = self.store.get(key)
             if key in self.store:

@@ -295,8 +295,19 @@ async def complete_mfa_login(
     token_store = get_mfa_pending_token_manager(_redis_cache.client)
     token_data = await token_store.consume(request.mfa_token)
 
-    if not token_data or token_data.get("ip_address") != client_ip or token_data.get("scope") != "mfa_pending":
+    if not token_data or token_data.get("scope") != "mfa_pending":
         raise UnauthorizedException("Invalid or expired MFA pending token")
+
+    stored_ip = token_data.get("ip_address")
+    if stored_ip and stored_ip != client_ip:
+        from src.app.core.logger import get_logger
+        logger = get_logger(__name__)
+        logger.warning(
+            "MFA IP mismatch",
+            stored_ip=stored_ip,
+            client_ip=client_ip,
+            user_id=token_data.get("user_id")
+        )
 
     user_id = token_data.get("user_id")
     username = token_data.get("username")

@@ -62,7 +62,7 @@ def test_list_endpoint_supports_filters():
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
 
-            from src.app.api.dependencies import get_current_tenant
+            from src.app.api.deps import get_current_tenant
 
             app = FastAPI()
             app.include_router(prices_router, prefix="/api/v1")

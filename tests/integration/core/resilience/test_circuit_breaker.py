@@ -29,7 +29,7 @@ def test_client():
 
     from fastapi import FastAPI
 
-    from src.app.api.dependencies import get_current_superuser
+    from src.app.api.deps import get_current_superuser
 
     app = FastAPI()
     # The tests expect the full path /api/v1/admin/circuit-breakers/...

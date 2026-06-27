@@ -261,7 +261,7 @@ class MagicLinkService:
             return LoginMFAResponse(
                 mfa_required=True,
                 mfa_token=mfa_token,
-                expires_in=str(settings.MFA_PENDING_EXPIRY_SECONDS),
+                expires_in=int(settings.MFA_PENDING_EXPIRY_SECONDS),
                 message="MFA verification required",
             )
 

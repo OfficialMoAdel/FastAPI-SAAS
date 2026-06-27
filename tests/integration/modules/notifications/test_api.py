@@ -11,7 +11,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 from src.app.main import app
 from src.app.modules.users.models import User
 

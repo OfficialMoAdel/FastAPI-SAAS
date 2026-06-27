@@ -222,6 +222,19 @@ async def update_webhook_endpoint(
     for field, value in update_data.items():
         if isinstance(value, HttpUrl):
             value = str(value)
+
+            # P1.3: Validate SSRF for URL updates
+            from src.app.core.config import settings
+            from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
+            if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
+                try:
+                    await validate_webhook_url(value)
+                except SSRFProtectionError as e:
+                    raise HTTPException(
+                        status_code=status.HTTP_400_BAD_REQUEST,
+                        detail=f"Invalid URL: {str(e)}",
+                    )
+
         if field in ("secret", "signing_secret") and value is not None:
             value = encrypt_data(value)
         setattr(endpoint, field, value)

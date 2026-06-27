@@ -530,6 +530,8 @@ class WebhookSettings(BaseSettings):
     WEBHOOK_TIMEOUT_SECONDS: int = 10
     WEBHOOK_SIGNATURE_HEADER: str = "X-Webhook-Signature"
     WEBHOOK_SIGNATURE_ALGORITHM: str = "sha256"
+    WEBHOOK_RECOVERY_BATCH_SIZE: int = 100
+    WEBHOOK_RECOVERY_BUFFER_MINUTES: int = 5
 
 
 class EnvironmentOption(str, Enum):
@@ -855,6 +857,8 @@ class Settings(BaseSettings):
     def __setattr__(self, name: str, value: Any) -> None:
         if name in self.model_fields or name.startswith("_") or name == "model_config":
             super().__setattr__(name, value)
+            if name in self.model_fields and "_delegation_map" in self.__dict__:
+                del self.__dict__["_delegation_map"]
             return
 
         target_component = self._delegation_map.get(name)

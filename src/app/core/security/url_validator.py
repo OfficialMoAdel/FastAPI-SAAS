@@ -69,6 +69,8 @@ def is_ip_blocked(ip: str) -> bool:
     """
     try:
         ip_obj = ipaddress.ip_address(ip)
+        if isinstance(ip_obj, ipaddress.IPv6Address) and ip_obj.ipv4_mapped:
+            ip_obj = ip_obj.ipv4_mapped
         for network in BLOCKED_NETWORKS:
             if ip_obj in network:
                 return True

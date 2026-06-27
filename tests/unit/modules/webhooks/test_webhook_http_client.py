@@ -1,6 +1,5 @@
 """Unit tests for shared webhook HTTP client."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
@@ -11,7 +10,6 @@ from src.app.modules.webhooks.http_client import (
     WEBHOOK_TIMEOUT,
     close_webhook_http_client,
     get_webhook_http_client,
-    webhook_http_post,
 )
 
 
@@ -144,42 +142,7 @@ class TestCloseWebhookHttpClient:
         assert client.is_closed
 
 
-class TestWebhookHttpPost:
-    """Tests for webhook_http_post convenience function."""
 
-    @pytest.mark.asyncio
-    async def test_webhook_http_post_calls_client_post(self):
-        """Should call post on the shared client."""
-        url = "https://example.com/webhook"
-        payload = {"event": "test"}
-        headers = {"X-Custom": "value"}
-
-        mock_response = MagicMock(spec=httpx.Response)
-
-        with patch("src.app.modules.webhooks.http_client.get_webhook_http_client") as mock_get_client:
-            mock_client = AsyncMock(spec=httpx.AsyncClient)
-            mock_client.post.return_value = mock_response
-            mock_get_client.return_value = mock_client
-
-            result = await webhook_http_post(url, json=payload, headers=headers)
-
-            assert result == mock_response
-            mock_client.post.assert_called_once_with(url, json=payload, headers=headers)
-
-    @pytest.mark.asyncio
-    async def test_uses_shared_client(self):
-        """Should use the shared singleton client."""
-        # Get client first to ensure it exists
-        client = await get_webhook_http_client()
-
-        mock_response = MagicMock(spec=httpx.Response)
-
-        with patch.object(client, "post", new_callable=AsyncMock) as mock_post:
-            mock_post.return_value = mock_response
-
-            await webhook_http_post("https://test.com", json={})
-
-            mock_post.assert_called_once()
 
 
 class TestConnectionPoolingBehavior:

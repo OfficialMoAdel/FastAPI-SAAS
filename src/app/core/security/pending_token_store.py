@@ -6,15 +6,7 @@ from typing import Any, cast
 import orjson
 from redis.asyncio import Redis
 
-# Lua script to perform atomic GET and DEL (GETDEL is Redis 6.2+)
-# Fallback script ensures compatibility with older Redis versions
-_GETDEL_LUA = """
-local val = redis.call('GET', KEYS[1])
-if val then
-    redis.call('DEL', KEYS[1])
-end
-return val
-"""
+from src.app.core.utils.redis_utils import _GETDEL_LUA
 
 
 class PendingTokenStore:
@@ -24,23 +16,23 @@ class PendingTokenStore:
     with a single parameterized implementation.
     """
 
-    def __init__(self, redis: Redis, prefix: str, ttl_seconds: int, hash_token: bool = False):
+    def __init__(self, redis: Redis, prefix: str, ttl_seconds: int, use_hash: bool = False):
         """Initialize the pending token store.
 
         Args:
             redis: Async Redis client instance.
             prefix: Prefix for the Redis keys.
             ttl_seconds: Time-to-live for the tokens in seconds.
-            hash_token: Whether to hash the token using SHA-256 before using it as a key.
+            use_hash: Whether to hash the token using SHA-256 before using it as a key.
         """
         self._redis = redis
         self.prefix = prefix
         self.ttl = ttl_seconds
-        self.hash_token = hash_token
+        self.use_hash = use_hash
 
     def _get_key(self, token: str) -> str:
         """Generate the Redis key for a given token."""
-        token_val = hashlib.sha256(token.encode()).hexdigest() if self.hash_token else token
+        token_val = hashlib.sha256(token.encode()).hexdigest() if self.use_hash else token
         return f"{self.prefix}:{token_val}"
 
     async def create(self, token: str, data: dict[str, Any]) -> None:
