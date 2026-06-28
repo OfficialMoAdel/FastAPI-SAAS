@@ -63,19 +63,10 @@ class WebhookService:
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
-        from fastapi import HTTPException, status
-
-        from src.app.core.config import settings
+        from src.app.modules.webhooks.router import _validate_url_ssrf
 
         # SECURITY FIX: Validate SSRF at create time to prevent persisting bad URLs
-        if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
-            try:
-                await validate_webhook_url(url)
-            except SSRFProtectionError as e:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Webhook URL rejected: {str(e)}"
-                )
+        await _validate_url_ssrf(url)
 
         # Generate a random secret for the endpoint (deprecated/auto-generated)
         import secrets as secrets_module

@@ -10,9 +10,11 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac import Permission, requires_permission
 from src.app.core.security.encryption import encrypt_data
+from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStatus, WebhookEndpoint
 from src.app.modules.webhooks.schemas import (
@@ -34,6 +36,25 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 
 # Route template for rate limit lookup - must match the registered API path.
 _WEBHOOK_TEST_RATE_LIMIT_PATH = "/api/v1/webhooks/{endpoint_id}/test"
+
+
+async def _validate_url_ssrf(url: str) -> None:
+    """Validate a webhook URL for SSRF protection.
+
+    Raises HTTPException(400) if the URL targets an internal/private IP
+    and WEBHOOK_ALLOW_INTERNAL_URLS is False (default).
+
+    Shared by router handlers and can be imported by the service layer.
+    """
+    if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
+        try:
+            await validate_webhook_url(url)
+        except SSRFProtectionError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid URL: {str(e)}",
+            )
+
 
 
 @router.get(
@@ -222,18 +243,8 @@ async def update_webhook_endpoint(
     for field, value in update_data.items():
         if isinstance(value, HttpUrl):
             value = str(value)
-
             # P1.3: Validate SSRF for URL updates
-            from src.app.core.config import settings
-            from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
-            if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
-                try:
-                    await validate_webhook_url(value)
-                except SSRFProtectionError as e:
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Invalid URL: {str(e)}",
-                    )
+            await _validate_url_ssrf(value)
 
         if field in ("secret", "signing_secret") and value is not None:
             value = encrypt_data(value)
