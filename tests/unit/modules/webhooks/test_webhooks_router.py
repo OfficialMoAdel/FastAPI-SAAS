@@ -91,8 +91,10 @@ async def test_create_webhook_endpoint(mock_service_cls, mock_db, mock_tenant, m
     mock_endpoint.event_type = "user.created"
     mock_endpoint.is_active = True
     mock_endpoint.created_at = datetime.now(UTC)
-    mock_endpoint.secret = "secret"
-    mock_endpoint.signing_secret = "signing_secret"
+    # create_endpoint attaches the plaintext secrets as transient attributes that the
+    # router maps onto the response model (which requires str values).
+    mock_endpoint._plaintext_secret = "secret"
+    mock_endpoint._plaintext_signing_secret = "signing_secret"
     mock_service.create_endpoint = AsyncMock(return_value=mock_endpoint)
     mock_service_cls.return_value = mock_service
 

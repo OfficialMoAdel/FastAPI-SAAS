@@ -74,7 +74,7 @@ class PasskeyService:
         user: dict[str, Any],
         device_type: str,
         redis: Redis | None = None,
-    ) -> dict[str, Any]:
+    ) -> tuple[dict[str, Any], str]:
         """Generate WebAuthn registration options (challenge).
 
         Args:
@@ -84,12 +84,14 @@ class PasskeyService:
             redis: Redis client for storing challenge.
 
         Returns:
-            dict: WebAuthn registration options.
+            tuple: (WebAuthn registration options, registration_id)
 
         Raises:
             BadRequestException: If user has reached passkey limit.
         """
+        import uuid
         user_id = user["id"]
+        registration_id = str(uuid.uuid4())
 
         # 1. Check passkey limit
         if not await crud_passkey_credentials.can_create(db=db, user_id=user_id):
@@ -121,16 +123,17 @@ class PasskeyService:
 
         # 4. Store challenge in Redis
         if redis:
-            await self._store_challenge(redis, user_id, options.challenge, device_type)
+            await self._store_challenge(redis, registration_id, options.challenge, device_type, user_id)
 
         result: dict[str, Any] = json_loads(options_to_json(options))
-        return result
+        return result, registration_id
 
     async def verify_registration(
         self,
         db: AsyncSession,
         user: dict[str, Any],
         credential: dict[str, Any],
+        registration_id: str,
         redis: Redis | None = None,
     ) -> dict[str, Any]:
         """Verify WebAuthn registration response and store credential.
@@ -139,6 +142,7 @@ class PasskeyService:
             db: Database session.
             user: User dictionary.
             credential: The WebAuthn response from the client.
+            registration_id: The ID of the registration challenge.
             redis: Redis client.
 
         Returns:
@@ -150,9 +154,12 @@ class PasskeyService:
         user_id = user["id"]
 
         # 1. Retrieve stored challenge
-        stored_data = await self._get_stored_challenge(redis, user_id) if redis else None
+        stored_data = await self._get_stored_challenge(redis, registration_id) if redis else None
         if not stored_data:
             raise BadRequestException(detail="Registration challenge expired or invalid.")
+
+        if stored_data["user_id"] != user_id:
+            raise BadRequestException(detail="Registration challenge belongs to another user.")
 
         challenge = stored_data["challenge"]
         device_type = stored_data["device_type"]
@@ -454,18 +461,21 @@ class PasskeyService:
         # Use shared helper
         return await self._decrypt_credentials_parallel(creds_to_decrypt, user_id)
 
-    async def _store_challenge(self, redis: Redis, user_id: int, challenge: bytes, device_type: str) -> None:
+    async def _store_challenge(
+        self, redis: Redis, registration_id: str, challenge: bytes, device_type: str, user_id: int
+    ) -> None:
         """Store registration challenge in Redis."""
-        key = f"passkey:challenge:{user_id}"
+        key = f"passkey:reg_challenge:{registration_id}"
         data = {
             "challenge": bytes_to_base64url(challenge),
             "device_type": device_type,
+            "user_id": user_id,
         }
         await redis.setex(key, CHALLENGE_TTL, json_dumps(data, as_str=True))
 
-    async def _get_stored_challenge(self, redis: Redis, user_id: int) -> dict[str, Any] | None:
+    async def _get_stored_challenge(self, redis: Redis, registration_id: str) -> dict[str, Any] | None:
         """Retrieve and atomically delete registration challenge from Redis."""
-        key = f"passkey:challenge:{user_id}"
+        key = f"passkey:reg_challenge:{registration_id}"
         # Atomic get and delete to prevent race conditions
         data = await redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
         if not data:
@@ -479,9 +489,9 @@ class PasskeyService:
         parsed["challenge"] = base64url_to_bytes(parsed["challenge"])
         return parsed
 
-    async def _delete_challenge(self, redis: Redis, user_id: int) -> None:
+    async def _delete_challenge(self, redis: Redis, registration_id: str) -> None:
         """Delete registration challenge from Redis."""
-        key = f"passkey:challenge:{user_id}"
+        key = f"passkey:reg_challenge:{registration_id}"
         await redis.delete(key)
 
     async def _store_credential(self, db: AsyncSession, cred_in: PasskeyCredentialCreate) -> dict[str, Any]:
@@ -498,7 +508,9 @@ class PasskeyService:
 
     def _get_origin(self) -> str:
         """Get expected origin based on configured frontend URL."""
-        return str(settings.FRONTEND_URL).rstrip("/")
+        import urllib.parse
+        parsed = urllib.parse.urlparse(str(settings.FRONTEND_URL))
+        return f"{parsed.scheme}://{parsed.netloc}"
 
     async def _count_user_passkeys(self, db: AsyncSession, user_id: int) -> int:
         """Count user passkeys."""

@@ -184,7 +184,6 @@ def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:
         "tenant_id": plan.tenant_id,
         "name": plan.name,
         "description": plan.description,
-        "tier_name": getattr(plan, "tier_name", None),
         "sort_order": plan.sort_order,
         "stripe_price_id_monthly": plan.stripe_price_id_monthly,
         "stripe_price_id_yearly": plan.stripe_price_id_yearly,

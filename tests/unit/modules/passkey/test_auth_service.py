@@ -633,6 +633,7 @@ async def test_verify_registration_exception_handling():
     mock_challenge_data = {
         "challenge": b"test-challenge",
         "device_type": "Test Device",
+        "user_id": 1,
     }
 
     with patch.object(service, "_get_stored_challenge", new_callable=AsyncMock) as mock_get_challenge:
@@ -646,6 +647,7 @@ async def test_verify_registration_exception_handling():
                     db=mock_db,
                     user=mock_user,
                     credential={"id": "test", "rawId": "test", "response": {}},
+                    registration_id="test-registration-id",
                     redis=AsyncMock(),
                 )
 

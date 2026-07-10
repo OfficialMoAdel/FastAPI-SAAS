@@ -19,7 +19,6 @@ from src.app.core.config import (
 )
 from src.app.core.db.database import Base, get_async_engine
 from src.app.core.utils import cache, queue
-from src.app.middleware.client_cache_middleware import ClientCacheMiddleware
 
 # Import all models to register them with SQLAlchemy's Base.metadata
 # This ensures create_all() creates all tables
@@ -254,11 +253,6 @@ def create_application(
 
     application = FastAPI(lifespan=lifespan, **kwargs)
     application.include_router(router)
-
-    # Middleware integration via feature detection
-    client_cache_max_age = getattr(settings, "CLIENT_CACHE_MAX_AGE", None)
-    if client_cache_max_age is not None:
-        application.add_middleware(ClientCacheMiddleware, max_age=client_cache_max_age)
 
     cors_origins = getattr(settings, "CORS_ORIGINS", None)
     if cors_origins:

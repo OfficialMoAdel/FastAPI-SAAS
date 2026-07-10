@@ -55,6 +55,9 @@ def test_passkey_login_flow(
             )
             assert response.status_code == 200, f"Start registration failed: {response.text}"
 
+            registration_data = response.json()
+            registration_id = registration_data.get("registration_id", "test-reg-id")
+
             # Complete registration
             credential_data = {
                 "id": "login-test-cred-id-b64",
@@ -65,7 +68,7 @@ def test_passkey_login_flow(
 
             response = client.post(
                 "/api/v1/auth/passkey/register/verify",
-                json={"credential": credential_data},
+                json={"credential": credential_data, "registration_id": registration_id},
                 headers=regular_user_token_headers,
             )
             assert response.status_code == 200, f"Complete registration failed: {response.text}"

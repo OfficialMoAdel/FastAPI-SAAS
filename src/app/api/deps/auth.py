@@ -61,17 +61,8 @@ async def _create_auth_context(
     db: AsyncSession,
     is_dependency_override: bool = False,
 ) -> AuthContext:
+    # Retained for schema compatibility, enforcement uses bitmask
     permissions: list[str] = []
-    if tenant:
-        try:
-            user_id = user["id"] if isinstance(user, dict) else user.id
-            tenant_id = tenant.id
-            from src.app.core.rbac.dependencies import get_cached_permissions
-
-            perms_set = await get_cached_permissions(user_id, tenant_id, db)
-            permissions = list(perms_set)
-        except Exception as e:
-            logger.error(f"Failed to load permissions: {e}")
 
     if isinstance(user, dict):
         user_obj = AuthenticatedUser(**user)
@@ -92,7 +83,7 @@ async def _is_token_blacklisted_with_fallback(token: str, jti: str | None, db: A
     from src.app.core.db.crud_token_blacklist import crud_token_blacklist
     from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
-    cache_result = await is_token_blacklisted(token)
+    cache_result = await is_token_blacklisted(token, jti=jti)
     if cache_result is True:
         return True
     if cache_result is None:

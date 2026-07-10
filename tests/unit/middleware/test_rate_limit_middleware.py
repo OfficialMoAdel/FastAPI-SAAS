@@ -17,7 +17,6 @@ from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
-from src.app.core.config import settings
 from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.database import Base
 from src.app.core.schemas import TokenBlacklistCreate
@@ -58,16 +57,16 @@ def client():
 def test_rate_limit_headers_allowed(mock_limiter, client):
     """Test that rate limit headers are set correctly when request is allowed."""
     # Setup mock to return allowed (False) and a count of 5
-    mock_limiter.check_rate_limit = AsyncMock(return_value=(False, 5))
+    mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(False, 5, 0))
 
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.headers["X-RateLimit-Limit"] == str(settings.DEFAULT_RATE_LIMIT_LIMIT)
-    assert response.headers["X-RateLimit-Period"] == str(settings.DEFAULT_RATE_LIMIT_PERIOD)
+    assert response.headers["X-RateLimit-Limit"] == "10"
+    assert response.headers["X-RateLimit-Period"] == "3600"
 
     # Remaining should be Limit - Count (e.g. 10 - 5 = 5)
-    expected_remaining = max(0, settings.DEFAULT_RATE_LIMIT_LIMIT - 5)
+    expected_remaining = max(0, 10 - 5)
     assert response.headers["X-RateLimit-Remaining"] == str(expected_remaining)
 
 
@@ -75,8 +74,8 @@ def test_rate_limit_headers_allowed(mock_limiter, client):
 def test_rate_limit_headers_exceeded(mock_limiter, client):
     """Test that rate limit headers are set correctly when limit is exceeded."""
     # Setup mock to return limited (True) and a count equal to limit + 1
-    limit = settings.DEFAULT_RATE_LIMIT_LIMIT
-    mock_limiter.check_rate_limit = AsyncMock(return_value=(True, limit + 1))
+    limit = 10
+    mock_limiter.check_rate_limit_algorithm = AsyncMock(return_value=(True, 0, 10))
 
     response = client.get("/")
 
@@ -189,7 +188,7 @@ async def test_rate_limit_headers(mock_redis):
 
         assert response.status_code == 200
 
-        limit = settings.DEFAULT_RATE_LIMIT_LIMIT
+        limit = 10
 
         assert "X-RateLimit-Limit" in response.headers
         assert response.headers["X-RateLimit-Limit"] == str(limit)
@@ -204,7 +203,7 @@ async def test_rate_limit_exceeded(mock_redis):
     # Reset redis state
     mock_redis.store.clear()
 
-    limit = settings.DEFAULT_RATE_LIMIT_LIMIT
+    limit = 10
 
     async with AsyncClient(
         transport=ASGITransport(app=app),

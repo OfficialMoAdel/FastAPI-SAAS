@@ -136,7 +136,7 @@ async def test_streaming_upload_without_size_attribute(s3_storage, mock_s3_clien
             )
 
             assert result.success
-            assert result.size == 0
+            assert result.size == len(content)
 
 
 @pytest.mark.asyncio
@@ -164,7 +164,10 @@ async def test_legacy_upload_when_feature_flag_false(s3_storage, mock_s3_client)
             call_kwargs = call_args[1]
             assert call_kwargs["Bucket"] == "test-bucket"
             assert call_kwargs["Key"] == "test.txt"
-            assert call_kwargs["Body"] == content
+            # Legacy path streams content into a SpooledTemporaryFile and uploads that
+            # file object (not the raw bytes), so assert the Body is a file-like object.
+            assert hasattr(call_kwargs["Body"], "read")
+            assert not isinstance(call_kwargs["Body"], bytes | bytearray)
 
             assert result.success
             assert result.size == len(content)

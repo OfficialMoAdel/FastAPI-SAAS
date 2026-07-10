@@ -131,11 +131,13 @@ async def test_s3_storage_legacy():
         provider = S3Storage(s3_client=mock_client, bucket="test-bucket")
 
         mock_file = MagicMock()
-        mock_file.read.return_value = b"content"
+        # Streaming legacy path loops on read() until an empty chunk; provide a
+        # terminating sequence so the loop ends (single return_value would loop forever).
+        mock_file.read.side_effect = [b"content", b""]
 
         await provider.upload(mock_file, "test/file.txt", "text/plain")
 
         # Verify put_object called
         mock_client.put_object.assert_called_once()
-        # Verify read called
-        mock_file.read.assert_called_once()
+        # Verify read was invoked (streaming legacy path reads in chunks)
+        mock_file.read.assert_called()

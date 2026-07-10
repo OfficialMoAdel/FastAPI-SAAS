@@ -180,11 +180,12 @@ from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings, AITokenUsage  # noqa: F401
 from src.app.modules.api_keys.models import APIKey  # noqa: F401
 from src.app.modules.audit_logs.models import AuditLog  # noqa: F401
-from src.app.modules.files.models import File  # noqa: F401
 
 # Import all models to ensure Base.metadata is fully populated for drop_all/create_all
 # This is critical - SQLAlchemy needs all models imported before create_all()
 # 1. Independent / Leaf models (or close to leaf)
+from src.app.modules.auth.models import EmailVerificationToken, PasswordResetToken  # noqa: F401
+from src.app.modules.files.models import File  # noqa: F401
 from src.app.modules.magic_link.models import MagicLink  # noqa: F401
 from src.app.modules.mfa.models import MFAMethod  # noqa: F401
 from src.app.modules.passkey.models import PasskeyCredential  # noqa: F401
@@ -249,12 +250,14 @@ def get_test_app():
     ):
         from src.app.core.rbac.dependencies import _get_current_user_from_token
         from src.app.core.tenancy.context import get_current_tenant
+
         current_tenant = get_current_tenant()
 
         # 1. If tests override get_current_user, respect it
         if get_current_user in app.dependency_overrides:
             override_func = app.dependency_overrides[get_current_user]
             import inspect
+
             user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
             return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
 
@@ -262,6 +265,7 @@ def get_test_app():
         if isinstance(_get_current_user_from_token, Mock) or hasattr(_get_current_user_from_token, "mock_add_spec"):
             mocked_user = await _get_current_user_from_token(token, db)
             from src.app.api.deps import AuthenticatedUser
+
             if isinstance(mocked_user, dict):
                 if "email" not in mocked_user:
                     mocked_user["email"] = "mocked@example.com"
@@ -282,6 +286,7 @@ def get_test_app():
     ):
         from src.app.core.rbac.dependencies import _get_current_user_from_token
         from src.app.core.tenancy.context import get_current_tenant
+
         current_tenant = get_current_tenant()
 
         # 1. If tests override get_current_user or get_optional_user, respect it
@@ -289,6 +294,7 @@ def get_test_app():
             if dep in app.dependency_overrides:
                 override_func = app.dependency_overrides[dep]
                 import inspect
+
                 user_obj = await override_func() if inspect.iscoroutinefunction(override_func) else override_func()
                 if user_obj is None:
                     return None
@@ -302,6 +308,7 @@ def get_test_app():
                 _, _, token_value = auth_header.partition(" ")
             mocked_user = await _get_current_user_from_token(token_value, db)
             from src.app.api.deps import AuthenticatedUser
+
             if isinstance(mocked_user, dict):
                 if "email" not in mocked_user:
                     mocked_user["email"] = "mocked@example.com"
@@ -317,7 +324,6 @@ def get_test_app():
 
     app.dependency_overrides[get_auth_context] = _test_aware_get_auth_context
     app.dependency_overrides[get_optional_auth_context] = _test_aware_get_optional_auth_context
-
 
     yield app
 
@@ -440,10 +446,28 @@ async def cleanup_async_tasks():
             task.cancel()
 
         if pending:
-            # Wait for cancellation to complete
-            await asyncio.gather(*pending, return_exceptions=True)
+            # Wait for cancellation to complete, but bound it so a leaked task
+            # that swallows CancelledError (or awaits a never-resolving future)
+            # can never hang the entire suite. A genuine hang surfaces as a
+            # timeout here instead of a silent, indefinite stall.
+            try:
+                await asyncio.wait_for(
+                    asyncio.gather(*pending, return_exceptions=True),
+                    timeout=10,
+                )
+            except TimeoutError:
+                pass
     except RuntimeError:
         # No event loop in sync tests
+        pass
+
+    # Clear any module-level background task references so they don't leak
+    # across event loops / tests (e.g. cache stampede-protection tasks).
+    try:
+        from src.app.core.utils.cache import _background_tasks
+
+        _background_tasks.clear()
+    except Exception:
         pass
 
 
@@ -1067,6 +1091,11 @@ class FakeRedisPipeline:
         self._commands.append(("exists", *keys))
         return self
 
+    def incr(self, key):
+        """Queue an incr command."""
+        self._commands.append(("incr", key))
+        return self
+
     def hset(self, key, mapping=None):
         """Queue a hset command."""
         self._commands.append(("hset", key, mapping))
@@ -1147,6 +1176,9 @@ class FakeRedisPipeline:
                 results.append(result)
             elif cmd[0] == "expire":
                 result = await self.redis.expire(cmd[1], cmd[2])
+                results.append(result)
+            elif cmd[0] == "incr":
+                result = await self.redis.incr(cmd[1])
                 results.append(result)
             elif cmd[0] == "get":
                 result = await self.redis.get(cmd[1])

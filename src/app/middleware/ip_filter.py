@@ -4,10 +4,8 @@ This middleware checks incoming requests against IP whitelist and blacklist
 stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocked.
 """
 
-from typing import cast
 
 from fastapi import Request, Response, status
-from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
@@ -53,7 +51,7 @@ def _reset_bad_bot_regex() -> None:
     _BAD_BOT_REGEX = None
 
 
-class IPFilterMiddleware(BaseHTTPMiddleware):
+class IPFilterMiddleware:
     """Middleware to enforce IP whitelist/blacklist policies.
 
     Execution order:
@@ -68,7 +66,7 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
     """
 
     def __init__(self, app: "ASGIApp") -> None:
-        super().__init__(app)
+        self.app = app
         self._filter_service = IPFilterService()
 
     def _is_exempt_path(self, path: str) -> bool:
@@ -83,14 +81,17 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
             return True
         return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
 
-    async def dispatch(self, request: Request, call_next) -> Response:
+    async def __call__(self, scope, receive, send):
         """Process request through IP filter."""
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        request = Request(scope, receive, send)
         path = request.url.path
 
         # Skip exempt paths
         if self._is_exempt_path(path):
-            response = await call_next(request)
-            return cast(Response, response)
+            return await self.app(scope, receive, send)
 
         client_ip = get_client_ip(request)
 
@@ -117,11 +118,12 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                         client_ip=client_ip,
                         user_agent=user_agent,
                     )
-                    return Response(
+                    response = Response(
                         content='{"detail":"Forbidden - Bad bot detected"}',
                         status_code=status.HTTP_403_FORBIDDEN,
                         media_type="application/json",
                     )
+                    return await response(scope, receive, send)
 
         # Check blacklist and whitelist in a single Redis pipeline
         if settings.IP_BLACKLIST_ENABLED or settings.IP_WHITELIST_ENABLED:
@@ -137,11 +139,12 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 log_security_event(event)
 
                 logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
-                return Response(
+                response = Response(
                     content='{"detail":"Forbidden - IP is blacklisted"}',
                     status_code=status.HTTP_403_FORBIDDEN,
                     media_type="application/json",
                 )
+                return await response(scope, receive, send)
 
             if settings.IP_WHITELIST_ENABLED and is_whitelisted:
                 # Log whitelisted access for audit trail
@@ -157,10 +160,8 @@ class IPFilterMiddleware(BaseHTTPMiddleware):
                 request.state.ip_whitelisted = True
 
                 logger.debug("IP allowed via whitelist for", client_ip=client_ip, path=path)
-                response = await call_next(request)
-                return cast(Response, response)
+                return await self.app(scope, receive, send)
 
         # IP is allowed through
         request.state.ip_whitelisted = False
-        response = await call_next(request)
-        return cast(Response, response)
+        return await self.app(scope, receive, send)

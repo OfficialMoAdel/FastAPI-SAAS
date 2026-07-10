@@ -187,17 +187,33 @@ class MagicLinkService:
         """
         # Validate token in Redis (one-time use)
         manager = self._get_magic_link_manager()
-        # Non-destructive read to preserve token if MFA check fails
-        token_data = await manager.peek(token)
+        # Consume immediately to prevent race conditions and mark as used
+        token_data = await manager.consume(token)
 
         if token_data is None:
-            # Token not found - could be expired or already used
-            # Check if we can distinguish (for 410 vs 400)
+            # Token not found - check if it was already used
+            from src.app.modules.magic_link.crud import get_magic_link_by_token
+            from src.app.modules.magic_link.exceptions import MagicLinkAlreadyUsedError
+
+            db_link = await get_magic_link_by_token(db=self.db, token=token)
+            if db_link and db_link.used_at is not None:
+                raise MagicLinkAlreadyUsedError("Token already used")
+
             logger.warning(
                 "Magic link validation failed",
                 extra={"operation": "verify_magic_link", "reason": "token_not_found"},
             )
             raise InvalidMagicLinkError("Token expired or invalid")
+
+        # Update audit trail in database immediately
+        from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
+
+        try:
+            db_link = await get_magic_link_by_token(db=self.db, token=token)
+            if db_link:
+                await mark_magic_link_used(db=self.db, magic_link=db_link)
+        except Exception:
+            logger.error("Failed to mark magic link used in DB", exc_info=True)
 
         email = token_data.get("email")
         if not email:
@@ -217,21 +233,6 @@ class MagicLinkService:
 
         mfa_service = MFAService()
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], self.db)
-
-        # MFA check succeeded, now safely consume the token
-        if not await manager.delete(token):
-            # Token was consumed concurrently
-            raise InvalidMagicLinkError("Token expired or already used")
-
-        # Update audit trail in database before returning (handles MFA drops)
-        from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
-
-        try:
-            db_link = await get_magic_link_by_token(db=self.db, token=token)
-            if db_link:
-                await mark_magic_link_used(db=self.db, magic_link=db_link)
-        except Exception:
-            logger.error("Failed to mark magic link used in DB", exc_info=True)
 
         if mfa_enabled:
             from src.app.core.security import get_mfa_pending_token_manager

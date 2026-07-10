@@ -17,10 +17,12 @@ class Permission(str, Enum):
     FEATURE_FLAGS_MANAGE = "feature_flags:manage"
 
     # Notification Management
+    NOTIFICATIONS_READ = "notifications:read"
     NOTIFICATIONS_MANAGE = "notifications:manage"
 
     # Webhooks Management
     WEBHOOKS_READ = "webhooks:read"
+    WEBHOOKS_CREATE = "webhooks:create"
     WEBHOOKS_MANAGE = "webhooks:manage"
 
     # Tenant Management

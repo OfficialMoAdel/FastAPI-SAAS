@@ -132,7 +132,8 @@ class UserService(BaseService[User]):
         try:
             # Handle both ORM object and dict
             if isinstance(user, dict):
-                user_data = user
+                user_data = user.copy()
+                user_data.pop("hashed_password", None)
                 user_id = user["id"]
                 email = user["email"]
                 username = user["username"]
@@ -210,7 +211,13 @@ class UserService(BaseService[User]):
             ]
 
             # Only build tenant-scoped keys when tenant_id is available
-            token_keys = []
+            from src.app.core.utils.cache import build_tenant_key
+
+            token_keys = [
+                build_tenant_key(f"user:{username}:token_version", str(tenant_id) if tenant_id else None),
+                build_tenant_key(f"user:{email}:token_version", str(tenant_id) if tenant_id else None)
+            ]
+
             if tenant_id is not None:
                 tenant_id_str = str(tenant_id)
                 keys.extend(
@@ -219,19 +226,6 @@ class UserService(BaseService[User]):
                         f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
                         f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
-                    ]
-                )
-                token_keys.extend(
-                    [
-                        f"tenant:{tenant_id_str}:user:{username}:token_version",
-                        f"tenant:{tenant_id_str}:user:{email}:token_version",
-                    ]
-                )
-            else:
-                token_keys.extend(
-                    [
-                        f"user:{username}:token_version",
-                        f"user:{email}:token_version",
                     ]
                 )
 
@@ -342,6 +336,18 @@ class UserService(BaseService[User]):
 
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
+
+            # M22: Send verification email automatically upon registration
+            try:
+                from src.app.modules.auth.service import get_auth_service
+                auth_service = get_auth_service()
+                await auth_service.send_verification_email(email=result.email, db=self.db)
+            except Exception as email_err:
+                logger.error(
+                    "Failed to send verification email during registration",
+                    error=str(email_err),
+                    user_id=result.id
+                )
 
             def _log_task_error(task: asyncio.Task) -> None:
                 """Log errors from background event tasks so they are not silently swallowed."""

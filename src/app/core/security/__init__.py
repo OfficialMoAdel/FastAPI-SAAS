@@ -270,10 +270,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     if token_version is not None:
         # P1-4: Cache token_version in Redis to avoid DB query on every request
         tenant_id = payload.get("tenant_id")
-        if tenant_id:
-            cache_key = f"tenant:{tenant_id}:user:{username_or_email}:token_version"
-        else:
-            cache_key = f"user:{username_or_email}:token_version"
+        from src.app.core.utils.cache import build_tenant_key
+        cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
 
         from src.app.core.utils.cache import client as redis_client
 
@@ -352,7 +350,13 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
     return None
 
 
-async def blacklist_tokens(access_token: str | None, refresh_token: str | None, db: AsyncSession) -> None:
+async def blacklist_tokens(
+    access_token: str | None,
+    refresh_token: str | None,
+    db: AsyncSession,
+    access_payload: dict[str, Any] | None = None,
+    refresh_payload: dict[str, Any] | None = None
+) -> None:
     """Blacklist both access and refresh tokens.
 
     Validates token signature before blacklisting to prevent database pollution.
@@ -366,20 +370,32 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
         The refresh token to blacklist
     db: AsyncSession
         Database session for performing database operations.
+    access_payload: dict[str, Any] | None
+        Optional pre-decoded payload for the access token to avoid re-decoding.
+    refresh_payload: dict[str, Any] | None
+        Optional pre-decoded payload for the refresh token to avoid re-decoding.
     """
     tokens_for_cache: list[tuple[str, datetime]] = []
 
-    for token in [access_token, refresh_token]:
+    tokens_and_payloads = [
+        (access_token, access_payload),
+        (refresh_token, refresh_payload),
+    ]
+
+    for token, payload in tokens_and_payloads:
         if not token:
             continue
         try:
-            payload = await asyncio.to_thread(
-                jwt.decode,
-                token,
-                _get_parsed_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
+            if not payload:
+                payload = await asyncio.to_thread(
+                    jwt.decode,
+                    token,
+                    _get_parsed_verification_key(),
+                    algorithms=[settings.ALGORITHM],
+                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+                )
+            if payload is None:
+                continue
             exp_timestamp = payload.get("exp")
             jti = payload.get("jti")
             tenant_id = payload.get("tenant_id")
@@ -428,12 +444,18 @@ async def blacklist_tokens(access_token: str | None, refresh_token: str | None, 
             # (the token is already blacklisted in DB) but still update cache
             _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
 
+        # Persist to DB for fallback during Redis outages
+        try:
+            await db.commit()
+        except Exception as e:
+            _jwt_logger.warning("Failed to commit blacklisted tokens to DB", error=str(e))
+
     # Bulk add to Redis cache
     if tokens_for_cache:
         await add_tokens_to_blacklist(tokens_for_cache)
 
 
-async def blacklist_token(token: str, db: AsyncSession) -> None:
+async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] | None = None) -> None:
     """Blacklist a single token after validating its signature.
 
     Adds token to both Redis cache (for fast lookup) and database (for persistence).
@@ -441,13 +463,16 @@ async def blacklist_token(token: str, db: AsyncSession) -> None:
     Also stores the JTI-prefixed key in DB so the DB fallback can find it during Redis outages.
     """
     try:
-        payload = await asyncio.to_thread(
-            jwt.decode,
-            token,
-            _get_parsed_verification_key(),
-            algorithms=[settings.ALGORITHM],
-            audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-        )
+        if not payload:
+            payload = await asyncio.to_thread(
+                jwt.decode,
+                token,
+                _get_parsed_verification_key(),
+                algorithms=[settings.ALGORITHM],
+                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            )
+        if payload is None:
+            return
         exp_timestamp = payload.get("exp")
         jti = payload.get("jti")
         tenant_id = payload.get("tenant_id")

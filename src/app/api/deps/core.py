@@ -47,7 +47,20 @@ async def rate_limiter_dependency(
             logger.warning("User has no assigned tier. Applying default rate limit.", user_id=user_id)
             limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
     else:
-        if request.client and request.client.host:
+        # Try to extract email from request body for per-email rate limiting
+        email_hash = None
+        if request.method == "POST":
+            try:
+                body = await request.json()
+                if "email" in body:
+                    import hashlib
+                    email_hash = hashlib.sha256(body["email"].encode()).hexdigest()[:16]
+            except Exception:
+                pass
+
+        if email_hash:
+            user_id = f"email:{email_hash}"
+        elif request.client and request.client.host:
             user_id = f"unknown:{request.client.host}"
         else:
             user_id = "unknown"

@@ -72,7 +72,11 @@ async def send_notification(
     return notification
 
 
-@router.get("", response_model=NotificationList)
+@router.get(
+    "",
+    response_model=NotificationList,
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_READ))],
+)
 async def list_notifications(
     status: str | None = Query(None, description="Filter by status"),
     start_date: datetime | None = Query(None, description="Filter from date"),
@@ -175,7 +179,11 @@ async def delete_template_override(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Template override not found")
 
 
-@router.get("/{notification_id}", response_model=NotificationResponse)
+@router.get(
+    "/{notification_id}",
+    response_model=NotificationResponse,
+    dependencies=[Depends(requires_permission(Permission.NOTIFICATIONS_READ))],
+)
 async def get_notification(
     notification_id: UUID,
     db: AsyncSession = Depends(async_get_db),

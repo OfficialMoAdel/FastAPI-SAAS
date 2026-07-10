@@ -36,6 +36,7 @@ class TestQueryProfilerE2E:
             tenant_id=tenant.id,
             username=f"profiler_user_{unique_suffix}",
             email=f"profiler_{unique_suffix}@example.com",
+            is_active=True,
         )
 
         # Create superuser for endpoints that require it
@@ -45,6 +46,7 @@ class TestQueryProfilerE2E:
             username=f"profiler_admin_{unique_suffix}",
             email=f"admin_{unique_suffix}@example.com",
             is_superuser=True,
+            is_active=True,
         )
 
         # Commit to ensure middleware using a separate connection can see the data

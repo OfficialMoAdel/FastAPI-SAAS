@@ -26,7 +26,7 @@ def ip_headers():
 class TestMFASetupFlow:
     """Test complete MFA setup and enable flow."""
 
-    async def test_mfa_setup_complete_flow(self, async_client, perf_metrics):
+    async def test_mfa_setup_complete_flow(self, async_client, perf_metrics, db):
         """[STEP 1] Verify MFA setup generates secret and backup codes."""
         # Setup: Create test user
         test_user_email = "mfa_setup_test@example.com"
@@ -44,6 +44,10 @@ class TestMFASetupFlow:
         )
         assert register_response.status_code == 201
         user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get access token
         login_response = await async_client.post(
@@ -143,7 +147,7 @@ class TestMFASetupFlow:
 class TestMFALoginWithTOTP:
     """Test login flow with TOTP verification."""
 
-    async def test_login_with_totp_success(self, async_client, perf_metrics):
+    async def test_login_with_totp_success(self, async_client, perf_metrics, db):
         """[STEP 1] Login with valid TOTP token succeeds."""
         test_user_email = "mfa_totp_login@example.com"
         test_password = "SecurePass123!"
@@ -159,7 +163,11 @@ class TestMFALoginWithTOTP:
             },
         )
         assert register_response.status_code == 201
-        register_response.json()["id"]
+        user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -249,7 +257,7 @@ class TestMFALoginWithTOTP:
 class TestMFALoginWithBackupCode:
     """Test login flow with backup code verification."""
 
-    async def test_login_with_backup_code_success(self, async_client, perf_metrics):
+    async def test_login_with_backup_code_success(self, async_client, perf_metrics, db):
         """[STEP 1] Login with backup code consumes one code."""
         test_user_email = "mfa_backup_login@example.com"
         test_password = "SecurePass123!"
@@ -265,7 +273,11 @@ class TestMFALoginWithBackupCode:
             },
         )
         assert register_response.status_code == 201
-        register_response.json()["id"]
+        user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -374,7 +386,7 @@ class TestMFALoginWithBackupCode:
 class TestMFALockoutFlow:
     """Test MFA lockout mechanism after failed attempts."""
 
-    async def test_mfa_lockout_after_5_failed_attempts(self, async_client, perf_metrics, mock_redis):
+    async def test_mfa_lockout_after_5_failed_attempts(self, async_client, perf_metrics, mock_redis, db):
         """[STEP 1] Verify rate limit enforced after 5 failed attempts."""
         test_user_email = "mfa_lockout_test@example.com"
         test_password = "SecurePass123!"
@@ -390,7 +402,11 @@ class TestMFALockoutFlow:
             },
         )
         assert register_response.status_code == 201
-        register_response.json()["id"]
+        user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -487,7 +503,7 @@ class TestMFALockoutFlow:
 class TestMFADisableFlow:
     """Test MFA disable flow."""
 
-    async def test_disable_mfa_success(self, async_client, perf_metrics):
+    async def test_disable_mfa_success(self, async_client, perf_metrics, db):
         """[STEP 1] Disable MFA removes requirement."""
         test_user_email = "mfa_disable_test@example.com"
         test_password = "SecurePass123!"
@@ -503,7 +519,11 @@ class TestMFADisableFlow:
             },
         )
         assert register_response.status_code == 201
-        register_response.json()["id"]
+        user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get tokens
         login_response = await async_client.post(
@@ -576,7 +596,7 @@ class TestMFADisableFlow:
 class TestMFARegenerateBackupCodes:
     """Test backup code regeneration flow."""
 
-    async def test_regenerate_backup_codes_success(self, async_client, perf_metrics):
+    async def test_regenerate_backup_codes_success(self, async_client, perf_metrics, db):
         """[STEP 1] Regenerate backup codes replaces old ones."""
         test_user_email = "mfa_regenerate_test@example.com"
         test_password = "SecurePass123!"
@@ -592,7 +612,11 @@ class TestMFARegenerateBackupCodes:
             },
         )
         assert register_response.status_code == 201
-        register_response.json()["id"]
+        user_id = register_response.json()["id"]
+
+        from sqlalchemy import text
+        db.execute(text(f"UPDATE users SET is_active = 1 WHERE id = '{user_id}'"))
+        db.commit()
 
         # Login to get tokens
         login_response = await async_client.post(

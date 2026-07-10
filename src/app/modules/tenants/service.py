@@ -79,9 +79,9 @@ class TenantService(BaseService[Tenant]):
             cache_key = _get_cache_key(tenant.id)
             await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
-            # Also cache by slug for slug-based lookups
+            # Also cache by slug for slug-based lookups - store full dict, not just UUID
             slug_key = _get_slug_cache_key(tenant.slug)
-            await redis_client.set(slug_key, str(tenant.id), ex=TENANT_CACHE_TTL)
+            await redis_client.set(slug_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
         except Exception as e:
             logger.debug("Failed to cache tenant", error=str(e))
 
@@ -98,11 +98,9 @@ class TenantService(BaseService[Tenant]):
             cache_key = _get_cache_key(tenant_id)
             await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
-            # Also cache by slug for slug-based lookups
-            slug = tenant_data.get("slug")
-            if slug:
-                slug_key = _get_slug_cache_key(slug)
-                await redis_client.set(slug_key, str(tenant_id), ex=TENANT_CACHE_TTL)
+            if "slug" in tenant_data and tenant_data["slug"]:
+                slug_key = _get_slug_cache_key(tenant_data["slug"])
+                await redis_client.set(slug_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
         except Exception as e:
             logger.debug("Failed to cache tenant dict", error=str(e))
 

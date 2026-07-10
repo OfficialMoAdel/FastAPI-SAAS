@@ -3,7 +3,7 @@
 from typing import Any
 from uuid import UUID
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from src.app.modules._base import BaseCreate, BaseList, BaseRead, BaseUpdate
 
@@ -106,6 +106,18 @@ class FeatureFlagOverrideBase(BaseModel):
     feature_flag_id: int = Field(..., description="ID of the feature flag")
     custom_value: dict[str, Any] | None = Field(None, description="Custom override value")
     reason: str | None = Field(None, max_length=500, description="Reason for override")
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_custom_value(cls, data: Any) -> Any:
+        if isinstance(data, dict):
+            val = data.get("custom_value")
+            if val is not None and not isinstance(val, dict):
+                if isinstance(val, bool):
+                    data["custom_value"] = {"enabled": val}
+                else:
+                    data["custom_value"] = {"value": val}
+        return data
 
 
 class FeatureFlagOverrideCreate(FeatureFlagOverrideBase, BaseCreate):

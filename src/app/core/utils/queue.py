@@ -11,4 +11,9 @@ async def get_queue_size() -> int:
     """
     if pool is None:
         return 0
-    return int(await pool.zcard("arq:queue"))
+    # M1: Use a pipeline to get sizes for both queues in one roundtrip
+    async with pool.pipeline() as pipe:
+        pipe.zcard("arq:queue")
+        pipe.zcard("arq:queue_low_priority")
+        results = await pipe.execute()
+    return int(results[0] or 0) + int(results[1] or 0)

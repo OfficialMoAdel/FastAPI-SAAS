@@ -62,8 +62,8 @@ class WebhookEndpointRead(BaseReadUUID):
 class WebhookEndpointCreateResponse(BaseReadUUID):
     """Schema for webhook endpoint creation response — includes secret once.
 
-    The ``secret`` is returned only on creation so the caller can store it.
-    It will NOT be returned by any other endpoint.
+    The ``secret`` and ``signing_secret`` are returned only on creation so the caller can store it.
+    They will NOT be returned by any other endpoint.
     """
 
     tenant_id: UUID
@@ -71,6 +71,7 @@ class WebhookEndpointCreateResponse(BaseReadUUID):
     event_type: str
     is_active: bool
     secret: str | None = Field(None, description="Auto-generated HMAC secret for signature verification")
+    signing_secret: str | None = Field(None, description="Auto-generated signing secret")
 
 
 class WebhookEndpointAdminRead(BaseReadUUID):

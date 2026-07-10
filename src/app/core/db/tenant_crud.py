@@ -126,6 +126,17 @@ class TenantAwareCRUD(
                 # Ensure we don't mutate the original dictionary
                 object = dict(object)
                 object["tenant_id"] = tenant_id
+                # FastCRUD.create requires a Pydantic model, not a raw dict.
+                # Convert the dict to the configured CreateSchemaType so the
+                # documented `object: CreateSchemaType | dict` contract holds.
+                create_schema = getattr(self, "create_schema", None)
+                if create_schema is None:
+                    raise TypeError(
+                        f"{type(self).__name__} received a dict for `create` but has "
+                        "no `create_schema` configured. Pass a Pydantic model instead, "
+                        "or set `create_schema` on the CRUD class."
+                    )
+                object = create_schema(**object)
             elif isinstance(object, BaseModel):
                 # Forcibly overwrite tenant_id to prevent cross-tenant data creation
                 if hasattr(object, "tenant_id"):

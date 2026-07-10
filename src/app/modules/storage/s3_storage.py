@@ -49,6 +49,10 @@ class S3Storage(StorageProvider):
         self.bucket = bucket
         self.region = region
 
+        # C1 FIX: Extract credentials to pass to boto3.client
+        aws_access_key_id = kwargs.pop("aws_access_key_id", None)
+        aws_secret_access_key = kwargs.pop("aws_secret_access_key", None)
+
         if s3_client:
             self.client = s3_client
         else:
@@ -56,11 +60,16 @@ class S3Storage(StorageProvider):
             import boto3
             from botocore.config import Config
 
-            self.client = boto3.client(
-                "s3",
-                region_name=region,
-                config=Config(signature_version="s3v4"),
-            )
+            client_kwargs = {
+                "region_name": region,
+                "config": Config(signature_version="s3v4"),
+            }
+            if aws_access_key_id:
+                client_kwargs["aws_access_key_id"] = aws_access_key_id
+            if aws_secret_access_key:
+                client_kwargs["aws_secret_access_key"] = aws_secret_access_key
+
+            self.client = boto3.client("s3", **client_kwargs)
 
         self.kwargs = kwargs
 
@@ -110,23 +119,44 @@ class S3Storage(StorageProvider):
                     Config=transfer_config,
                 )
 
-                # Get file size from file object if available
-                size = file.size if hasattr(file, "size") else 0
+                # Get file size: prefer an explicit .size attribute (e.g. Starlette UploadFile);
+                # otherwise derive it from the file object without disturbing its read position.
+                size = getattr(file, "size", None)
+                if size is None and hasattr(file, "seek"):
+                    current_pos = file.tell()
+                    file.seek(0, 2)
+                    size = file.tell()
+                    file.seek(current_pos)
             else:
-                # Legacy behavior: read entire file into memory
-                content = file.read()
+                # Legacy behavior: stream to a spooled temporary file instead of memory
+                import tempfile
 
-                # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
-                await asyncio.to_thread(
-                    self.client.put_object,
-                    Bucket=self.bucket,
-                    Key=path,
-                    Body=content,
-                    ContentType=mime_type,
-                    **self.kwargs,
-                )
+                with tempfile.SpooledTemporaryFile(max_size=5 * 1024 * 1024) as temp:
+                    # Reset file position if needed
+                    if hasattr(file, "seek"):
+                        file.seek(0)
 
-                size = len(content)
+                    # Copy chunks to prevent memory exhaustion
+                    while True:
+                        chunk = await asyncio.to_thread(file.read, 64 * 1024)
+                        if not chunk:
+                            break
+                        temp.write(chunk)
+
+                    # Seek to end to capture the true byte length, then reset to start for upload
+                    temp.seek(0, 2)
+                    size = temp.tell()
+                    temp.seek(0)
+
+                    # Upload to S3 - wrapped in asyncio.to_thread to avoid blocking event loop
+                    await asyncio.to_thread(
+                        self.client.put_object,
+                        Bucket=self.bucket,
+                        Key=path,
+                        Body=temp,
+                        ContentType=mime_type,
+                        **self.kwargs,
+                    )
 
             return StorageResult(
                 success=True,

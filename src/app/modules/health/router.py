@@ -58,12 +58,16 @@ async def ready(
     is_redis_healthy = redis_result.status == "healthy"
     is_queue_healthy = queue_result.status == "healthy"
 
-    overall_status = (
-        STATUS_HEALTHY
-        if (is_database_healthy and is_redis_healthy and is_queue_healthy and events_status)
-        else STATUS_UNHEALTHY
+    if is_database_healthy and is_redis_healthy and is_queue_healthy and events_status:
+        overall_status = STATUS_HEALTHY
+    elif not is_database_healthy:
+        overall_status = STATUS_UNHEALTHY
+    else:
+        overall_status = "degraded"
+
+    http_status = (
+        status.HTTP_200_OK if overall_status in (STATUS_HEALTHY, "degraded") else status.HTTP_503_SERVICE_UNAVAILABLE
     )
-    http_status = status.HTTP_200_OK if overall_status == STATUS_HEALTHY else status.HTTP_503_SERVICE_UNAVAILABLE
 
     response = {
         "status": overall_status,

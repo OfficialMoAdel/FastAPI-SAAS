@@ -232,6 +232,7 @@ class BillingRecord(Base, kw_only=True):
     )
     stripe_payment_intent_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None, index=True)
     stripe_invoice_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None, index=True)
+    stripe_refund_id: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None, index=True)
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="usd")
     description: Mapped[str | None] = mapped_column(String(255), nullable=True, default=None)
 

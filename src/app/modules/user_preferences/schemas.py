@@ -250,4 +250,4 @@ class ImageUploadResponse(BaseModel):
     """Response schema for image upload endpoint."""
 
     message: str
-    avatar_url: str | None = None
+    image_url: str | None = None

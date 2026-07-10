@@ -91,19 +91,25 @@ class WebhookService:
         await self.db.commit()
         await self.db.refresh(endpoint)
 
+        # C2 FIX: Attach plaintext secrets as transient attributes for the creation response
+        setattr(endpoint, "_plaintext_secret", actual_secret)
+        setattr(endpoint, "_plaintext_signing_secret", actual_signing_secret)
+
         logger.info("webhook_endpoint_created", tenant_id=tenant_id, event_type=event_type, url=url)
         return endpoint
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
-        """Get all active webhook endpoints for a tenant and event type."""
+        """Get active endpoints for an event type with glob matching support."""
+        from fnmatch import fnmatch
+
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
-            WebhookEndpoint.event_type == event_type,
             WebhookEndpoint.is_active.is_(True),
         )
-
         result = await self.db.execute(stmt)
-        return list(result.scalars().all())
+        all_endpoints = list(result.scalars().all())
+
+        return [ep for ep in all_endpoints if ep.event_type == event_type or fnmatch(event_type, ep.event_type)]
 
     async def trigger_webhooks(
         self,
@@ -161,12 +167,9 @@ class WebhookService:
                 if expires_at > now_utc:
                     try:
                         old_secret = decrypt_data(endpoint.old_signing_secret)
-                        import json
-
-                        payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-                        active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-                        old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-                        signature = f"sha256={active_sig},sha256={old_sig}"
+                        active_sig_full = self._generate_signature(payload, secret)
+                        old_sig_full = self._generate_signature(payload, old_secret)
+                        signature = f"{active_sig_full},{old_sig_full}"
                     except Exception as old_sig_err:
                         logger.error(
                             "webhook_old_signing_secret_decryption_failed",
@@ -267,12 +270,9 @@ class WebhookService:
             if expires_at > now_utc:
                 try:
                     old_secret = decrypt_data(endpoint.old_signing_secret)
-                    import json
-
-                    payload_bytes = json.dumps(payload, sort_keys=True).encode("utf-8")
-                    active_sig = hmac.new(secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-                    old_sig = hmac.new(old_secret.encode("utf-8"), payload_bytes, hashlib.sha256).hexdigest()
-                    signature = f"sha256={active_sig},sha256={old_sig}"
+                    active_sig_full = self._generate_signature(payload, secret)
+                    old_sig_full = self._generate_signature(payload, old_secret)
+                    signature = f"{active_sig_full},{old_sig_full}"
                 except Exception as old_sig_err:
                     logger.error(
                         "webhook_old_signing_secret_decryption_failed",
@@ -506,7 +506,7 @@ class WebhookService:
             logger.warning("Webhook circuit breaker opened: %s", circuit_error)
             delivery.attempt_count += 1
             delivery.response_body = str(circuit_error)[:1000]
-            await self._handle_delivery_failure(delivery)
+            await self._handle_delivery_failure(delivery, override_delay=getattr(circuit_error, "recovery_in", None))
 
         elif http_error is not None:
             # Network/timeout error - record failure and retry
@@ -520,12 +520,12 @@ class WebhookService:
         await self.db.refresh(delivery)
         return delivery
 
-    async def _handle_delivery_failure(self, delivery: WebhookDelivery) -> None:
+    async def _handle_delivery_failure(self, delivery: WebhookDelivery, override_delay: float | None = None) -> None:
         """Handle failed delivery with retry logic."""
         attempt_idx = delivery.attempt_count - 1
         if attempt_idx >= 0 and attempt_idx < len(WEBHOOK_RETRY_DELAYS):
             # Schedule retry
-            retry_delay = int(WEBHOOK_RETRY_DELAYS[attempt_idx])
+            retry_delay = int(override_delay if override_delay is not None else WEBHOOK_RETRY_DELAYS[attempt_idx])
             delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=retry_delay)
             delivery.status = WebhookDeliveryStatus.PENDING
 
@@ -659,10 +659,16 @@ class WebhookService:
                     raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
                 secret = endpoint.signing_secret
 
-        masked_secret = f"{secret[:4]}...{secret[-4:]}" if secret and len(secret) > 8 else "****"
+        if not secret:
+            return {
+                "webhook_endpoint_id": endpoint.id,
+                "signing_secret": "",
+                "created_at": endpoint.created_at,
+            }
+
         return {
             "webhook_endpoint_id": endpoint.id,
-            "signing_secret": masked_secret,
+            "signing_secret": secret,
             "created_at": endpoint.created_at,
         }
 

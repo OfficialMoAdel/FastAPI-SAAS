@@ -292,6 +292,7 @@ class BillingRecordCreate(BaseCreate):
     user_subscription_id: int | None = None
     stripe_payment_intent_id: str | None = None
     stripe_invoice_id: str | None = None
+    stripe_refund_id: str | None = None
     amount_cents: int
     currency: str = "usd"
     status: BillingRecordStatus
@@ -312,6 +313,7 @@ class BillingRecordRead(BaseRead):
     user_subscription_id: int | None
     stripe_payment_intent_id: str | None
     stripe_invoice_id: str | None
+    stripe_refund_id: str | None
     amount_cents: int
     currency: str
     status: str

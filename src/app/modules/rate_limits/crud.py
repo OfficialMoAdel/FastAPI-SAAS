@@ -6,10 +6,9 @@ from src.app.modules.rate_limits.schemas import (
     RateLimitDelete,
     RateLimitRead,
     RateLimitUpdate,
-    RateLimitUpdateInternal,
 )
 
 CRUDRateLimit = FastCRUD[
-    RateLimit, RateLimitCreateInternal, RateLimitUpdate, RateLimitUpdateInternal, RateLimitDelete, RateLimitRead
+    RateLimit, RateLimitCreateInternal, RateLimitUpdate, RateLimitUpdate, RateLimitDelete, RateLimitRead
 ]
 crud_rate_limits = CRUDRateLimit(RateLimit)

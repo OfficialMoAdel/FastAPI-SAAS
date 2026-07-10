@@ -106,8 +106,9 @@ async def test_cache_decorator_uses_setex():
         # Call the endpoint
         result = await dummy_endpoint(mock_request, id=123)
 
-        # Verify result
-        assert result == {"data": "value"}
+        # Verify result is a Response with JSON content
+        import json
+        assert json.loads(result.body.decode()) == {"data": "value"}
 
         # Verify Redis pipeline calls
         # Should call setex on pipeline once with correct args

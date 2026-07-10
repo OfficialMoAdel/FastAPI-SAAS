@@ -6,7 +6,7 @@ Tests cover:
 - Queue unavailability handling
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -51,7 +51,9 @@ class TestTaskServiceCreate:
             result = await task_service.create_task("test message")
 
             assert result["id"] == "test-job-123"
-            mock_pool.enqueue_job.assert_called_once_with("sample_background_task", "test message", tenant_id=None)
+            mock_pool.enqueue_job.assert_called_once_with(
+                "sample_background_task", "test message", tenant_id=None, _job_id=ANY
+            )
 
     @pytest.mark.asyncio
     async def test_create_task_queue_unavailable(self):
@@ -102,7 +104,9 @@ class TestTaskServiceGet:
             mock_arq_job.info = AsyncMock(return_value=mock_job_info)
             MockArqJob.return_value = mock_arq_job
 
-            result = await task_service.get_task("test-job-123")
+            # get_task now requires tenant_id; match the job's stored tenant_id for isolation
+            mock_job_info.kwargs["tenant_id"] = "tenant-1"
+            result = await task_service.get_task("test-job-123", tenant_id="tenant-1")
 
             assert result["id"] == "test-job-123"
             assert "status" in result
@@ -124,7 +128,7 @@ class TestTaskServiceGet:
             mock_arq_job.info = AsyncMock(return_value=None)
             MockArqJob.return_value = mock_arq_job
 
-            result = await task_service.get_task("nonexistent-job")
+            result = await task_service.get_task("nonexistent-job", tenant_id="tenant-1")
 
             assert result is None
 
@@ -137,6 +141,6 @@ class TestTaskServiceGet:
             mock_queue.pool = None
 
             with pytest.raises(QueueUnavailableError) as exc_info:
-                await task_service.get_task("test-job-123")
+                await task_service.get_task("test-job-123", tenant_id="tenant-1")
 
             assert "Queue is not available" in str(exc_info.value)

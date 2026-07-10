@@ -55,8 +55,28 @@ class TestB7ParallelReads:
         request = ChatCompletionRequest(message="Hello")
 
         # Act
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
             mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            mock_msg_inst.add_message = AsyncMock()
+            MockMsgService.return_value = mock_msg_inst
+
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
                 # Patch local_session to avoid real DB calls in Phase 3
                 with patch("src.app.modules.ai.service.local_session") as mock_local_session:
@@ -65,17 +85,12 @@ class TestB7ParallelReads:
                     mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
                     mock_fresh_db.commit = AsyncMock()
                     mock_local_session.return_value = mock_fresh_db
-                    # Also patch ChatMessageService in the fresh session context
-                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
-                        mock_msg_instance = AsyncMock()
-                        mock_msg_instance.add_message = AsyncMock()
-                        MockMsgService.return_value = mock_msg_instance
-                        await service.complete(session_id=1, user_id=1, request=request)
+                    await service.complete(session_id=1, user_id=1, request=request)
 
         # Assert - all 3 reads should have been called
-        service._session_service.get_session.assert_called_once_with(1, 1)
-        service._settings_service.get_or_create_settings.assert_called_once_with(1)
-        service._message_service.get_session_messages.assert_called_once_with(1, limit=50)
+        mock_session_inst.get_session.assert_called_once_with(1, 1)
+        mock_settings_inst.get_or_create_settings.assert_called_once_with(1)
+        mock_msg_inst.get_session_messages.assert_called_once_with(1, limit=50)
 
         logger.info("Verified: All 3 reads were called (parallel execution via gather)")
 
@@ -101,8 +116,30 @@ class TestB7ParallelReads:
         request = ChatCompletionRequest(message="Hello")
 
         # Act & Assert
-        with pytest.raises(ValueError, match="Session not found"):
-            await service.complete(session_id=1, user_id=1, request=request)
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+            mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(side_effect=ValueError("Session not found"))
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            mock_msg_inst.add_message = AsyncMock()
+            MockMsgService.return_value = mock_msg_inst
+
+            with pytest.raises(ValueError, match="Session not found"):
+                await service.complete(session_id=1, user_id=1, request=request)
 
         logger.info("Verified: Exception from gather propagates correctly")
 
@@ -149,8 +186,30 @@ class TestB7UserMessageTiming:
         request = ChatCompletionRequest(message="Hello")
 
         # Act
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
             mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            async def track_add_message(*args, **kwargs):
+                call_order.append("add_user_message")
+            mock_msg_inst.add_message = AsyncMock(side_effect=track_add_message)
+            MockMsgService.return_value = mock_msg_inst
+
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
                 # Patch local_session to avoid real DB calls in Phase 3
                 with patch("src.app.modules.ai.service.local_session") as mock_local_session:
@@ -159,12 +218,7 @@ class TestB7UserMessageTiming:
                     mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
                     mock_fresh_db.commit = AsyncMock()
                     mock_local_session.return_value = mock_fresh_db
-                    # Also patch ChatMessageService in the fresh session context
-                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
-                        mock_msg_instance = AsyncMock()
-                        mock_msg_instance.add_message = AsyncMock()
-                        MockMsgService.return_value = mock_msg_instance
-                        await service.complete(session_id=1, user_id=1, request=request)
+                    await service.complete(session_id=1, user_id=1, request=request)
 
         # Assert - user message must come before ollama
         user_msg_index = call_order.index("add_user_message")
@@ -210,8 +264,30 @@ class TestB7BatchedWrites:
         add_message_calls = []
 
         # Act
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
             mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            async def track_assistant_msg(*args, **kwargs):
+                add_message_calls.append(("assistant", kwargs))
+            mock_msg_inst.add_message = AsyncMock(side_effect=track_assistant_msg)
+            MockMsgService.return_value = mock_msg_inst
+
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
                 # Patch local_session to avoid real DB calls in Phase 3
                 with patch("src.app.modules.ai.service.local_session") as mock_local_session:
@@ -220,16 +296,7 @@ class TestB7BatchedWrites:
                     mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
                     mock_fresh_db.commit = AsyncMock()
                     mock_local_session.return_value = mock_fresh_db
-                    # Track ChatMessageService calls in Phase 3
-                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
-                        mock_msg_instance = MagicMock()
-
-                        async def track_assistant_msg(*args, **kwargs):
-                            add_message_calls.append(("assistant", kwargs))
-
-                        mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
-                        MockMsgService.return_value = mock_msg_instance
-                        await service.complete(session_id=1, user_id=1, request=request)
+                    await service.complete(session_id=1, user_id=1, request=request)
 
             # Assert - both post-Ollama operations should be called
             # User message via original service, assistant via fresh service
@@ -266,8 +333,30 @@ class TestB7BatchedWrites:
         # Track assistant message to verify token count
         assistant_message_kwargs = {}
 
-        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
             mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            async def track_assistant_msg(*args, **kwargs):
+                assistant_message_kwargs.update(kwargs)
+            mock_msg_inst.add_message = AsyncMock(side_effect=track_assistant_msg)
+            MockMsgService.return_value = mock_msg_inst
+
             with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
                 # Patch local_session to avoid real DB calls in Phase 3
                 with patch("src.app.modules.ai.service.local_session") as mock_local_session:
@@ -276,16 +365,7 @@ class TestB7BatchedWrites:
                     mock_fresh_db.__aexit__ = AsyncMock(return_value=None)
                     mock_fresh_db.commit = AsyncMock()
                     mock_local_session.return_value = mock_fresh_db
-                    # Track ChatMessageService calls in Phase 3
-                    with patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
-                        mock_msg_instance = MagicMock()
-
-                        async def track_assistant_msg(*args, **kwargs):
-                            assistant_message_kwargs.update(kwargs)
-
-                        mock_msg_instance.add_message = AsyncMock(side_effect=track_assistant_msg)
-                        MockMsgService.return_value = mock_msg_instance
-                        await service.complete(session_id=1, user_id=1, request=request)
+                    await service.complete(session_id=1, user_id=1, request=request)
 
         # Check the assistant message was saved with correct token count
         assert assistant_message_kwargs.get("token_count") == expected_token_count
@@ -323,9 +403,31 @@ class TestB7ErrorHandling:
 
         request = ChatCompletionRequest(message="Hello")
 
-        with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
-            with pytest.raises(ChatCompletionError) as exc_info:
-                await service.complete(session_id=1, user_id=1, request=request)
+        with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud, \
+             patch("src.app.modules.ai.service.ChatSessionService") as MockSessionService, \
+             patch("src.app.modules.ai.service.AISettingsService") as MockSettingsService, \
+             patch("src.app.modules.ai.service.ChatMessageService") as MockMsgService:
+            mock_crud.update = AsyncMock()
+            mock_crud.get = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+
+            mock_session_inst = MagicMock()
+            mock_session_inst.get_session = AsyncMock(return_value={"id": 1, "model": "gemma3", "user_id": 1})
+            MockSessionService.return_value = mock_session_inst
+
+            mock_settings_inst = MagicMock()
+            mock_settings_inst.get_or_create_settings = AsyncMock(
+                return_value={"model": "gemma3", "temperature": 0.7, "max_tokens": 2048}
+            )
+            MockSettingsService.return_value = mock_settings_inst
+
+            mock_msg_inst = MagicMock()
+            mock_msg_inst.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
+            mock_msg_inst.add_message = AsyncMock()
+            MockMsgService.return_value = mock_msg_inst
+
+            with patch("src.app.modules.ai.service.truncate_context", return_value=[]):
+                with pytest.raises(ChatCompletionError) as exc_info:
+                    await service.complete(session_id=1, user_id=1, request=request)
 
         assert "Model not found" in str(exc_info.value)
         logger.info("Verified: OllamaError properly converted to ChatCompletionError")

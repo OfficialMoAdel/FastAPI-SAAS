@@ -158,7 +158,14 @@ async def test_process_callback_success(
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
 
-    response = await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code", "state")
+    # process_callback now requires an active tenant context (raises
+    # "Cannot process SSO login without tenant context" otherwise).
+    with patch("src.app.modules.sso.service.get_tenant_context") as mock_get_tenant_ctx:
+        mock_tenant = MagicMock()
+        mock_tenant.id = uuid4()
+        mock_get_tenant_ctx.return_value = mock_tenant
+
+        response = await service.process_callback(mock_db, mock_request, SSOProvider.GOOGLE, "code", "state")
 
     assert response.access_token == "jwt_access"
     assert response.refresh_token == "jwt_refresh"
@@ -320,6 +327,8 @@ async def test_process_callback_apple_custom_flow(
     )
     mock_get_service.return_value = mock_user_svc
     mock_core_get_service.return_value = mock_user_svc
+    # _create_sso_user awaits user_svc.crud.update -> must be awaitable
+    mock_user_svc.crud.update = AsyncMock()
 
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"

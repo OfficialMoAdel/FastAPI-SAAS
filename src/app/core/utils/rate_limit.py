@@ -92,6 +92,40 @@ class RateLimiter:
 
         return False, current_count
 
+    async def check_rate_limit_algorithm(
+        self, key: str, limit: int, period: int
+    ) -> tuple[bool, int, int]:
+        """Check rate limit using configured algorithm (GCRA or Fixed Window).
+
+        Returns:
+            Tuple of (is_limited, remaining, retry_after)
+        """
+        from src.app.core.config import settings
+
+        use_gcra = getattr(settings.rate_limit, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
+
+        if use_gcra:
+            from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
+            gcra = get_gcra_rate_limiter()
+            if gcra:
+                try:
+                    result = await gcra.check_rate_limit(key, limit, period)
+                    return result.is_limited, result.remaining, int(result.retry_after)
+                except Exception as e:
+                    logger.warning("GCRA rate limit check failed: %s", e)
+                    # Fallback to fixed window handled below
+
+        # Fixed window fallback / default
+        try:
+            is_limited, current_count = await self.check_rate_limit(key, limit, period)
+            remaining = max(0, limit - current_count)
+            return is_limited, remaining, 0
+        except Exception as fallback_e:
+            logger.error("Rate limit check failed: %s", fallback_e)
+            is_limited = not getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
+            remaining = 0 if is_limited else limit
+            return is_limited, remaining, 0
+
     async def is_rate_limited(self, db: AsyncSession, user_id: int | str, path: str, limit: int, period: int) -> bool:
         sanitized_path = sanitize_path(path)
 
@@ -106,7 +140,7 @@ class RateLimiter:
         else:
             key = f"{user_id}:{sanitized_path}"
 
-        is_limited, _ = await self.check_rate_limit(key, limit, period)
+        is_limited, _, _ = await self.check_rate_limit_algorithm(key, limit, period)
         return is_limited
 
     @classmethod

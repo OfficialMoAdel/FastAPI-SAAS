@@ -773,8 +773,9 @@ class TestResetPassword:
 
         mock_user = {
             "id": 1,
-            "is_deleted": True,
-            "is_active": True,
+            "is_deleted": False,
+            "is_active": False,
+            "is_email_verified": True,
         }
 
         with patch("src.app.modules.auth.service.select"):
@@ -1024,6 +1025,7 @@ class TestVerifyEmail:
             "id": 1,
             "is_deleted": False,
             "is_active": False,
+            "is_email_verified": True,
         }
 
         with patch("src.app.modules.auth.service.select"):
@@ -1031,6 +1033,8 @@ class TestVerifyEmail:
                 with patch("src.app.modules.auth.service.get_service") as mock_get_service:
                     mock_user_service = MagicMock()
                     mock_user_service.crud.get = AsyncMock(return_value=mock_user)
+                    mock_user_service.crud.update = AsyncMock()
+                    mock_user_service._invalidate_user_cache = AsyncMock()
                     mock_get_service.return_value = mock_user_service
                     mock_db.execute = AsyncMock(return_value=mock_result)
 

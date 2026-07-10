@@ -23,7 +23,7 @@ class TestWebhookEndpointSecurity:
     async def test_webhook_endpoint_requires_authentication(self, async_client: AsyncClient, test_tenant: dict) -> None:
         """Test that webhook endpoints require authentication."""
         response = await async_client.get(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             headers={"X-Tenant-ID": test_tenant.slug},
         )
         assert response.status_code == status.HTTP_401_UNAUTHORIZED
@@ -43,7 +43,7 @@ class TestWebhookEndpointSecurity:
         }
 
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json=endpoint_data,
             headers=auth_headers,
         )
@@ -73,7 +73,7 @@ class TestWebhookEndpointSecurity:
         }
 
         response = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json=endpoint_data,
             headers=auth_headers,
         )
@@ -96,7 +96,7 @@ class TestWebhookEndpointSecurity:
         """Test that updating webhook preserves existing secret."""
         # Create endpoint
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "user.created",
@@ -133,7 +133,7 @@ class TestWebhookEndpointSecurity:
         """Test that only owner tenant can delete webhook endpoints."""
         # Create endpoint
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "user.created",
@@ -166,7 +166,7 @@ class TestWebhookEndpointSecurity:
         # Create multiple endpoints
         for i in range(5):
             await async_client.post(
-                "/api/v1/webhooks/",
+                "/api/v1/webhooks",
                 json={
                     "url": f"https://example{i}.com/webhook",
                     "event_type": f"event.{i}",
@@ -176,7 +176,7 @@ class TestWebhookEndpointSecurity:
 
         # Get first page with per_page=2
         response = await async_client.get(
-            "/api/v1/webhooks/?page=1&per_page=2",
+            "/api/v1/webhooks?page=1&per_page=2",
             headers=auth_headers,
         )
 
@@ -202,7 +202,7 @@ class TestWebhookSignature:
 
         # Create webhook endpoint
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://httpbin.org/post",
                 "event_type": "test.event",
@@ -240,7 +240,7 @@ class TestWebhookSignature:
         """Test webhook signature can be verified via test endpoint."""
         # Create endpoint
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://httpbin.org/post",
                 "event_type": "test.event",
@@ -278,7 +278,7 @@ class TestWebhookDelivery:
         """Test that webhook deliveries track status correctly."""
         # Create endpoint and trigger delivery
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://httpbin.org/post",
                 "event_type": "test.event",
@@ -317,7 +317,7 @@ class TestWebhookDelivery:
         """Test that failed deliveries can be retried."""
         # Create endpoint pointing to non-existent URL (will fail)
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "test.event",
@@ -621,7 +621,7 @@ class TestWebhookAPIKeyIntegration:
 
         # Try to create webhook with limited scope key
         response = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "test.event",
@@ -646,7 +646,7 @@ class TestWebhookAPIKeyIntegration:
         """Test that webhook and API key operations are audited."""
         # Create webhook
         webhook_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "test.event",
@@ -682,7 +682,7 @@ class TestWebhookSecurityEvents:
         """Test that webhook secret rotation is logged."""
         # Create endpoint
         create_resp = await async_client.post(
-            "/api/v1/webhooks/",
+            "/api/v1/webhooks",
             json={
                 "url": "https://example.com/webhook",
                 "event_type": "test.event",

@@ -75,6 +75,16 @@ class ChatMessageRead(BaseRead):
     token_count: int | None
 
 
+class ChatMessageCreateInternal(BaseCreate):
+    """Internal schema for persisting a chat message (includes tenant scoping)."""
+
+    session_id: int
+    tenant_id: UUID
+    role: str
+    content: str
+    token_count: int | None = None
+
+
 # =============================================================================
 # AI SETTINGS SCHEMAS
 # =============================================================================
@@ -97,6 +107,17 @@ class AISettingsRead(BaseRead):
     temperature: float
     max_tokens: int
     system_prompt: str | None
+
+
+class AISettingsCreateInternal(BaseCreate):
+    """Internal schema for persisting AI settings (includes tenant scoping)."""
+
+    user_id: int
+    tenant_id: UUID
+    model: AIModelType
+    temperature: Annotated[float, Field(ge=0.0, le=2.0)]
+    max_tokens: Annotated[int, Field(ge=1, le=32000)]
+    system_prompt: Annotated[str | None, Field(max_length=4000)] = None
 
 
 class AIModelInfo(BaseCreate):

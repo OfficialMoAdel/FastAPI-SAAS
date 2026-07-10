@@ -3,6 +3,7 @@
 Business logic for AI chat sessions, messages, and user settings.
 """
 
+import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
 from typing import Any
@@ -204,6 +205,7 @@ class ChatMessageInternal(BaseModel):
     content: str
     token_count: int | None = None
 
+
 class ChatMessageService(BaseService[AIChatMessage]):
     """Service for managing chat messages."""
 
@@ -360,12 +362,27 @@ class ChatCompletionService:
         Returns:
             Dict with assistant response, model, token_count
         """
-        logger.info("Chat completion request for session by user", session_id=session_id, user_id=user_id)
+        # M3: Removed verbose per-request logger.info to reduce logging overhead on hot path
 
-        # Sequential fetch to avoid SQLAlchemy AsyncSession concurrency issues
-        session = await self._session_service.get_session(session_id, user_id)
-        user_settings = await self._settings_service.get_or_create_settings(user_id)
-        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
+        # R5-7: Parallelize pre-LLM DB reads using dedicated short-lived DB sessions
+        # to avoid SQLAlchemy AsyncSession concurrency issues.
+        async def _fetch_session():
+            async with local_session() as db:
+                return await ChatSessionService(db).get_session(session_id, user_id)
+
+        async def _fetch_settings():
+            async with local_session() as db:
+                return await AISettingsService(db).get_or_create_settings(user_id)
+
+        async def _fetch_messages():
+            async with local_session() as db:
+                return await ChatMessageService(db).get_session_messages(session_id, limit=50)
+
+        session, user_settings, messages_result = await asyncio.gather(
+            _fetch_session(),
+            _fetch_settings(),
+            _fetch_messages(),
+        )
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -448,10 +465,26 @@ class ChatCompletionService:
 
         Yields dicts with 'content', 'done', and optionally 'token_count'.
         """
-        # Sequential fetch to avoid SQLAlchemy AsyncSession concurrency issues
-        session = await self._session_service.get_session(session_id, user_id)
-        user_settings = await self._settings_service.get_or_create_settings(user_id)
-        messages_result = await self._message_service.get_session_messages(session_id, limit=50)
+
+        # R5-7: Parallelize pre-LLM DB reads using dedicated short-lived DB sessions
+        # to avoid SQLAlchemy AsyncSession concurrency issues.
+        async def _fetch_session():
+            async with local_session() as db:
+                return await ChatSessionService(db).get_session(session_id, user_id)
+
+        async def _fetch_settings():
+            async with local_session() as db:
+                return await AISettingsService(db).get_or_create_settings(user_id)
+
+        async def _fetch_messages():
+            async with local_session() as db:
+                return await ChatMessageService(db).get_session_messages(session_id, limit=50)
+
+        session, user_settings, messages_result = await asyncio.gather(
+            _fetch_session(),
+            _fetch_settings(),
+            _fetch_messages(),
+        )
 
         model = request.model or session.get("model") or user_settings.get("model", "gemma3")
         temperature = request.temperature if request.temperature is not None else user_settings.get("temperature", 0.7)
@@ -488,6 +521,7 @@ class ChatCompletionService:
         stream_completed = False
 
         from src.app.core.tenancy.context import get_tenant_context
+
         current_tenant = get_tenant_context()
 
         try:
@@ -522,6 +556,7 @@ class ChatCompletionService:
                         try:
                             if tenant_ctx:
                                 from src.app.core.tenancy.context import set_tenant_context
+
                                 set_tenant_context(tenant_ctx)
                             async with local_session() as fresh_db:
                                 message_service = ChatMessageService(fresh_db)

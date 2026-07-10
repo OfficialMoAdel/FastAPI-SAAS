@@ -75,7 +75,7 @@ async def read_users(
 @router.get("/me", response_model=UserRead)
 async def read_users_me(
     request: Request,
-    current_user: Annotated[dict, Depends(get_current_user)],
+    current_user: Annotated[dict | Any, Depends(get_current_user)],
     service: UserService = Depends(_get_user_service),
 ) -> Any:
     """Get current authenticated user profile.
@@ -87,9 +87,16 @@ async def read_users_me(
     if isinstance(current_user, dict):
         user_id = current_user.get("id")
         username = current_user.get("username")
+        has_profile_fields = {"name", "profile_image_url"}.issubset(current_user.keys())
     else:
         user_id = getattr(current_user, "id", None)
         username = getattr(current_user, "username", None)
+        has_profile_fields = hasattr(current_user, "name") and hasattr(current_user, "profile_image_url")
+
+    # R5-1: Reuse current_user directly if it already has the full profile fields
+    # (e.g. if loaded via API key or DB fallback)
+    if has_profile_fields:
+        return current_user
 
     try:
         if user_id is not None:

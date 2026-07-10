@@ -69,7 +69,7 @@ class MicrosoftProvider(BaseOAuthProvider):
                 self.provider_user_id = str(data.get("id"))
                 self.email = data.get("mail") or data.get("userPrincipalName")
                 # Microsoft emails are typically verified
-                self.email_verified = data.get("emailVerified", True)
+                self.email_verified = data.get("emailVerified", False)
                 self.name = data.get("displayName") or data.get("givenName", "")
                 # Photo requires additional API call, keeping it None for now
                 self.picture = None

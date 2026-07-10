@@ -5,11 +5,9 @@ for storage providers that feature modules can use.
 """
 
 from io import BytesIO
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
-
-from tests.conftest import patch_setting
 
 
 class MockClientError(Exception):
@@ -132,13 +130,17 @@ class TestS3Storage:
         file_content = b"test file content"
         file_obj = BytesIO(file_content)
 
-        # Mock settings to disable streaming uploads (avoids botocore import)
-        with patch_setting("FEATURE_STREAMING_UPLOADS", False):
+        # Disable streaming uploads so the legacy path (which computes size from the
+        # spooled temp file) is exercised. patch_setting cannot reach the delegated
+        # FEATURE_STREAMING_UPLOADS flag, so patch the module-level settings directly.
+        with patch("src.app.modules.storage.s3_storage.settings") as mock_settings:
+            mock_settings.FEATURE_STREAMING_UPLOADS = False
             result = await storage.upload(file=file_obj, path="uploads/test.txt", mime_type="text/plain")
 
         assert result.success is True
         assert "uploads/test.txt" in result.path
-        assert result.size == len(file_content)
+        # Legacy path now correctly computes size (17 bytes for b"test file content").
+        assert result.size == 17
         mock_s3_client.put_object.assert_called_once()
 
     @pytest.mark.asyncio

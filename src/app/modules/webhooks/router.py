@@ -58,7 +58,7 @@ async def _validate_url_ssrf(url: str) -> None:
 
 
 @router.get(
-    "/",
+    "",
     response_model=WebhookEndpointList,
     dependencies=[Depends(requires_permission(Permission.WEBHOOKS_READ))],
 )
@@ -104,10 +104,10 @@ async def list_webhook_endpoints(
 
 
 @router.post(
-    "/",
+    "",
     response_model=WebhookEndpointCreateResponse,
     status_code=status.HTTP_201_CREATED,
-    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_MANAGE))],
+    dependencies=[Depends(requires_permission(Permission.WEBHOOKS_CREATE))],
 )
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
@@ -130,7 +130,18 @@ async def create_webhook_endpoint(
         signing_secret=request.secret,
     )
 
-    return endpoint
+    # Map the transient plaintext secrets onto the specific creation response model
+    return WebhookEndpointCreateResponse(
+        id=endpoint.id,
+        tenant_id=endpoint.tenant_id,
+        url=endpoint.url,
+        event_type=endpoint.event_type,
+        is_active=endpoint.is_active,
+        created_at=endpoint.created_at,
+        updated_at=endpoint.updated_at,
+        secret=getattr(endpoint, "_plaintext_secret", ""),
+        signing_secret=getattr(endpoint, "_plaintext_signing_secret", None),
+    )
 
 
 @router.get(

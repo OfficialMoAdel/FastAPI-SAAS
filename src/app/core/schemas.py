@@ -1,13 +1,13 @@
 import uuid as uuid_pkg
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_serializer
 from uuid6 import uuid7
 
 
 class HealthCheck(BaseModel):
-    status: str
+    status: Literal["healthy", "degraded", "unhealthy"]
     environment: str
     version: str
     timestamp: str
@@ -20,7 +20,7 @@ class MessageResponse(BaseModel):
 
 
 class ReadyCheck(BaseModel):
-    status: str
+    status: Literal["healthy", "degraded", "unhealthy"]
     environment: str
     version: str
     app: str

@@ -111,6 +111,14 @@ class RateLimitService(BaseService[RateLimit]):
         if rate_limit_exists:
             raise DuplicateError("name", rate_limit_dict["name"])
 
+        path_exists = await crud_rate_limits.exists(
+            db=self.db,
+            tier_id=db_tier["id"],
+            path=rate_limit_dict["path"]
+        )
+        if path_exists:
+            raise DuplicateError("path", f"Rate limit for path '{rate_limit_dict['path']}' already exists on this tier")
+
         rate_limit_internal = RateLimitCreateInternal(**rate_limit_dict)
         created_rate_limit = await crud_rate_limits.create(
             db=self.db, object=rate_limit_internal, schema_to_select=RateLimitRead

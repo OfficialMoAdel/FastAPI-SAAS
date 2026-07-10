@@ -406,7 +406,11 @@ return new_attempts
         )
 
         # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
-        await blacklist_token(token=refresh_token, db=db)
+        await blacklist_token(
+            token=refresh_token,
+            db=db,
+            payload=user_data.model_dump(exclude_unset=True) if user_data else None
+        )
 
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
         try:
@@ -473,7 +477,11 @@ return new_attempts
                 except (UnauthorizedException, ExpiredSignatureError):
                     pass  # Token expired or invalid, proceed with logout anyway
 
-            await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
+            await blacklist_tokens(
+                access_token=access_token,
+                refresh_token=refresh_token,
+                db=db
+            )
             response.delete_cookie(key="refresh_token")
 
             # Try to invalidate the specific session to decrement active sessions
@@ -671,16 +679,11 @@ return new_attempts
                 email = user.get("email")
                 tenant_id = user.get("tenant_id")
                 keys = []
+                from src.app.core.utils.cache import build_tenant_key
                 if username:
-                    keys.append(
-                        f"tenant:{tenant_id}:user:{username}:token_version"
-                        if tenant_id
-                        else f"user:{username}:token_version"
-                    )
+                    keys.append(build_tenant_key(f"user:{username}:token_version", tenant_id))
                 if email:
-                    keys.append(
-                        f"tenant:{tenant_id}:user:{email}:token_version" if tenant_id else f"user:{email}:token_version"
-                    )
+                    keys.append(build_tenant_key(f"user:{email}:token_version", tenant_id))
                 if keys:
                     # Fix P0.2: Forcefully overwrite the cache with the new token version
                     # to prevent stale-read race conditions that could allow old tokens.
@@ -874,10 +877,21 @@ return new_attempts
             Success message
         """
 
-        # BUG FIX: Also require is_active=True to prevent inactive accounts from
-        # verifying emails (which could restore account access without going through reactivation).
+        # BUG FIX: Allow unverified (inactive) accounts to request verification.
+        # But prevent admin-disabled (inactive AND verified) accounts from abusing this.
         user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
+        user = await user_service.crud.get(db=db, email=email, is_deleted=False)
+
+        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
+        is_email_verified = (
+            user.get("is_email_verified", False)
+            if isinstance(user, dict)
+            else getattr(user, "is_email_verified", False)
+        )
+
+        # If inactive and ALREADY verified, it means admin disabled the account. Do not send email.
+        if user and not is_active and is_email_verified:
+            user = None
 
         is_email_verified = (
             user.get("is_email_verified", False)
@@ -961,16 +975,21 @@ return new_attempts
         if not user:
             raise UnauthorizedException("User not found.")
 
-        # BUG FIX: Reject verification for inactive accounts. Without this check,
-        # an inactive user could verify their email and gain unintended access.
-        # SECURITY: Default to False (deny-by-default) if field is absent.
+        # BUG FIX: Reject verification for admin-disabled accounts.
+        # But if they are inactive ONLY because they are unverified, we activate them here.
         is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        if not is_active:
+        is_email_verified = (
+            user.get("is_email_verified", False)
+            if isinstance(user, dict)
+            else getattr(user, "is_email_verified", False)
+        )
+        if not is_active and is_email_verified:
+            # Already verified but inactive -> Admin disabled
             raise UnauthorizedException("This account is inactive. Please contact support.")
 
-        # Update user status
+        # Update user status to verified and active
         await user_service.crud.update(
-            db=db, id=verification_token.user_id, object={"is_email_verified": True}, commit=False
+            db=db, id=verification_token.user_id, object={"is_email_verified": True, "is_active": True}, commit=False
         )
 
         # Invalidate auth cache

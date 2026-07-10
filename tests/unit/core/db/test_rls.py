@@ -36,7 +36,7 @@ async def test_set_rls_context_tenant_only(mock_connection):
     await set_rls_context(mock_connection, "tenant-123")
     mock_connection.execute.assert_called_once()
     args, kwargs = mock_connection.execute.call_args
-    assert "set_config('app.current_tenant_id', :tenant_id, true)" in str(args[0])
+    assert "set_config('app.current_tenant_id', :tenant_id, false)" in str(args[0])
 
 
 @pytest.mark.asyncio
@@ -44,8 +44,8 @@ async def test_set_rls_context_tenant_and_user(mock_connection):
     await set_rls_context(mock_connection, "tenant-123", "user-123")
     mock_connection.execute.assert_called_once()
     args, kwargs = mock_connection.execute.call_args
-    assert "set_config('app.current_tenant_id', :tenant_id, true)" in str(args[0])
-    assert "set_config('app.current_user_id', :user_id, true)" in str(args[0])
+    assert "set_config('app.current_tenant_id', :tenant_id, false)" in str(args[0])
+    assert "set_config('app.current_user_id', :user_id, false)" in str(args[0])
 
 
 @pytest.mark.asyncio
@@ -60,7 +60,7 @@ async def test_clear_rls_context(mock_connection):
     await clear_rls_context(mock_connection)
     mock_connection.execute.assert_called_once()
     args, kwargs = mock_connection.execute.call_args
-    assert "set_config('app.current_tenant_id', '', true)" in str(args[0])
+    assert "set_config('app.current_tenant_id', '', false)" in str(args[0])
 
 
 @pytest.mark.asyncio

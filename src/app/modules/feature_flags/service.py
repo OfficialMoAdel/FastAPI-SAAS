@@ -211,7 +211,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Returns:
             Dictionary of feature flags
         """
-        cache_key = f"tenant:{tenant_id}:features"
+        from src.app.core.utils.cache import build_tenant_key
+        cache_key = build_tenant_key("features", tenant_id)
 
         # Try cache first
         if redis_client:
@@ -251,7 +252,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         Returns:
             True if feature is enabled, False otherwise
         """
-        cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
+        from src.app.core.utils.cache import build_tenant_key
+        cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
 
         # Try cache first
         if redis_client:
@@ -421,9 +423,10 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             return
 
         try:
-            await redis_client.delete(f"tenant:{tenant_id}:features")
+            from src.app.core.utils.cache import build_tenant_key
+            await redis_client.delete(build_tenant_key("features", tenant_id))
             if feature_name:
-                await redis_client.delete(f"tenant:{tenant_id}:feature:{feature_name}")
+                await redis_client.delete(build_tenant_key(f"feature:{feature_name}", tenant_id))
         except Exception as e:
             logger.debug("Cache invalidation failed", error=e)
 

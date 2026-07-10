@@ -64,13 +64,13 @@ async def register_begin(
     redis: Redis = Depends(async_get_redis),
 ):
     """Start passkey registration process (generate challenge)."""
-    options = await passkey_service.generate_registration_challenge(
+    options, registration_id = await passkey_service.generate_registration_challenge(
         db=db,
         user=current_user,
         device_type=request.device_type,
         redis=redis,
     )
-    return PasskeyRegistrationOptionsResponse(publicKey=options)
+    return PasskeyRegistrationOptionsResponse(publicKey=options, registration_id=registration_id)
 
 
 @router.post("/register/verify", response_model=PasskeyCredentialResponse)
@@ -85,6 +85,7 @@ async def register_complete(
         db=db,
         user=current_user,
         credential=request.credential,
+        registration_id=request.registration_id,
         redis=redis,
     )
     return credential

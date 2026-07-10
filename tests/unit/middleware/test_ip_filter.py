@@ -37,6 +37,53 @@ def mock_response():
     return Response(content='{"test":"ok"}', status_code=200)
 
 
+async def call_middleware(middleware, mock_request, mock_response=None):
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": mock_request.url.path,
+        "headers": [(k.encode(), v.encode()) for k, v in mock_request.headers.items()],
+        "state": {}
+    }
+    if getattr(mock_request.client, "host", None):
+        scope["client"] = (mock_request.client.host, 1234)
+    else:
+        scope["client"] = None
+
+    app_called = False
+    async def mock_app(scope, receive, send):
+        nonlocal app_called
+        app_called = True
+        mock_request.state.ip_whitelisted = scope.get("state", {}).get("ip_whitelisted", False)
+        if mock_response:
+            await mock_response(scope, receive, send)
+
+    middleware.app = mock_app
+
+    sent_messages = []
+    async def mock_send(message):
+        sent_messages.append(message)
+
+    class AsyncMockWithCallArgs:
+        async def __call__(self, *args, **kwargs):
+            pass
+
+    await middleware(scope, AsyncMockWithCallArgs(), mock_send)
+
+    class DummyResponse:
+        def __init__(self, msgs):
+            self.status_code = msgs[0]["status"] if msgs and msgs[0].get("type") == "http.response.start" else 500
+            self.body = b"".join(m.get("body", b"") for m in msgs if m.get("type") == "http.response.body")
+
+    response = DummyResponse(sent_messages)
+
+    call_next = AsyncMock()
+    if app_called:
+        call_next(mock_request)
+
+    return response, call_next
+
+
 @pytest.fixture
 def middleware():
     """Create IP filter middleware instance."""
@@ -132,7 +179,7 @@ class TestWhitelistEnforcement:
     @pytest.mark.asyncio
     async def test_whitelisted_ip_allowed(self, middleware, mock_request, mock_response):
         """Test that whitelisted IPs are allowed through."""
-        call_next = AsyncMock(return_value=mock_response)
+        mock_resp = mock_response
 
         # Replace MagicMock state with a SimpleNamespace to allow normal attribute assignment
         state_obj = type("State", (), {})()
@@ -142,7 +189,7 @@ class TestWhitelistEnforcement:
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -151,13 +198,12 @@ class TestWhitelistEnforcement:
     @pytest.mark.asyncio
     async def test_non_whitelisted_ip_falls_through_to_blacklist(self, middleware, mock_request, mock_response):
         """Test that non-whitelisted IPs fall through to blacklist checks when whitelist is enabled."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, False)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -165,10 +211,9 @@ class TestWhitelistEnforcement:
     @pytest.mark.asyncio
     async def test_whitelist_disabled_allows_all(self, middleware, mock_request, mock_response):
         """Test that when whitelist is disabled, all IPs are allowed."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", False):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -180,14 +225,13 @@ class TestBlacklistEnforcement:
     @pytest.mark.asyncio
     async def test_blacklisted_ip_blocked(self, middleware, mock_request):
         """Test that blacklisted IPs are blocked."""
-        call_next = AsyncMock()
-
+        mock_resp = None
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event"),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 403
             assert b"blacklisted" in response.body
@@ -196,13 +240,12 @@ class TestBlacklistEnforcement:
     @pytest.mark.asyncio
     async def test_non_blacklisted_ip_allowed(self, middleware, mock_request, mock_response):
         """Test that non-blacklisted IPs are allowed."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -210,10 +253,9 @@ class TestBlacklistEnforcement:
     @pytest.mark.asyncio
     async def test_blacklist_disabled_allows_all(self, middleware, mock_request, mock_response):
         """Test that when blacklist is disabled, all IPs are allowed."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", False):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -233,13 +275,12 @@ class TestBadBotDetection:
     async def test_sqlmap_blocked(self, middleware, mock_request):
         """Test that SQLMap user agent is blocked."""
         mock_request.headers = Headers({"user-agent": "sqlmap/1.0"})
-        call_next = AsyncMock()
-
+        mock_resp = None
         with (
             patch_setting("BAD_BOT_FILTER_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event"),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 403
             assert b"Bad bot detected" in response.body
@@ -249,13 +290,12 @@ class TestBadBotDetection:
     async def test_nikto_blocked(self, middleware, mock_request):
         """Test that Nikto user agent is blocked."""
         mock_request.headers = Headers({"user-agent": "Mozilla/5.0 (Nikto/2.1.6)"})
-        call_next = AsyncMock()
-
+        mock_resp = None
         with (
             patch_setting("BAD_BOT_FILTER_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event"),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 403
             assert b"Bad bot detected" in response.body
@@ -265,12 +305,11 @@ class TestBadBotDetection:
     async def test_normal_user_agent_allowed(self, middleware, mock_request, mock_response):
         """Test that normal browsers are allowed."""
         mock_request.headers = Headers({"user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"})
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with patch_setting(
             "BAD_BOT_FILTER_ENABLED", True, "IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", False
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -279,12 +318,11 @@ class TestBadBotDetection:
     async def test_bad_bot_filter_disabled(self, middleware, mock_request, mock_response):
         """Test that bad bot filter can be disabled."""
         mock_request.headers = Headers({"user-agent": "sqlmap/1.0"})
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with patch_setting(
             "BAD_BOT_FILTER_ENABLED", False, "IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", False
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -293,13 +331,12 @@ class TestBadBotDetection:
     async def test_nmap_blocked(self, middleware, mock_request):
         """Test that Nmap user agent is blocked."""
         mock_request.headers = Headers({"user-agent": "Nmap Scripting Engine"})
-        call_next = AsyncMock()
-
+        mock_resp = None
         with (
             patch_setting("BAD_BOT_FILTER_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event"),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 403
             call_next.assert_not_called()
@@ -311,14 +348,13 @@ class TestSecurityEventLogging:
     @pytest.mark.asyncio
     async def test_whitelist_access_logged(self, middleware, mock_request, mock_response):
         """Test that whitelist access is logged."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
             patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
         ):
-            await middleware.dispatch(mock_request, call_next)
+            _, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             mock_log.assert_called_once()
             event = mock_log.call_args[0][0]
@@ -327,14 +363,14 @@ class TestSecurityEventLogging:
     @pytest.mark.asyncio
     async def test_blacklist_block_logged(self, middleware, mock_request):
         """Test that blacklist block is logged."""
-        call_next = AsyncMock()
+        mock_resp = None
 
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
         ):
-            await middleware.dispatch(mock_request, call_next)
+            _, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             mock_log.assert_called_once()
             event = mock_log.call_args[0][0]
@@ -345,13 +381,13 @@ class TestSecurityEventLogging:
     async def test_bad_bot_logged(self, middleware, mock_request):
         """Test that bad bot detection is logged."""
         mock_request.headers = Headers({"user-agent": "sqlmap/1.0"})
-        call_next = AsyncMock()
+        mock_resp = None
 
         with (
             patch_setting("BAD_BOT_FILTER_ENABLED", True),
             patch("src.app.middleware.ip_filter.log_security_event") as mock_log,
         ):
-            await middleware.dispatch(mock_request, call_next)
+            _, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             mock_log.assert_called_once()
             event = mock_log.call_args[0][0]
@@ -367,10 +403,10 @@ class TestExemptPathBehavior:
         """Test that exempt paths skip all filtering."""
         mock_request.url.path = "/health/live"
         mock_request.headers = Headers({"user-agent": "sqlmap/1.0"})  # Would normally be blocked
-        call_next = AsyncMock(return_value=mock_response)
+        mock_resp = mock_response
 
         with patch_setting("IP_WHITELIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -380,13 +416,12 @@ class TestExemptPathBehavior:
         """Test that exempt paths allow blacklisted IPs."""
         mock_request.url.path = "/metrics"
         mock_request.client.host = "10.0.0.1"  # Blacklisted IP
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(True, False)),
             patch_setting("IP_BLACKLIST_ENABLED", True, "BAD_BOT_FILTER_ENABLED", True),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -398,13 +433,12 @@ class TestEdgeCases:
     @pytest.mark.asyncio
     async def test_whitelist_takes_priority_over_blacklist(self, middleware, mock_request, mock_response):
         """Test that whitelist takes priority when both are enabled."""
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", True),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -413,12 +447,11 @@ class TestEdgeCases:
     async def test_empty_user_agent_allowed(self, middleware, mock_request, mock_response):
         """Test that requests without user-agent are allowed."""
         mock_request.headers = Headers()
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with patch_setting(
             "BAD_BOT_FILTER_ENABLED", True, "IP_WHITELIST_ENABLED", False, "IP_BLACKLIST_ENABLED", False
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)
@@ -427,13 +460,12 @@ class TestEdgeCases:
     async def test_ipv6_address_handling(self, middleware, mock_request, mock_response):
         """Test handling of IPv6 addresses."""
         mock_request.client.host = "2001:db8::1"
-        call_next = AsyncMock(return_value=mock_response)
-
+        mock_resp = mock_response
         with (
             patch.object(middleware._filter_service, "check_ip_status", return_value=(False, True)),
             patch_setting("IP_WHITELIST_ENABLED", True, "IP_BLACKLIST_ENABLED", False),
         ):
-            response = await middleware.dispatch(mock_request, call_next)
+            response, call_next = await call_middleware(middleware, mock_request, mock_resp)
 
             assert response.status_code == 200
             call_next.assert_called_once_with(mock_request)

@@ -169,14 +169,14 @@ def _release_script_lock(release: bool = True) -> None:
 
 
 @lru_cache(maxsize=4096)
-def _token_cache_key(token: str) -> str:
+def _token_cache_key(token: str, jti: str | None = None) -> str:
     """Generate collision-resistant cache key for a token.
 
     Uses xxhash for fast hashing instead of token prefix, which is
     collision-prone for JWTs (first 20+ chars are often identical headers).
     """
     # R2 #11b: Use JTI for key if available to match blacklist members
-    member = _extract_blacklist_member(token)
+    member = _extract_blacklist_member(token, jti)
     return xxhash.xxh64(member.encode()).hexdigest()
 
 
@@ -244,22 +244,25 @@ async def _ensure_script_loaded() -> str | None:
         return None
 
 
-def _extract_blacklist_member(token: str) -> str:
+def _extract_blacklist_member(token: str, jti: str | None = None) -> str:
     """Extract the Redis sorted-set member key for a token.
 
     ``blacklist_tokens`` stores ``jti:{jti}`` (not the raw token) when a JTI
     claim is present.  This helper performs the same extraction so that lookup
     and storage always use an identical key.
     """
-    from src.app.core.security.jwt_utils import extract_jti_unverified
-
-    jti = extract_jti_unverified(token)
     if jti:
         return f"jti:{jti}"
+
+    from src.app.core.security.jwt_utils import extract_jti_unverified
+
+    extracted_jti = extract_jti_unverified(token)
+    if extracted_jti:
+        return f"jti:{extracted_jti}"
     return token
 
 
-async def is_token_blacklisted(token: str) -> bool | None:
+async def is_token_blacklisted(token: str, jti: str | None = None) -> bool | None:
     """Check if token is blacklisted using Lua script for atomic operations.
 
     Uses 2-tier check for optimal performance:
@@ -281,16 +284,16 @@ async def is_token_blacklisted(token: str) -> bool | None:
     # Resolve the member key that blacklist_tokens used when storing this token.
     # blacklist_tokens stores "jti:{jti}" when a JTI claim is present, so we
     # must use the same key here to get a cache hit.
-    blacklist_member = _extract_blacklist_member(token)
+    blacklist_member = _extract_blacklist_member(token, jti)
 
     try:
         # P0-3: Use Lua script for atomic check (4 operations → 1 roundtrip)
         script_sha = await _ensure_script_loaded()
         if script_sha is None:
             # Fallback to old implementation if script loading failed
-            return await _is_token_blacklisted_fallback(token)
+            return await _is_token_blacklisted_fallback(token, jti)
 
-        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"  # Hash for collision resistance
+        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"  # Hash for collision resistance
         now = int(time.time())
 
         try:
@@ -357,7 +360,7 @@ async def is_token_blacklisted(token: str) -> bool | None:
         return None  # Fail open - let DB check handle it
 
 
-async def _is_token_blacklisted_fallback(token: str) -> bool | None:
+async def _is_token_blacklisted_fallback(token: str, jti: str | None = None) -> bool | None:
     """Fallback implementation without Lua script (original 4-roundtrip version).
 
     Used when Lua script loading fails.
@@ -371,10 +374,10 @@ async def _is_token_blacklisted_fallback(token: str) -> bool | None:
         record_fail_open("token_blacklist_fallback")
         return None
 
-    blacklist_member = _extract_blacklist_member(token)
+    blacklist_member = _extract_blacklist_member(token, jti)
 
     try:
-        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token)}"
+        negative_key = f"{NEGATIVE_CACHE_KEY}{_token_cache_key(token, jti)}"
         if await redis_client.exists(negative_key):
             return False
 

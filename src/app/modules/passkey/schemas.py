@@ -39,6 +39,10 @@ class PasskeyRegistrationVerifyRequest(BaseModel):
         ...,
         description="WebAuthn PublicKeyCredential from browser",
     )
+    registration_id: str = Field(
+        ...,
+        description="The registration_id returned from the /register endpoint",
+    )
 
 
 # ============================================================================
@@ -52,6 +56,10 @@ class PasskeyRegistrationOptionsResponse(BaseModel):
     publicKey: dict[str, Any] = Field(
         ...,
         description="WebAuthn PublicKeyCredentialCreationOptions",
+    )
+    registration_id: str = Field(
+        ...,
+        description="Unique identifier for the registration challenge",
     )
 
 

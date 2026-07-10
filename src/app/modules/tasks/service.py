@@ -39,20 +39,30 @@ class TaskService:
         if queue.pool is None:
             raise QueueUnavailableError("Queue is not available")
 
-        job = await queue.pool.enqueue_job("sample_background_task", message, tenant_id=tenant_id)
+        import hashlib
+
+        job_id_input = f"{tenant_id}:{message}".encode()
+        deterministic_job_id = f"sample_task:{hashlib.sha256(job_id_input).hexdigest()}"
+
+        job = await queue.pool.enqueue_job(
+            "sample_background_task",
+            message,
+            tenant_id=tenant_id,
+            _job_id=deterministic_job_id,
+        )
         if job is None:
             raise ValueError("Failed to create task")
 
         return {"id": job.job_id}
 
-    async def get_task(self, task_id: str, tenant_id: str | None = None) -> dict[str, Any] | None:
+    async def get_task(self, task_id: str, tenant_id: str) -> dict[str, Any] | None:
         """Get information about a specific background task.
 
         Parameters
         ----------
         task_id : str
             The ID of the task
-        tenant_id : str | None
+        tenant_id : str
             The tenant ID to verify ownership Against
 
         Returns
@@ -64,7 +74,12 @@ class TaskService:
         ------
         QueueUnavailableError
             If queue is not available
+        ValueError
+            If tenant_id is missing
         """
+        if not tenant_id:
+            raise ValueError("tenant_id is required for task isolation")
+
         if queue.pool is None:
             raise QueueUnavailableError("Queue is not available")
 
@@ -73,8 +88,8 @@ class TaskService:
         if job_info is None:
             return None
 
-        # Enforce tenant isolation if tenant_id is provided
-        if tenant_id and job_info.kwargs.get("tenant_id") != tenant_id:
+        # Enforce tenant isolation
+        if job_info.kwargs.get("tenant_id") != tenant_id:
             return None
 
         # Get the current status from ARQ

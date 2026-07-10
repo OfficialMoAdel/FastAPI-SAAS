@@ -263,8 +263,12 @@ class EventBus:
                 logger.debug("Event published no handlers", event_name=event_name)
                 return
 
-            # Get sequence number for ordering guarantees
-            sequence = await self.get_next_sequence(event_name)
+            # R5-10: Gate get_next_sequence behind a setting or consumer check
+            # Avoids hitting Redis on every single event unless strict ordering is explicitly required
+            if getattr(settings, "EVENT_BUS_REQUIRE_STRICT_ORDERING", False):
+                sequence = await self.get_next_sequence(event_name)
+            else:
+                sequence = 0
 
             # SECURITY FIX: Capture tenant context if available to propagate to background tasks
             # This is critical for RLS-enabled database operations in worker processes.
@@ -574,6 +578,7 @@ class EventBus:
 
                     # Add to pipeline: SETEX job_def, ZADD queue
                     # 24h expiration + extra ms
+                    # M3: 86400000 is 1 day. Fix expires_ms default
                     expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 86400000)
 
                     pipe.psetex(job_key, expires_ms, job_data)

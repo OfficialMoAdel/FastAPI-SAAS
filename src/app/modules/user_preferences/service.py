@@ -130,11 +130,6 @@ class PreferencesService:
         logger.debug("Updating preferences for user :", user_id=user_id, update_dict=update_dict)
 
         # Update preferences
-        if "email_notifications_enabled" in update_dict:
-            # Handle explicit columns if they are in the update dict
-            # We need to separate JSONB updates from column updates if passing to crud.update
-            # But fastcrud handles it if the model has the columns.
-            pass
 
         prefs = await crud_user_preferences.update_preferences(
             db=db,

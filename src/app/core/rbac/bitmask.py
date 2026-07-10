@@ -111,7 +111,10 @@ class PermissionBitmask:
         """
         mask = 0
         for slug in permission_slugs:
-            mask |= PermissionBitmask.get_bit(slug)
+            try:
+                mask |= PermissionBitmask.get_bit(slug)
+            except KeyError:
+                continue
         return mask
 
     @staticmethod

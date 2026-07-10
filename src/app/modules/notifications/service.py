@@ -59,7 +59,8 @@ class NotificationService:
             Tuple of (subject, html_content)
         """
         # Try cache first to avoid N+1 queries
-        cache_key = f"tenant:{tenant_id}:email_template:{template_name}"
+        from src.app.core.utils.cache import build_tenant_key
+        cache_key = build_tenant_key(f"email_template:{template_name}", tenant_id)
         if redis_client:
             try:
                 cached = await redis_client.get(cache_key)
@@ -93,7 +94,13 @@ class NotificationService:
             # so that render_template() can fill variables later.
             try:
                 # Non-blocking template loading with thread pool (validates the template exists)
-                await asyncio.to_thread(jinja_env.get_template, f"{template_name}.html.jinja2")
+                template_file = f"{template_name}.html.jinja2"
+                try:
+                    await asyncio.to_thread(jinja_env.get_template, template_file)
+                except Exception:
+                    template_file = f"{template_name}.html"
+                    await asyncio.to_thread(jinja_env.get_template, template_file)
+
                 # Default subject from template name
                 subject = template_name.replace("_", " ").title()
                 # Return the raw Jinja2 source via the loader.
@@ -101,7 +108,7 @@ class NotificationService:
                 # jinja_env.loader is always a FileSystemLoader (set at module init), never None.
                 assert jinja_env.loader is not None
                 raw_source, _, _ = await asyncio.to_thread(
-                    jinja_env.loader.get_source, jinja_env, f"{template_name}.html.jinja2"
+                    jinja_env.loader.get_source, jinja_env, template_file
                 )
                 data = (subject, raw_source)
             except Exception as e:
@@ -435,7 +442,8 @@ class NotificationService:
 
             # Invalidate cache
             if redis_client:
-                await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
+                from src.app.core.utils.cache import build_tenant_key
+                await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
             return existing
 
@@ -452,7 +460,8 @@ class NotificationService:
 
         # Invalidate cache
         if redis_client:
-            await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
+            from src.app.core.utils.cache import build_tenant_key
+            await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
         return override
 
@@ -473,7 +482,8 @@ class NotificationService:
 
         # Invalidate cache
         if redis_client:
-            await redis_client.delete(f"tenant:{tenant_id}:email_template:{template_name}")
+            from src.app.core.utils.cache import build_tenant_key
+            await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
         return True
 
@@ -674,17 +684,7 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
         from src.app.core.db.rls import rls_context
 
         async with local_session() as db:
-            if tenant_id_str:
-                async with rls_context(db, tenant_id_str):
-                    service = NotificationService(db)
-                    await service.send_email(
-                        tenant_id=tenant_id,
-                        to_email=to_email,
-                        template_name=template_name,
-                        context=data.get("context", {}),
-                        user_id=data.get("user_id"),
-                    )
-            else:
+            async with rls_context(db, tenant_id_str or ""):
                 service = NotificationService(db)
                 await service.send_email(
                     tenant_id=tenant_id,

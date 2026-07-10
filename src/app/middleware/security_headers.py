@@ -10,9 +10,6 @@ Adds standard security headers to all responses:
 - Permissions-Policy
 """
 
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.requests import Request
-from starlette.responses import Response
 from structlog import get_logger
 
 from src.app.core.config import EnvironmentOption, settings
@@ -20,7 +17,7 @@ from src.app.core.config import EnvironmentOption, settings
 logger = get_logger(__name__)
 
 
-class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+class SecurityHeadersMiddleware:
     """Add security headers to all responses.
 
     Configurable via settings or constructor parameters.
@@ -57,7 +54,7 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
             csp_policy: Custom CSP policy string (or use default)
             frame_options: X-Frame-Options value (DENY, SAMEORIGIN)
         """
-        super().__init__(app)
+        self.app = app
         self.enable_hsts = enable_hsts
         self.hsts_max_age = hsts_max_age
         self.enable_csp = enable_csp
@@ -67,38 +64,33 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         # Only enable HSTS in production (requires HTTPS)
         self.is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        """Add security headers to response."""
-        response: Response = await call_next(request)
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
 
-        # XSS Prevention Headers
-        response.headers["X-Content-Type-Options"] = "nosniff"
-        response.headers["X-Frame-Options"] = self.frame_options
-        # OWASP: Set to "0" to disable the browser's broken XSS auditor.
-        # "1; mode=block" is deprecated and can be exploited by attackers.
-        response.headers["X-XSS-Protection"] = "0"
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                from starlette.datastructures import MutableHeaders
+                headers = MutableHeaders(scope=message)
 
-        # Referrer Policy - don't leak full URL to external sites
-        response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+                # XSS Prevention Headers
+                headers.append("X-Content-Type-Options", "nosniff")
+                headers.append("X-Frame-Options", self.frame_options)
+                headers.append("X-XSS-Protection", "0")
+                headers.append("Referrer-Policy", "strict-origin-when-cross-origin")
+                headers.append("Permissions-Policy", (
+                    "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
+                    "magnetometer=(), microphone=(), payment=(), usb=()"
+                ))
 
-        # Permissions Policy - disable potentially dangerous browser features
-        response.headers["Permissions-Policy"] = (
-            "accelerometer=(), "
-            "camera=(), "
-            "geolocation=(), "
-            "gyroscope=(), "
-            "magnetometer=(), "
-            "microphone=(), "
-            "payment=(), "
-            "usb=()"
-        )
+                if self.enable_csp:
+                    headers.append("Content-Security-Policy", self.csp_policy)
 
-        # Content-Security-Policy
-        if self.enable_csp:
-            response.headers["Content-Security-Policy"] = self.csp_policy
+                if self.enable_hsts and self.is_production:
+                    headers.append(
+                        "Strict-Transport-Security", f"max-age={self.hsts_max_age}; includeSubDomains; preload"
+                    )
 
-        # HSTS - only in production (HTTPS required)
-        if self.enable_hsts and self.is_production:
-            response.headers["Strict-Transport-Security"] = f"max-age={self.hsts_max_age}; includeSubDomains; preload"
+            await send(message)
 
-        return response
+        await self.app(scope, receive, send_wrapper)

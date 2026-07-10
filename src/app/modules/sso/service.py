@@ -98,7 +98,7 @@ class SSOService:
 
         if not redirect_uri:
             base_url = str(request.base_url).rstrip("/")
-            redirect_uri = f"{base_url}/api/v1/auth/sso/{provider}/callback"
+            redirect_uri = f"{base_url}/api/v1/account/sso/{provider}/callback"
 
         tenant = get_tenant_context()
         extra_data: dict[str, Any] = {"tenant_id": tenant.id} if tenant else {}
@@ -223,10 +223,15 @@ class SSOService:
                 logger.error("SSO User Info Fetch Failed", error=str(e), provider=provider)
                 raise BadRequestException("Failed to fetch user info from provider")
 
+            current_tenant = get_tenant_context()
+            if not current_tenant:
+                raise BadRequestException("Cannot process SSO login without tenant context")
+
             connection = await crud_user_sso_connections.get_by_provider_user_id(
                 db=db,
                 provider=provider,
                 provider_user_id=user_info.provider_user_id,
+                tenant_id=current_tenant.id,
             )
 
             found_user_data = None
@@ -284,9 +289,12 @@ class SSOService:
                     user_by_email = await get_service("user", db).get_by_email(user_info.email)
 
                     if user_by_email:
-                        found_user_data = user_by_email
-                        user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
-                        await self._link_account(db, user_id, provider, user_info)
+                        # M27: Security - prevent account takeover via IdP
+                        raise BadRequestException(
+                            "An account with this email already exists. "
+                            "Please log in using your existing credentials and "
+                            "link this provider in your account settings."
+                        )
                     else:
                         current_tenant = get_tenant_context()
                         if not current_tenant:
@@ -472,47 +480,55 @@ class SSOService:
 
     async def _create_sso_user(self, db: AsyncSession, user_info: Any) -> Any:
         """Create a new user from SSO data."""
-        # Generate a 23-char random password that satisfies complexity rules:
-        # at least 1 uppercase, 1 lowercase, 1 digit, 1 special char - all random.
         import secrets
         import string
 
-        _upper = string.ascii_uppercase
-        _lower = string.ascii_lowercase
-        _digits = string.digits
-        _special = "!@#$%^&*"
-        _all = _upper + _lower + _digits + _special
-        # Guarantee at least one of each required class, then fill the rest randomly
-        _required = [
-            secrets.choice(_upper),
-            secrets.choice(_lower),
-            secrets.choice(_digits),
-            secrets.choice(_special),
-        ]
-        _rest = [secrets.choice(_all) for _ in range(19)]
-        _combined = _required + _rest
-        secrets.SystemRandom().shuffle(_combined)
-        password = "".join(_combined)
+        from src.app.core.exceptions.http_exceptions import DuplicateValueException
+        from src.app.core.service_registry import get_service
 
         base_username = user_info.email.split("@")[0]
         # Ensure username is lowercase and alphanumeric
         clean_base = "".join(c for c in base_username if c.isalnum()).lower()
-        random_suffix = "".join(secrets.choice(_lower + _digits) for _ in range(4))
-        username = f"{clean_base}{random_suffix}"[:30]  # Limit length
-
-        user_in = UserCreate(
-            email=user_info.email,
-            username=username,
-            password=password,
-            name=user_info.name or base_username,
-        )
-
-        # Use service registry for cross-module decoupling
-        from src.app.core.service_registry import get_service
 
         user_svc = get_service("user", db)
-        result = await user_svc.create(user=user_in)
-        return result
+
+        # M26: Retry loop for username collisions
+        max_retries = 3
+        for attempt in range(max_retries):
+            random_suffix = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(4))
+            username = f"{clean_base}{random_suffix}"[:30]  # Limit length
+
+            user_in = UserCreate(
+                email=user_info.email,
+                username=username,
+                password="TemporaryPassword123!",
+                name=user_info.name or base_username,
+            )
+
+            try:
+                result = await user_svc.create(user=user_in)
+
+                # Overwrite hashed_password with sentinel string so no valid password exists
+                await user_svc.crud.update(
+                    db=db,
+                    id=result.id,
+                    object={"hashed_password": "!SSO_ONLY_ACCOUNT_NO_PASSWORD"},
+                    commit=True
+                )
+
+                return result
+            except DuplicateValueException as e:
+                # If email duplicate, it should have been caught earlier or it's a real collision
+                if "email" in str(e).lower():
+                    raise
+                # If username duplicate, try again
+                if attempt == max_retries - 1:
+                    raise BadRequestException("Failed to generate a unique username. Please try again.")
+                logger.warning(
+                    "Username collision during SSO registration",
+                    username=username,
+                    attempt=attempt + 1
+                )
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
         """List all available SSO providers with their status."""

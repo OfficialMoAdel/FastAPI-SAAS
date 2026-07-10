@@ -119,15 +119,15 @@ async def set_rls_context(
             await connection.execute(
                 text(f"""
                     SELECT
-                        set_config('{RLS_TENANT_VAR}', :tenant_id, true),
-                        set_config('{RLS_USER_VAR}', :user_id, true)
+                        set_config('{RLS_TENANT_VAR}', :tenant_id, false),
+                        set_config('{RLS_USER_VAR}', :user_id, false)
                 """),
                 {"tenant_id": tenant_id, "user_id": user_id},
             )
             logger.debug("RLS context set", tenant_id=tenant_id, user_id=user_id)
         else:
             await connection.execute(
-                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, true)"),
+                text(f"SELECT set_config('{RLS_TENANT_VAR}', :tenant_id, false)"),
                 {"tenant_id": tenant_id},
             )
             logger.debug("RLS context set", tenant_id=tenant_id)
@@ -164,9 +164,9 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
         await connection.execute(
             text(f"""
                 SELECT
-                    set_config('{RLS_TENANT_VAR}', '', true),
-                    set_config('{RLS_USER_VAR}', '', true),
-                    set_config('{RLS_BYPASS_VAR}', '', true)
+                    set_config('{RLS_TENANT_VAR}', '', false),
+                    set_config('{RLS_USER_VAR}', '', false),
+                    set_config('{RLS_BYPASS_VAR}', '', false)
             """)
         )
         logger.debug("RLS context cleared")

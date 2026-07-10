@@ -59,6 +59,7 @@ dependencies = [
     "openai>=1.0.0",
     "anthropic>=0.20.0",
     "filetype>=1.2.0",
+    "pytest-timeout>=2.4.0",
 ]
 
 [project.optional-dependencies]
@@ -151,6 +152,12 @@ filterwarnings = [
 ]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# Prevent the suite from hanging forever on a leaked task/connection.
+# A true hang (never completes) will be killed and dump a traceback showing
+# the exact blocking call. 300s is ~400x the per-test average, so it only
+# fires on genuine hangs, not slow tests.
+timeout = 300
+timeout_method = "thread"
 markers = [
     "e2e: marks tests as end-to-end tests (require full stack)",
     "uses_real_redis: marks tests that require a real Redis instance",

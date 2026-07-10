@@ -68,14 +68,15 @@ class TestPasskeyServiceChallengeGeneration:
             ) as mock_can_create:
                 mock_can_create.return_value = True
 
-                result = await service.generate_registration_challenge(
+                result, registration_id = await service.generate_registration_challenge(
                     db=mock_db,
                     user=mock_user,
                     device_type="Test Device",
                 )
 
-                # Should return dict with WebAuthn options
-                assert "publicKey" in result or "challenge" in result
+                # Should return dict with WebAuthn options (now returns (options, registration_id))
+                assert "challenge" in result
+                assert isinstance(registration_id, str)
 
     @pytest.mark.asyncio
     async def test_generate_registration_challenge_stores_challenge(self):
@@ -252,6 +253,7 @@ class TestPasskeyServiceVerification:
                     db=mock_db,
                     user=mock_user,
                     credential={"response": {}},
+                    registration_id="test-registration-id",
                 )
 
             assert "challenge" in str(exc_info.value.detail).lower() or "expired" in str(exc_info.value.detail).lower()
@@ -269,6 +271,7 @@ class TestPasskeyServiceVerification:
         mock_challenge_data = {
             "challenge": b"test-challenge",
             "device_type": "Test Device",
+            "user_id": 1,
         }
 
         with patch.object(service, "_get_stored_challenge", new_callable=AsyncMock) as mock_get_challenge:
@@ -297,6 +300,7 @@ class TestPasskeyServiceVerification:
                                 },
                                 "type": "public-key",
                             },
+                            registration_id="test-registration-id",
                             redis=AsyncMock(),
                         )
 
@@ -315,6 +319,7 @@ class TestPasskeyServiceVerification:
         mock_challenge_data = {
             "challenge": b"test-challenge",
             "device_type": "Test Device",
+            "user_id": 1,
         }
 
         with patch.object(service, "_get_stored_challenge", new_callable=AsyncMock) as mock_get_challenge:
@@ -343,6 +348,7 @@ class TestPasskeyServiceVerification:
                                 },
                                 "type": "public-key",
                             },
+                            registration_id="test-registration-id",
                             redis=AsyncMock(),
                         )
 
@@ -706,12 +712,14 @@ async def test_store_challenge():
 
     mock_redis = AsyncMock()
 
-    await service._store_challenge(mock_redis, user_id=1, challenge=b"test-challenge", device_type="Test Device")
+    await service._store_challenge(
+        mock_redis, registration_id=1, challenge=b"test-challenge", device_type="Test Device", user_id=1
+    )
 
     # Verify redis.setex was called
     mock_redis.setex.assert_called_once()
     call_args = mock_redis.setex.call_args
-    assert "passkey:challenge:1" in str(call_args)
+    assert "passkey:reg_challenge:1" in str(call_args)
 
 
 @pytest.mark.asyncio
@@ -725,7 +733,7 @@ async def test_get_stored_challenge():
     # Mock the Lua script returning a JSON string
     mock_redis.eval = AsyncMock(return_value='{"challenge": "test", "device_type": "Test"}')
 
-    result = await service._get_stored_challenge(mock_redis, user_id=1)
+    result = await service._get_stored_challenge(mock_redis, registration_id=1)
 
     assert result is not None
     assert "challenge" in result
@@ -741,7 +749,7 @@ async def test_get_stored_challenge_not_found():
     mock_redis = AsyncMock()
     mock_redis.eval = AsyncMock(return_value=None)
 
-    result = await service._get_stored_challenge(mock_redis, user_id=1)
+    result = await service._get_stored_challenge(mock_redis, registration_id=1)
 
     assert result is None
 
@@ -755,7 +763,7 @@ async def test_delete_challenge():
 
     mock_redis = AsyncMock()
 
-    await service._delete_challenge(mock_redis, user_id=1)
+    await service._delete_challenge(mock_redis, registration_id=1)
 
     mock_redis.delete.assert_called_once()
 

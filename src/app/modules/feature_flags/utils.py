@@ -36,7 +36,8 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
         DeprecationWarning,
         stacklevel=2,
     )
-    cache_key = f"tenant:{tenant_id}:feature:{feature_name}"
+    from src.app.core.utils.cache import build_tenant_key
+    cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
 
     # Try cache first
     if redis_client:
@@ -83,7 +84,8 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
         DeprecationWarning,
         stacklevel=2,
     )
-    cache_key = f"tenant:{tenant_id}:features"
+    from src.app.core.utils.cache import build_tenant_key
+    cache_key = build_tenant_key("features", tenant_id)
 
     # Try cache first
     if redis_client:
@@ -160,10 +162,11 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
     # Invalidate cache
     if redis_client:
         try:
+            from src.app.core.utils.cache import build_tenant_key
             # Delete specific feature key
-            await redis_client.delete(f"tenant:{tenant_id}:feature:{feature_name}")
+            await redis_client.delete(build_tenant_key(f"feature:{feature_name}", tenant_id))
             # Delete all features key
-            await redis_client.delete(f"tenant:{tenant_id}:features")
+            await redis_client.delete(build_tenant_key("features", tenant_id))
         except Exception as e:
             logger.debug("Cache invalidation failed", error=e)
 
@@ -216,11 +219,12 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     # Invalidate cache
     if redis_client:
         try:
+            from src.app.core.utils.cache import build_tenant_key
             # Delete all features key
-            await redis_client.delete(f"tenant:{tenant_id}:features")
+            await redis_client.delete(build_tenant_key("features", tenant_id))
 
             # Delete individual keys for updated flags
-            keys_to_delete = [f"tenant:{tenant_id}:feature:{k}" for k in flags]
+            keys_to_delete = [build_tenant_key(f"feature:{k}", tenant_id) for k in flags]
             if keys_to_delete:
                 await redis_client.delete(*keys_to_delete)
         except Exception as e:

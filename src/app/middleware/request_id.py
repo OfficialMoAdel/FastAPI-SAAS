@@ -8,10 +8,8 @@ Generates a unique request ID for each request and adds it to:
 
 import re
 import uuid
-from collections.abc import Callable
 
-from fastapi import Request, Response
-from starlette.middleware.base import BaseHTTPMiddleware
+from fastapi import Request
 from structlog import get_logger
 
 logger = get_logger(__name__)
@@ -19,7 +17,10 @@ logger = get_logger(__name__)
 REQUEST_ID_HEADER = "X-Request-ID"
 
 
-class RequestIDMiddleware(BaseHTTPMiddleware):
+from starlette.datastructures import MutableHeaders
+
+
+class RequestIDMiddleware:
     """Middleware to generate and track request IDs for tracing.
 
     Features:
@@ -29,9 +30,14 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
     - Makes request ID available via request.state.request_id
     """
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
-        """Process request and add request ID."""
-        # Use existing header or generate new ID
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            return await self.app(scope, receive, send)
+
+        request = Request(scope, receive, send)
         request_id = request.headers.get(REQUEST_ID_HEADER)
 
         # Validate request_id to prevent log injection (M-02)
@@ -53,9 +59,10 @@ class RequestIDMiddleware(BaseHTTPMiddleware):
             path=request.url.path,
         )
 
-        response: Response = await call_next(request)
+        async def send_wrapper(message):
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers.append(REQUEST_ID_HEADER, request_id)
+            await send(message)
 
-        # Add to response headers
-        response.headers[REQUEST_ID_HEADER] = request_id
-
-        return response
+        await self.app(scope, receive, send_wrapper)

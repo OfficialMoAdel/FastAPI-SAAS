@@ -21,8 +21,6 @@ from src.app.core.logger import get_logger
 from src.app.core.security.auto_ban import check_and_auto_ban, get_ban_info, is_ip_banned
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
-from src.app.core.security.token_blacklist_cache import is_token_blacklisted
-from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 
@@ -39,6 +37,7 @@ TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
 
 # Default for users without tier or unknown tier
 DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
+DEFAULT_ANONYMOUS_LIMIT = (10, 3600)  # 10 requests per hour
 
 
 class RateLimitMiddleware(BaseHTTPMiddleware):
@@ -117,38 +116,7 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         limit, period, key = await self._get_rate_limit_config(request)
 
         # Check rate limit using configured algorithm
-        use_gcra = getattr(settings.rate_limit, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
-
-        if use_gcra:
-            gcra = get_gcra_rate_limiter()
-            if gcra:
-                try:
-                    result = await gcra.check_rate_limit(key, limit, period)
-                    is_limited = result.is_limited
-                    remaining = result.remaining
-                    retry_after = int(result.retry_after)
-                except Exception as e:
-                    logger.warning("GCRA rate limit check failed: %s", e)
-                    # Fallback to fixed window
-                    try:
-                        is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
-                        remaining = max(0, limit - current_count)
-                        retry_after = 0
-                    except Exception as fallback_e:
-                        logger.error("Rate limit fallback check failed: %s", fallback_e)
-                        is_limited = not getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
-                        remaining = 0 if is_limited else limit
-                        retry_after = 0
-            else:
-                # GCRA not initialized, fall back to fixed window
-                is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
-                remaining = max(0, limit - current_count)
-                retry_after = 0
-        else:
-            # Fixed window algorithm
-            is_limited, current_count = await rate_limiter.check_rate_limit(key, limit, period)
-            remaining = max(0, limit - current_count)
-            retry_after = 0
+        is_limited, remaining, retry_after = await rate_limiter.check_rate_limit_algorithm(key, limit, period)
 
         headers = {
             "X-RateLimit-Limit": str(limit),
@@ -157,8 +125,10 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         }
 
         if is_limited:
+            if retry_after == 0:
+                retry_after = period - (int(time.time()) % period)
             if retry_after > 0:
-                headers["Retry-After"] = str(int(retry_after) + 1)
+                headers["Retry-After"] = str(int(retry_after))
             logger.warning("Rate limit exceeded | key=%s | limit=%s | period=%s", key, limit, period)
 
             # AUTO-BAN: Track violations and ban repeat offenders
@@ -257,10 +227,16 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
         # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
         if user_id and token:
-            is_blacklisted = await is_token_blacklisted(token)
-            request.state.is_token_blacklisted = is_blacklisted
+            from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+
+            # Use JTI if available to avoid re-parsing token
+            jti = cached_payload.get("jti") if cached_payload else None
+            is_blacklisted = await is_token_blacklisted(token, jti=jti)
+
+            # Store in state so `auth.py` (deps) can reuse the result (R5-3)
+            request.state.is_token_blacklisted = is_blacklisted is True
+
             if is_blacklisted:
-                # Token is blacklisted - downgrade to anonymous limits
                 logger.info(
                     "Blacklisted token detected in rate limiter | user_id=%s | treating as anonymous",
                     user_id,
@@ -268,27 +244,47 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 user_id = None
                 tier_name = None
 
-        if user_id:
-            # Authenticated user - use tier-based limits
-            # If we successfully identified the user (via state or JWT), we use their specific key
-            if tier_name:
-                limit, period = TIER_RATE_LIMITS.get(tier_name.lower(), DEFAULT_AUTHENTICATED_LIMIT)
-            else:
-                limit, period = DEFAULT_AUTHENTICATED_LIMIT
-            # SECURITY FIX: Include tenant_id in key so tenants never share rate limit counters.
-            # Without this, user IDs that happen to collide across tenants share the same bucket.
-            if tenant_id:
-                key = f"tenant:{tenant_id}:user:{user_id}"
-            else:
-                key = f"user:{user_id}"
+        # 4. Resolve limits
+        from src.app.core.security.rate_limit_cache import get_tier_policy
+        from src.app.modules.rate_limits.schemas import sanitize_path
+
+        path = sanitize_path(request.url.path)
+        limit = None
+        period = None
+
+        if tier_name and user_id:
+            try:
+                tier_id_raw = user.get("tier_id") if isinstance(user, dict) else getattr(user, "tier_id", None)
+                tier_id_val = int(tier_id_raw) if tier_id_raw is not None else 0
+                if tier_id_val:
+                    tier_policies = await get_tier_policy(tier_id_val)
+                    if tier_policies:
+                        for policy in tier_policies:
+                            if policy.get("path") == path:
+                                limit = policy.get("limit")
+                                period = policy.get("period")
+                                break
+            except (ValueError, TypeError, AttributeError):
+                pass
+
+        if limit is None or period is None:
+            # Fallback to hardcoded tier config
+            resolved_tier = tier_name.lower() if tier_name else "anonymous"
+            limit_config = TIER_RATE_LIMITS.get(resolved_tier)
+            if limit_config is None:
+                limit_config = DEFAULT_AUTHENTICATED_LIMIT if user_id else DEFAULT_ANONYMOUS_LIMIT
+
+            limit, period = limit_config
+
+        if not user_id:
+            # For anonymous users, use IP address
+            client_ip = request.client.host if request.client else "unknown"
+            key = f"rate_limit:anonymous:ip:{client_ip}:{path}"
         else:
-            # Unauthenticated - use IP + tenant so different tenants on same IP aren't pooled.
-            limit = settings.rate_limit.DEFAULT_RATE_LIMIT_LIMIT
-            period = settings.rate_limit.DEFAULT_RATE_LIMIT_PERIOD
-            if tenant_id:
-                key = f"tenant:{tenant_id}:ip:{get_client_ip(request)}"
-            else:
-                key = f"ip:{get_client_ip(request)}"
+            # For authenticated users, scope by tenant if available
+            from src.app.core.utils.cache import build_tenant_key
+            base_key = f"rate_limit:user:{user_id}:{path}"
+            key = build_tenant_key(base_key, tenant_id)
 
         return limit, period, key
 

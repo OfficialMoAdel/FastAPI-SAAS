@@ -79,7 +79,7 @@ class User(Base, kw_only=True):
     is_deleted: Mapped[bool] = mapped_column(default=False, index=True)
     is_superuser: Mapped[bool] = mapped_column(default=False)
     is_email_verified: Mapped[bool] = mapped_column(default=False)
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     token_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)

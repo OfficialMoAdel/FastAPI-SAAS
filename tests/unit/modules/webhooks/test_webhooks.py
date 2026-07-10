@@ -197,6 +197,7 @@ async def test_trigger_webhooks_enqueues_job(service, mock_db):
     mock_endpoint.id = uuid4()
     mock_endpoint.secret = encrypted_secret
     mock_endpoint.signing_secret = "test_signing_secret"  # Add signing_secret
+    mock_endpoint.event_type = event_type  # Required for get_active_endpoints glob match
     mock_endpoint.tenant_id = tenant_id
     mock_endpoint_result = MagicMock()
     mock_endpoint_result.scalars.return_value.all.return_value = [mock_endpoint]

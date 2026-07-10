@@ -32,8 +32,8 @@ class TestS3AsyncUpload:
                 file = BytesIO(b"test content")
                 await storage.upload(file, "test-key.txt", "text/plain")
 
-                # Verify asyncio.to_thread was called
-                mock_to_thread.assert_called_once()
+                # Verify asyncio.to_thread was called (legacy path: file.read + put_object)
+                assert mock_to_thread.call_count == 2
 
     @pytest.mark.asyncio
     async def test_event_loop_responsive_during_upload(self) -> None:

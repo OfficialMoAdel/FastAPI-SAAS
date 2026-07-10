@@ -43,6 +43,24 @@ stampede_logger: Any = get_logger("src.app.core.utils.cache.stampede")
 # Tenant-Scoped Cache Utilities
 # =============================================================================
 
+from uuid import UUID
+
+
+def build_tenant_key(key: str, tenant_id: int | str | UUID | None = None) -> str:
+    """Build a cache key, optionally prepending tenant isolation if present.
+
+    Args:
+        key: Base cache key
+        tenant_id: Optional tenant identifier
+
+    Returns:
+        Tenant-scoped cache key or original key
+    """
+    if tenant_id:
+        if key.startswith(f"tenant:{tenant_id}:"):
+            return key
+        return f"tenant:{tenant_id}:{key}"
+    return key
 
 def tenant_cache_key(tenant_id: int | str, prefix: str, *key_parts: str | int) -> str:
     """Build a tenant-scoped cache key.
@@ -999,7 +1017,7 @@ def cache(
 
                     await pipe.execute()
 
-                return result  # Return original result, not re-parsed
+                return Response(content=serialized_data, media_type="application/json")
 
             else:
                 # OPT-6: Pipeline cache invalidation (N deletes → 1 roundtrip)

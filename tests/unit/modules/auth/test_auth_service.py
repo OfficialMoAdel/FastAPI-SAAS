@@ -336,7 +336,8 @@ class TestAuthServiceTokenRefresh:
 
             # Verify Rotation Logic
             # 1. Old token blacklisted
-            mock_blacklist.assert_called_once_with(token="valid_refresh_token", db=mock_db)
+            from unittest.mock import ANY
+            mock_blacklist.assert_called_once_with(token="valid_refresh_token", db=mock_db, payload=ANY)
 
             # 2. New refresh token created
             mock_create_refresh.assert_called_once()

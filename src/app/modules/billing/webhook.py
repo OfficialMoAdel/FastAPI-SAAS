@@ -855,35 +855,56 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         user_id = db_subscription.user_id
         subscription_id = db_subscription.id
 
-    # Create billing record with refunded status
-    refund_amount = charge.get("amount_refunded", 0)
-    billing_record = BillingRecordCreateInternal(
-        tenant_id=tenant_id,
-        user_id=user_id,
-        user_subscription_id=subscription_id,
-        stripe_payment_intent_id=stripe_payment_intent_id,
-        stripe_invoice_id=stripe_invoice_id,
-        amount_cents=-refund_amount,  # Negative amount for refund
-        currency=charge["currency"],
-        status="refunded",
-        description=f"Refund processed for charge {charge['id']}",
-    )
-
     async with job_tenant_context(tenant_id) as db:
-        # Check if refund billing record already exists to prevent duplicate inserts
-        # Use description matching or amount/status for idempotency since we don't have a refund ID column
-        if await crud_billing_records.exists(
-            db=db,
-            stripe_payment_intent_id=stripe_payment_intent_id,
-            status="refunded",
-        ):
-            logger.info("Refund billing record already exists, skipping duplicate insert")
-            return
+        refunds = charge.get("refunds", {}).get("data", [])
 
-        await crud_billing_records.create(
-            db=db,
-            object=billing_record,
-        )
+        if not refunds:
+            # Fallback if refunds array is missing
+            refund_amount = charge.get("amount_refunded", 0)
+            if await crud_billing_records.exists(
+                db=db,
+                stripe_payment_intent_id=stripe_payment_intent_id,
+                status="refunded",
+                amount_cents=-refund_amount,
+            ):
+                logger.info("Refund billing record already exists, skipping duplicate insert")
+                return
+
+            billing_record = BillingRecordCreateInternal(
+                tenant_id=tenant_id,
+                user_id=user_id,
+                user_subscription_id=subscription_id,
+                stripe_payment_intent_id=stripe_payment_intent_id,
+                stripe_invoice_id=stripe_invoice_id,
+                amount_cents=-refund_amount,
+                currency=charge["currency"],
+                status="refunded",
+                description=f"Refund processed for charge {charge['id']}",
+            )
+            await crud_billing_records.create(db=db, object=billing_record)
+        else:
+            for refund in refunds:
+                refund_id = refund["id"]
+                if await crud_billing_records.exists(
+                    db=db,
+                    stripe_refund_id=refund_id,
+                ):
+                    continue
+
+                billing_record = BillingRecordCreateInternal(
+                    tenant_id=tenant_id,
+                    user_id=user_id,
+                    user_subscription_id=subscription_id,
+                    stripe_payment_intent_id=stripe_payment_intent_id,
+                    stripe_invoice_id=stripe_invoice_id,
+                    stripe_refund_id=refund_id,
+                    amount_cents=-refund["amount"],
+                    currency=charge["currency"],
+                    status="refunded",
+                    description=f"Refund {refund_id} processed for charge {charge['id']}",
+                )
+                await crud_billing_records.create(db=db, object=billing_record)
+
         await db.commit()
 
-    logger.info("Created refunded billing record for charge", val=charge["id"])
+    logger.info("Created refunded billing record(s) for charge", val=charge["id"])

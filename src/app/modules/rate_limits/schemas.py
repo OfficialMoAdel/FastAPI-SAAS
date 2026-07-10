@@ -1,4 +1,4 @@
-from datetime import datetime
+import re
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
@@ -7,7 +7,12 @@ from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
 
 
 def sanitize_path(path: str) -> str:
-    return path.strip("/").replace("/", "_")
+    normalized = path.strip("/")
+    # Strip API version prefix (e.g., api/v1/)
+    normalized = re.sub(r"^api/v\d+/", "", normalized)
+    # Collapse numeric/UUID path segments to {}
+    normalized = re.sub(r"/[0-9a-fA-F-]{36}|/\d+", "/{}", normalized)
+    return normalized.replace("/", "_")
 
 
 class RateLimitBase(BaseModel):
@@ -57,8 +62,7 @@ class RateLimitUpdate(BaseUpdate):
         return sanitize_path(v) if v is not None else None
 
 
-class RateLimitUpdateInternal(RateLimitUpdate):
-    updated_at: datetime
+
 
 
 class RateLimitDelete(BaseModel):
