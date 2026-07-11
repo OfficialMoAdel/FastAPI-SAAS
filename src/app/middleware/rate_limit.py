@@ -101,6 +101,11 @@ class RateLimitMiddleware:
             await response(scope, receive, send)
             return
 
+        # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
+        if request.url.path.endswith("/refresh") and "/account" in request.url.path:
+            await self.app(scope, receive, send)
+            return
+
         # Check if IP is whitelisted and should bypass rate limiting
         if settings.IP_WHITELIST_BYPASS_RATE_LIMIT:
             if hasattr(request.state, "ip_whitelisted"):

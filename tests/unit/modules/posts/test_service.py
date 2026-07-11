@@ -88,14 +88,8 @@ class TestPostServiceCreate:
 
         service = PostService(mock_db)
 
-        with (
-            patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud,
-            patch("src.app.modules.posts.service.get_tenant_context") as mock_context,
-        ):
+        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
             mock_crud.create.return_value = mock_post
-            mock_tenant = MagicMock()
-            mock_tenant.id = MockUser.DEFAULT_TENANT_ID  # Use UUID
-            mock_context.return_value = mock_tenant
 
             result = await service.create_post(
                 post=post_create,

@@ -12,7 +12,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from src.app.core.rbac.permissions import Permission
-from src.app.core.rbac.utils import get_user_permissions_cache_key
+from src.app.core.rbac.dependencies import _get_bitmask_cache_key
 
 
 @pytest.mark.asyncio
@@ -25,7 +25,7 @@ class TestPermissionCheckPerformance:
 
         start = time.perf_counter()
         for i in range(iterations):
-            get_user_permissions_cache_key(user_id=i % 1000, tenant_id=i % 10)
+            _get_bitmask_cache_key(user_id=i % 1000, tenant_id=i % 10)
         elapsed = (time.perf_counter() - start) * 1000 / iterations
 
         assert elapsed < 0.1, f"Cache key generation too slow: {elapsed:.4f}ms"
@@ -38,7 +38,7 @@ class TestPermissionCheckPerformance:
 
         async def simulated_permission_check(user_id: int, tenant_id: int) -> set[str]:
             """Simulate a permission check with cache."""
-            cache_key = get_user_permissions_cache_key(user_id, tenant_id)
+            cache_key = _get_bitmask_cache_key(user_id, tenant_id)
             if cache_key in cached_permissions:
                 return cached_permissions[cache_key]
             # Simulate cache miss - would normally query DB
@@ -177,7 +177,7 @@ class TestCacheBehavior:
         keys = set()
         for user_id in range(100):
             for tenant_id in range(10):
-                key = get_user_permissions_cache_key(user_id, tenant_id)
+                key = _get_bitmask_cache_key(user_id, tenant_id)
                 assert key not in keys, f"Duplicate key: {key}"
                 keys.add(key)
 
@@ -191,7 +191,7 @@ class TestCacheBehavior:
 
         start = time.perf_counter()
         for i in range(operations):
-            key = get_user_permissions_cache_key(i % 500, i % 50)
+            key = _get_bitmask_cache_key(i % 500, i % 50)
             if i % 3 == 0:
                 # Write
                 cache[key] = {"USERS_READ", "ROLES_READ"}

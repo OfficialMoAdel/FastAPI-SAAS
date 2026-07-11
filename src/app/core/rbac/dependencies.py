@@ -26,7 +26,7 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
-from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
+from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
 
 logger = get_logger(__name__)
 
@@ -60,60 +60,6 @@ async def get_user_permissions(
     return set(result.scalars().all())
 
 
-async def get_cached_permissions(
-    user_id: int,
-    tenant_id: int | UUID,
-    db: AsyncSession,
-) -> set[str]:
-    """
-    Get user permissions with Redis caching using native Sets.
-
-    Uses Redis SMEMBERS for O(1) retrieval instead of JSON deserialization.
-    Returns cached permissions if available, otherwise queries DB and caches result.
-    """
-    from src.app.core.utils.cache import client as redis_client
-
-    cache_key = get_user_permissions_cache_key(user_id, tenant_id)
-
-    # Try to get from cache using Redis Sets
-    if redis_client is not None:
-        try:
-            # Check if set exists and get all members in one call
-            if await redis_client.exists(cache_key):
-                members = await redis_client.smembers(cache_key)  # type: ignore[misc]
-                # Redis returns bytes, decode to strings
-                return {m.decode() if isinstance(m, bytes) else m for m in members}  # type: ignore[union-attr]
-        except Exception as e:
-            # Log cache read failure but continue to DB query
-            logger.warning(
-                "Failed to read permissions from cache",
-                user_id=user_id,
-                tenant_id=tenant_id,
-                error=str(e),
-            )
-
-    # Query from database
-    permissions = await get_user_permissions(user_id, tenant_id, db)
-
-    # Cache the result using Redis Sets
-    if redis_client is not None and permissions:
-        try:
-            # Use pipeline for atomic set + expire
-            async with redis_client.pipeline() as pipe:
-                pipe.delete(cache_key)  # Clear any existing data
-                pipe.sadd(cache_key, *permissions)
-                pipe.expire(cache_key, PERMISSIONS_CACHE_TTL)
-                await pipe.execute()  # type: ignore[union-attr]
-        except Exception as e:
-            # Log cache write failure but continue successfully (permissions already retrieved)
-            logger.warning(
-                "Failed to cache permissions",
-                user_id=user_id,
-                tenant_id=tenant_id,
-                error=str(e),
-            )
-
-    return permissions
 
 
 def _get_bitmask_cache_key(user_id: int, tenant_id: int | UUID) -> str:
@@ -362,15 +308,11 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
     if redis_client is None:
         return
 
-    set_cache_key = get_user_permissions_cache_key(user_id, tenant_id)
     bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
 
     try:
-        # Delete both cache types atomically
-        async with redis_client.pipeline() as pipe:
-            pipe.delete(set_cache_key)
-            pipe.delete(bitmask_cache_key)
-            await pipe.execute()  # type: ignore[union-attr]
+        # Delete cache
+        await redis_client.delete(bitmask_cache_key)
     except Exception as e:
         # Log cache invalidation failure
         logger.warning(
@@ -397,9 +339,7 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
     try:
         async with redis_client.pipeline() as pipe:
             for user_id in user_ids:
-                set_cache_key = get_user_permissions_cache_key(user_id, tenant_id)
                 bitmask_cache_key = _get_bitmask_cache_key(user_id, tenant_id)
-                pipe.delete(set_cache_key)
                 pipe.delete(bitmask_cache_key)
 
             # Execute all deletions in one round-trip

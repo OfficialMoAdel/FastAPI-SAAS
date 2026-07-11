@@ -6,7 +6,6 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
-from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.posts.crud import crud_posts
@@ -61,11 +60,6 @@ class PostService(BaseService[Post]):
         post_dict = post.model_dump()
         post_dict["created_by_user_id"] = current_user["id"]
 
-        # Inject tenant_id from context
-        tenant = get_tenant_context()
-        if tenant is not None:
-            post_dict["tenant_id"] = tenant.id
-
         post_internal = PostCreateInternal(**post_dict)
         created_post = cast(
             dict[str, Any], await crud_posts.create(db=self.db, object=post_internal, schema_to_select=PostRead)
@@ -98,15 +92,12 @@ class PostService(BaseService[Post]):
         dict[str, Any]
             Paginated posts response
         """
-        # SECURITY FIX: Include tenant_id in the filter to prevent cross-tenant
-        # leakage when post IDs are guessable and user IDs are global integers.
-        tenant = get_tenant_context()
+        # SECURITY FIX: The tenant_id filter is automatically injected by
+        # TenantAwareCRUD.get_multi(), preventing cross-tenant leakage.
         filters: dict[str, Any] = {
             "created_by_user_id": user_id,
             "is_deleted": False,
         }
-        if tenant is not None:
-            filters["tenant_id"] = tenant.id
 
         posts_data = await crud_posts.get_multi(
             db=self.db,
@@ -139,15 +130,13 @@ class PostService(BaseService[Post]):
         ModelNotFoundError
             If post not found
         """
-        # SECURITY FIX: Include tenant_id in lookup to prevent cross-tenant IDOR.
-        tenant = get_tenant_context()
+        # SECURITY FIX: The tenant_id filter is automatically injected by
+        # TenantAwareCRUD.get(), preventing cross-tenant IDOR.
         filters: dict[str, Any] = {
             "id": post_id,
             "created_by_user_id": user_id,
             "is_deleted": False,
         }
-        if tenant is not None:
-            filters["tenant_id"] = tenant.id
 
         db_post = await crud_posts.get(db=self.db, schema_to_select=PostRead, **filters)
         if db_post is None:

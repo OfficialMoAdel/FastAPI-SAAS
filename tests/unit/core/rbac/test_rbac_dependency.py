@@ -16,14 +16,14 @@ import pytest
 from fastapi import HTTPException
 
 from src.app.core.rbac.dependencies import (
-    get_cached_permissions,
+    _get_bitmask_cache_key,
     get_user_permissions,
     has_permission_cached,
     invalidate_user_permissions_cache,
     requires_permission,
 )
 from src.app.core.rbac.permissions import Permission
-from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL, get_user_permissions_cache_key
+from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
 
 
 def _acm(pipe):
@@ -45,19 +45,21 @@ class TestGetUserPermissionsCacheKey:
 
     def test_cache_key_format(self):
         """Cache key should follow expected format."""
-        key = get_user_permissions_cache_key(user_id=123, tenant_id=456)
-        assert key == "rbac:permissions:123:456"
+        from src.app.core.rbac.bitmask import PermissionBitmask
+        version = PermissionBitmask.get_permission_version_hash()
+        key = _get_bitmask_cache_key(user_id=123, tenant_id=456)
+        assert key == f"perms:bitmask:456:123:{version}"
 
     def test_cache_key_different_users(self):
         """Different users should have different cache keys."""
-        key1 = get_user_permissions_cache_key(user_id=1, tenant_id=100)
-        key2 = get_user_permissions_cache_key(user_id=2, tenant_id=100)
+        key1 = _get_bitmask_cache_key(user_id=1, tenant_id=100)
+        key2 = _get_bitmask_cache_key(user_id=2, tenant_id=100)
         assert key1 != key2
 
     def test_cache_key_different_tenants(self):
         """Same user in different tenants should have different cache keys."""
-        key1 = get_user_permissions_cache_key(user_id=1, tenant_id=100)
-        key2 = get_user_permissions_cache_key(user_id=1, tenant_id=200)
+        key1 = _get_bitmask_cache_key(user_id=1, tenant_id=100)
+        key2 = _get_bitmask_cache_key(user_id=1, tenant_id=200)
         assert key1 != key2
 
 
@@ -94,140 +96,7 @@ class TestGetUserPermissions:
         assert permissions == {"users:read", "roles:read", "roles:manage"}
 
 
-class TestGetCachedPermissions:
-    """Tests for cached permission fetching using Redis Sets."""
 
-    @pytest.mark.asyncio
-    async def test_returns_cached_permissions_on_hit(self):
-        """Should return cached permissions from Redis Set without hitting DB."""
-        mock_db = AsyncMock()
-        cached_perms = {b"users:read", b"roles:read"}  # Redis returns bytes
-        mock_redis = AsyncMock()
-        mock_redis.exists.return_value = True
-        mock_redis.smembers.return_value = cached_perms
-
-        # Patch at the source module where client is defined
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == {"users:read", "roles:read"}
-            mock_db.execute.assert_not_called()  # DB should not be queried
-            mock_redis.smembers.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_queries_db_and_caches_on_miss(self):
-        """Should query DB and cache result using Redis Set on cache miss."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read", "roles:read"]
-        mock_db.execute.return_value = mock_result
-
-        # Redis client with async methods except pipeline() which is sync
-        mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=False)  # Cache miss
-        # Pipeline returns a sync object with async execute
-        mock_pipeline = MagicMock()
-        _acm(mock_pipeline)
-        mock_pipeline.execute = AsyncMock()
-        mock_redis.pipeline.return_value = mock_pipeline
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == {"users:read", "roles:read"}
-            mock_db.execute.assert_called_once()
-            # Verify pipeline operations for atomic set caching
-            mock_redis.pipeline.assert_called_once()
-            mock_pipeline.delete.assert_called_once()
-            mock_pipeline.sadd.assert_called_once()
-            mock_pipeline.expire.assert_called_once()
-            mock_pipeline.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_handles_string_permissions_from_redis(self):
-        """Should handle both bytes and string returns from Redis."""
-        mock_db = AsyncMock()
-        # Some Redis clients return strings instead of bytes
-        cached_perms = {"users:read", "roles:read"}
-        mock_redis = AsyncMock()
-        mock_redis.exists.return_value = True
-        mock_redis.smembers.return_value = cached_perms
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == {"users:read", "roles:read"}
-
-    @pytest.mark.asyncio
-    async def test_works_without_redis(self):
-        """Should work when Redis is unavailable."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read"]
-        mock_db.execute.return_value = mock_result
-
-        with patch("src.app.core.utils.cache.client", None):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == {"users:read"}
-            mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_handles_cache_read_error_gracefully(self):
-        """Should fall back to DB on cache read error."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read"]
-        mock_db.execute.return_value = mock_result
-
-        mock_redis = AsyncMock()
-        mock_redis.exists.side_effect = Exception("Redis connection error")
-        mock_pipeline = AsyncMock()
-        mock_redis.pipeline.return_value = mock_pipeline
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == {"users:read"}
-            mock_db.execute.assert_called_once()
-
-    @pytest.mark.asyncio
-    async def test_handles_cache_write_error_gracefully(self):
-        """Should return permissions even if cache write fails."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = ["users:read"]
-        mock_db.execute.return_value = mock_result
-
-        mock_redis = MagicMock()
-        mock_redis.exists = AsyncMock(return_value=False)
-        mock_pipeline = MagicMock()
-        _acm(mock_pipeline)
-        mock_pipeline.execute = AsyncMock(side_effect=Exception("Redis write error"))
-        mock_redis.pipeline.return_value = mock_pipeline
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            # Should still return permissions despite cache error
-            assert permissions == {"users:read"}
-
-    @pytest.mark.asyncio
-    async def test_does_not_cache_empty_permissions(self):
-        """Should not cache when user has no permissions."""
-        mock_db = AsyncMock()
-        mock_result = MagicMock()
-        mock_result.scalars.return_value.all.return_value = []
-        mock_db.execute.return_value = mock_result
-
-        mock_redis = AsyncMock()
-        mock_redis.exists.return_value = False
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            permissions = await get_cached_permissions(user_id=1, tenant_id=1, db=mock_db)
-
-            assert permissions == set()
-            mock_redis.pipeline.assert_not_called()  # No caching for empty set
 
 
 class TestInvalidateUserPermissionsCache:
@@ -235,20 +104,13 @@ class TestInvalidateUserPermissionsCache:
 
     @pytest.mark.asyncio
     async def test_deletes_cache_key(self):
-        """Should delete both set and bitmask cache keys via pipeline."""
-        mock_redis = MagicMock()
-        mock_pipeline = MagicMock()
-        _acm(mock_pipeline)
-        mock_pipeline.execute = AsyncMock()
-        mock_redis.pipeline.return_value = mock_pipeline
+        """Should delete bitmask cache key directly."""
+        mock_redis = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             await invalidate_user_permissions_cache(user_id=1, tenant_id=1)
 
-            # Should use pipeline to delete both cache types atomically
-            mock_redis.pipeline.assert_called_once()
-            assert mock_pipeline.delete.call_count == 2
-            mock_pipeline.execute.assert_called_once()
+            mock_redis.delete.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_handles_missing_redis_gracefully(self):
@@ -277,7 +139,7 @@ class TestRequiresPermission:
                 return_value={"id": 1, "is_superuser": True},
             ),
             patch("src.app.core.tenancy.context.get_tenant_context", return_value=DummyTenant()),
-            patch("src.app.core.rbac.dependencies.get_cached_permissions") as mock_perms,
+            patch("src.app.core.rbac.dependencies.get_cached_permissions_bitmask") as mock_perms,
         ):
             mock_db = AsyncMock()
 

@@ -886,7 +886,7 @@ def _build_cache_key(
     return build_tenant_key(base_key, tenant_id)
 
 
-def cache(
+def cache(  # noqa: C901
     key_prefix: str,
     resource_id_name: Any = None,
     expiration: int = 3600,
@@ -1003,9 +1003,9 @@ def cache(
       consider the potential impact on Redis performance.
     """
 
-    def wrapper(func: Callable) -> Callable:
+    def wrapper(func: Callable) -> Callable:  # noqa: C901
         @functools.wraps(func)
-        async def inner(request: Request, *args: Any, **kwargs: Any) -> Any:
+        async def inner(request: Request, *args: Any, **kwargs: Any) -> Any:  # noqa: C901
             if client is None:
                 raise MissingClientError
 
@@ -1022,8 +1022,24 @@ def cache(
 
                 cached_data = await client.get(cache_key)
                 if cached_data:
-                    # P6: Skip re-parse - return raw JSON bytes directly
-                    return Response(content=cached_data, media_type="application/json")
+                    # XFetch probabilistic early expiration (Stampede Protection)
+                    remaining_ttl = await client.ttl(cache_key)
+                    if remaining_ttl > 0:
+                        delta = expiration - remaining_ttl
+                        if delta > 0:
+                            probability = min((delta / expiration) ** 2, 1.0)
+                            import random
+                            if random.random() < probability:
+                                lock_key = f"{cache_key}:refresh_lock"
+                                lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+                                if lock_acquired:
+                                    # We got the lock. Act as if cache miss to force synchronous refresh.
+                                    cached_data = None
+                                    request.state.cache_refresh_lock_key = lock_key
+
+                    if cached_data is not None:
+                        # P6: Skip re-parse - return raw JSON bytes directly
+                        return Response(content=cached_data, media_type="application/json")
 
             result = await func(request, *args, **kwargs)
 
@@ -1057,6 +1073,11 @@ def cache(
                                 sharded_idx_key = _tenant_prefix_index_key(tenant_id, prefix)
                                 pipe.sadd(sharded_idx_key, cache_key)
                                 pipe.expire(sharded_idx_key, expiration * 2)
+
+                    # Release refresh lock if we acquired it
+                    refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)
+                    if refresh_lock_key:
+                        pipe.delete(refresh_lock_key)
 
                     await pipe.execute()
 

@@ -50,7 +50,6 @@ class AuthContext(BaseModel):
     user: AuthenticatedUser
     token_data: Any  # The token data returned from verify_token or cached JWT payload dict
     tenant: Any  # The tenant context (or None if no tenant context is available)
-    permissions: list[str] = []
     is_dependency_override: bool = False
 
 
@@ -61,9 +60,6 @@ async def _create_auth_context(
     db: AsyncSession,
     is_dependency_override: bool = False,
 ) -> AuthContext:
-    # Retained for schema compatibility, enforcement uses bitmask
-    permissions: list[str] = []
-
     if isinstance(user, dict):
         user_obj = AuthenticatedUser(**user)
     else:
@@ -73,7 +69,6 @@ async def _create_auth_context(
         user=user_obj,
         token_data=token_data,
         tenant=tenant,
-        permissions=permissions,
         is_dependency_override=is_dependency_override,
     )
 
