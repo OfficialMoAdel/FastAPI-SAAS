@@ -26,6 +26,9 @@ from src.app.modules._base.exceptions import (
     ForbiddenError,
     ModelNotFoundError,
     RateLimitExceededError,
+    ServiceUnavailableError,
+    StripeError,
+    TenantContextError,
 )
 from src.app.modules._base.exceptions import (
     ValidationError as BaseValidationError,
@@ -258,6 +261,66 @@ def setup_exception_handlers(app: FastAPI) -> None:
             code=ErrorCode.RATE_LIMITED,
             message=str(exc),
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(TenantContextError)
+    async def tenant_context_error_handler(request: Request, exc: TenantContextError) -> JSONResponse:
+        """Handle TenantContextError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Tenant context error",
+            reason=exc.reason,
+            message=exc.message,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.FORBIDDEN,
+            message=exc.message,
+            status_code=status.HTTP_403_FORBIDDEN,
+            details={"reason": exc.reason},
+            request_id=request_id,
+        )
+
+    @app.exception_handler(ServiceUnavailableError)
+    async def service_unavailable_error_handler(request: Request, exc: ServiceUnavailableError) -> JSONResponse:
+        """Handle ServiceUnavailableError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.error(
+            "Service unavailable",
+            message=exc.message,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.SERVICE_UNAVAILABLE,
+            message=exc.message,
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            request_id=request_id,
+        )
+
+    @app.exception_handler(StripeError)
+    async def stripe_error_handler(request: Request, exc: StripeError) -> JSONResponse:
+        """Handle StripeError from _base exceptions."""
+        request_id = getattr(request.state, "request_id", None)
+
+        logger.warning(
+            "Stripe error",
+            message=exc.message,
+            status_code=exc.status_code,
+            request_id=request_id,
+            path=request.url.path,
+        )
+
+        return create_error_response(
+            code=ErrorCode.SERVICE_UNAVAILABLE if exc.status_code >= 500 else ErrorCode.INVALID_INPUT,
+            message=exc.message,
+            status_code=exc.status_code,
             request_id=request_id,
         )
 

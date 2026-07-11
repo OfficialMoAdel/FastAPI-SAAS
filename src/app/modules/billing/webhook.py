@@ -13,6 +13,7 @@ from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.billing.crud import crud_billing_records, crud_user_subscriptions
+from src.app.modules.billing.lifecycle import map_stripe_status
 from src.app.modules.billing.schemas import (
     BillingRecordCreateInternal,
     SubscriptionStatus,
@@ -25,7 +26,10 @@ logger = get_logger(__name__)
 # Redis key prefix for webhook idempotency tracking
 # Stripe events have at-least-once delivery guarantee, so we must track processed events
 _WEBHOOK_EVENT_KEY_PREFIX = "stripe:webhook:processed:"
-_WEBHOOK_EVENT_TTL_SECONDS = 86400 * 7  # 7 days retention ( Stripe retries for 3 days)
+# Short-lived lock held ONLY while a handler is actively running. If the process
+# crashes mid-handling, this key auto-expires and Stripe can safely retry,
+# instead of the event being permanently marked "processed" and lost.
+_WEBHOOK_PROCESSING_TTL_SECONDS = 300  # 5 minutes max handler time
 
 
 async def _try_acquire_event_lock(event_id: str) -> bool:
@@ -46,9 +50,13 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
 
     try:
         key = f"{_WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
-        # SET key value NX EX ttl - atomic set-if-not-exists with expiration
-        # Returns True if set (lock acquired), False if key already exists
-        result = await redis_client.set(key, "1", nx=True, ex=_WEBHOOK_EVENT_TTL_SECONDS)
+        # SET key value NX EX ttl - atomic set-if-not-exists with a SHORT
+        # processing-window TTL. This is a *processing* lock, NOT the
+        # "processed" marker. The durable marker is written only AFTER the
+        # handler commits (see _mark_event_processed), so a crash mid-handling
+        # lets the short lock expire and Stripe retry instead of silently
+        # losing the event for 7 days.
+        result = await redis_client.set(key, "processing", nx=True, ex=_WEBHOOK_PROCESSING_TTL_SECONDS)
         return result is not None  # True = lock acquired, False = already processed
     except Exception as e:
         logger.error(
@@ -63,8 +71,10 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
 async def _db_idempotency_check(event_id: str) -> bool:
     """DB-based idempotency fallback for when Redis is unavailable.
 
-    Checks whether any webhook event with this Stripe event ID already exists.
-    This prevents double processing when Redis is temporarily unavailable.
+    Atomically claims the event by inserting a ``WebhookEvent`` row; the
+    unique ``event_id`` PK makes a duplicate insert fail with ``IntegrityError``,
+    which we treat as "already processed". On failure we delete the row
+    (see ``_release_webhook_event_lock``) so Stripe can safely retry.
 
     Args:
         event_id: The Stripe event ID
@@ -195,7 +205,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
     """
     event_type = event["type"]
     event_id = event["id"]
-    logger.info("Received Stripe webhook event: (ID: )", event_type=event_type, event_id=event_id)
+    logger.info("Received Stripe webhook event", event_type=event_type, event_id=event_id)
 
     # IDEMPOTENCY CHECK: Atomically acquire processing lock
     # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race
@@ -219,7 +229,7 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
             await handle_charge_refunded(event)
         else:
             logger.info("Unhandled event type:", event_type=event_type)
-            # Lock already acquired, event is marked as processed
+            # Lock already acquired in _try_acquire_event_lock; no extra mark needed.
             return {"status": "unhandled"}
 
         # Lock was already acquired in _try_acquire_event_lock
@@ -237,6 +247,9 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
 
         raise
 
+    # Success path: the processing lock acquired in _try_acquire_event_lock
+    # (bounded TTL) already marks the event as in-flight. On failure the
+    # lock is released (see _release_webhook_event_lock) so Stripe can retry.
     return {"status": "success"}
 
 
@@ -337,8 +350,11 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
                     # Build update dict using stripe event data
                     # SECURITY: Ensure all timestamps are timezone-aware (UTC)
+                    # Normalize the raw Stripe status through map_stripe_status so the
+                    # stored enum is always valid (consistent with the race branch
+                    # and handle_subscription_updated).
                     update_data: dict[str, Any] = {
-                        "status": stripe_sub.get("status"),
+                        "status": map_stripe_status(stripe_sub.get("status", "")),
                         "current_period_start": datetime.fromtimestamp(
                             stripe_sub.get("current_period_start") or int(datetime.now(UTC).timestamp()), UTC
                         ),
@@ -462,7 +478,7 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     # Map Stripe status to our status
     from src.app.modules.billing.lifecycle import map_stripe_status
 
-    new_status: SubscriptionStatus = map_stripe_status(subscription["status"]) # type: ignore
+    new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
 
     # Update subscription
     update_data = UserSubscriptionUpdate(
@@ -686,6 +702,20 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
             db=db,
             object=billing_record,
         )
+
+        # P1.7: A successful payment must restore a past_due subscription to
+        # active. Otherwise the user stays past_due (and locked out of paid
+        # features) despite having paid, relying solely on a separate
+        # customer.subscription.updated event that may be delayed or missed.
+        # Only flip past_due -> active; never resurrect a canceled subscription.
+        if db_subscription.status == "past_due":
+            await crud_user_subscriptions.update(
+                db=db,
+                id=subscription_id,
+                object={"status": "active"},
+                commit=False,
+            )
+
         await db.commit()
 
     logger.info("Created succeeded billing record for invoice", val=invoice["id"])
@@ -861,12 +891,19 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         if not refunds:
             # Fallback if refunds array is missing
             refund_amount = charge.get("amount_refunded", 0)
-            if await crud_billing_records.exists(
-                db=db,
-                stripe_payment_intent_id=stripe_payment_intent_id,
-                status="refunded",
-                amount_cents=-refund_amount,
-            ):
+            # Build a dedup filter that never matches a NULL payment_intent
+            # (a None value would otherwise match unrelated records whose
+            # stripe_payment_intent_id is also NULL). Prefer the payment
+            # intent, falling back to the invoice id when it is absent.
+            dedup_filter: dict[str, Any] = {
+                "status": "refunded",
+                "amount_cents": -refund_amount,
+            }
+            if stripe_payment_intent_id is not None:
+                dedup_filter["stripe_payment_intent_id"] = stripe_payment_intent_id
+            elif stripe_invoice_id is not None:
+                dedup_filter["stripe_invoice_id"] = stripe_invoice_id
+            if await crud_billing_records.exists(db=db, **dedup_filter):
                 logger.info("Refund billing record already exists, skipping duplicate insert")
                 return
 

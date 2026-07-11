@@ -7,9 +7,9 @@ products, pricing, and billing records.
 import asyncio
 from datetime import UTC, datetime
 from typing import Any, cast
+from uuid import UUID
 
 import stripe
-from fastapi import HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -17,7 +17,12 @@ from sqlalchemy.orm import selectinload
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.modules._base.exceptions import ModelNotFoundError
+from src.app.modules._base.exceptions import (
+    ModelNotFoundError,
+    StripeError,
+    TenantContextError,
+    ValidationError,
+)
 from src.app.modules._base.service import BaseService
 
 logger = get_logger(__name__)
@@ -75,9 +80,9 @@ def _require_active_tenant():
     """
     tenant = get_current_tenant()
     if tenant is None:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="No tenant context available")
+        raise TenantContextError("No tenant context available")
     if not tenant.is_active:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+        raise TenantContextError("Tenant is not active")
     return tenant
 
 
@@ -135,7 +140,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
         if tenant is None:
             return None
         if not tenant.is_active:
-            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Tenant is not active")
+            raise TenantContextError("Tenant is not active")
         result = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
         return dict(result) if result else None
 
@@ -175,6 +180,13 @@ class StripeSettingsService(BaseService[StripeSettings]):
             await crud_stripe_settings.update(db=self.db, object=update_data, id=stripe_settings_record["id"])
             stripe_settings_record.update(update_data)
             return dict(stripe_settings_record)
+
+    async def get_webhook_secret(self, tenant_id: UUID) -> str | None:
+        """Get the decrypted Stripe webhook secret for a specific tenant."""
+        record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
+        if not record or not record.get("encrypted_webhook_secret"):
+            return None
+        return self._encryption.decrypt_column(record["encrypted_webhook_secret"])
 
 
 def _subscription_plan_to_dict(plan: SubscriptionPlan) -> dict[str, Any]:
@@ -653,32 +665,23 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             if not api_key:
                 logger.error("Stripe API key missing for subscription cancellation")
                 await self.db.rollback()
-                from fastapi import HTTPException, status
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Billing service is misconfigured. Cannot communicate with Stripe.",
-                )
+                raise StripeError("Billing service is misconfigured. Cannot communicate with Stripe.")
 
-            if api_key:
-                try:
-                    # Wrap sync Stripe call in thread to avoid blocking event loop
-                    await asyncio.to_thread(
-                        stripe.Subscription.modify,
-                        stripe_subscription_id,
-                        api_key=api_key,
-                        cancel_at_period_end=True,
-                    )
-                    logger.info(
-                        "Stripe subscription marked for cancellation", stripe_subscription_id=stripe_subscription_id
-                    )
-                except stripe.error.StripeError as e:
-                    logger.error("Failed to cancel Stripe subscription", error=e)
-                    await self.db.rollback()
-                    from fastapi import HTTPException, status
-                    raise HTTPException(
-                        status_code=status.HTTP_400_BAD_REQUEST,
-                        detail=f"Failed to cancel subscription in Stripe: {str(e)}",
-                    )
+            try:
+                # Wrap sync Stripe call in thread to avoid blocking event loop
+                await asyncio.to_thread(
+                    stripe.Subscription.modify,
+                    stripe_subscription_id,
+                    api_key=api_key,
+                    cancel_at_period_end=True,
+                )
+                logger.info(
+                    "Stripe subscription marked for cancellation", stripe_subscription_id=stripe_subscription_id
+                )
+            except stripe.error.StripeError as e:
+                logger.error("Failed to cancel Stripe subscription", error=e)
+                await self.db.rollback()
+                raise StripeError(f"Failed to cancel subscription in Stripe: {str(e)}")
 
         await self.db.commit()
         result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
@@ -734,7 +737,7 @@ class BillingRecordService(BaseService[BillingRecord]):
         # SECURITY FIX: Include tenant_id to prevent cross-tenant data access
         tenant = get_current_tenant()
         if tenant is None:
-            raise HTTPException(status_code=403, detail="Tenant context required")
+            raise TenantContextError("Tenant context required")
         offset = (page - 1) * limit
         filters: dict[str, Any] = {"user_id": user_id, "tenant_id": tenant.id}
 
@@ -785,10 +788,8 @@ class CheckoutService:
 
                 api_key = CredentialEncryption().decrypt_column(stripe_settings["encrypted_secret_key"])
 
-        if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
-            )
+            if not api_key:
+                raise StripeError("Stripe API key not configured", status_code=500)
 
         import stripe
 
@@ -804,10 +805,7 @@ class CheckoutService:
         )
 
         if not price_id:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Plan does not have a {data.billing_interval} price configured",
-            )
+            raise ValidationError(f"Plan does not have a {data.billing_interval} price configured")
 
         try:
             # Create Stripe Session - build kwargs conditionally to satisfy type checker
@@ -834,11 +832,8 @@ class CheckoutService:
             session = await asyncio.to_thread(lambda: stripe.checkout.Session.create(**session_kwargs))
 
             checkout_url = session.url
-            if checkout_url is None:
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Stripe did not return a checkout URL",
-                )
+            if not checkout_url:
+                raise StripeError("Stripe did not return a checkout URL", status_code=500)
 
             return CheckoutSession(
                 checkout_url=checkout_url,
@@ -848,7 +843,7 @@ class CheckoutService:
 
         except stripe.error.StripeError as e:
             logger.error("Stripe portal error", error=str(e))
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to initialize customer portal.")
+            raise StripeError(f"Failed to initialize checkout session: {str(e)}")
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
@@ -875,17 +870,14 @@ class CheckoutService:
                     is_allowed_origin = True
 
             if not (is_relative or is_allowed_origin):
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="Invalid return_url form: Must be relative or match allowed origins.",
-                )
+                raise ValidationError("Invalid return_url form: Must be relative or match allowed origins.")
 
             # Stripe requires absolute URLs
             if is_relative:
                 if not frontend_url:
-                    raise HTTPException(
-                        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                        detail="Server misconfiguration: Need FRONTEND_URL to resolve relative return_url.",
+                    raise StripeError(
+                        "Server misconfiguration: Need FRONTEND_URL to resolve relative return_url.",
+                        status_code=500
                     )
                 return_url = f"{frontend_url}{return_url}"
 
@@ -895,18 +887,14 @@ class CheckoutService:
             else getattr(settings, "STRIPE_SECRET_KEY", None)
         )
         if not api_key:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Stripe API key not configured"
-            )
+            raise StripeError("Stripe API key not configured", status_code=500)
 
         # Get Customer ID
         settings_service = StripeSettingsService(self.db)
         stripe_settings = await settings_service.get_settings()
 
         if not stripe_settings or not stripe_settings.get("stripe_customer_id"):
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST, detail="No Stripe customer found for this tenant"
-            )
+            raise ValidationError("No Stripe customer ID found for this tenant")
 
         customer_id = stripe_settings["stripe_customer_id"]
 
@@ -918,7 +906,7 @@ class CheckoutService:
             return session.url
         except stripe.error.StripeError as e:
             logger.error("Stripe portal error", error=str(e))
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Failed to initialize customer portal.")
+            raise StripeError("Failed to initialize customer portal.", status_code=400)
 
 
 def get_stripe_settings_service(db: AsyncSession) -> StripeSettingsService:

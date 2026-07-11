@@ -7,14 +7,17 @@ Provides different rate limits based on user's tier:
 Supports two algorithms:
 - fixed_window: Classic fixed window counter (default)
 - gcra: Generic Cell Rate Algorithm (smoother, no boundary bursts)
+
+Implemented as a native ASGI middleware (not BaseHTTPMiddleware) so that
+streaming responses (SSE, large downloads) are not buffered into memory.
 """
 
 import time
-from collections.abc import Callable
 
 from fastapi import Request, Response, status
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from fastapi.responses import JSONResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
@@ -40,57 +43,63 @@ DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
 DEFAULT_ANONYMOUS_LIMIT = (10, 3600)  # 10 requests per hour
 
 
-class RateLimitMiddleware(BaseHTTPMiddleware):
+class RateLimitMiddleware:
     """Middleware for tier-aware rate limiting.
 
     Features:
-    - Unauthenticated requests: IP-based limits
+    - Unauthenticated requests: IP-based limits (proxy-aware via get_client_ip)
     - Authenticated requests: User + tier-based limits
     - Configurable limits per tier
     - X-RateLimit-* response headers
     """
 
     def __init__(self, app: ASGIApp):
-        super().__init__(app)
+        self.app = app
 
-    async def dispatch(self, request: Request, call_next: Callable) -> Response:
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         """Process request with tier-aware rate limiting and auto-ban."""
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         client_ip = get_client_ip(request)
 
         # SECURITY: Check if IP is banned before processing
-        if settings.AUTO_BAN_ENABLED:
-            if await is_ip_banned(client_ip):
-                ban_info = await get_ban_info(client_ip)
-                logger.warning(
-                    "Request from banned IP blocked | ip=%s | reason=%s",
-                    client_ip,
-                    ban_info.reason,
-                )
+        if settings.AUTO_BAN_ENABLED and await is_ip_banned(client_ip):
+            ban_info = await get_ban_info(client_ip)
+            logger.warning(
+                "Request from banned IP blocked | ip=%s | reason=%s",
+                client_ip,
+                ban_info.reason,
+            )
 
-                # Log security event
-                security_event = SecurityEvent(
-                    event_type=SecurityEventType.ATTACK_DETECTED,
-                    client_ip=client_ip,
-                    request_path=str(request.url.path),
-                    reason="Request from banned IP",
-                    extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
-                )
-                log_security_event(security_event)
+            # Log security event
+            security_event = SecurityEvent(
+                event_type=SecurityEventType.ATTACK_DETECTED,
+                client_ip=client_ip,
+                request_path=str(request.url.path),
+                reason="Request from banned IP",
+                extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
+            )
+            log_security_event(security_event)
 
-                headers = {
-                    "X-Banned": "true",
-                    "X-Ban-Reason": ban_info.reason or "Auto-ban",
-                }
-                if ban_info.expires_at:
-                    retry_after = int(ban_info.expires_at - time.time()) + 1
-                    if retry_after > 0:
-                        headers["Retry-After"] = str(retry_after)
+            headers = {
+                "X-Banned": "true",
+                "X-Ban-Reason": ban_info.reason or "Auto-ban",
+            }
+            if ban_info.expires_at:
+                retry_after = int(ban_info.expires_at - time.time()) + 1
+                if retry_after > 0:
+                    headers["Retry-After"] = str(retry_after)
 
-                return Response(
-                    content="Forbidden: IP address banned due to abuse",
-                    status_code=status.HTTP_403_FORBIDDEN,
-                    headers=headers,
-                )
+            response = Response(
+                content="Forbidden: IP address banned due to abuse",
+                status_code=status.HTTP_403_FORBIDDEN,
+                headers=headers,
+            )
+            await response(scope, receive, send)
+            return
 
         # Check if IP is whitelisted and should bypass rate limiting
         if settings.IP_WHITELIST_BYPASS_RATE_LIMIT:
@@ -104,13 +113,17 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                 is_whitelisted = False
 
             if is_whitelisted:
-                # Skip rate limiting for whitelisted IPs
-                whitelisted_response: Response = await call_next(request)
-                # Add headers indicating unlimited rate for whitelisted IPs
-                whitelisted_response.headers["X-RateLimit-Limit"] = "unlimited"
-                whitelisted_response.headers["X-RateLimit-Remaining"] = "unlimited"
-                whitelisted_response.headers["X-RateLimit-Whitelisted"] = "true"
-                return whitelisted_response
+                # Skip rate limiting for whitelisted IPs; inject unlimited headers.
+                async def whitelisted_send(message: Message) -> None:
+                    if message["type"] == "http.response.start":
+                        headers = MutableHeaders(scope=message)
+                        headers["X-RateLimit-Limit"] = "unlimited"
+                        headers["X-RateLimit-Remaining"] = "unlimited"
+                        headers["X-RateLimit-Whitelisted"] = "true"
+                    await send(message)
+
+                await self.app(scope, receive, whitelisted_send)
+                return
 
         # Determine rate limit key and limits
         limit, period, key = await self._get_rate_limit_config(request)
@@ -152,30 +165,42 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
                         violation_count,
                         settings.AUTO_BAN_THRESHOLD,
                     )
-                    # Return 403 Forbidden instead of 429 to indicate ban
+                    # Return 403 Forbidden instead of 429 to indicate ban.
                     headers["X-Banned"] = "true"
                     headers["X-Ban-Reason"] = f"Auto-ban after {violation_count} violations"
-                    from fastapi.responses import JSONResponse
+                    # P3.24: include Retry-After so clients know when to retry.
+                    try:
+                        fresh_ban_info = await get_ban_info(client_ip)
+                        if fresh_ban_info.expires_at:
+                            ban_retry_after = int(fresh_ban_info.expires_at - time.time()) + 1
+                            if ban_retry_after > 0:
+                                headers["Retry-After"] = str(ban_retry_after)
+                    except Exception:
+                        pass
 
-                    return JSONResponse(
+                    response = JSONResponse(
                         content={"detail": f"Forbidden: IP banned after {violation_count} rate limit violations"},
                         status_code=status.HTTP_403_FORBIDDEN,
                         headers=headers,
                     )
+                    await response(scope, receive, send)
+                    return
 
-            from fastapi.responses import JSONResponse
-
-            return JSONResponse(
+            response = JSONResponse(
                 {"detail": "Rate limit exceeded"}, status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers=headers
             )
+            await response(scope, receive, send)
+            return
 
-        response: Response = await call_next(request)
+        # Success: inject rate-limit headers into the response.
+        async def send_wrapper(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                resp_headers = MutableHeaders(scope=message)
+                for name, value in headers.items():
+                    resp_headers[name] = value
+            await send(message)
 
-        # Add rate limit headers to response
-        for name, value in headers.items():
-            response.headers[name] = value
-
-        return response
+        await self.app(scope, receive, send_wrapper)
 
     async def _get_rate_limit_config(self, request: Request) -> tuple[int, int, str]:
         """Determine rate limit configuration based on request context.
@@ -225,7 +250,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             tenant_id = cached_payload.get("tenant_id")
 
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
-        # If token is blacklisted, treat user as anonymous to prevent premium rate limit abuse
+        # If token is blacklisted OR its status is unknown (fail-open during a
+        # Redis outage), treat the user as anonymous to prevent premium rate-limit
+        # abuse with a revoked/unknown token.
         if user_id and token:
             from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
@@ -236,9 +263,9 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             # Store in state so `auth.py` (deps) can reuse the result (R5-3)
             request.state.is_token_blacklisted = is_blacklisted is True
 
-            if is_blacklisted:
+            if is_blacklisted is not False:
                 logger.info(
-                    "Blacklisted token detected in rate limiter | user_id=%s | treating as anonymous",
+                    "Blacklisted/unknown token detected in rate limiter | user_id=%s | treating as anonymous",
                     user_id,
                 )
                 user_id = None
@@ -277,12 +304,14 @@ class RateLimitMiddleware(BaseHTTPMiddleware):
             limit, period = limit_config
 
         if not user_id:
-            # For anonymous users, use IP address
-            client_ip = request.client.host if request.client else "unknown"
-            key = f"rate_limit:anonymous:ip:{client_ip}:{path}"
+            # For anonymous users, use the proxy-aware client IP (not the raw peer,
+            # which is the load balancer/reverse proxy behind trusted proxies).
+            anonymous_ip = get_client_ip(request)
+            key = f"rate_limit:anonymous:ip:{anonymous_ip}:{path}"
         else:
             # For authenticated users, scope by tenant if available
             from src.app.core.utils.cache import build_tenant_key
+
             base_key = f"rate_limit:user:{user_id}:{path}"
             key = build_tenant_key(base_key, tenant_id)
 

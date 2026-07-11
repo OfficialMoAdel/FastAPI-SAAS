@@ -12,11 +12,16 @@ logger = get_logger(__name__)
 
 # Lua script for atomic rate limit check
 # Returns the current count after increment
-# Sets expiry only on first increment (when count is 1)
+# Sets expiry only on first increment (when count is 1). The TTL is aligned to
+# the window boundary (period - (now % period)) so the counter does not persist
+# past the start of the next window (which would worsen boundary bursts).
 RATE_LIMIT_LUA_SCRIPT = """
 local current = redis.call('INCR', KEYS[1])
 if current == 1 then
-    redis.call('EXPIRE', KEYS[1], ARGV[1])
+    local now = redis.call('TIME')[1]
+    local period = tonumber(ARGV[1])
+    local ttl = period - (now % period)
+    redis.call('EXPIRE', KEYS[1], ttl)
 end
 return current
 """
@@ -92,9 +97,7 @@ class RateLimiter:
 
         return False, current_count
 
-    async def check_rate_limit_algorithm(
-        self, key: str, limit: int, period: int
-    ) -> tuple[bool, int, int]:
+    async def check_rate_limit_algorithm(self, key: str, limit: int, period: int) -> tuple[bool, int, int]:
         """Check rate limit using configured algorithm (GCRA or Fixed Window).
 
         Returns:
@@ -106,6 +109,7 @@ class RateLimiter:
 
         if use_gcra:
             from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
+
             gcra = get_gcra_rate_limiter()
             if gcra:
                 try:

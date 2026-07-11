@@ -54,7 +54,7 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
     transactions on this connection checkout, until it is returned to the pool and checked out again.
     """
     tenant = get_current_tenant()
-    tenant_id = str(tenant.id) if tenant else ""
+    tenant_id = str(tenant.id) if tenant else None
 
     async def _do_restore(conn: Any) -> None:
         try:
@@ -69,6 +69,13 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
                     tenant_id,
                 )
             else:
+                # No tenant context at pool checkout. Reset ALL RLS vars to empty so a
+                # previous connection's tenant context cannot leak into this checkout
+                # (fail-closed). We still warn so a missing-context bug on an
+                # authenticated path is observable rather than silently masked.
+                logger.warning(
+                    "restore_rls_context: no tenant context at pool checkout; resetting RLS vars to empty (fail-closed)"
+                )
                 await conn.execute(
                     f"SELECT set_config('{RLS_TENANT_VAR}', '', false), "
                     f"set_config('{RLS_USER_VAR}', '', false), "

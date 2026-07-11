@@ -404,15 +404,16 @@ class ChatCompletionService:
         )
 
         # Save user message before releasing connection
-        await self._message_service.add_message(
+        user_msg = await self._message_service.add_message(
             session_id=session_id,
             data=ChatMessageCreate(role="user", content=request.message),
         )
+        user_msg_id = user_msg.get("id") if isinstance(user_msg, dict) else getattr(user_msg, "id", None)
 
         # C2: Commit and release DB connection before LLM call
         await self.db.commit()
 
-        # Phase 2: Call LLM (connection released, no DB hold during inference)
+        # Phase2: Call LLM (connection released, no DB hold during inference)
         try:
             logger.debug("Calling Ollama with model=, temperature=", model=model, temperature=temperature)
             result = await self.ollama.chat(
@@ -425,6 +426,20 @@ class ChatCompletionService:
             logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
 
         except OllamaError as e:
+            # P2.20 FIX: the user message was already committed above. On LLM
+            # failure it would be left as a dangling turn with no assistant reply,
+            # so remove it to keep the conversation consistent.
+            if user_msg_id is not None:
+                try:
+                    async with local_session() as fresh_db:
+                        await crud_chat_messages.delete(db=fresh_db, id=user_msg_id)
+                        await fresh_db.commit()
+                except Exception as cleanup_err:  # noqa: BLE001
+                    logger.warning(
+                        "Failed to clean up orphaned chat user message",
+                        id=user_msg_id,
+                        error=cleanup_err,
+                    )
             logger.error("Chat completion failed: ()", message=e.message, error_code=e.error_code)
             raise ChatCompletionError(e.message, e.error_code, model) from e
 
@@ -518,7 +533,6 @@ class ChatCompletionService:
         # Use list accumulation to avoid O(n²) string concatenation
         response_chunks = []
         token_count = None
-        stream_completed = False
 
         from src.app.core.tenancy.context import get_tenant_context
 
@@ -536,7 +550,6 @@ class ChatCompletionService:
                 if content:
                     response_chunks.append(content)
                 if chunk.get("done"):
-                    stream_completed = True
                     token_count = chunk.get("token_count")
                 yield chunk
 
@@ -546,7 +559,9 @@ class ChatCompletionService:
         finally:
             # Phase 3: Get fresh session for writing response safely in the background
             full_response = "".join(response_chunks)
-            if full_response and stream_completed:
+            # P2.21 FIX: persist even if the client disconnected before the final
+            # 'done' chunk arrived, so a partial assistant turn isn't lost.
+            if full_response:
 
                 async def _save_response(resp_content: str, resp_tokens: int | None, tenant_ctx: Any) -> None:
                     import asyncio

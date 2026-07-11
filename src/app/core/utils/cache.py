@@ -45,6 +45,8 @@ stampede_logger: Any = get_logger("src.app.core.utils.cache.stampede")
 
 from uuid import UUID
 
+from src.app.core.tenancy.context import get_current_tenant
+
 
 def build_tenant_key(key: str, tenant_id: int | str | UUID | None = None) -> str:
     """Build a cache key, optionally prepending tenant isolation if present.
@@ -56,11 +58,12 @@ def build_tenant_key(key: str, tenant_id: int | str | UUID | None = None) -> str
     Returns:
         Tenant-scoped cache key or original key
     """
-    if tenant_id:
+    if tenant_id is not None:
         if key.startswith(f"tenant:{tenant_id}:"):
             return key
         return f"tenant:{tenant_id}:{key}"
     return key
+
 
 def tenant_cache_key(tenant_id: int | str, prefix: str, *key_parts: str | int) -> str:
     """Build a tenant-scoped cache key.
@@ -853,6 +856,36 @@ async def _delete_keys_by_pattern(pattern: str) -> None:
             break
 
 
+def _build_cache_key(
+    key_prefix: str,
+    resource_id: Any,
+    kwargs: dict[str, Any],
+    user_scoped: bool,
+) -> str:
+    """Build the tenant + (optional) user scoped cache key for ``@cache``.
+
+    The decorator resolves the cache BEFORE the handler runs, so the key MUST
+    encode the authorized principal (tenant and, when ``user_scoped``, user)
+    to prevent cross-tenant / cross-user cache leakage.
+    """
+    tenant = get_current_tenant()
+    tenant_id = str(tenant.tenant_id) if tenant is not None else None
+
+    user_id: Any = None
+    if user_scoped:
+        cu = kwargs.get("current_user")
+        if isinstance(cu, dict):
+            user_id = cu.get("id")
+        elif cu is not None:
+            user_id = getattr(cu, "id", None)
+
+    formatted_key_prefix = _format_prefix(key_prefix, kwargs)
+    base_key = f"{formatted_key_prefix}:{resource_id}"
+    if user_id is not None:
+        base_key = f"user:{user_id}:{base_key}"
+    return build_tenant_key(base_key, tenant_id)
+
+
 def cache(
     key_prefix: str,
     resource_id_name: Any = None,
@@ -861,6 +894,7 @@ def cache(
     to_invalidate_extra: dict[str, Any] | None = None,
     pattern_to_invalidate_extra: list[str] | None = None,
     invalidation_patterns: list[str] | None = None,
+    user_scoped: bool = False,
 ) -> Callable:
     """Cache decorator for FastAPI endpoints.
 
@@ -890,6 +924,15 @@ def cache(
         A list of patterns to register this cache key against for O(1) invalidation.
         When this endpoint is called (GET), the cache key will be added to the index sets for these patterns.
         This allows future O(1) invalidation using `invalidate_by_pattern`.
+
+    Notes
+    -----
+    Cached GET responses are returned as a raw `Response(content=...,
+    media_type="application/json")`. FastAPI does NOT apply the route's
+    `response_model` to these responses, so field filtering / `exclude` /
+    `alias` rules declared on the endpoint are ignored for cache hits. Only
+    decorate handlers that return response-model-shaped data (e.g. dicts
+    produced via `schema_to_select`), never raw ORM objects.
 
     Returns
     -------
@@ -971,8 +1014,8 @@ def cache(
             else:
                 resource_id = _infer_resource_id(kwargs=kwargs, resource_id_type=resource_id_type)
 
-            formatted_key_prefix = _format_prefix(key_prefix, kwargs)
-            cache_key = f"{formatted_key_prefix}:{resource_id}"
+            cache_key = _build_cache_key(key_prefix, resource_id, kwargs, user_scoped)
+
             if request.method == "GET":
                 if to_invalidate_extra is not None or pattern_to_invalidate_extra is not None:
                     raise InvalidRequestError
@@ -1034,11 +1077,27 @@ def cache(
                         await pipe.execute()
 
                 if pattern_to_invalidate_extra is not None:
+                    # Recompute the authorized principal (mirrors _build_cache_key)
+                    # so pattern invalidation never wipes another tenant's / user's keys.
+                    _tenant = get_current_tenant()
+                    _tenant_id = str(_tenant.tenant_id) if _tenant is not None else None
+                    _user_id: Any = None
+                    if user_scoped:
+                        _cu = kwargs.get("current_user")
+                        if isinstance(_cu, dict):
+                            _user_id = _cu.get("id")
+                        elif _cu is not None:
+                            _user_id = getattr(_cu, "id", None)
+
                     for pattern in pattern_to_invalidate_extra:
                         formatted_pattern = _format_prefix(pattern, kwargs)
-                        # OPT-8: Use O(1) pattern invalidation
-                        # This avoids the O(N) SCAN operation on the Redis database.
-                        await invalidate_by_pattern(formatted_pattern)
+                        if _user_id is not None:
+                            formatted_pattern = f"user:{_user_id}:{formatted_pattern}"
+                        scoped_pattern = build_tenant_key(formatted_pattern, _tenant_id)
+                        # SCAN-based deletion: the O(1) index is not populated for
+                        # these keys, so fall back to pattern matching. The pattern
+                        # is tenant/user scoped to avoid wiping other tenants' data.
+                        await _delete_keys_by_pattern(scoped_pattern)
 
             return result
 

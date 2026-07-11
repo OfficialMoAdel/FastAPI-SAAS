@@ -577,9 +577,8 @@ class EventBus:
                     )
 
                     # Add to pipeline: SETEX job_def, ZADD queue
-                    # 24h expiration + extra ms
-                    # M3: 86400000 is 1 day. Fix expires_ms default
-                    expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 86400000)
+                    # 24h expiration + optional extra ms (defaults to 0, not another day)
+                    expires_ms = 86400000 + getattr(self._arq_queue, "expires_extra_ms", 0)
 
                     pipe.psetex(job_key, expires_ms, job_data)
                     pipe.zadd(queue_prefix, {job_id: enqueue_time_ms})

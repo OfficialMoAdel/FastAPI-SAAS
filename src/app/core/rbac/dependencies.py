@@ -54,6 +54,7 @@ async def get_user_permissions(
             UserRole.user_id == user_id,
             UserRole.tenant_id == tenant_id,
         )
+        .limit(1000)  # Safety bound
     )
     result = await db.execute(stmt)
     return set(result.scalars().all())

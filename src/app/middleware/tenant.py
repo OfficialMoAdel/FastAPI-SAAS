@@ -30,7 +30,7 @@ from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
+from src.app.core.tenancy.context import NO_TENANT, TenantContext, clear_tenant_context, set_current_tenant
 from src.app.core.utils.cache import client as redis_client
 from src.app.modules.tenants.models import Tenant
 
@@ -95,7 +95,11 @@ class TenantMiddleware(BaseHTTPMiddleware):
         path = request.url.path
 
         if is_path_exempt(path) or request.method == "OPTIONS":
-            return await call_next(request)
+            set_current_tenant(NO_TENANT)
+            try:
+                return await call_next(request)
+            finally:
+                clear_tenant_context()
 
         # PERFORMANCE: Check for missing header BEFORE acquiring a DB connection.
         tenant_slug = request.headers.get(TENANT_HEADER)

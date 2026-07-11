@@ -129,19 +129,13 @@ class MFAService:
                 await cache.client.setex(f"mfa_setup:{setup_token}", 600, secret)
             except Exception as e:
                 logger.error("Redis failed during MFA setup: %s", e)
-                from fastapi import HTTPException, status
+                from src.app.modules._base.exceptions import ServiceUnavailableError
 
-                raise HTTPException(
-                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                    detail="MFA setup is currently unavailable.",
-                )
+                raise ServiceUnavailableError("MFA setup is currently unavailable.")
         else:
-            from fastapi import HTTPException, status
+            from src.app.modules._base.exceptions import ServiceUnavailableError
 
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="MFA setup is currently unavailable.",
-            )
+            raise ServiceUnavailableError("MFA setup is currently unavailable.")
 
         # Note: In production, generate actual QR code image
         # For now, return the provisioning URI

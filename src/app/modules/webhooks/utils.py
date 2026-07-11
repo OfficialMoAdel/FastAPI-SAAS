@@ -9,8 +9,30 @@ import hmac
 import json
 import time
 
+from fastapi import HTTPException, status
+
+from src.app.core.config import settings
+from src.app.core.security.url_validator import SSRFProtectionError, validate_webhook_url
+
+
+async def validate_url_ssrf(url: str) -> None:
+    """Validate a webhook URL for SSRF protection.
+
+    Raises HTTPException(400) if the URL targets an internal/private IP
+    and WEBHOOK_ALLOW_INTERNAL_URLS is False (default).
+    """
+    if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
+        try:
+            await validate_webhook_url(url)
+        except SSRFProtectionError as e:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid URL: {str(e)}",
+            )
+
 
 def verify_webhook_signature(
+
     payload: bytes,
     signature: str,
     timestamp: int,

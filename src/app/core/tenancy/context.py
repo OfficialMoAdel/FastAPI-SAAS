@@ -67,6 +67,20 @@ class TenantContext:
         return self.tenant_name
 
 
+class _NoTenantContext(TenantContext):
+    """Sentinel object for explicitly exempt paths to safely bypass tenancy checks."""
+    def __bool__(self) -> bool:
+        return False
+
+
+NO_TENANT = _NoTenantContext(
+    tenant_id=UUID(int=0),
+    tenant_slug="no-tenant",
+    tenant_name="No Tenant",
+    is_active=False
+)
+
+
 # ContextVars are thread-safe and async-safe
 _current_tenant: ContextVar["TenantContext | None"] = ContextVar("current_tenant", default=None)
 
@@ -96,9 +110,6 @@ def get_lightweight_tenant_context() -> "TenantContext | None":
     Returns
     -------
         The lightweight tenant context if set, None otherwise.
-
-    This is the preferred method for most use cases as it avoids
-    loading the full ORM model.
     """
     return _current_tenant.get()
 
@@ -107,7 +118,8 @@ def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:
     """Set the current tenant in the context.
 
     Args:
-        tenant: The tenant to set as current, or None to clear.
+    ----
+        tenant: The tenant model or context to set
     """
     if tenant is None:
         _current_tenant.set(None)
@@ -123,7 +135,7 @@ def set_tenant_context(tenant: "Tenant | None") -> None:
 
 
 def clear_tenant_context() -> None:
-    """Clear the current tenant from the context.
+    """Clear the tenant context.
 
     Should be called in a finally block after request processing
     to prevent context leakage.

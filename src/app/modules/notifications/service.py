@@ -60,6 +60,7 @@ class NotificationService:
         """
         # Try cache first to avoid N+1 queries
         from src.app.core.utils.cache import build_tenant_key
+
         cache_key = build_tenant_key(f"email_template:{template_name}", tenant_id)
         if redis_client:
             try:
@@ -107,9 +108,7 @@ class NotificationService:
                 # get_source() returns (source_str, filename, uptodate_fn) — we take [0].
                 # jinja_env.loader is always a FileSystemLoader (set at module init), never None.
                 assert jinja_env.loader is not None
-                raw_source, _, _ = await asyncio.to_thread(
-                    jinja_env.loader.get_source, jinja_env, template_file
-                )
+                raw_source, _, _ = await asyncio.to_thread(jinja_env.loader.get_source, jinja_env, template_file)
                 data = (subject, raw_source)
             except Exception as e:
                 logger.error(
@@ -443,6 +442,7 @@ class NotificationService:
             # Invalidate cache
             if redis_client:
                 from src.app.core.utils.cache import build_tenant_key
+
                 await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
             return existing
@@ -461,6 +461,7 @@ class NotificationService:
         # Invalidate cache
         if redis_client:
             from src.app.core.utils.cache import build_tenant_key
+
             await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
         return override
@@ -483,6 +484,7 @@ class NotificationService:
         # Invalidate cache
         if redis_client:
             from src.app.core.utils.cache import build_tenant_key
+
             await redis_client.delete(build_tenant_key(f"email_template:{template_name}", tenant_id))
 
         return True
@@ -684,7 +686,17 @@ async def handle_notification_request_event(data: dict[str, Any]) -> None:
         from src.app.core.db.rls import rls_context
 
         async with local_session() as db:
-            async with rls_context(db, tenant_id_str or ""):
+            # Only scope RLS by tenant when a tenant is actually present.
+            # Passing an empty string would set app.current_tenant_id='' and
+            # silently mis-scope the insert under RLS.
+            if tenant_id:
+                ctx: Any = rls_context(db, str(tenant_id))
+            else:
+                from contextlib import nullcontext
+
+                ctx = nullcontext()
+
+            async with ctx:
                 service = NotificationService(db)
                 await service.send_email(
                     tenant_id=tenant_id,

@@ -1,15 +1,19 @@
 """Feature flags service with BaseService pattern."""
 
-from typing import Any
+import asyncio
+from collections.abc import Awaitable
+from typing import Any, TypeVar, cast
+
+T = TypeVar("T")
 from uuid import UUID
 
 from fastapi import Depends
-from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.attributes import flag_modified
 
 from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
+from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
@@ -18,6 +22,7 @@ from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverrid
 from src.app.modules.feature_flags.schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
+    FeatureFlagOverrideRead,
     FeatureFlagOverrideUpdate,
     FeatureFlagUpdate,
 )
@@ -27,13 +32,42 @@ logger = get_logger(__name__)
 
 CACHE_TTL = 300  # 5 minutes
 
+# P2.19 FIX: per-key singleflight locks for the manual feature-flag caches.
+# On a cold key under burst traffic, N concurrent requests would each miss
+# the cache and hit the DB (classic cache stampede). These locks serialize
+# the cache-miss path so only one coroutine per key loads from the DB; the
+# others wait and then read the freshly-written cache value.
+_flag_cache_locks: dict[str, asyncio.Lock] = {}
+
+
+async def _with_flag_lock(key: str, coro: Awaitable[T]) -> T:
+    """Run `coro` under a per-key lock (singleflight)."""
+    import asyncio
+
+    lock = _flag_cache_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _flag_cache_locks[key] = lock
+    async with lock:
+        return await coro
+
 
 class FeatureFlagService(BaseService[FeatureFlag]):
     """Service for managing feature flags using BaseService pattern."""
 
     def __init__(self, db: AsyncSession):
         super().__init__(model=FeatureFlag, db=db)
-        self.override_crud: FastCRUD[FeatureFlagOverride, Any, Any, Any, Any, Any] = FastCRUD(FeatureFlagOverride)
+        # TenantAwareCRUD auto-injects the current tenant_id into every
+        # get/update/delete, so override mutations are always tenant-scoped and
+        # a caller cannot read/modify/delete another tenant's override by PK.
+        self.override_crud: TenantAwareCRUD[
+            FeatureFlagOverride,
+            FeatureFlagOverrideCreate,
+            FeatureFlagOverrideUpdate,
+            FeatureFlagOverrideUpdate,
+            Any,
+            FeatureFlagOverrideRead,
+        ] = TenantAwareCRUD(FeatureFlagOverride)
 
     # =========================================================================
     # Core Flag Operations
@@ -165,11 +199,21 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         return override
 
     async def update_override(self, override_id: int, data: FeatureFlagOverrideUpdate) -> FeatureFlagOverride | None:
-        """Update a feature flag override."""
-        result = await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True))
+        """Update a feature flag override.
+
+        Tenant isolation is enforced by TenantAwareCRUD.update, which auto-injects
+        the current tenant_id into the WHERE clause so a caller can only mutate
+        their own tenant's override (IDOR-safe).
+        """
+        # TenantAwareCRUD.update is typed as returning None, but FastCRUD's
+        # update actually returns the updated row at runtime. Cast to the real type.
+        result = cast(
+            "FeatureFlagOverride | None",
+            await self.override_crud.update(db=self.db, id=override_id, object=data.model_dump(exclude_unset=True)),
+        )
         if result is None:
             return None
-        override: FeatureFlagOverride = result  # type: ignore[assignment]
+        override = result
 
         # Invalidate cache
         ff_id = override.get("feature_flag_id") if isinstance(override, dict) else override.feature_flag_id
@@ -212,33 +256,43 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             Dictionary of feature flags
         """
         from src.app.core.utils.cache import build_tenant_key
+
         cache_key = build_tenant_key("features", tenant_id)
 
-        # Try cache first
+        # Fast path: serve from cache if present.
         if redis_client:
             try:
                 cached_value = await redis_client.get(cache_key)
                 if cached_value:
-                    result_data: dict[str, Any] = json_loads(cached_value)
-                    return result_data
+                    return cast("dict[str, Any]", json_loads(cached_value))
             except Exception as e:
                 logger.debug("Cache get failed", error=e)
 
-        # Fallback to DB
-        tenant = await self.db.get(Tenant, tenant_id)
-        flags: dict[str, Any] = {}
+        async def _load() -> dict[str, Any]:
+            # P2.19 FIX: re-check cache now that we hold the per-key lock,
+            # so a concurrent caller that already populated it is served from cache
+            # instead of stampeding the DB.
+            if redis_client:
+                try:
+                    cached_value = await redis_client.get(cache_key)
+                    if cached_value:
+                        return cast("dict[str, Any]", json_loads(cached_value))
+                except Exception as e:
+                    logger.debug("Cache get failed", error=e)
 
-        if tenant and tenant.feature_flags:
-            flags = tenant.feature_flags
+            tenant = await self.db.get(Tenant, tenant_id)
+            flags: dict[str, Any] = {}
+            if tenant and tenant.feature_flags:
+                flags = tenant.feature_flags
 
-        # Update cache
-        if redis_client:
-            try:
-                await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
-            except Exception as e:
-                logger.debug("Cache operation failed", error=e)
+            if redis_client:
+                try:
+                    await redis_client.setex(cache_key, CACHE_TTL, json_dumps(flags, as_str=True))
+                except Exception as e:
+                    logger.debug("Cache operation failed", error=e)
+            return flags
 
-        return flags
+        return await _with_flag_lock(cache_key, _load())
 
     async def is_enabled(self, tenant_id: UUID, feature_name: str, default: bool = False) -> bool:
         """
@@ -253,9 +307,10 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             True if feature is enabled, False otherwise
         """
         from src.app.core.utils.cache import build_tenant_key
+
         cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
 
-        # Try cache first
+        # Fast path: serve from cache if present.
         if redis_client:
             try:
                 cached_value = await redis_client.get(cache_key)
@@ -267,45 +322,61 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             except Exception as e:
                 logger.debug("Cache get failed", error=e)
 
-        # Fallback to DB (H-12 FIX: Check flag and overrides first)
-        enabled = default
+        async def _load() -> bool:
+            # P2.19 FIX: re-check cache under the per-key lock (singleflight)
+            # so concurrent cache misses don't all hit the DB.
+            if redis_client:
+                try:
+                    cached_value = await redis_client.get(cache_key)
+                    if cached_value is not None:
+                        val_str = (cached_value.decode() if isinstance(cached_value, bytes) else cached_value).lower()
+                        return val_str == "true"
+                except Exception as e:
+                    logger.debug("Cache get failed", error=e)
 
-        flag = await self.get_flag_by_key_or_none(feature_name)
-        if flag:
-            flag_id = int(flag.id if not isinstance(flag, dict) else flag.get("id", 0))
-            flag_default = bool(flag.default_value if not isinstance(flag, dict) else flag.get("default_value", False))
+            # Fallback to DB (H-12 FIX: Check flag and overrides first)
+            enabled = default
 
-            override = await self.get_override(flag_id, tenant_id)
+            flag = await self.get_flag_by_key_or_none(feature_name)
+            if flag:
+                flag_id = int(flag.id if not isinstance(flag, dict) else flag.get("id", 0))
+                flag_default = bool(
+                    flag.default_value if not isinstance(flag, dict) else flag.get("default_value", False)
+                )
 
-            if override:
-                custom_value = override.custom_value if not isinstance(override, dict) else override.get("custom_value")
-                if custom_value is not None:
-                    if isinstance(custom_value, dict):
-                        if "value" in custom_value:
-                            enabled = bool(custom_value["value"])
-                        elif "enabled" in custom_value:
-                            enabled = bool(custom_value["enabled"])
+                override = await self.get_override(flag_id, tenant_id)
+
+                if override:
+                    custom_value = (
+                        override.custom_value if not isinstance(override, dict) else override.get("custom_value")
+                    )
+                    if custom_value is not None:
+                        if isinstance(custom_value, dict):
+                            if "value" in custom_value:
+                                enabled = bool(custom_value["value"])
+                            elif "enabled" in custom_value:
+                                enabled = bool(custom_value["enabled"])
+                            else:
+                                enabled = bool(custom_value)
                         else:
                             enabled = bool(custom_value)
                     else:
-                        enabled = bool(custom_value)
+                        enabled = flag_default
                 else:
                     enabled = flag_default
             else:
-                enabled = flag_default
-        else:
-            tenant = await self.db.get(Tenant, tenant_id)
-            if tenant and tenant.feature_flags:
-                enabled = bool(tenant.feature_flags.get(feature_name, default))
+                tenant = await self.db.get(Tenant, tenant_id)
+                if tenant and tenant.feature_flags:
+                    enabled = bool(tenant.feature_flags.get(feature_name, default))
 
-        # Update cache
-        if redis_client:
-            try:
-                await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
-            except Exception as e:
-                logger.debug("Cache operation failed", error=e)
+            if redis_client:
+                try:
+                    await redis_client.setex(cache_key, CACHE_TTL, str(enabled).lower())
+                except Exception as e:
+                    logger.debug("Cache operation failed", error=e)
+            return enabled
 
-        return enabled
+        return await _with_flag_lock(cache_key, _load())
 
     async def update_tenant_flag(self, tenant_id: UUID, feature_name: str, value: Any) -> Tenant:
         """
@@ -424,6 +495,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
         try:
             from src.app.core.utils.cache import build_tenant_key
+
             await redis_client.delete(build_tenant_key("features", tenant_id))
             if feature_name:
                 await redis_client.delete(build_tenant_key(f"feature:{feature_name}", tenant_id))

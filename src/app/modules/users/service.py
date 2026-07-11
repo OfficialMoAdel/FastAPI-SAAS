@@ -215,7 +215,7 @@ class UserService(BaseService[User]):
 
             token_keys = [
                 build_tenant_key(f"user:{username}:token_version", str(tenant_id) if tenant_id else None),
-                build_tenant_key(f"user:{email}:token_version", str(tenant_id) if tenant_id else None)
+                build_tenant_key(f"user:{email}:token_version", str(tenant_id) if tenant_id else None),
             ]
 
             if tenant_id is not None:
@@ -340,13 +340,12 @@ class UserService(BaseService[User]):
             # M22: Send verification email automatically upon registration
             try:
                 from src.app.modules.auth.service import get_auth_service
+
                 auth_service = get_auth_service()
                 await auth_service.send_verification_email(email=result.email, db=self.db)
             except Exception as email_err:
                 logger.error(
-                    "Failed to send verification email during registration",
-                    error=str(email_err),
-                    user_id=result.id
+                    "Failed to send verification email during registration", error=str(email_err), user_id=result.id
                 )
 
             def _log_task_error(task: asyncio.Task) -> None:
@@ -565,16 +564,16 @@ class UserService(BaseService[User]):
         if db_username != current_user["username"] and not current_user.get("is_superuser"):
             raise ForbiddenException("You do not have permission to modify this user's email.")
 
-        # Check for duplicate email if changing
+        # Check for duplicate email if changing (exclude soft-deleted users)
         if values.email is not None and values.email != db_email:
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
-            if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val):
+            if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("email", values.email)
 
-        # Check for duplicate username if changing
+        # Check for duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
-            if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val):
+            if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("username", values.username)
 
         await self.crud.update(db=self.db, object=values, username=db_username)

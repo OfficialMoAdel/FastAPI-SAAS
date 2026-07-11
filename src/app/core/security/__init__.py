@@ -34,14 +34,15 @@ _jwt_logger = get_logger(__name__)
 
 _bcrypt_executor: ThreadPoolExecutor | None = None
 
+
 def _get_bcrypt_executor() -> ThreadPoolExecutor:
     global _bcrypt_executor
     if _bcrypt_executor is None:
         _bcrypt_executor = ThreadPoolExecutor(
-            max_workers=settings.BCRYPT_THREAD_POOL_SIZE,
-            thread_name_prefix="bcrypt_auth"
+            max_workers=settings.BCRYPT_THREAD_POOL_SIZE, thread_name_prefix="bcrypt_auth"
         )
     return _bcrypt_executor
+
 
 from src.app.core.security.jwt_utils import _get_parsed_verification_key
 
@@ -271,6 +272,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         # P1-4: Cache token_version in Redis to avoid DB query on every request
         tenant_id = payload.get("tenant_id")
         from src.app.core.utils.cache import build_tenant_key
+
         cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
 
         from src.app.core.utils.cache import client as redis_client
@@ -333,6 +335,7 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
         return tenant_id
 
     from src.app.core.tenancy.context import get_tenant_context
+
     tenant = get_tenant_context()
     if tenant:
         return tenant.id
@@ -355,7 +358,7 @@ async def blacklist_tokens(
     refresh_token: str | None,
     db: AsyncSession,
     access_payload: dict[str, Any] | None = None,
-    refresh_payload: dict[str, Any] | None = None
+    refresh_payload: dict[str, Any] | None = None,
 ) -> None:
     """Blacklist both access and refresh tokens.
 
@@ -444,13 +447,17 @@ async def blacklist_tokens(
             # (the token is already blacklisted in DB) but still update cache
             _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
 
-        # Persist to DB for fallback during Redis outages
+        # Persist to DB for fallback during Redis outages.
+        # Only write to Redis AFTER a successful DB commit: if the DB write
+        # fails, we must not advertise the token as blacklisted in Redis either,
+        # otherwise the DB fallback (used during Redis outages) would miss it.
         try:
             await db.commit()
         except Exception as e:
             _jwt_logger.warning("Failed to commit blacklisted tokens to DB", error=str(e))
+            return
 
-    # Bulk add to Redis cache
+    # Bulk add to Redis cache (only after successful DB commit)
     if tokens_for_cache:
         await add_tokens_to_blacklist(tokens_for_cache)
 
@@ -528,8 +535,5 @@ def get_mfa_pending_token_manager(redis: Redis) -> PendingTokenStore:
         PendingTokenStore instance configured for MFA.
     """
     return PendingTokenStore(
-        redis=redis,
-        prefix="mfa_pending",
-        ttl_seconds=settings.MFA_PENDING_EXPIRY_SECONDS,
-        use_hash=True
+        redis=redis, prefix="mfa_pending", ttl_seconds=settings.MFA_PENDING_EXPIRY_SECONDS, use_hash=True
     )

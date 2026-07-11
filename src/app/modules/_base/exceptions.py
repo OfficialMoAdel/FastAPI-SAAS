@@ -118,4 +118,38 @@ class RateLimitExceededError(Exception):
         super().__init__(self.message)
 
 
-__all__ = ["ModelNotFoundError", "ValidationError", "DuplicateError", "ForbiddenError", "RateLimitExceededError"]
+class TenantContextError(ForbiddenError):
+    """Raised when tenant context is missing or inactive."""
+
+    def __init__(self, message: str = "Tenant context required or inactive"):
+        super().__init__(message, reason="tenant_context_error")
+
+
+class ServiceUnavailableError(Exception):
+    """Raised when an external service (Stripe, Redis) is unavailable."""
+
+    def __init__(self, message: str):
+        self.message = message
+        super().__init__(self.message)
+
+
+class StripeError(Exception):
+    """Raised when a Stripe API call fails."""
+
+    def __init__(self, message: str, status_code: int = 400):
+        self.message = message
+        self.status_code = status_code
+        super().__init__(self.message)
+
+
+__all__ = [
+    "ModelNotFoundError",
+    "ValidationError",
+    "DuplicateError",
+    "ForbiddenError",
+    "RateLimitExceededError",
+    "TenantContextError",
+    "ServiceUnavailableError",
+    "StripeError",
+]
+

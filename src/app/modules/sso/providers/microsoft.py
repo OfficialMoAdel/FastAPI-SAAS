@@ -68,8 +68,11 @@ class MicrosoftProvider(BaseOAuthProvider):
                 # Microsoft uses id (UUID) instead of id (numeric)
                 self.provider_user_id = str(data.get("id"))
                 self.email = data.get("mail") or data.get("userPrincipalName")
-                # Microsoft emails are typically verified
-                self.email_verified = data.get("emailVerified", False)
+                # Microsoft Graph /v1.0/me does NOT return an emailVerified field,
+                # so relying on it always yields False and breaks new-user signup
+                # (requires_verified_email() is True for Microsoft). The user has
+                # already authenticated with Microsoft, so treat the email as verified.
+                self.email_verified = True
                 self.name = data.get("displayName") or data.get("givenName", "")
                 # Photo requires additional API call, keeping it None for now
                 self.picture = None

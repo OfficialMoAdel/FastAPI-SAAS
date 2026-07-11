@@ -202,3 +202,4 @@ drop.py
 report.xml
 skills-lock.json
 graphify-out
+src/.env.local

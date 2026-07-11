@@ -97,6 +97,11 @@ return new_attempts
         # This ensures bcrypt verification always takes ~100ms, preventing
         # attackers from enumerating valid usernames via response time analysis.
         hash_to_verify = db_user["hashed_password"] if db_user else self._DUMMY_BCRYPT_HASH
+        # SSO-only accounts store a non-bcrypt sentinel ("!SSO_ONLY_ACCOUNT_NO_PASSWORD")
+        # in place of a real password. Passing it to verify_password raises UnknownHashError
+        # (500). Treat the sentinel as an invalid password so the login fails cleanly with 401.
+        if hash_to_verify and str(hash_to_verify).startswith("!SSO_ONLY"):
+            return None
         password_valid = await verify_password(password, hash_to_verify)
 
         # Only return user data if both user exists AND password is valid
@@ -146,9 +151,9 @@ return new_attempts
             # fail_closed: Raise exception and block operation (security focused, compliance)
             # Note: fail_closed requires ServiceUnavailableException to be defined
             if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "fail_open") == "fail_closed":
-                from fastapi import HTTPException
+                from src.app.modules._base.exceptions import ServiceUnavailableError
 
-                raise HTTPException(status_code=503, detail="Service temporarily unavailable") from e
+                raise ServiceUnavailableError("Service temporarily unavailable") from e
 
     async def login(
         self,
@@ -255,6 +260,7 @@ return new_attempts
 
             # Generate MFA pending token
             from src.app.core.security.tokens import TokenGenerator
+
             mfa_token_store = get_mfa_pending_token_manager(redis)
             mfa_token = TokenGenerator.generate_magic_link_token()
             await mfa_token_store.create(
@@ -264,7 +270,7 @@ return new_attempts
                     "username": user["username"],
                     "ip_address": client_ip,
                     "scope": "mfa_pending",
-                }
+                },
             )
 
             # Return partial authentication response
@@ -407,9 +413,7 @@ return new_attempts
 
         # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
         await blacklist_token(
-            token=refresh_token,
-            db=db,
-            payload=user_data.model_dump(exclude_unset=True) if user_data else None
+            token=refresh_token, db=db, payload=user_data.model_dump(exclude_unset=True) if user_data else None
         )
 
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
@@ -477,11 +481,7 @@ return new_attempts
                 except (UnauthorizedException, ExpiredSignatureError):
                     pass  # Token expired or invalid, proceed with logout anyway
 
-            await blacklist_tokens(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                db=db
-            )
+            await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
             response.delete_cookie(key="refresh_token")
 
             # Try to invalidate the specific session to decrement active sessions
@@ -680,6 +680,7 @@ return new_attempts
                 tenant_id = user.get("tenant_id")
                 keys = []
                 from src.app.core.utils.cache import build_tenant_key
+
                 if username:
                     keys.append(build_tenant_key(f"user:{username}:token_version", tenant_id))
                 if email:

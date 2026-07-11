@@ -39,9 +39,10 @@ async def write_post(
 
 @router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
 @cache(
-    key_prefix="user_posts:{username}:page_{page}:per_page:{per_page}",
+    key_prefix="user_posts:{username}:page_{page}:per_page_{per_page}",
     resource_id_name="username",
     expiration=60,
+    user_scoped=True,
 )
 async def read_posts(
     request: Request,
@@ -60,7 +61,7 @@ async def read_posts(
 
 
 @router.get("/{username}/posts/{id}", response_model=PostRead)
-@cache(key_prefix="user_post_cache:{username}", resource_id_name="id")
+@cache(key_prefix="user_post_cache:{username}", resource_id_name="id", user_scoped=True)
 async def read_post(
     request: Request,
     username: str,
@@ -77,7 +78,12 @@ async def read_post(
 
 
 @router.patch("/{username}/posts/{id}", response_model=MessageResponse)
-@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
+@cache(
+    "user_post_cache:{username}",
+    resource_id_name="id",
+    pattern_to_invalidate_extra=["user_posts:{username}:*"],
+    user_scoped=True,
+)
 async def patch_post(
     request: Request,
     username: str,
@@ -95,7 +101,12 @@ async def patch_post(
 
 
 @router.delete("/{username}/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
-@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
+@cache(
+    "user_post_cache:{username}",
+    resource_id_name="id",
+    pattern_to_invalidate_extra=["user_posts:{username}:*"],
+    user_scoped=True,
+)
 async def erase_post(
     request: Request,
     username: str,
@@ -117,7 +128,12 @@ async def erase_post(
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(get_current_superuser)],
 )
-@cache("user_post_cache:{username}", resource_id_name="id", pattern_to_invalidate_extra=["user_posts:{username}:*"])
+@cache(
+    "user_post_cache:{username}",
+    resource_id_name="id",
+    pattern_to_invalidate_extra=["user_posts:{username}:*"],
+    user_scoped=True,
+)
 async def erase_db_post(
     request: Request, username: str, id: int, service: PostService = Depends(_get_post_service)
 ) -> Response:

@@ -63,10 +63,10 @@ class WebhookService:
         is_active: bool = True,
     ) -> WebhookEndpoint:
         """Create a new webhook endpoint."""
-        from src.app.modules.webhooks.router import _validate_url_ssrf
+        from src.app.modules.webhooks.utils import validate_url_ssrf
 
         # SECURITY FIX: Validate SSRF at create time to prevent persisting bad URLs
-        await _validate_url_ssrf(url)
+        await validate_url_ssrf(url)
 
         # Generate a random secret for the endpoint (deprecated/auto-generated)
         import secrets as secrets_module
@@ -97,6 +97,105 @@ class WebhookService:
 
         logger.info("webhook_endpoint_created", tenant_id=tenant_id, event_type=event_type, url=url)
         return endpoint
+
+    async def get_endpoints(
+        self,
+        tenant_id: UUID,
+        is_active: bool | None = None,
+        event_type: str | None = None,
+        page: int = 1,
+        per_page: int = 100,
+    ) -> tuple[list[WebhookEndpoint], int]:
+        """Get paginated webhook endpoints for a tenant."""
+        from sqlalchemy import func, select
+
+        query = select(WebhookEndpoint).where(WebhookEndpoint.tenant_id == tenant_id)
+
+        if is_active is not None:
+            query = query.where(WebhookEndpoint.is_active == is_active)
+        if event_type:
+            query = query.where(WebhookEndpoint.event_type == event_type)
+
+        query = query.order_by(WebhookEndpoint.created_at.desc())
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar_one()
+
+        # Apply pagination
+        offset = (page - 1) * per_page
+        query = query.limit(per_page).offset(offset)
+
+        result = await self.db.execute(query)
+        endpoints = list(result.scalars().all())
+
+        return endpoints, total
+
+    async def get_endpoint_by_id(self, endpoint_id: UUID, tenant_id: UUID) -> WebhookEndpoint | None:
+        """Get an endpoint by ID for a specific tenant."""
+        result = await self.db.execute(
+            select(WebhookEndpoint).where(
+                WebhookEndpoint.id == endpoint_id,
+                WebhookEndpoint.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_delivery_by_id(self, delivery_id: UUID, tenant_id: UUID) -> WebhookDelivery | None:
+        """Get a delivery by ID for a specific tenant."""
+        result = await self.db.execute(
+            select(WebhookDelivery)
+            .join(WebhookEndpoint)
+            .where(
+                WebhookDelivery.id == delivery_id,
+                WebhookEndpoint.tenant_id == tenant_id,
+            )
+        )
+        return result.scalar_one_or_none()
+
+    async def get_deliveries(
+        self,
+        tenant_id: UUID,
+        endpoint_id: UUID | None = None,
+        delivery_status: WebhookDeliveryStatus | None = None,
+        event_type: str | None = None,
+        start_date: datetime | None = None,
+        end_date: datetime | None = None,
+        page: int = 1,
+        per_page: int = 100,
+    ) -> tuple[list[WebhookDelivery], int]:
+        """Get paginated webhook deliveries for a tenant."""
+        from sqlalchemy import func, select
+
+        query = select(WebhookDelivery).where(WebhookDelivery.tenant_id == tenant_id)
+
+        if endpoint_id:
+            query = query.where(WebhookDelivery.webhook_endpoint_id == endpoint_id)
+        if delivery_status:
+            query = query.where(WebhookDelivery.status == delivery_status)
+        if event_type:
+            query = query.where(WebhookDelivery.event_type == event_type)
+        if start_date:
+            query = query.where(WebhookDelivery.created_at >= start_date)
+        if end_date:
+            query = query.where(WebhookDelivery.created_at <= end_date)
+
+        query = query.order_by(WebhookDelivery.created_at.desc())
+
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        total_result = await self.db.execute(count_query)
+        total = total_result.scalar_one()
+
+        # Apply pagination
+        offset = (page - 1) * per_page
+        query = query.limit(per_page).offset(offset)
+
+        result = await self.db.execute(query)
+        deliveries = list(result.scalars().all())
+
+        return deliveries, total
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
         """Get active endpoints for an event type with glob matching support."""
@@ -220,9 +319,7 @@ class WebhookService:
                         error_type=type(enqueue_result).__name__,
                     )
 
-        logger.info(
-            "webhooks_triggered", deliveries_count=len(deliveries), event_type=event_type, tenant_id=tenant_id
-        )
+        logger.info("webhooks_triggered", deliveries_count=len(deliveries), event_type=event_type, tenant_id=tenant_id)
         return deliveries
 
     async def trigger_endpoint(
@@ -362,7 +459,24 @@ class WebhookService:
         """
         import json
 
+        # P2.17 FIX: serialize delivery by id to prevent double delivery when the
+        # same delivery_id is enqueued twice (e.g. a retry scheduled while the
+        # original is still in flight). A short-lived Redis lock ensures only one
+        # worker performs the HTTP call; others skip and return the current state.
+        from src.app.core.utils import cache as _cache
         from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
+
+        _redis = _cache.client
+        _lock_key = f"webhook:deliver_lock:{delivery_id}"
+        _lock_held = False
+        if _redis is not None:
+            _lock_held = bool(await _redis.set(_lock_key, "1", nx=True, ex=600))
+            if not _lock_held:
+                logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
+                existing = await self.db.get(WebhookDelivery, delivery_id)
+                if not existing:
+                    raise ModelNotFoundError("WebhookDelivery", delivery_id)
+                return existing
 
         # Get delivery record with endpoint eagerly loaded (fixes N+1 query)
         stmt = (
@@ -373,6 +487,11 @@ class WebhookService:
         result = await self.db.execute(stmt)
         delivery = result.unique().scalar_one_or_none()
         if not delivery:
+            if _lock_held and _redis is not None:
+                try:
+                    await _redis.delete(_lock_key)
+                except Exception:  # noqa: BLE001
+                    pass
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
         # Access eagerly loaded endpoint
@@ -397,6 +516,11 @@ class WebhookService:
             await self._handle_delivery_failure(delivery)
             await self.db.commit()
             await self.db.refresh(delivery)
+            if _lock_held and _redis is not None:
+                try:
+                    await _redis.delete(_lock_key)
+                except Exception:  # noqa: BLE001
+                    pass
             return delivery
 
         # CRIT-2 FIX: Serialize payload ONCE with sort_keys=True to match HMAC signature.
@@ -416,6 +540,7 @@ class WebhookService:
         # Validate URL for SSRF protection before making request
         try:
             from src.app.core.config import settings
+
             if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
                 validated_ip = await validate_webhook_url(endpoint.url)
             else:
@@ -446,6 +571,11 @@ class WebhookService:
             delivery.response_body = f"SSRF protection: {e}"
             await self.db.commit()
             await self.db.refresh(delivery)
+            if _lock_held and _redis is not None:
+                try:
+                    await _redis.delete(_lock_key)
+                except Exception:  # noqa: BLE001
+                    pass
             return delivery
 
         # Extract data needed for HTTP call before releasing DB connection
@@ -518,6 +648,11 @@ class WebhookService:
 
         await self.db.commit()
         await self.db.refresh(delivery)
+        if _lock_held and _redis is not None:
+            try:
+                await _redis.delete(_lock_key)
+            except Exception:  # noqa: BLE001
+                pass
         return delivery
 
     async def _handle_delivery_failure(self, delivery: WebhookDelivery, override_delay: float | None = None) -> None:
@@ -655,9 +790,11 @@ class WebhookService:
                     endpoint_id=str(endpoint.id),
                     error=str(e),
                 )
-                if endpoint.signing_secret.startswith("v1:"):
-                    raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
-                secret = endpoint.signing_secret
+                # signing_secret is ALWAYS stored encrypted via encrypt_data.
+                # On any decryption failure we must NOT fall back to returning the
+                # ciphertext blob (it would leak the encrypted secret to the caller).
+                # Raise so the caller gets a clean error instead of sensitive data.
+                raise ValueError(f"Cannot decrypt webhook signing_secret for endpoint {endpoint.id}.") from e
 
         if not secret:
             return {
@@ -680,13 +817,12 @@ class WebhookService:
     ) -> dict[str, Any]:
         """Rotate the signing secret for a webhook endpoint.
 
-        Generates a new signing secret that takes effect immediately.
-        The old secret is invalidated upon rotation.
-
-        NOTE: The grace_period_seconds parameter is included for future
-        grace period support but is not currently implemented. The old
-        secret is replaced immediately. Update your webhook consumers
-        before calling this endpoint.
+        Generates a new signing secret that takes effect immediately. The
+        previous secret is preserved in ``old_signing_secret`` and remains
+        valid until ``old_secret_expires_at`` (``grace_period_seconds`` after
+        rotation), so in-flight deliveries signed with the old secret keep
+        working during the grace window. Update your webhook consumers
+        before the grace period elapses.
 
         Parameters
         ----------

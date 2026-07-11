@@ -1,6 +1,7 @@
 """Billing & Payments router - HTTP handlers for billing operations."""
 
 from typing import Annotated, Any
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, HttpUrl
@@ -57,28 +58,60 @@ logger = get_logger(__name__)
 async def stripe_webhook(
     request: Request,
     background_tasks: BackgroundTasks,
+    tenant_id: UUID | None = Query(None, description="Optional tenant ID for per-tenant webhook secrets"),
+    db: AsyncSession = Depends(async_get_db),
 ) -> Any:
     """
     Handle Stripe webhooks.
 
     Verifies signature and dispatches event handling.
-    This endpoint is global for the platform.
+    This endpoint is global for the platform but supports per-tenant secrets.
     """
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
-    webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
+
+    if not sig_header:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Missing Stripe-Signature header",
+        )
+
+    # Try to extract tenant_id from payload if not in query params
+    if not tenant_id:
+        import json
+        try:
+            event_data = json.loads(payload)
+            obj = event_data.get("data", {}).get("object", {})
+
+            # Check common locations for tenant_id
+            metadata_tenant = obj.get("metadata", {}).get("tenant_id")
+            if metadata_tenant:
+                from uuid import UUID
+                tenant_id = UUID(metadata_tenant)
+            else:
+                client_ref = obj.get("client_reference_id")
+                if client_ref:
+                    from uuid import UUID
+                    tenant_id = UUID(client_ref)
+        except (ValueError, AttributeError, json.JSONDecodeError):
+            pass
+
+    # Resolve webhook secret
+    webhook_secret = None
+    if tenant_id:
+        from src.app.modules.billing.service import StripeSettingsService
+        settings_service = StripeSettingsService(db)
+        webhook_secret = await settings_service.get_webhook_secret(tenant_id)
+
+    # Fall back to global secret
+    if not webhook_secret:
+        webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
 
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
         raise HTTPException(
             status_code=status.HTTP_501_NOT_IMPLEMENTED,
             detail="Webhook secret not configured",
-        )
-
-    if not sig_header:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Missing Stripe-Signature header",
         )
 
     # Verify signature

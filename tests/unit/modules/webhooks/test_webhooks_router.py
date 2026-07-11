@@ -261,8 +261,8 @@ async def test_retry_webhook_delivery(mock_service_cls, mock_db, mock_tenant, mo
     mock_result.scalar_one_or_none.return_value = mock_delivery
     mock_db.execute.return_value = mock_result
 
-    mock_service = list(mock_service_cls.return_value)  # wait
     mock_service = MagicMock()
+    mock_service.get_delivery_by_id = AsyncMock(return_value=mock_delivery)
     mock_service.retry_delivery = AsyncMock()
     mock_service_cls.return_value = mock_service
 
@@ -315,6 +315,7 @@ async def test_test_webhook_endpoint(mock_service_cls, mock_rate_limiter, mock_d
     mock_db.execute.side_effect = [mock_rate_limit_result, mock_endpoint_result]
 
     mock_service = MagicMock()
+    mock_service.get_endpoint_by_id = AsyncMock(return_value=mock_endpoint)
     mock_delivery = MagicMock()
     mock_delivery.id = uuid4()
     mock_delivery.webhook_endpoint_id = endpoint_id

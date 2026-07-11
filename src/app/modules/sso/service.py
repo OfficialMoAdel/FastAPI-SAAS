@@ -17,7 +17,7 @@ from src.app.core.logger import get_logger
 from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.service_registry import get_service
-from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
+from src.app.core.tenancy.context import get_tenant_context, set_current_tenant, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.sso.crud import crud_user_sso_connections
 from src.app.modules.sso.providers.apple import AppleProvider
@@ -114,6 +114,7 @@ class SSOService:
             raise BadRequestException("Redis client not initialized")
         sso_state_manager = get_sso_state_manager(redis_client)
         from src.app.core.security.tokens import TokenGenerator
+
         state = TokenGenerator.generate_sso_state()
         state_data: dict[str, Any] = {
             "provider": provider,
@@ -161,6 +162,12 @@ class SSOService:
 
         if state_data["provider"] != provider:
             raise BadRequestException("State provider mismatch")
+
+        # Preserve any tenant context already set by upstream middleware (e.g. an
+        # authenticated user in connect_mode). We only override it below if the SSO
+        # state carries an explicit tenant_id, and we must restore the prior value
+        # afterwards so we don't discard the caller's context.
+        prior_tenant_ctx = get_tenant_context()
 
         try:
             redirect_uri = state_data["redirect_uri"]
@@ -360,7 +367,6 @@ class SSOService:
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
             if mfa_enabled:
-
                 from src.app.core.security import get_mfa_pending_token_manager
                 from src.app.core.security.tokens import TokenGenerator
                 from src.app.core.utils.cache import client as mfa_redis_client
@@ -378,7 +384,7 @@ class SSOService:
                         "username": normalized_user.get("username") or normalized_user.get("email"),
                         "ip_address": get_client_ip(request),
                         "scope": "mfa_pending",
-                    }
+                    },
                 )
                 return {
                     "mfa_required": True,
@@ -408,6 +414,7 @@ class SSOService:
 
             try:
                 from src.app.core.security.login_helpers import register_login_session
+
                 await register_login_session(
                     user_id=normalized_user["id"],
                     access_token=access_token,
@@ -462,7 +469,10 @@ class SSOService:
                 token_type="bearer",
             )
         finally:
-            clear_tenant_context()
+            # Restore the tenant context that existed before this call (which may
+            # have been set by upstream auth middleware), rather than unconditionally
+            # clearing it and discarding the caller's context.
+            set_current_tenant(prior_tenant_ctx)
 
     async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any) -> None:
         """Create UserSSOConnection."""
@@ -510,10 +520,7 @@ class SSOService:
 
                 # Overwrite hashed_password with sentinel string so no valid password exists
                 await user_svc.crud.update(
-                    db=db,
-                    id=result.id,
-                    object={"hashed_password": "!SSO_ONLY_ACCOUNT_NO_PASSWORD"},
-                    commit=True
+                    db=db, id=result.id, object={"hashed_password": "!SSO_ONLY_ACCOUNT_NO_PASSWORD"}, commit=True
                 )
 
                 return result
@@ -524,11 +531,7 @@ class SSOService:
                 # If username duplicate, try again
                 if attempt == max_retries - 1:
                     raise BadRequestException("Failed to generate a unique username. Please try again.")
-                logger.warning(
-                    "Username collision during SSO registration",
-                    username=username,
-                    attempt=attempt + 1
-                )
+                logger.warning("Username collision during SSO registration", username=username, attempt=attempt + 1)
 
     async def get_enabled_providers(self, db: AsyncSession) -> list[dict[str, Any]]:
         """List all available SSO providers with their status."""
@@ -619,13 +622,14 @@ class SSOService:
         if tenant_id is None:
             raise BadRequestException("Tenant context required")
 
-        # Check if user has a password
+        # Check if user has a real password (SSO-only accounts store a sentinel
+        # "!SSO_ONLY_ACCOUNT_NO_PASSWORD" placeholder, which is NOT a valid password).
         user = await get_service("user", db).get(user_id)
         if user:
             hashed_pw = (
                 user.get("hashed_password") if isinstance(user, dict) else getattr(user, "hashed_password", None)
             )
-            if hashed_pw:
+            if hashed_pw and not str(hashed_pw).startswith("!SSO_ONLY"):
                 return True
 
         # Check if user has multiple SSO connections

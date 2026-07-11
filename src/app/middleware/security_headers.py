@@ -71,23 +71,25 @@ class SecurityHeadersMiddleware:
         async def send_wrapper(message):
             if message["type"] == "http.response.start":
                 from starlette.datastructures import MutableHeaders
+
                 headers = MutableHeaders(scope=message)
 
                 # XSS Prevention Headers
-                headers.append("X-Content-Type-Options", "nosniff")
-                headers.append("X-Frame-Options", self.frame_options)
-                headers.append("X-XSS-Protection", "0")
-                headers.append("Referrer-Policy", "strict-origin-when-cross-origin")
-                headers.append("Permissions-Policy", (
+                headers.setdefault("X-Content-Type-Options", "nosniff")
+                headers.setdefault("X-Frame-Options", self.frame_options)
+                headers.setdefault("X-XSS-Protection", "0")
+                headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+                headers.setdefault(
+                    "Permissions-Policy",
                     "accelerometer=(), camera=(), geolocation=(), gyroscope=(), "
-                    "magnetometer=(), microphone=(), payment=(), usb=()"
-                ))
+                    "magnetometer=(), microphone=(), payment=(), usb=()",
+                )
 
                 if self.enable_csp:
-                    headers.append("Content-Security-Policy", self.csp_policy)
+                    headers.setdefault("Content-Security-Policy", self.csp_policy)
 
                 if self.enable_hsts and self.is_production:
-                    headers.append(
+                    headers.setdefault(
                         "Strict-Transport-Security", f"max-age={self.hsts_max_age}; includeSubDomains; preload"
                     )
 

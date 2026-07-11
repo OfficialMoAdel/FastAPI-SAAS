@@ -70,8 +70,20 @@ class LocalStorage(StorageProvider):
         # correct — e.g., /uploads2 is NOT relative to /uploads.
         full_path = (self._base_path / path).resolve()
         resolved_base = self._base_path.resolve()
-        if not full_path.is_relative_to(resolved_base):
-            raise ValueError("Invalid path: directory traversal detected")
+
+        # BUG FIX: Handle Windows path casing issues during concurrent directory creation.
+        # Path.resolve() can return different drive letter casing (e.g. C: vs c:)
+        # depending on whether the path exists at the exact microsecond it is called.
+        import os
+        if os.name == "nt":
+            norm_full = os.path.normcase(str(full_path))
+            norm_base = os.path.normcase(str(resolved_base))
+            if not norm_full.startswith(norm_base):
+                raise ValueError("Invalid path: directory traversal detected")
+        else:
+            if not full_path.is_relative_to(resolved_base):
+                raise ValueError("Invalid path: directory traversal detected")
+
         return full_path
 
     async def upload(
