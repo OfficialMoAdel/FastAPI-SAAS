@@ -181,13 +181,14 @@ class TestLogin:
                     mock_mfa_svc.is_mfa_enabled = AsyncMock(return_value=False)
                     with patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_svc):
                         # Should handle the bytes coercion and proceed
-                        try:
+                        from fastapi import HTTPException
+
+                        with pytest.raises(HTTPException) as exc_info:
                             await auth_service.login(
                                 "testuser", "wrongpass", mock_response, mock_request, mock_db, mock_redis
                             )
-                        except Exception:
-                            # Exception is expected (invalid credentials)
-                            pass
+                        assert exc_info.value.status_code == 401
+                        assert "Wrong username, email or password." in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_login_inactive_user(self, auth_service, mock_db, mock_redis, mock_request, mock_response):

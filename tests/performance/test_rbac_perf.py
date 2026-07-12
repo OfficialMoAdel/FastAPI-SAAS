@@ -11,8 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from src.app.core.rbac.permissions import Permission
 from src.app.core.rbac.dependencies import _get_bitmask_cache_key
+from src.app.core.rbac.permissions import Permission
 
 
 @pytest.mark.asyncio

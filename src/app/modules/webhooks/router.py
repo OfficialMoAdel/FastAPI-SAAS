@@ -5,14 +5,12 @@ from typing import Any
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from pydantic import HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac import Permission, requires_permission
-from src.app.core.security.encryption import encrypt_data
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.webhooks.models import WebhookDeliveryStatus
 from src.app.modules.webhooks.schemas import (
@@ -35,7 +33,6 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 # Route template for rate limit lookup - must match the registered API path.
 _WEBHOOK_TEST_RATE_LIMIT_PATH = "/api/v1/webhooks/{endpoint_id}/test"
 
-from src.app.modules.webhooks.utils import validate_url_ssrf
 
 
 @router.get(
@@ -209,22 +206,9 @@ async def update_webhook_endpoint(
     if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
-    # Update fields
+    # Update fields via service layer
     update_data = request.model_dump(exclude_unset=True)
-    for field, value in update_data.items():
-        if isinstance(value, HttpUrl):
-            value = str(value)
-            # P1.3: Validate SSRF for URL updates
-            await validate_url_ssrf(value)
-
-        if field in ("secret", "signing_secret") and value is not None:
-            value = encrypt_data(value)
-        setattr(endpoint, field, value)
-
-    await db.commit()
-    await db.refresh(endpoint)
-
-    return endpoint
+    return await service.update_endpoint(endpoint, update_data)
 
 
 @router.delete(
@@ -249,8 +233,7 @@ async def delete_webhook_endpoint(
     if not endpoint:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
-    await db.delete(endpoint)
-    await db.commit()
+    await service.delete_endpoint(endpoint)
 
 @router.get(
     "/deliveries/{delivery_id}",

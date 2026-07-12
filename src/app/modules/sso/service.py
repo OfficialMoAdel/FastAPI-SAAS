@@ -3,11 +3,10 @@ from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import Depends, Request
+from fastapi import Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
-from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import (
     BadRequestException,
     NotFoundException,
@@ -508,10 +507,17 @@ class SSOService:
             random_suffix = "".join(secrets.choice(string.ascii_lowercase + string.digits) for _ in range(4))
             username = f"{clean_base}{random_suffix}"[:30]  # Limit length
 
+            # Generate a secure random password that satisfies complexity requirements
+            # so that even if the process crashes before the sentinel is set, the account is safe.
+            import string
+
+            chars = string.ascii_letters + string.digits + "!@#$%^&*"
+            secure_temp_password = "".join(secrets.choice(chars) for _ in range(32))
+
             user_in = UserCreate(
                 email=user_info.email,
                 username=username,
-                password="TemporaryPassword123!",
+                password=secure_temp_password,
                 name=user_info.name or base_username,
             )
 
@@ -642,13 +648,8 @@ class SSOService:
         return connection_count > 1
 
 
-def get_sso_service(db: AsyncSession = Depends(async_get_db)) -> "SSOService":
+def get_sso_service() -> "SSOService":
     """Dependency injection factory for SSOService.
-
-    Parameters
-    ----------
-    db : AsyncSession
-        Database session from async_get_db
 
     Returns
     -------

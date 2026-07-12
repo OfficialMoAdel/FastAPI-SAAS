@@ -200,11 +200,19 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             from src.app.api.dependencies import AuthenticatedUser
 
             if isinstance(user_data, dict):
+                from src.app.core.config import settings
+
                 # Ensure we have email/username fallback if missing
                 if "email" not in user_data:
-                    user_data["email"] = "mocked@example.com"
+                    if settings.ENVIRONMENT != "production":
+                        user_data["email"] = "mocked@example.com"
+                    else:
+                        user_data["email"] = "unknown@example.com"
                 if "username" not in user_data:
-                    user_data["username"] = "mockeduser"
+                    if settings.ENVIRONMENT != "production":
+                        user_data["username"] = "mockeduser"
+                    else:
+                        user_data["username"] = "unknown"
                 current_user = AuthenticatedUser(**user_data)
             else:
                 current_user = user_data

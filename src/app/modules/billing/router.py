@@ -86,12 +86,10 @@ async def stripe_webhook(
             # Check common locations for tenant_id
             metadata_tenant = obj.get("metadata", {}).get("tenant_id")
             if metadata_tenant:
-                from uuid import UUID
                 tenant_id = UUID(metadata_tenant)
             else:
                 client_ref = obj.get("client_reference_id")
                 if client_ref:
-                    from uuid import UUID
                     tenant_id = UUID(client_ref)
         except (ValueError, AttributeError, json.JSONDecodeError):
             pass

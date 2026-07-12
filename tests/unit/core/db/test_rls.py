@@ -66,8 +66,9 @@ async def test_clear_rls_context(mock_connection):
 @pytest.mark.asyncio
 async def test_clear_rls_context_exception(mock_connection):
     mock_connection.execute.side_effect = Exception("DB error")
-    # Should not raise
-    await clear_rls_context(mock_connection)
+    # Should raise to force connection discard (fail closed)
+    with pytest.raises(Exception, match="DB error"):
+        await clear_rls_context(mock_connection)
 
 
 @pytest.mark.asyncio

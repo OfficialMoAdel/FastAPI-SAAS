@@ -84,14 +84,16 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
         except Exception as e:
             # SECURITY FIX: Log heavily and raise.
             # SQLite does not support set_config and will fail here safely.
-            if "set_config" not in str(e).lower() and "syntax error" not in str(e).lower():
-                logger.critical(
-                    "CRITICAL SECURITY FAILURE: Failed to restore RLS context in event listener",
-                    error=str(e),
-                    tenant_id=tenant_id,
-                    exc_info=True,
-                )
-                raise
+            if _is_sqlite(dbapi_connection):
+                return
+
+            logger.critical(
+                "CRITICAL SECURITY FAILURE: Failed to restore RLS context in event listener",
+                error=str(e),
+                tenant_id=tenant_id,
+                exc_info=True,
+            )
+            raise
 
     # Invoke the async function in the synchronous checkout event
     dbapi_connection.run_async(_do_restore)
@@ -179,8 +181,9 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
         logger.debug("RLS context cleared")
 
     except Exception as e:
-        # Fail open - log warning but don't block
-        logger.warning("Failed to clear RLS context", error=str(e))
+        # Fail closed - connection must be discarded to prevent cross-tenant data leakage
+        logger.critical("CRITICAL: Failed to clear RLS context - discarding connection", error=str(e))
+        raise
 
 
 @asynccontextmanager

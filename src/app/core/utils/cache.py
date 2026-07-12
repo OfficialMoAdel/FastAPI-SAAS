@@ -594,9 +594,24 @@ async def get_with_stampede_protection(
 
         return json_loads(cached)
 
-    # Cache miss - fetch and cache
-    return await _refresh_cache(key, fetch_func, ttl)
-
+    # Cache miss - use lock-based fetch to prevent thundering herd
+    lock_key = f"{key}:refresh_lock"
+    lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+    if lock_acquired:
+        try:
+            return await _refresh_cache(key, fetch_func, ttl)
+        finally:
+            await client.delete(lock_key)
+    else:
+        # Wait and retry with simple polling
+        for _ in range(20):
+            await asyncio.sleep(0.1)
+            cached = await client.get(key)
+            if cached is not None:
+                return json_loads(cached)
+        # Timeout waiting for lock - fetch anyway
+        stampede_logger.warning("Cache lock timeout on full miss, fetching anyway", key=key)
+        return await fetch_func()
 
 async def _refresh_cache_with_lock(key: str, fetch_func: Callable[[], Any], ttl: int, lock_key: str) -> Any:
     """Refresh cache and cleanup lock."""
@@ -663,6 +678,11 @@ async def get_with_lock(
 
     if lock_acquired:
         try:
+            # Double-check cache after acquiring lock
+            cached = await client.get(key)
+            if cached is not None:
+                return json_loads(cached)
+
             # We got the lock - fetch and cache
             data = await fetch_func()
             # U4: orjson handles datetime, UUID, Pydantic natively - skip jsonable_encoder

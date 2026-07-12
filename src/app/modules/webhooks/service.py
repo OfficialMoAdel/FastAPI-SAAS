@@ -133,14 +133,42 @@ class WebhookService:
         return endpoints, total
 
     async def get_endpoint_by_id(self, endpoint_id: UUID, tenant_id: UUID) -> WebhookEndpoint | None:
-        """Get an endpoint by ID for a specific tenant."""
-        result = await self.db.execute(
-            select(WebhookEndpoint).where(
-                WebhookEndpoint.id == endpoint_id,
-                WebhookEndpoint.tenant_id == tenant_id,
-            )
+        """Get a webhook endpoint by ID and tenant ID."""
+        stmt = select(WebhookEndpoint).where(
+            WebhookEndpoint.id == endpoint_id,
+            WebhookEndpoint.tenant_id == tenant_id,
         )
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
+
+    async def update_endpoint(
+        self, endpoint: WebhookEndpoint, update_data: dict[str, Any]
+    ) -> WebhookEndpoint:
+        """Update a webhook endpoint."""
+        from src.app.core.security.encryption import encrypt_data
+        from src.app.modules.webhooks.utils import validate_url_ssrf
+
+        for field, value in update_data.items():
+            # Handle HttpUrl from Pydantic
+            if hasattr(value, "scheme") and hasattr(value, "host"):
+                value = str(value)
+
+            if field == "url" and value:
+                value = str(value)
+                await validate_url_ssrf(value)
+
+            if field in ("secret", "signing_secret") and value is not None:
+                value = encrypt_data(value)
+            setattr(endpoint, field, value)
+
+        await self.db.commit()
+        await self.db.refresh(endpoint)
+        return endpoint
+
+    async def delete_endpoint(self, endpoint: WebhookEndpoint) -> None:
+        """Delete a webhook endpoint."""
+        await self.db.delete(endpoint)
+        await self.db.commit()
 
     async def get_delivery_by_id(self, delivery_id: UUID, tenant_id: UUID) -> WebhookDelivery | None:
         """Get a delivery by ID for a specific tenant."""

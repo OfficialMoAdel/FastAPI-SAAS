@@ -149,7 +149,8 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching and DB fallback."""
-        if len(slug) > 64:
+        import re
+        if len(slug) > 64 or not re.match(r"^[a-z0-9\-]+$", slug):
             return None
 
         # L1: In-memory cache
@@ -194,8 +195,18 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     from src.app.core.db.rls import bypass_rls, clear_rls_context
 
                     stmt = select(Tenant).where(Tenant.slug == slug)
-                    async with bypass_rls(session, reason="Tenant resolution via middleware"):
-                        result = await session.execute(stmt)
+                    try:
+                        async with bypass_rls(session, reason="Tenant resolution via middleware"):
+                            result = await session.execute(stmt)
+                    except RuntimeError as e:
+                        if "audit log failure" in str(e):
+                            logger.error(
+                                "RLS bypass audit failed during tenant resolution, falling back to standard query",
+                                error=str(e),
+                            )
+                            result = await session.execute(stmt)
+                        else:
+                            raise
                     tenant = result.scalar_one_or_none()
 
                     # SECURITY FIX: Explicitly clear RLS context before returning connection to pool

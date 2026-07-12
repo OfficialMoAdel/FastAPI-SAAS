@@ -562,7 +562,6 @@ def reset_token_blacklist_cache() -> None:
 
     # Clear the LRU cache for token keys
     _token_cache_key.cache_clear()
-
-    logger.debug("Token blacklist cache state reset")
+    _blacklist_script = None
 
     logger.debug("Token blacklist cache state reset")

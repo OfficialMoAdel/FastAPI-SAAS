@@ -993,12 +993,12 @@ return new_attempts
             db=db, id=verification_token.user_id, object={"is_email_verified": True, "is_active": True}, commit=False
         )
 
-        # Invalidate auth cache
-        user_service = get_service("user", db)
-        await user_service._invalidate_user_cache(user)
-
         # Delete token (it's single use)
         await db.delete(verification_token)
         await db.commit()
+
+        # Invalidate auth cache AFTER commit
+        user_service = get_service("user", db)
+        await user_service._invalidate_user_cache(user)
 
         return {"message": "Email verified successfully."}

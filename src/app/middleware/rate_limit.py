@@ -102,7 +102,7 @@ class RateLimitMiddleware:
             return
 
         # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
-        if request.url.path.endswith("/refresh") and "/account" in request.url.path:
+        if request.url.path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
             await self.app(scope, receive, send)
             return
 

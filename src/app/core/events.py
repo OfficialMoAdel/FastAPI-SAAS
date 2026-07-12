@@ -280,8 +280,6 @@ class EventBus:
                 tenant_info = {
                     "id": str(tenant.id),
                     "slug": tenant.slug,
-                    "name": tenant.name,
-                    "is_active": tenant.is_active,
                 }
 
             # Inject sequence and tenant into event data for consumers

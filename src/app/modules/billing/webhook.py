@@ -398,17 +398,8 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                         )
 
                         # Re-fetch and update
-                        status_map = {
-                            "active": "active",
-                            "past_due": "past_due",
-                            "unpaid": "past_due",
-                            "canceled": "canceled",
-                            "incomplete": "pending",
-                            "incomplete_expired": "canceled",
-                            "trialing": "trialing",
-                        }
                         raw_status = stripe_sub.get("status", "")
-                        mapped_status = status_map.get(raw_status, "active")
+                        mapped_status = map_stripe_status(raw_status)
 
                         race_update_data: dict[str, Any] = {
                             "status": mapped_status,
@@ -476,8 +467,6 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
         subscription_id = db_subscription.id
 
     # Map Stripe status to our status
-    from src.app.modules.billing.lifecycle import map_stripe_status
-
     new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
 
     # Update subscription

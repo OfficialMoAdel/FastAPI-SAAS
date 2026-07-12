@@ -41,8 +41,8 @@ class RequestIDMiddleware:
         request_id = request.headers.get(REQUEST_ID_HEADER)
 
         # Validate request_id to prevent log injection (M-02)
-        # ISSUE 20 FIX: Allow {} for valid UUID formats in some environments
-        if request_id and not re.match(r"^[a-zA-Z0-9\-\{\}]{1,128}$", request_id):
+        # Validate request_id to prevent log injection (M-02)
+        if request_id and not re.match(r"^[a-zA-Z0-9\-]{1,128}$", request_id):
             request_id = None
 
         if not request_id:
