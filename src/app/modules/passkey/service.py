@@ -354,10 +354,37 @@ class PasskeyService:
         # 5. Update counter and last_used_at
         await self._update_credential_counter(db, db_credential, new_count)
 
-        # 6. Get user and generate tokens
         user = await self._get_user_for_credential(db, db_credential)
         if not user:
             raise BadRequestException(detail="User not found for credential.")
+
+        # S4 FIX: Check MFA before issuing tokens (mirrors auth login flow)
+        from src.app.modules.mfa.service import get_mfa_service
+        mfa_service = get_mfa_service()
+        mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
+
+        if mfa_enabled:
+            from src.app.core.security import get_mfa_pending_token_manager
+            from src.app.core.security.tokens import TokenGenerator
+            from src.app.core.utils.cache import client as redis_client
+
+            if redis_client is None:
+                raise RuntimeError("Redis client is not initialized")
+            mfa_token_store = get_mfa_pending_token_manager(redis_client)
+            mfa_token = TokenGenerator.generate_magic_link_token()
+            await mfa_token_store.create(
+                token=mfa_token,
+                data={
+                    "user_id": str(user["id"]),
+                    "username": user.get("username", ""),
+                    "scope": "mfa_pending",
+                },
+            )
+            return {
+                "mfa_required": True,
+                "mfa_token": mfa_token,
+                "message": "MFA verification required",
+            }
 
         tokens = await self._generate_auth_tokens(user)
 

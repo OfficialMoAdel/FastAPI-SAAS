@@ -1,10 +1,16 @@
 """{{ ModelName }} CRUD operations."""
 
+{% if not no_tenant -%}
+from src.app.core.db.tenant_crud import TenantAwareCRUD
+{%- else -%}
 from fastcrud import FastCRUD
+{%- endif %}
 
 from .models import {{ ModelName }}
 from .schemas import {{ ModelName }}Read
 
-# Use type: ignore for FastCRUD generics since the library's type stubs
-# don't properly support SQLAlchemy models as first argument.
-crud_{{ module_name }}: FastCRUD[{{ ModelName }}, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read, {{ ModelName }}Read] = FastCRUD({{ ModelName }})  # type: ignore[type-var]
+{% if not no_tenant -%}
+crud_{{ module_name }}: TenantAwareCRUD = TenantAwareCRUD({{ ModelName }})
+{%- else -%}
+crud_{{ module_name }}: FastCRUD = FastCRUD({{ ModelName }})  # type: ignore[type-var]
+{%- endif %}

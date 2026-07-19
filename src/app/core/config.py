@@ -623,8 +623,8 @@ class R1UnifiedSettings(BaseSettings):
     SESSION_USE_PIPELINE_EVICTION: bool = True
     """Use Redis pipeline for session eviction (P2-1)."""
 
-    XFETCH_USE_LUA_SCRIPT: bool = True
-    """Use Lua script for atomic GET+TTL in XFetch (P2-2)."""
+    XFETCH_USE_LUA_SCRIPT: bool = False
+    """Use Lua script for atomic GET+TTL in XFetch (P2-2). (Off by default due to performance)"""
 
     RBAC_USE_REDIS_CACHE: bool = True
     """Use Redis caching for RBAC permission checks (P5)."""

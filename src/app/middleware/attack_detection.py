@@ -60,6 +60,11 @@ EXEMPT_PATHS: frozenset[str] = frozenset(
         "/docs",
         "/redoc",
         "/openapi.json",
+        # S8 FIX: Webhook endpoints receive third-party payloads
+        # that may contain SQL-like strings (invoice descriptions, etc.)
+        # These endpoints verify signatures independently (e.g. Stripe HMAC).
+        "/api/v1/billing/webhook",
+        "/api/v1/webhooks/stripe",
     ]
 )
 
@@ -436,7 +441,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             response = await call_next(request)
             return cast(Response, response)
 
-        client_ip = get_client_ip(request)
+        client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # Detect attack patterns
         try:

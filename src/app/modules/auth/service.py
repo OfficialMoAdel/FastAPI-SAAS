@@ -721,6 +721,17 @@ return new_attempts
         user_service = get_service("user", db)
         user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
 
+        # S5 FIX: Block password reset for SSO-only accounts
+        if user:
+            hashed_pw = (
+                user.get("hashed_password", "")
+                if isinstance(user, dict)
+                else getattr(user, "hashed_password", "")
+            )
+            if str(hashed_pw).startswith("!SSO_ONLY"):
+                # Treat SSO-only accounts same as non-existent (timing equalized below)
+                user = None
+
         # Always return success to prevent email enumeration
         if user:
             raw_token = generate_reset_token()
@@ -814,6 +825,15 @@ return new_attempts
         user = await user_service.crud.get(db=db, id=reset_token.user_id)
         if not user:
             raise UnauthorizedException("Invalid password reset token.")
+
+        # S5 FIX: Prevent SSO-only accounts from setting a local password
+        hashed_pw = (
+            user.get("hashed_password", "")
+            if isinstance(user, dict)
+            else getattr(user, "hashed_password", "")
+        )
+        if str(hashed_pw).startswith("!SSO_ONLY"):
+            raise UnauthorizedException("This account uses SSO authentication. Password reset is not available.")
 
         # SECURITY FIX: Use generic message for deleted/inactive accounts
         # Prevents account enumeration attacks - attackers cannot determine account status

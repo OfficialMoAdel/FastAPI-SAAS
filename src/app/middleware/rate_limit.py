@@ -63,7 +63,7 @@ class RateLimitMiddleware:
             return
 
         request = Request(scope, receive)
-        client_ip = get_client_ip(request)
+        client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # SECURITY: Check if IP is banned before processing
         if settings.AUTO_BAN_ENABLED and await is_ip_banned(client_ip):
@@ -311,7 +311,7 @@ class RateLimitMiddleware:
         if not user_id:
             # For anonymous users, use the proxy-aware client IP (not the raw peer,
             # which is the load balancer/reverse proxy behind trusted proxies).
-            anonymous_ip = get_client_ip(request)
+            anonymous_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
             key = f"rate_limit:anonymous:ip:{anonymous_ip}:{path}"
         else:
             # For authenticated users, scope by tenant if available

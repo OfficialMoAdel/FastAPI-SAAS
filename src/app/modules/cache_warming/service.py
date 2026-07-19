@@ -19,6 +19,7 @@ from src.app.core.cache.warmer import (
     warm_tier_cache,
 )
 from src.app.core.logger import get_logger
+from src.app.modules.feature_flags.service import warm_feature_flags
 
 logger = get_logger(__name__)
 
@@ -28,6 +29,7 @@ CACHE_WARMING_DELAY = timedelta(seconds=2)
 DEFAULT_WARMERS: list[tuple[str, Callable[..., Any]]] = [
     ("tenant", warm_tenant_cache),
     ("tier", warm_tier_cache),
+    ("feature_flags", warm_feature_flags),
 ]
 
 

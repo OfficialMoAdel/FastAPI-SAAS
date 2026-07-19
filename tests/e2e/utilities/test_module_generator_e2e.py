@@ -68,8 +68,8 @@ class TestModuleGeneratorE2E:
             content = f.read()
 
         assert "name: Mapped[str]" in content
-        # Note: Decimal maps to float in generator
-        assert "price: Mapped[float]" in content
+        # Note: Decimal is mapped to Decimal in generator
+        assert "price: Mapped[Decimal]" in content
         assert "quantity: Mapped[int]" in content
         assert "active: Mapped[bool]" in content
         assert "created_at: Mapped[datetime]" in content

@@ -1,6 +1,7 @@
 """{{ ModelName }} service layer - business logic."""
 
 from typing import Any
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -29,7 +30,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         self,
         data: {{ ModelName }}Create,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> {{ ModelName }}Read:
         """Create a new {{ module_name }}.
 
@@ -76,7 +77,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
 
     async def list_{{ module_name }}s(
         self,
-        tenant_id: int,
+        tenant_id: UUID,
         page: int = 1,
         items_per_page: int = 20,
     ) -> dict[str, Any]:
@@ -109,7 +110,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         id: int,
         data: {{ ModelName }}Update,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> {{ ModelName }}Read:
         """Update a {{ module_name }}.
 
@@ -162,7 +163,7 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         self,
         id: int,
         user_id: int,
-        tenant_id: int,
+        tenant_id: UUID,
     ) -> None:
         """Delete a {{ module_name }}.
 

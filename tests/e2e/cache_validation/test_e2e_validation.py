@@ -157,22 +157,24 @@ class TestFeatureFlagsE2E:
 
         from src.app.core.config import settings
 
-        flags = {
+        flags_true = {
             "EVENT_BUS_USE_LUA_IDEMPOTENCY": settings.EVENT_BUS_USE_LUA_IDEMPOTENCY,
             "SESSION_USE_PIPELINE_EVICTION": settings.SESSION_USE_PIPELINE_EVICTION,
-            "XFETCH_USE_LUA_SCRIPT": settings.XFETCH_USE_LUA_SCRIPT,
             "RBAC_USE_REDIS_CACHE": settings.RBAC_USE_REDIS_CACHE,
             "DLQ_USE_BOUNDED_SIZE": settings.DLQ_USE_BOUNDED_SIZE,
             "PASSKEY_USE_COLUMN_SELECT": settings.PASSKEY_USE_COLUMN_SELECT,
             "CIRCUIT_BREAKER_USE_DOUBLE_CHECK": settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK,
         }
 
-        for flag_name, value in flags.items():
+        for flag_name, value in flags_true.items():
             status = "✅" if value else "❌"
             logger.info(f"  {status} {flag_name}: {value}")
             assert value is True, f"{flag_name} should be True by default"
 
-        logger.info("✅ PASSED: All 7 feature flags enabled")
+        # Verify XFETCH_USE_LUA_SCRIPT is False (disabled due to Phase 4 P1 config change)
+        assert settings.XFETCH_USE_LUA_SCRIPT is False, "XFETCH_USE_LUA_SCRIPT should be False"
+
+        logger.info("✅ PASSED: Feature flags verified")
 
 
 class TestFileIndexE2E:

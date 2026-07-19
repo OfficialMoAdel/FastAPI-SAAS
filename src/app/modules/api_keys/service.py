@@ -274,10 +274,10 @@ class APIKeyService(BaseService[APIKey]):
     def _get_cache_key(self, api_key_hash: str) -> str:
         """Get Redis cache key for an API key hash.
 
-        Uses first 16 chars of hash to keep key size reasonable while
-        maintaining collision resistance.
+        Uses full hash to prevent any theoretical collision risk.
         """
-        return f"{API_KEY_CACHE_PREFIX}:{api_key_hash[:16]}"
+        # S7 FIX: Use full hash instead of truncating to 16 chars
+        return f"{API_KEY_CACHE_PREFIX}:{api_key_hash}"
 
     async def validate_api_key(
         self,

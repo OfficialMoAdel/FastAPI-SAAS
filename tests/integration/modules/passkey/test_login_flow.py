@@ -110,8 +110,7 @@ def test_passkey_login_flow(
 
             # Mock _get_user_for_credential
             with patch.object(passkey_service, "_get_user_for_credential") as mock_get_user:
-                mock_user = MagicMock()
-                mock_user.id = 1
+                mock_user = {"id": 1, "username": "testuser", "is_superuser": False, "tenant_id": "test-tenant"}
                 mock_get_user.return_value = mock_user
 
                 # Mock _update_credential_counter

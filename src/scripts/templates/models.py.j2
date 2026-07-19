@@ -2,8 +2,9 @@
 
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
+import uuid as uuid_pkg
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import Boolean, DateTime, ForeignKey, Index, Numeric, String, Text
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -46,7 +47,11 @@ class {{ ModelName }}(Base):
 {%- elif field.type == 'datetime' %}
     {{ field.name }}: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), default=None)
 {%- elif field.type == 'Decimal' %}
-    {{ field.name }}: Mapped[float] = mapped_column(nullable={{ 'False' if field.required else 'True' }})
+    {{ field.name }}: Mapped[Decimal] = mapped_column(Numeric(precision=10, scale=2), nullable={{ 'False' if field.required else 'True' }})
+{%- elif field.type == 'json' %}
+    {{ field.name }}: Mapped[dict] = mapped_column(JSONB, default_factory=dict)
+{%- elif field.type == 'uuid' %}
+    {{ field.name }}: Mapped[uuid_pkg.UUID] = mapped_column(default_factory=uuid_pkg.uuid4)
 {%- else %}
     {{ field.name }}: Mapped[str] = mapped_column(String(100), nullable={{ 'False' if field.required else 'True' }})
 {%- endif %}
@@ -59,7 +64,7 @@ class {{ ModelName }}(Base):
         index=True,
         nullable=False,
     )
-    tenant_id: Mapped[int] = mapped_column(
+    tenant_id: Mapped[uuid_pkg.UUID] = mapped_column(
         ForeignKey("tenants.id", ondelete="CASCADE"),
         nullable=False,
     )

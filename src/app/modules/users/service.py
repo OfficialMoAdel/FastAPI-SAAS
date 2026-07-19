@@ -116,12 +116,19 @@ class UserService(BaseService[User]):
     ) -> dict[str, Any]:
         """Get paginated list of users."""
         offset = (page - 1) * per_page
-        return await self.crud.get_multi(
+        result = await self.crud.get_multi(
             db=self.db,
             offset=offset,
             limit=per_page,
             is_deleted=is_deleted,
             schema_to_select=UserRead,
+        )
+        from src.app.core.pagination import build_paginated_response
+        return build_paginated_response(
+            items=result["data"],
+            total=result["total_count"],
+            page=page,
+            per_page=per_page,
         )
 
     async def _cache_user(self, user: User | dict[str, Any]) -> None:
@@ -173,7 +180,7 @@ class UserService(BaseService[User]):
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to cache user %s: %s", user_id_log, e)
 
-    async def _invalidate_user_cache(self, user: User | dict[str, Any]) -> None:
+    async def _invalidate_user_cache(self, user: User | dict[str, Any], bump_token_version: bool = False) -> None:
         """Invalidate all cache entries for a user.
 
         Avoids relying on tenant context by using tenant_id from the user payload
@@ -245,9 +252,10 @@ class UserService(BaseService[User]):
                 else:
                     current_version = getattr(user, "token_version", 0)
 
-                # We bump by 1 assuming an update happened. If not, this acts as a global logout
-                # for the user, which is safe for security.
-                new_version = current_version + 1
+                # S3 FIX: Only bump token_version for security-affecting changes
+                # (password change, email change, deletion, tier change).
+                # Benign profile updates (name, avatar) should NOT invalidate sessions.
+                new_version = current_version + 1 if bump_token_version else current_version
 
                 async with cache.client.pipeline(transaction=False) as pipe:
                     for key in token_keys:
@@ -565,13 +573,16 @@ class UserService(BaseService[User]):
             raise ForbiddenException("You do not have permission to modify this user's email.")
 
         # Check for duplicate email if changing (exclude soft-deleted users)
+        bump_token_version = False
         if values.email is not None and values.email != db_email:
+            bump_token_version = True
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
             if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
+            bump_token_version = True
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
             if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("username", values.username)
@@ -579,7 +590,7 @@ class UserService(BaseService[User]):
         await self.crud.update(db=self.db, object=values, username=db_username)
 
         # Invalidate cache after update
-        await self._invalidate_user_cache(db_user)
+        await self._invalidate_user_cache(db_user, bump_token_version=bump_token_version)
 
         return {"message": "User updated"}
 
@@ -734,7 +745,7 @@ class UserService(BaseService[User]):
 
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
         await self.crud.db_delete(db=self.db, username=db_username)
-        await self._invalidate_user_cache(db_user)
+        await self._invalidate_user_cache(db_user, bump_token_version=True)
 
         return {"message": "User deleted from the database"}
 
@@ -789,7 +800,7 @@ class UserService(BaseService[User]):
         await self.db.commit()
 
         # Invalidate cache
-        await self._invalidate_user_cache(db_user)
+        await self._invalidate_user_cache(db_user, bump_token_version=True)
 
         # A3 FIX: Handle both ORM objects and dict responses
         user_name = db_user["name"] if isinstance(db_user, dict) else db_user.name

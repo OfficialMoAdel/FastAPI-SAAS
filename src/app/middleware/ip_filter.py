@@ -94,6 +94,8 @@ class IPFilterMiddleware:
             return await self.app(scope, receive, send)
 
         client_ip = get_client_ip(request)
+        # P3 FIX: Store computed IP for downstream middleware reuse
+        request.state.client_ip = client_ip
 
         # BAD BOT FILTERING: Check User-Agent for known malicious scanners
         if settings.BAD_BOT_FILTER_ENABLED:
