@@ -38,7 +38,7 @@ class TestWebhookEndpointSecurity:
         """Test that users can only access webhooks from their tenant."""
         # Create webhook endpoint in test tenant
         endpoint_data = {
-            "url": "https://example.com/webhook",
+            "url": "https://httpbin.org/webhook",
             "event_type": "user.created",
         }
 
@@ -68,7 +68,7 @@ class TestWebhookEndpointSecurity:
     ) -> None:
         """Test that webhook endpoints auto-generate secrets."""
         endpoint_data = {
-            "url": "https://example.com/webhook",
+            "url": "https://httpbin.org/webhook",
             "event_type": "user.created",
         }
 
@@ -98,7 +98,7 @@ class TestWebhookEndpointSecurity:
         create_resp = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "user.created",
                 "secret": "custom_secret_123",
             },
@@ -109,7 +109,7 @@ class TestWebhookEndpointSecurity:
         # Update just the URL
         update_resp = await async_client.patch(
             f"/api/v1/webhooks/{endpoint_id}",
-            json={"url": "https://new-url.com/webhook"},
+            json={"url": "https://httpbin.org/webhook2"},
             headers=auth_headers,
         )
 
@@ -135,7 +135,7 @@ class TestWebhookEndpointSecurity:
         create_resp = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "user.created",
             },
             headers=auth_headers,
@@ -319,7 +319,7 @@ class TestWebhookDelivery:
         create_resp = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "test.event",
             },
             headers=auth_headers,
@@ -623,7 +623,7 @@ class TestWebhookAPIKeyIntegration:
         response = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "test.event",
             },
             headers=limited_auth,
@@ -648,7 +648,7 @@ class TestWebhookAPIKeyIntegration:
         webhook_resp = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "test.event",
             },
             headers=auth_headers,
@@ -684,7 +684,7 @@ class TestWebhookSecurityEvents:
         create_resp = await async_client.post(
             "/api/v1/webhooks",
             json={
-                "url": "https://example.com/webhook",
+                "url": "https://httpbin.org/webhook",
                 "event_type": "test.event",
             },
             headers=auth_headers,

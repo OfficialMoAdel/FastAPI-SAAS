@@ -279,11 +279,22 @@ class TestChatCompletionAPI:
 
     def test_chat_completion_requires_auth(self, client, regular_user_token_headers) -> None:
         """Chat completion requires authentication."""
-        response = client.post(
-            "/api/v1/ai/sessions/1/chat",
-            headers=regular_user_token_headers,
-            json={"message": "Hello"},
-        )
+        with patch(
+            "src.app.modules.ai.service.ChatCompletionService.complete",
+            new_callable=AsyncMock,
+            return_value={
+                "message": "Hello! How can I help you?",
+                "role": "assistant",
+                "token_count": 10,
+                "model": "gemma3",
+                "finish_reason": "stop",
+            },
+        ):
+            response = client.post(
+                "/api/v1/ai/sessions/1/chat",
+                headers=regular_user_token_headers,
+                json={"message": "Hello"},
+            )
         # Auth is mocked in test fixture
         assert response.status_code in [200, 401, 403, 404, 422, 500, 503]
 
