@@ -162,9 +162,13 @@ class TestTenantIsolationE2E:
         async def mock_get_current_user_a():
             return fake_user_a
 
+        from src.app.core.rbac.dependencies import _oauth2_scheme
+        from src.app.core.security import oauth2_scheme
         from src.app.main import app
 
         app.dependency_overrides[get_current_user] = mock_get_current_user_a
+        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
         response_a = await client.get(
             "/api/v1/users",
@@ -385,6 +389,10 @@ class TestTenantIsolationE2E:
             return fake_user_a
 
         app.dependency_overrides[get_current_user] = mock_get_current_user_a
+        from src.app.core.rbac.dependencies import _oauth2_scheme
+        from src.app.core.security import oauth2_scheme
+        app.dependency_overrides[oauth2_scheme] = lambda: "dummy-token"
+        app.dependency_overrides[_oauth2_scheme] = lambda: "dummy-token"
 
         response_1 = await client.get(
             "/api/v1/users",

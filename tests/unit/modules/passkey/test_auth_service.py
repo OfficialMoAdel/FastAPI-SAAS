@@ -325,7 +325,9 @@ class TestPasskeyAuthenticationVerification:
                                 }
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
-                                    await service.verify_authentication(
+                                    with patch("src.app.modules.mfa.service.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
+                                        await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,
                                         credential={
@@ -389,7 +391,9 @@ class TestPasskeyAuthenticationVerification:
                                 }
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
-                                    result = await service.verify_authentication(
+                                    with patch("src.app.modules.mfa.service.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
+                                        result = await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,
                                         credential={
@@ -453,7 +457,9 @@ class TestPasskeyAuthenticationVerification:
                                 }
 
                                 with patch.object(service, "_delete_auth_challenge", new_callable=AsyncMock):
-                                    await service.verify_authentication(
+                                    with patch("src.app.modules.mfa.service.get_mfa_service") as mock_mfa:
+                                        mock_mfa.return_value.is_mfa_enabled = AsyncMock(return_value=False)
+                                        await service.verify_authentication(
                                         db=mock_db,
                                         redis=mock_redis,
                                         credential={

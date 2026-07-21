@@ -42,7 +42,11 @@ async def write_user(request: Request, user: UserCreate, service: UserService = 
     return await service.create(user)
 
 
-@router.get("", response_model=UserList, dependencies=[Depends(get_current_superuser)])
+@router.get(
+    "",
+    response_model=UserList,
+    dependencies=[Depends(requires_permission(Permission.USERS_READ))],
+)
 async def read_users(
     request: Request,
     pagination: PaginationParams = Depends(get_pagination_params),

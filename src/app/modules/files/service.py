@@ -556,6 +556,7 @@ class FileService:
                     file_count=func.coalesce(Tenant.file_count, 0) + 1,
                     storage_usage_bytes=func.coalesce(Tenant.storage_usage_bytes, 0) + size_bytes,
                 )
+                .execution_options(synchronize_session=False)
             )
             result = await self.db.execute(stmt)
             if result.rowcount == 0:

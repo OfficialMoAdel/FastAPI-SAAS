@@ -257,17 +257,19 @@ class TestFeatureFlagsEnabled:
         from src.app.core.config import settings
 
         # Only check flags that actually exist in R1UnifiedSettings
-        flags = [
+        flags_true = [
             ("EVENT_BUS_USE_LUA_IDEMPOTENCY", True),
             ("EVENT_BUS_USE_BATCH_ENQUEUE", True),
             ("SESSION_USE_PIPELINE_EVICTION", True),
-            ("XFETCH_USE_LUA_SCRIPT", True),
             ("RBAC_USE_REDIS_CACHE", True),
         ]
 
-        for flag_name, expected in flags:
+        for flag_name, expected in flags_true:
             actual = getattr(settings, flag_name)
             assert actual == expected, f"{flag_name} should be {expected}, got {actual}"
+
+        # Verify XFETCH_USE_LUA_SCRIPT is False (disabled due to Phase 4 config change)
+        assert getattr(settings, "XFETCH_USE_LUA_SCRIPT") is False
 
 
 class TestFileMIMEIndex:

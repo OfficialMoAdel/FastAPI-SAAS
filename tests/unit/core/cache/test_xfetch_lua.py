@@ -25,7 +25,7 @@ async def test_lua_script_reduces_roundtrips(mock_redis, override_settings):
         mock_redis.ttl = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
 
                 async def fetch_func():
                     return {"data": "fresh_value"}
@@ -64,7 +64,7 @@ async def test_fallback_on_lua_failure(mock_redis, override_settings):
         mock_redis.ttl = AsyncMock(return_value=3000)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
 
                 async def fetch_func():
                     return {"data": "fresh_value"}
@@ -101,7 +101,7 @@ async def test_cache_miss_fetches_fresh_data(mock_redis, override_settings):
         mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
                 fetch_called = False
 
                 async def fetch_func():
@@ -138,7 +138,7 @@ async def test_bytes_to_string_conversion(mock_redis, override_settings):
         mock_lua_mgr.return_value = mock_manager
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
 
                 async def fetch_func():
                     return {"data": "fresh_value"}
@@ -202,7 +202,7 @@ async def test_xfetch_probabilistic_refresh(mock_redis, override_settings):
         mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
                 # Mock random to always trigger refresh
                 with patch("src.app.core.utils.cache.random.random", return_value=0.1):
                     fetch_called = False
@@ -236,7 +236,7 @@ async def test_latency_metrics_recorded(mock_redis, override_settings):
         mock_lua_mgr.return_value = mock_manager
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
                 with patch("src.app.core.utils.cache.record_xfetch_latency") as mock_record:
 
                     async def fetch_func():
@@ -279,7 +279,7 @@ async def test_cache_miss_metrics_recorded(mock_redis, override_settings):
         mock_redis.setex = AsyncMock()
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with override_settings():
+            with override_settings(XFETCH_USE_LUA_SCRIPT=True):
                 with patch("src.app.core.utils.cache.record_xfetch_latency") as mock_record:
 
                     async def fetch_func():

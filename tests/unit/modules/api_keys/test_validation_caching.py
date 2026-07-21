@@ -131,12 +131,12 @@ class TestAPIKeyValidationCaching:
 
     @pytest.mark.asyncio
     async def test_cache_key_format(self, api_key_service: Any) -> None:
-        """Cache key should use first 16 chars of hash."""
+        """Cache key should use full hash to prevent collisions."""
         test_hash = "abcdef1234567890deadbeef"
         cache_key = api_key_service._get_cache_key(test_hash)
 
-        assert cache_key == "api_key:abcdef1234567890"
-        assert len(cache_key.split(":")[1]) == 16
+        assert cache_key == f"api_key:{test_hash}"
+        assert cache_key.split(":")[1] == test_hash
 
 
 class TestAPIKeyRevocationCacheInvalidation:
