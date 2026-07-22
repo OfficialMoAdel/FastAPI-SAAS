@@ -8,6 +8,7 @@ from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.auth.schemas import LoginTokenResponse
 from src.app.modules.passkey.schemas import (
@@ -38,7 +39,7 @@ async def passkey_login_rate_limit(request: Request) -> None:
 
     Limits: 10 requests per minute per IP address.
     """
-    client_ip = request.client.host if request.client else "unknown"
+    client_ip = get_client_ip(request)
     key = f"passkey:login:{client_ip}"
 
     is_limited, current_count = await rate_limiter.check_rate_limit(

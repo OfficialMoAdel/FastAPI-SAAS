@@ -1262,6 +1262,12 @@ class FakeRedis:
             self.store[key][field] = value
         return len(mapping)
 
+    async def hexists(self, key, field):
+        return 1
+
+    async def hdel(self, key, *fields):
+        return 1
+
     async def hincrby(self, key, field, amount):
         key = self._get_key(key)
         if key not in self.store:

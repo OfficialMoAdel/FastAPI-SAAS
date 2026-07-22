@@ -16,6 +16,7 @@ from structlog import get_logger
 from src.app.core.db.database import get_db_context
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.utils import cache as redis_cache
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.audit_logs.models import AuditLog
 
 if TYPE_CHECKING:
@@ -492,7 +493,7 @@ def audit_action(action: str, entity_type: str) -> Callable:
             user_agent = None
             request = kwargs.get("request")
             if request and hasattr(request, "client"):
-                ip_address = request.client.host if request.client else None
+                ip_address = get_client_ip(request)
                 user_agent = request.headers.get("user-agent")
 
             # Resolve tenant_id from context if missing

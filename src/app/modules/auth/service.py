@@ -31,6 +31,7 @@ from src.app.core.security import (
 from src.app.core.security.tokens import hash_token
 from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.models import (
     EmailVerificationToken,
     PasswordResetToken,
@@ -139,7 +140,7 @@ return new_attempts
                         "success": success,
                         "reason": reason,
                     },
-                    "ip_address": request.client.host if request.client else None,
+                    "ip_address": get_client_ip(request),
                     "user_agent": request.headers.get("user-agent"),
                 },
                 priority=EventPriority.NORMAL,
@@ -526,7 +527,7 @@ return new_attempts
                             "username": username,
                             "success": True,
                         },
-                        "ip_address": request.client.host if request.client else None,
+                        "ip_address": get_client_ip(request),
                         "user_agent": request.headers.get("user-agent"),
                     },
                     priority=EventPriority.NORMAL,

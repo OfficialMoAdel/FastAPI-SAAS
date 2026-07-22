@@ -29,8 +29,27 @@ class UserBase(BaseModel):
     """Base schema with common user fields."""
 
     name: Annotated[str, Field(min_length=2, max_length=30, examples=["User Userson"])]
-    username: Annotated[str, Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userson"])]
+    username: Annotated[
+        str,
+        Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userson"]),
+    ]
     email: Annotated[EmailStr, Field(examples=["user.userson@example.com"])]
+
+    @field_validator("email", mode="before")
+    @classmethod
+    def normalize_email(cls, v: str | None) -> str | None:
+        """Normalize email address to lowercase to prevent duplicates."""
+        if isinstance(v, str):
+            return v.strip().lower()
+        return v
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_not_numeric(cls, v: str) -> str:
+        """Ensure username is not entirely numeric."""
+        if v.isdigit():
+            raise ValueError("Username cannot consist entirely of numbers")
+        return v
 
 
 # =============================================================================
@@ -69,6 +88,14 @@ class UserUpdateInternal(BaseUpdate):
         Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userberg"], default=None),
     ]
     email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_not_numeric(cls, v: str | None) -> str | None:
+        """Ensure username is not entirely numeric."""
+        if v and v.isdigit():
+            raise ValueError("Username cannot consist entirely of numbers")
+        return v
     profile_image_url: Annotated[
         str | None,
         Field(
@@ -151,6 +178,14 @@ class UserUpdate(BaseUpdate):
         Field(min_length=2, max_length=20, pattern=r"^[a-z0-9]+$", examples=["userberg"], default=None),
     ]
     email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
+
+    @field_validator("username")
+    @classmethod
+    def validate_username_not_numeric(cls, v: str | None) -> str | None:
+        """Ensure username is not entirely numeric."""
+        if v and v.isdigit():
+            raise ValueError("Username cannot consist entirely of numbers")
+        return v
     profile_image_url: Annotated[
         str | None,
         Field(

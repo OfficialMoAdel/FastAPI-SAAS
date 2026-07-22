@@ -508,6 +508,8 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                         await crud_token_blacklist.create(
                             db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
                         )
+                # Commit the savepoint to persist DB fallback blacklist
+                await db.commit()
                 if jti:
                     await add_token_to_blacklist(jti_key, expires_at)
                 else:

@@ -346,8 +346,6 @@ class EventBus:
                         handler=handler.__name__,
                         timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
-                    if priority == EventPriority.CRITICAL:
-                        raise
                     # We do not re-raise TimeoutError to prevent blocking other handlers
                     # in the gather group (though return_exceptions=True handles that too).
                 except Exception as e:
@@ -366,7 +364,7 @@ class EventBus:
         tasks = [_call_handler(handler) for handler in handlers]
         results = await asyncio.gather(*tasks, return_exceptions=True)
 
-        # Inspect results for any exceptions that escaped _call_handler (unlikely but possible)
+        # Log CRITICAL exceptions (they are already logged inside _call_handler but we can keep the logger.critical)
         for i, result in enumerate(results):
             if isinstance(result, Exception):
                 logger.critical(

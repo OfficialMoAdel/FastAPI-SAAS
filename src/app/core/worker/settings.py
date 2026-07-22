@@ -12,6 +12,7 @@ from src.app.core.worker.functions import (
     shutdown,
     startup,
 )
+from src.app.modules.magic_link.tasks import send_magic_link_email_task
 from src.app.modules.notifications.service import send_email_task
 from src.app.modules.webhooks.recovery import recover_stuck_deliveries
 
@@ -40,6 +41,7 @@ class WorkerSettings:
         flush_audit_logs_task,
         process_event_handler,  # FIXED: Was missing - handles async event bus events
         send_email_task,  # FIXED: Was missing - handles email notifications
+        send_magic_link_email_task,
     ]
     redis_settings = RedisSettings(
         host=settings.REDIS_QUEUE_HOST,

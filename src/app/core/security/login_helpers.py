@@ -10,6 +10,7 @@ from structlog import get_logger
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.security.jwt_utils import decode_jwt_token, extract_jti_unverified, validate_jwt_length
 from src.app.core.security.session_manager import session_manager as global_session_manager
+from src.app.core.utils.ip_utils import get_client_ip
 
 logger = get_logger(__name__)
 
@@ -60,7 +61,7 @@ async def register_login_session(
         else:
             session_id = extract_jti_unverified(access_token) or access_token[:32]
 
-        client_ip = request.client.host if request and request.client else "Unknown"
+        client_ip = get_client_ip(request) if request else "Unknown"
 
         device_info_data = {
             "user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown",

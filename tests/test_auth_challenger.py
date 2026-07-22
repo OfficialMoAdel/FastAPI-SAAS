@@ -25,6 +25,7 @@ async def mock_get_redis_client():
     mock_client = AsyncMock()
     mock_client.exists = AsyncMock(return_value=0)
     mock_client.get = AsyncMock(return_value=None)
+    mock_client.hexists = AsyncMock(return_value=1)
 
     fake_pipeline = AsyncMock()
     fake_pipeline.__aenter__.return_value = fake_pipeline

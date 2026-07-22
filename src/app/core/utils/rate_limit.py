@@ -89,7 +89,7 @@ class RateLimiter:
             from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
-            if settings.RATE_LIMIT_FAIL_OPEN:
+            if getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False):
                 record_fail_open("rate_limit")
                 return False, 0  # Allow request (fail-open)
             else:

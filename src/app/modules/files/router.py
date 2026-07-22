@@ -67,20 +67,14 @@ async def upload_file(
         413: If file exceeds size limit.
         507: If quota exceeded.
     """
-    # Get file size without reading entire content into memory
-    # Use UploadFile.size if available (FastAPI provides this from Content-Length header)
-    # Otherwise, use seek/tell to determine size (O(1) relative to content reading)
-    if file.size is not None:
-        size_bytes = file.size
-    else:
-        import asyncio
-        import os
+    import asyncio
+    import os
 
-        # Fallback: seek to end to get size, then reset position.
-        # Use asyncio.to_thread to prevent blocking the event loop on disk I/O.
-        await asyncio.to_thread(file.file.seek, 0, os.SEEK_END)
-        size_bytes = await asyncio.to_thread(file.file.tell)
-        await asyncio.to_thread(file.file.seek, 0, os.SEEK_SET)
+    # SECURITY FIX: Do not rely on file.size which may be spoofed via Content-Length.
+    # Always determine size by seeking to the end of the actual spooled file.
+    await asyncio.to_thread(file.file.seek, 0, os.SEEK_END)
+    size_bytes = await asyncio.to_thread(file.file.tell)
+    await asyncio.to_thread(file.file.seek, 0, os.SEEK_SET)
 
     try:
         result = await service.upload_file(

@@ -65,7 +65,13 @@ class TestMagicLinkService:
     @pytest.fixture
     def mock_db(self):
         """Create a mock async database session."""
-        return AsyncMock()
+        from unittest.mock import AsyncMock, MagicMock
+        db = AsyncMock()
+        mock_result = MagicMock()
+        db_link = MagicMock()
+        mock_result.scalar_one_or_none.return_value = db_link
+        db.execute.return_value = mock_result
+        return db
 
     @pytest.fixture
     def mock_user(self):

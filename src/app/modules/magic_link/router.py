@@ -9,6 +9,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Request, Response
 
 from src.app.api.dependencies import rate_limiter_dependency
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest
 from src.app.modules.magic_link.service import MagicLinkService, get_magic_link_service
@@ -43,7 +44,7 @@ async def send_magic_link(
     Rate limited to 3 requests per minute per email address.
     """
     # Extract client info for audit logging
-    ip_address = request.client.host if request.client else "unknown"
+    ip_address = get_client_ip(request)
     user_agent = request.headers.get("user-agent", "unknown")
 
     return await service.send_magic_link(

@@ -477,7 +477,7 @@ class WebhookService:
         else:
             logger.warning("Redis queue pool not initialized. Cannot enqueue delivery", delivery_id=delivery_id)
 
-    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:
+    async def deliver_webhook(self, delivery_id: UUID) -> WebhookDelivery:  # noqa: C901
         """Deliver a webhook (called by background task).
 
         Implements retry logic with exponential backoff and circuit breaker protection.
@@ -657,7 +657,17 @@ class WebhookService:
             else:
                 # HTTP error - record failure and retry if attempts remain
                 await webhook_circuit.record_failure(Exception(f"HTTP {response.status_code}"))
-                await self._handle_delivery_failure(delivery)
+
+                # SECURITY FIX: Do not retry non-transient 4xx errors (e.g. 400, 422)
+                if 400 <= response.status_code < 500 and response.status_code not in (408, 429):
+                    delivery.status = WebhookDeliveryStatus.FAILED
+                    logger.error(
+                        "Webhook failed with permanent 4xx error, skipping retries",
+                        delivery_id=delivery_id,
+                        status_code=response.status_code,
+                    )
+                else:
+                    await self._handle_delivery_failure(delivery)
 
         elif circuit_error is not None:
             # Circuit opened during delivery attempt

@@ -93,7 +93,7 @@ async def update_feature_flag(
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
-        enabled=bool(value),
+        enabled=value if isinstance(value, bool) else (str(value).lower() not in ("false", "0", "no", "")),
         value=value,
     )
 

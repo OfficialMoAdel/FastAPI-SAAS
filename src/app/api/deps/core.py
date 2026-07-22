@@ -8,6 +8,7 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.logger import get_logger
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.rate_limits.crud import crud_rate_limits
 from src.app.modules.rate_limits.schemas import RateLimitRead, sanitize_path
@@ -60,10 +61,8 @@ async def rate_limiter_dependency(
 
         if email_hash:
             user_id = f"email:{email_hash}"
-        elif request.client and request.client.host:
-            user_id = f"unknown:{request.client.host}"
         else:
-            user_id = "unknown"
+            user_id = f"unknown:{get_client_ip(request)}"
         limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD
 
     is_limited = await rate_limiter.is_rate_limited(db=db, user_id=user_id, path=path, limit=limit, period=period)

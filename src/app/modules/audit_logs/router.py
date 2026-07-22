@@ -240,6 +240,14 @@ async def export_audit_logs(
         details={"format": format, "record_count": count},
     )
 
+    def _sanitize_csv_cell(value: str | None) -> str:
+        """Prevent CSV formula injection by prefixing dangerous characters."""
+        if not value:
+            return ""
+        if value[0] in ("=", "+", "-", "@", "\t", "\r"):
+            return f"'{value}"
+        return value
+
     async def generate_csv() -> AsyncGenerator[str, None]:
         """Generate CSV content."""
         output = io.StringIO()
@@ -269,13 +277,13 @@ async def export_audit_logs(
             writer.writerow(
                 [
                     str(log.id),
-                    log.action,
+                    _sanitize_csv_cell(log.action),
                     str(log.user_id) if log.user_id else "",
-                    log.entity_type or "",
+                    _sanitize_csv_cell(log.entity_type or ""),
                     str(log.entity_id) if log.entity_id else "",
                     json_dumps(log.details, as_str=True) if log.details else "",
-                    log.ip_address or "",
-                    log.user_agent or "",
+                    _sanitize_csv_cell(log.ip_address or ""),
+                    _sanitize_csv_cell(log.user_agent or ""),
                     log.created_at.isoformat() if log.created_at else "",
                 ]
             )

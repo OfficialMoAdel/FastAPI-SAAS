@@ -143,6 +143,26 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         await _warm_token_blacklist_cache()
 
         # Warm application caches
+        logger.info("Loading security runtime config...")
+        from src.app.core.utils.config_store import get_runtime_config
+        config = await get_runtime_config()
+        if config:
+            if "IP_WHITELIST_ENABLED" in config:
+                settings.IP_WHITELIST_ENABLED = config["IP_WHITELIST_ENABLED"]
+            if "IP_BLACKLIST_ENABLED" in config:
+                settings.IP_BLACKLIST_ENABLED = config["IP_BLACKLIST_ENABLED"]
+            if "IP_WHITELIST_BYPASS_RATE_LIMIT" in config:
+                settings.IP_WHITELIST_BYPASS_RATE_LIMIT = config["IP_WHITELIST_BYPASS_RATE_LIMIT"]
+            if "AUTO_BAN_ENABLED" in config:
+                settings.AUTO_BAN_ENABLED = config["AUTO_BAN_ENABLED"]
+            if "AUTO_BAN_THRESHOLD" in config:
+                settings.AUTO_BAN_THRESHOLD = config["AUTO_BAN_THRESHOLD"]
+            if "AUTO_BAN_DURATION" in config:
+                settings.AUTO_BAN_DURATION = config["AUTO_BAN_DURATION"]
+            if "AUTO_BAN_ESCALATION" in config:
+                settings.AUTO_BAN_ESCALATION = config["AUTO_BAN_ESCALATION"]
+            logger.info("Security runtime config loaded from Redis")
+
         logger.info("Starting application cache warming...")
         await _warm_application_caches()
 

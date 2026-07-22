@@ -25,6 +25,7 @@ from src.app.core.security import (
     get_mfa_pending_token_manager,
 )
 from src.app.core.utils import cache as _redis_cache
+from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.mfa.schemas import (
     MFABackupCodesResponse,
@@ -69,7 +70,7 @@ async def check_mfa_rate_limit(
         if forwarded:
             client_ip = forwarded.split(",")[0].strip()
         else:
-            client_ip = request.client.host if request.client else "unknown"
+            client_ip = get_client_ip(request)
         identifier = client_ip
 
     # Build rate limit key

@@ -63,7 +63,7 @@ class ChatMessageCreate(BaseCreate):
     """Schema for creating a chat message."""
 
     role: MessageRole
-    content: Annotated[str, Field(min_length=1)]
+    content: Annotated[str, Field(min_length=1, max_length=32000)]
 
 
 class ChatMessageRead(BaseRead):
@@ -142,7 +142,7 @@ class AIModelsListResponse(BaseCreate):
 class ChatCompletionRequest(BaseCreate):
     """Schema for requesting a chat completion."""
 
-    message: Annotated[str, Field(min_length=1)]
+    message: Annotated[str, Field(min_length=1, max_length=32000)]
     model: AIModelType | None = None  # Override session default
     temperature: Annotated[float | None, Field(ge=0.0, le=2.0)] = None
     max_tokens: Annotated[int | None, Field(ge=1, le=32000)] = None

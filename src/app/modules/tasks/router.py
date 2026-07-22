@@ -3,8 +3,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from src.app.api.dependencies import get_current_user, rate_limiter_dependency
+from src.app.core.logger import get_logger
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
 from src.app.modules.tasks.service import QueueUnavailableError, task_service
+
+logger = get_logger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
@@ -39,7 +42,11 @@ async def create_task(
     except QueueUnavailableError:
         raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Queue is not available")
     except ValueError as e:
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(e))
+        logger.error("Task creation failed", error=str(e))
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="An internal error occurred while creating the task"
+        )
 
 
 @router.get("/task/{task_id}", response_model=TaskStatus)

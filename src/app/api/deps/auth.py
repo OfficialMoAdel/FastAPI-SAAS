@@ -160,6 +160,18 @@ async def get_auth_context(
     if payload_version != user_version:
         raise UnauthorizedException("Session expired. Please log in again.")
 
+    # Check session validity (revocation)
+    jti = cached_payload.get("jti") if cached_payload else getattr(token_data, "jti", None)
+    if jti:
+        from src.app.core.security.session_manager import session_manager
+
+        session_valid = await session_manager.is_session_valid(
+            user_id=user["id"],
+            session_id=jti,
+        )
+        if not session_valid:
+            raise UnauthorizedException("Session has been revoked.")
+
     current_tenant = get_tenant_context()
     if current_tenant and not user.get("is_superuser", False):
         if str(user.get("tenant_id")) != str(current_tenant.id):

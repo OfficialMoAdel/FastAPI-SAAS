@@ -453,7 +453,7 @@ class SSOService:
                             else found_user_data["username"],
                             "success": True,
                         },
-                        "ip_address": request.client.host if request.client else None,
+                        "ip_address": get_client_ip(request),
                         "user_agent": request.headers.get("user-agent"),
                     },
                     priority=EventPriority.NORMAL,

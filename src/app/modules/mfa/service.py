@@ -307,13 +307,14 @@ class MFAService:
         Raises:
             UnauthorizedException: If token is invalid or MFA not enabled.
         """
-        # SECURITY FIX: Check and increment MFA lockout before any verification
-        await self._check_mfa_lockout(user_id)
-
         # Get user's MFA method (FastCRUD returns dict)
         mfa_method_dict: dict[str, Any] | None = await crud_mfa_methods.get(db=db, user_id=user_id, type="totp")
         if not mfa_method_dict:
             raise UnauthorizedException("MFA is not enabled for this user")
+
+        # SECURITY FIX: Check and increment MFA lockout AFTER confirming MFA is enabled
+        # to prevent DoS against non-MFA users
+        await self._check_mfa_lockout(user_id)
 
         # Check backup code first if provided
         if request.backup_code:
@@ -441,6 +442,8 @@ class MFAService:
         old_salt = settings.SECRET_KEY.get_secret_value().encode()
         old_hashed_input = hashlib.sha256(old_salt + formatted_code.encode()).hexdigest()
 
+        import hmac as hmac_mod
+
         for stored_hash in mfa_method.backup_codes:
             # Fallback for old bcrypt hashes dynamically
             if stored_hash.startswith("$2b$"):
@@ -448,11 +451,11 @@ class MFAService:
                     matched_hash = stored_hash
                     break
             # Fast HMAC-SHA256
-            elif hashed_input == stored_hash:
+            elif hmac_mod.compare_digest(hashed_input, stored_hash):
                 matched_hash = stored_hash
                 break
             # Legacy simple SHA256 fallback
-            elif old_hashed_input == stored_hash:
+            elif hmac_mod.compare_digest(old_hashed_input, stored_hash):
                 matched_hash = stored_hash
                 break
 

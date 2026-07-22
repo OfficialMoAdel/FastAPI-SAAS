@@ -115,7 +115,7 @@ async def test_rate_limiter_anonymous_no_client_uses_unknown():
     ):
         rl.is_rate_limited = AsyncMock(return_value=False)
         await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown"
+    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown:unknown"
 
 
 async def test_rate_limiter_json_parse_error_falls_through():
@@ -129,7 +129,7 @@ async def test_rate_limiter_json_parse_error_falls_through():
     ):
         rl.is_rate_limited = AsyncMock(return_value=False)
         await deps_core.rate_limiter_dependency(request=request, db=db, user=None)
-    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown"
+    assert rl.is_rate_limited.call_args.kwargs["user_id"] == "unknown:unknown"
 
 
 async def test_rate_limiter_raises_when_limited():

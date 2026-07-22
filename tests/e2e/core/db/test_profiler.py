@@ -66,6 +66,25 @@ class TestQueryProfilerE2E:
         admin_token = await create_access_token(
             data={"sub": admin_user.email, "email": admin_user.email, "tenant_id": str(tenant.id)}
         )
+        
+        from src.app.core.security.session_manager import session_manager
+        import jwt
+        
+        user_decoded = jwt.decode(access_token, options={"verify_signature": False})
+        if getattr(session_manager, "_redis_client", None):
+            await session_manager.register_session(
+                user_id=str(user.id),
+                session_id=user_decoded.get("jti"),
+                device_info="test"
+            )
+            
+        admin_decoded = jwt.decode(admin_token, options={"verify_signature": False})
+        if getattr(session_manager, "_redis_client", None):
+            await session_manager.register_session(
+                user_id=str(admin_user.id),
+                session_id=admin_decoded.get("jti"),
+                device_info="test"
+            )
 
         self.user_headers = {
             "Authorization": f"Bearer {access_token}",
@@ -89,7 +108,6 @@ class TestQueryProfilerE2E:
             "/api/v1/users/me",
             headers=self.user_headers,
         )
-
         assert response.status_code == 200
 
         # Verify profiling headers are present (middleware adds X-Query-Count and X-Query-Time)

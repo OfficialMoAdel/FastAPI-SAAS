@@ -182,10 +182,9 @@ class MagicLinkService:
             MagicLinkAlreadyUsedError: If token was already used.
             MagicLinkUserInactiveError: If user account is inactive.
         """
-        # Validate token in Redis (one-time use)
         manager = self._get_magic_link_manager()
-        # Consume immediately to prevent race conditions and mark as used
-        token_data = await manager.consume(token)
+        # Step 1: Read token data WITHOUT consuming (peek)
+        token_data = await manager.peek(token)
 
         if token_data is None:
             # Token not found - check if it was already used
@@ -202,7 +201,7 @@ class MagicLinkService:
             )
             raise InvalidMagicLinkError("Token expired or invalid")
 
-        # Update audit trail in database immediately
+        # Step 2: Update audit trail in database immediately BEFORE consuming Redis token
         from src.app.modules.magic_link.crud import get_magic_link_by_token, mark_magic_link_used
 
         try:
@@ -211,6 +210,11 @@ class MagicLinkService:
                 await mark_magic_link_used(db=self.db, magic_link=db_link)
         except Exception:
             logger.error("Failed to mark magic link used in DB", exc_info=True)
+            # DB failure → do NOT consume Redis token, let user retry
+            raise InvalidMagicLinkError("Temporary error, please try again")
+
+        # Step 3: NOW consume the Redis token (safe — DB is marked)
+        await manager.consume(token)
 
         email = token_data.get("email")
         if not email:
