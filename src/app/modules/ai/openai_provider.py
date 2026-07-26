@@ -112,10 +112,16 @@ class OpenAIProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
+        chat_messages = kwargs.pop("messages", None)
         messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        if chat_messages is not None:
+            messages = list(chat_messages)
+            if system_prompt and not any(m.get("role") == "system" for m in messages):
+                messages.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
 
         payload = {
             "model": model,
@@ -175,10 +181,16 @@ class OpenAIProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
+        chat_messages = kwargs.pop("messages", None)
         messages: list[dict[str, str]] = []
-        if system_prompt:
-            messages.append({"role": "system", "content": system_prompt})
-        messages.append({"role": "user", "content": prompt})
+        if chat_messages is not None:
+            messages = list(chat_messages)
+            if system_prompt and not any(m.get("role") == "system" for m in messages):
+                messages.insert(0, {"role": "system", "content": system_prompt})
+        else:
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
 
         payload = {
             "model": model,

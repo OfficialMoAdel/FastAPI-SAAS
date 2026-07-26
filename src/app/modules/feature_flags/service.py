@@ -13,16 +13,15 @@ from sqlalchemy.orm.attributes import flag_modified
 
 from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
-from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 from src.app.modules._base import BaseService, ModelNotFoundError
+from src.app.modules.feature_flags.crud import crud_feature_flag_overrides, crud_feature_flags
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
 from src.app.modules.feature_flags.schemas import (
     FeatureFlagCreate,
     FeatureFlagOverrideCreate,
-    FeatureFlagOverrideRead,
     FeatureFlagOverrideUpdate,
     FeatureFlagUpdate,
 )
@@ -57,17 +56,8 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
     def __init__(self, db: AsyncSession):
         super().__init__(model=FeatureFlag, db=db)
-        # TenantAwareCRUD auto-injects the current tenant_id into every
-        # get/update/delete, so override mutations are always tenant-scoped and
-        # a caller cannot read/modify/delete another tenant's override by PK.
-        self.override_crud: TenantAwareCRUD[
-            FeatureFlagOverride,
-            FeatureFlagOverrideCreate,
-            FeatureFlagOverrideUpdate,
-            FeatureFlagOverrideUpdate,
-            Any,
-            FeatureFlagOverrideRead,
-        ] = TenantAwareCRUD(FeatureFlagOverride)
+        self.crud = crud_feature_flags
+        self.override_crud = crud_feature_flag_overrides
 
     # =========================================================================
     # Core Flag Operations

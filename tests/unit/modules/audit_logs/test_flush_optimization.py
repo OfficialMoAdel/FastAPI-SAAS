@@ -166,10 +166,14 @@ class TestFlushAuditLogsTaskFunction:
     @pytest.mark.asyncio
     async def test_task_respects_max_flush_per_run(self):
         """Test task stops after max flushes per run."""
-        with patch(
-            "src.app.modules.audit_logs.service.flush_audit_log_buffer",
-            new_callable=AsyncMock,
-        ) as mock_flush:
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__.return_value = AsyncMock()
+        mock_ctx.__aexit__.return_value = None
+
+        with (
+            patch("src.app.modules.audit_logs.service.flush_audit_log_buffer", new_callable=AsyncMock) as mock_flush,
+            patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_ctx),
+        ):
             mock_flush.return_value = 5
 
             from src.app.core.worker.functions import flush_audit_logs_task
@@ -181,10 +185,14 @@ class TestFlushAuditLogsTaskFunction:
     @pytest.mark.asyncio
     async def test_task_stops_when_buffer_drained(self):
         """Test task stops when buffer is empty."""
-        with patch(
-            "src.app.modules.audit_logs.service.flush_audit_log_buffer",
-            new_callable=AsyncMock,
-        ) as mock_flush:
+        mock_ctx = AsyncMock()
+        mock_ctx.__aenter__.return_value = AsyncMock()
+        mock_ctx.__aexit__.return_value = None
+
+        with (
+            patch("src.app.modules.audit_logs.service.flush_audit_log_buffer", new_callable=AsyncMock) as mock_flush,
+            patch("src.app.core.worker.functions.job_bypass_context", return_value=mock_ctx),
+        ):
             mock_flush.return_value = 0
 
             from src.app.core.worker.functions import flush_audit_logs_task

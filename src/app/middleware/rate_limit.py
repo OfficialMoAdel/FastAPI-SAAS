@@ -14,12 +14,12 @@ streaming responses (SSE, large downloads) are not buffered into memory.
 
 import time
 
-from fastapi import Request, Response, status
-from fastapi.responses import JSONResponse
+from fastapi import Request, status
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import settings
+from src.app.core.errors import ErrorCode, create_error_response
 from src.app.core.logger import get_logger
 from src.app.core.security.auto_ban import check_and_auto_ban, get_ban_info, is_ip_banned
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
@@ -29,18 +29,10 @@ from src.app.core.utils.rate_limit import rate_limiter
 
 logger = get_logger(__name__)
 
-# Tier-based rate limits configuration
-# Format: {tier_name: (limit, period_seconds)}
-TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
-    "free": (10, 3600),  # 10 requests per hour
-    "basic": (100, 3600),  # 100 requests per hour
-    "pro": (1000, 3600),  # 1000 requests per hour
-    "enterprise": (10000, 3600),  # 10000 requests per hour
-}
-
-# Default for users without tier or unknown tier
-DEFAULT_AUTHENTICATED_LIMIT = (50, 3600)  # 50 requests per hour
-DEFAULT_ANONYMOUS_LIMIT = (10, 3600)  # 10 requests per hour
+# Tier-based rate limits configuration (from settings)
+TIER_RATE_LIMITS = settings.TIER_RATE_LIMITS
+DEFAULT_AUTHENTICATED_LIMIT = settings.DEFAULT_AUTHENTICATED_LIMIT
+DEFAULT_ANONYMOUS_LIMIT = settings.DEFAULT_ANONYMOUS_LIMIT
 
 
 class RateLimitMiddleware:
@@ -93,8 +85,9 @@ class RateLimitMiddleware:
                 if retry_after > 0:
                     headers["Retry-After"] = str(retry_after)
 
-            response = Response(
-                content="Forbidden: IP address banned due to abuse",
+            response = create_error_response(
+                code=ErrorCode.FORBIDDEN,
+                message="Forbidden: IP address banned due to abuse",
                 status_code=status.HTTP_403_FORBIDDEN,
                 headers=headers,
             )
@@ -183,16 +176,20 @@ class RateLimitMiddleware:
                     except Exception:
                         pass
 
-                    response = JSONResponse(
-                        content={"detail": f"Forbidden: IP banned after {violation_count} rate limit violations"},
+                    response = create_error_response(
+                        code=ErrorCode.FORBIDDEN,
+                        message=f"Forbidden: IP banned after {violation_count} rate limit violations",
                         status_code=status.HTTP_403_FORBIDDEN,
                         headers=headers,
                     )
                     await response(scope, receive, send)
                     return
 
-            response = JSONResponse(
-                {"detail": "Rate limit exceeded"}, status_code=status.HTTP_429_TOO_MANY_REQUESTS, headers=headers
+            response = create_error_response(
+                code=ErrorCode.RATE_LIMITED,
+                message="Rate limit exceeded",
+                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                headers=headers,
             )
             await response(scope, receive, send)
             return
@@ -216,22 +213,11 @@ class RateLimitMiddleware:
         -------
             Tuple of (limit, period, key)
         """
-        # 1. Try to get user from request state (if auth middleware ran first)
-        user = getattr(request.state, "user", None)
-        user_id = None
-        tier_name = None
-        tenant_id = None
-
-        if user:
-            # Handle both ORM objects and dicts safely
-            if isinstance(user, dict):
-                user_id = user.get("id")
-                tenant_id = str(user["tenant_id"]) if user.get("tenant_id") else None
-                tier_name = await self._get_user_tier_name(user)
-            else:
-                user_id = getattr(user, "id", None)
-                tenant_id = str(getattr(user, "tenant_id", None) or "") or None
-                tier_name = await self._get_user_tier_name(user)
+        # 1. Check if user_id/tier_name/tenant_id are already in request state (e.g. from tests)
+        user_id = getattr(request.state, "user_id", None)
+        tier_name = getattr(request.state, "tier_name", None)
+        tenant_id = getattr(request.state, "tenant_id", None)
+        tier_id_raw = getattr(request.state, "tier_id", None)
 
         # 2. If no user in state, use jwt_utils to extract/cache JWT claims
         # This eliminates double JWT decode when auth dependency runs later
@@ -250,9 +236,11 @@ class RateLimitMiddleware:
                 user_id = cached_payload.get("sub")
                 tier_name = cached_payload.get("tier_name")
 
-        # Always try to get tenant_id from JWT payload if not already set
+        # Always try to get tenant_id and tier_id from JWT payload if not already set
         if tenant_id is None and cached_payload:
             tenant_id = cached_payload.get("tenant_id")
+        if tier_id_raw is None and cached_payload:
+            tier_id_raw = cached_payload.get("tier_id")
 
         # 3. Security: Check if token is blacklisted (SECURITY-GAP-1 fix)
         # If token is blacklisted OR its status is unknown (fail-open during a
@@ -278,16 +266,15 @@ class RateLimitMiddleware:
 
         # 4. Resolve limits
         from src.app.core.security.rate_limit_cache import get_tier_policy
-        from src.app.modules.rate_limits.schemas import sanitize_path
+        from src.app.core.utils.path_utils import sanitize_path
 
         path = sanitize_path(request.url.path)
         limit = None
         period = None
 
-        if tier_name and user_id:
+        if tier_name and user_id and tier_id_raw is not None:
             try:
-                tier_id_raw = user.get("tier_id") if isinstance(user, dict) else getattr(user, "tier_id", None)
-                tier_id_val = int(tier_id_raw) if tier_id_raw is not None else 0
+                tier_id_val = int(tier_id_raw)
                 if tier_id_val:
                     tier_policies = await get_tier_policy(tier_id_val)
                     if tier_policies:
@@ -296,15 +283,15 @@ class RateLimitMiddleware:
                                 limit = policy.get("limit")
                                 period = policy.get("period")
                                 break
-            except (ValueError, TypeError, AttributeError):
+            except (ValueError, TypeError):
                 pass
 
         if limit is None or period is None:
-            # Fallback to hardcoded tier config
+            # Fallback to settings tier config
             resolved_tier = tier_name.lower() if tier_name else "anonymous"
-            limit_config = TIER_RATE_LIMITS.get(resolved_tier)
+            limit_config = settings.TIER_RATE_LIMITS.get(resolved_tier)
             if limit_config is None:
-                limit_config = DEFAULT_AUTHENTICATED_LIMIT if user_id else DEFAULT_ANONYMOUS_LIMIT
+                limit_config = settings.DEFAULT_AUTHENTICATED_LIMIT if user_id else settings.DEFAULT_ANONYMOUS_LIMIT
 
             limit, period = limit_config
 
@@ -321,28 +308,3 @@ class RateLimitMiddleware:
             key = build_tenant_key(base_key, tenant_id)
 
         return limit, period, key
-
-    async def _get_user_tier_name(self, user) -> str | None:
-        """Get tier name for user from eager-loaded tier object.
-
-        The tier is now eager-loaded in get_current_user via joinedload,
-        eliminating the need for DB queries in middleware.
-
-        Args:
-            user: User object or dict with tier included
-
-        Returns:
-            Tier name or None
-        """
-        # Try to get tier from user object/dict directly (eager-loaded)
-        if isinstance(user, dict):
-            tier = user.get("tier")
-            if tier:
-                return tier.get("name") if isinstance(tier, dict) else tier
-        else:
-            tier = getattr(user, "tier", None)
-            if tier:
-                return getattr(tier, "name", None)
-
-        # No tier loaded - return None (will use default rate limit)
-        return None

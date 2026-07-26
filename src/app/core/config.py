@@ -134,9 +134,9 @@ class CryptSettings(BaseSettings):
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "CryptSettings":
         """Validate encryption keys are set to prevent runtime failures."""
-        from src.app.core.config import EnvironmentSettings
+        import os
 
-        env = getattr(EnvironmentSettings().ENVIRONMENT, "value", EnvironmentSettings().ENVIRONMENT).lower()
+        env = os.environ.get("ENVIRONMENT", "local").lower()
         if env in ("production", "staging"):
             # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated in production/staging
             if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
@@ -483,6 +483,14 @@ class RedisQueueSettings(BaseSettings):
 class DefaultRateLimitSettings(BaseSettings):
     DEFAULT_RATE_LIMIT_LIMIT: int = 100
     DEFAULT_RATE_LIMIT_PERIOD: int = 3600
+    TIER_RATE_LIMITS: dict[str, tuple[int, int]] = {
+        "free": (10, 3600),
+        "basic": (100, 3600),
+        "pro": (1000, 3600),
+        "enterprise": (10000, 3600),
+    }
+    DEFAULT_AUTHENTICATED_LIMIT: tuple[int, int] = (50, 3600)
+    DEFAULT_ANONYMOUS_LIMIT: tuple[int, int] = (10, 3600)
     # If True, allow requests when Redis is unavailable (fail-open)
     # If False, block requests when Redis is unavailable (fail-closed, more secure)
     RATE_LIMIT_FAIL_OPEN: bool = False

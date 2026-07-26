@@ -1,7 +1,7 @@
 import logging
 from pathlib import Path
 
-from src.app import feature_flags
+from src.app.modules import feature_flags
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -15,20 +15,19 @@ class TestBrokenImportsFix:
         logger.info(f"Finished test: {method.__name__}")
 
     def test_feature_flags_imports_successfully(self):
-        """P0-2a: feature_flags.py must import without error."""
+        """P0-2a: feature_flags module must import without error."""
         logger.info("Testing feature_flags import")
-        # Already imported at top level, but we can check attributes
-        assert hasattr(feature_flags, "async_session_maker") or True
+        assert feature_flags is not None
         # verify it's actually the module we expect
-        assert feature_flags.__name__ == "src.app.feature_flags"
+        assert feature_flags.__name__ == "src.app.modules.feature_flags"
 
     def test_templates_imports_successfully(self):
         """P0-2b: templates.py must import without error."""
         logger.info("Testing templates import")
-        from src.app import templates
+        from src.app.core.utils import templates
 
         assert templates is not None
-        assert templates.__name__ == "src.app.templates"
+        assert templates.__name__ == "src.app.core.utils.templates"
 
     def test_rls_imports_successfully(self):
         """P0-2c: rls.py must import without error."""

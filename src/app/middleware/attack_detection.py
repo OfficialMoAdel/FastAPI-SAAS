@@ -379,10 +379,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Mode: block - return 400 Bad Request
         if self._mode == "block":
-            return Response(
-                content='{"detail":"Bad Request - Attack pattern detected"}',
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Bad Request - Attack pattern detected",
                 status_code=status.HTTP_400_BAD_REQUEST,
-                media_type="application/json",
             )
 
         # Mode: ban - add to blacklist and return 403 Forbidden
@@ -402,10 +404,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 logger.error("Failed to add IP to blacklist during ban: %s", str(e))
                 # Fall back to block behavior but still return 403
 
-            return Response(
-                content='{"detail":"Forbidden - Attack detected and IP banned"}',
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.FORBIDDEN,
+                message="Forbidden - Attack detected and IP banned",
                 status_code=status.HTTP_403_FORBIDDEN,
-                media_type="application/json",
             )
 
         return None
@@ -450,10 +454,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                 return detected_attacks
         except BodyScanError as e:
             logger.error("Body scan failed: %s", str(e))
-            return Response(
-                content='{"detail":"Payload Too Large - Request body exceeded maximum scan size"}',
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.VALIDATION_ERROR,
+                message="Payload Too Large - Request body exceeded maximum scan size",
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                media_type="application/json",
             )
 
         if detected_attacks:

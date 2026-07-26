@@ -85,7 +85,7 @@ class TestDLQBoundedSize:
     ) -> None:
         """Test that bounded DLQ uses LPUSH + LTRIM + LLEN pipeline."""
         with patch("src.app.core.config.settings", mock_r1_settings_enabled):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="send_welcome_email",
@@ -105,7 +105,7 @@ class TestDLQBoundedSize:
     ) -> None:
         """Test that legacy path uses single LPUSH."""
         with patch("src.app.core.config.settings", mock_r1_settings_disabled):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="send_welcome_email",
@@ -157,7 +157,7 @@ class TestDLQBoundedSize:
         settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 with patch("src.app.core.events.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
@@ -189,7 +189,7 @@ class TestDLQBoundedSize:
         settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 with patch("src.app.core.events.logger") as mock_logger:
                     await event_bus.add_to_dlq(
                         event_name="user.created",
@@ -212,7 +212,7 @@ class TestDLQBoundedSize:
         settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 await event_bus.add_to_dlq(
                     event_name="user.created",
                     handler_name="handler",
@@ -259,7 +259,7 @@ class TestDLQFeatureFlagToggle:
         settings_mock.DLQ_ALERT_THRESHOLD_PCT = 80
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 await bus.add_to_dlq("event", "handler", {}, "error", 1)
 
                 mock_redis.pipeline.assert_called()
@@ -277,7 +277,7 @@ class TestDLQFeatureFlagToggle:
         settings_mock.DLQ_USE_BOUNDED_SIZE = False
 
         with patch("src.app.core.config.settings", settings_mock):
-            with patch("src.app.core.monitoring_metrics.update_dlq_size"):
+            with patch("src.app.core.monitoring.update_dlq_size"):
                 await bus.add_to_dlq("event", "handler", {}, "error", 1)
 
                 mock_redis.lpush.assert_called()

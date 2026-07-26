@@ -1,18 +1,9 @@
-import re
 from typing import Annotated
 
 from pydantic import BaseModel, Field, field_validator
 
+from src.app.core.utils.path_utils import sanitize_path as sanitize_path
 from src.app.modules._base.schemas import BaseCreate, BaseRead, BaseUpdate
-
-
-def sanitize_path(path: str) -> str:
-    normalized = path.strip("/")
-    # Strip API version prefix (e.g., api/v1/)
-    normalized = re.sub(r"^api/v\d+/", "", normalized)
-    # Collapse numeric/UUID path segments to {}
-    normalized = re.sub(r"/[0-9a-fA-F-]{36}|/\d+", "/{}", normalized)
-    return normalized.replace("/", "_")
 
 
 class RateLimitBase(BaseModel):

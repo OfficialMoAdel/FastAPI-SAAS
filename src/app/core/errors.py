@@ -83,6 +83,7 @@ def create_error_response(
     status_code: int = 400,
     details: dict | None = None,
     request_id: str | None = None,
+    headers: dict[str, str] | None = None,
 ) -> JSONResponse:
     """Create a standardized error response.
 
@@ -92,6 +93,7 @@ def create_error_response(
         status_code: HTTP status code
         details: Optional additional context
         request_id: Request ID for tracing
+        headers: Optional HTTP headers for response
 
     Returns
     -------
@@ -117,7 +119,7 @@ def create_error_response(
         "detail": message,
     }
 
-    return JSONResponse(status_code=status_code, content=error_body)
+    return JSONResponse(status_code=status_code, content=error_body, headers=headers)
 
 
 def setup_exception_handlers(app: FastAPI) -> None:

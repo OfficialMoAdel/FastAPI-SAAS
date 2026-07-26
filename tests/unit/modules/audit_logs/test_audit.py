@@ -3,7 +3,7 @@ from uuid import uuid4
 
 import pytest
 
-from src.app.email_service import EmailService
+from src.app.modules.notifications.email_service import EmailService
 from src.app.modules.notifications.models import NotificationStatus
 
 
@@ -22,7 +22,7 @@ async def test_get_provider(email_service):
     service, _ = email_service
     assert service._provider is None
 
-    with patch("src.app.email_service.SMTPProvider") as mock_smtp:
+    with patch("src.app.modules.notifications.email_service.SMTPProvider") as mock_smtp:
         mock_instance = MagicMock()
         mock_smtp.return_value = mock_instance
 
@@ -32,7 +32,7 @@ async def test_get_provider(email_service):
         assert service._provider is mock_instance
 
 
-@patch("src.app.email_service.Notification")
+@patch("src.app.modules.notifications.email_service.Notification")
 async def test_send_email_success(mock_notification_class, email_service):
     service, mock_session = email_service
 
@@ -80,7 +80,7 @@ async def test_send_email_success(mock_notification_class, email_service):
     assert mock_notification_instance.sent_at is not None
 
 
-@patch("src.app.email_service.Notification")
+@patch("src.app.modules.notifications.email_service.Notification")
 async def test_send_email_failure_from_provider(mock_notification_class, email_service):
     service, mock_session = email_service
 
@@ -108,7 +108,7 @@ async def test_send_email_failure_from_provider(mock_notification_class, email_s
     assert mock_notification_instance.error_message is None
 
 
-@patch("src.app.email_service.Notification")
+@patch("src.app.modules.notifications.email_service.Notification")
 async def test_send_email_exception(mock_notification_class, email_service):
     service, mock_session = email_service
 
@@ -135,7 +135,7 @@ async def test_send_email_exception(mock_notification_class, email_service):
     assert mock_notification_instance.error_message == "SMTP Error"
 
 
-@patch("src.app.email_service.Notification")
+@patch("src.app.modules.notifications.email_service.Notification")
 async def test_send_bulk_emails(mock_notification_class, email_service):
     service, mock_session = email_service
 

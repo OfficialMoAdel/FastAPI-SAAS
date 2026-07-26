@@ -25,17 +25,12 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
 from src.app.core.logger import get_logger
+from src.app.core.utils.r1_error_handling import LuaScriptError
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
 
 logger = get_logger(__name__)
-
-
-class LuaScriptError(Exception):
-    """Error executing Lua script."""
-
-    pass
 
 
 class ScriptNotFoundError(LuaScriptError):

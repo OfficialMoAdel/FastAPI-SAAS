@@ -161,7 +161,7 @@ async def clear_rls_context(connection: AsyncConnection) -> None:
         connection: Database connection
 
     Note:
-        Fails open - logs warnings but doesn't raise exceptions
+        Fails closed - raises on failure to prevent cross-tenant data leakage
     """
     # SQLite does not support set_config - skip silently
     if _is_sqlite(connection):

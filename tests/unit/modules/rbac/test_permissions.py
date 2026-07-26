@@ -39,7 +39,7 @@ class TestPermissionsEndpoint:
         assert "rbac" in endpoint["tags"]
 
     def test_permissions_response_schema(self):
-        """Permissions endpoint should return list of PermissionOut."""
+        """Permissions endpoint should return list of PermissionRead."""
         response = client.get("/openapi.json")
         spec = response.json()
 

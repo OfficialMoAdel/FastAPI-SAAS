@@ -239,6 +239,23 @@ class TestLogSanitizer:
             assert "[REDACTED]" in result
             assert "Basic dXNlcjpwYXNz" not in result
 
+    class TestPasskeySanitization:
+        """Test WebAuthn/Passkey sensitive data sanitization."""
+
+        def test_passkey_challenge(self) -> None:
+            """Test passkey challenge is sanitized."""
+            message = "WebAuthn challenge=abc123base64url"
+            result = LogSanitizer.sanitize_message(message)
+            assert "challenge=[REDACTED]" in result
+            assert "abc123base64url" not in result
+
+        def test_passkey_credential_id(self) -> None:
+            """Test credential_id is sanitized."""
+            message = '{"credential_id": "rawCredId64Url"}'
+            result = LogSanitizer.sanitize_message(message)
+            assert "credential_id=[REDACTED]" in result
+            assert "rawCredId64Url" not in result
+
     class TestRecursiveSanitization:
         """Test recursive sanitization of nested structures."""
 
@@ -289,6 +306,20 @@ class TestLogSanitizer:
             # Should not raise RecursionError
             result = LogSanitizer.sanitize_dict(deep_data, _max_depth=10)
             assert result is not None
+
+        def test_bytes_sanitization(self) -> None:
+            """Test bytes are sanitized."""
+            data = b"credential_id=secret_passkey_bytes"
+            result = LogSanitizer.sanitize_value(data)
+            assert isinstance(result, bytes)
+            assert b"credential_id=[REDACTED]" in result
+
+        def test_set_sanitization(self) -> None:
+            """Test sets are sanitized."""
+            data = {"normal", "password=secret_in_set"}
+            result = LogSanitizer.sanitize_value(data)
+            assert isinstance(result, set)
+            assert "password=[REDACTED]" in result
 
     class TestEdgeCases:
         """Test edge cases and error handling."""
@@ -375,10 +406,17 @@ class TestSanitizingProcessor:
     def test_respects_max_depth(self) -> None:
         """Test processor respects max_depth parameter."""
         processor = SanitizingProcessor(max_depth=2)
-        deep_event = {"level1": {"level2": {"level3": {"jwt": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"}}}}
+        deep_event = {
+            "level1": {
+                "jwt_shallow": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig",
+                "level2": {"level3": {"jwt_deep": "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"}},
+            }
+        }
         result = processor(None, "info", deep_event)
-        # Should still sanitize within depth limit
-        assert "[JWT_TOKEN]" in result["level1"]["level2"]["level3"]["jwt"]
+        # Should sanitize within depth limit (depth 1 < max_depth 2)
+        assert "[JWT_TOKEN]" in result["level1"]["jwt_shallow"]
+        # Should stop recursion at max_depth 2, leaving deeper items untouched
+        assert result["level1"]["level2"]["level3"]["jwt_deep"] == "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"
 
     def test_processor_with_nested_structures(self) -> None:
         """Test processor handles nested dicts and lists."""

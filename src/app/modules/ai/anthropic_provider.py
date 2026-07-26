@@ -121,13 +121,16 @@ class AnthropicProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
+        chat_messages = kwargs.pop("messages", None)
+        if chat_messages is None:
+            chat_messages = [{"role": "user", "content": prompt}]
         # Anthropic requires max_tokens
         if max_tokens is None:
             max_tokens = 4096
 
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": chat_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             **kwargs,
@@ -185,12 +188,15 @@ class AnthropicProvider(AIProvider):
         Raises:
             AIProviderError: If generation fails
         """
+        chat_messages = kwargs.pop("messages", None)
+        if chat_messages is None:
+            chat_messages = [{"role": "user", "content": prompt}]
         if max_tokens is None:
             max_tokens = 4096
 
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": chat_messages,
             "temperature": temperature,
             "max_tokens": max_tokens,
             "stream": True,

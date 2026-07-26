@@ -64,7 +64,7 @@ def _make_db() -> MagicMock:
 
 
 async def test_get_password_hash() -> None:
-    with patch("src.app.core.security.asyncio.get_running_loop") as mock_loop:
+    with patch("src.app.core.security.password.asyncio.get_running_loop") as mock_loop:
         mock_loop.return_value.run_in_executor = AsyncMock(return_value=b"$2b$hashed")
         result = await get_password_hash("secret")
     assert result == "$2b$hashed"
@@ -72,8 +72,8 @@ async def test_get_password_hash() -> None:
 
 async def test_verify_password_true() -> None:
     with (
-        patch("src.app.core.security.bcrypt") as mock_bcrypt,
-        patch("src.app.core.security.asyncio.get_running_loop") as mock_loop,
+        patch("src.app.core.security.password.bcrypt") as mock_bcrypt,
+        patch("src.app.core.security.password.asyncio.get_running_loop") as mock_loop,
     ):
         mock_bcrypt.checkpw.return_value = True
         mock_loop.return_value.run_in_executor = AsyncMock(return_value=True)
@@ -82,8 +82,8 @@ async def test_verify_password_true() -> None:
 
 async def test_verify_password_false() -> None:
     with (
-        patch("src.app.core.security.bcrypt") as mock_bcrypt,
-        patch("src.app.core.security.asyncio.get_running_loop") as mock_loop,
+        patch("src.app.core.security.password.bcrypt") as mock_bcrypt,
+        patch("src.app.core.security.password.asyncio.get_running_loop") as mock_loop,
     ):
         mock_bcrypt.checkpw.return_value = False
         mock_loop.return_value.run_in_executor = AsyncMock(return_value=False)
@@ -92,8 +92,8 @@ async def test_verify_password_false() -> None:
 
 async def test_verify_password_malformed() -> None:
     with (
-        patch("src.app.core.security.bcrypt") as mock_bcrypt,
-        patch("src.app.core.security.asyncio.get_running_loop") as mock_loop,
+        patch("src.app.core.security.password.bcrypt") as mock_bcrypt,
+        patch("src.app.core.security.password.asyncio.get_running_loop") as mock_loop,
     ):
         mock_bcrypt.checkpw.side_effect = ValueError("malformed hash")
         mock_loop.return_value.run_in_executor = AsyncMock(side_effect=ValueError("x"))
@@ -106,25 +106,25 @@ async def test_verify_password_malformed() -> None:
 
 
 async def test_create_access_token_default_exp() -> None:
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value="tok")):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value="tok")):
         token = await create_access_token({"sub": "user1"})
     assert token == "tok"
 
 
 async def test_create_access_token_custom_exp() -> None:
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value="tok2")):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value="tok2")):
         token = await create_access_token({"sub": "user1", "token_version": 3}, expires_delta=timedelta(minutes=5))
     assert token == "tok2"
 
 
 async def test_create_refresh_token_default() -> None:
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value="rtok")):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value="rtok")):
         token = await create_refresh_token({"sub": "user1"})
     assert token == "rtok"
 
 
 async def test_create_refresh_token_custom() -> None:
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value="rtok2")):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value="rtok2")):
         token = await create_refresh_token({"sub": "user1", "token_version": 1}, expires_delta=timedelta(days=2))
     assert token == "rtok2"
 
@@ -160,7 +160,7 @@ async def test_check_db_fallback_in_flight() -> None:
 
 async def test_check_db_fallback_db_check() -> None:
     db = _make_db()
-    with patch("src.app.core.security.crud_token_blacklist.exists", new=AsyncMock(return_value=True)):
+    with patch("src.app.core.security.jwt_service.crud_token_blacklist.exists", new=AsyncMock(return_value=True)):
         result = await _check_db_fallback("abc", "tok", db)
     assert result is True
 
@@ -168,7 +168,7 @@ async def test_check_db_fallback_db_check() -> None:
 async def test_check_db_fallback_exception() -> None:
     db = _make_db()
     with patch(
-        "src.app.core.security.crud_token_blacklist.exists",
+        "src.app.core.security.jwt_service.crud_token_blacklist.exists",
         new=AsyncMock(side_effect=RuntimeError("db down")),
     ):
         result = await _check_db_fallback("abc", "tok", db)
@@ -182,7 +182,7 @@ async def test_check_db_fallback_exception() -> None:
 
 async def test_verify_token_jwt_error() -> None:
     with patch(
-        "src.app.core.security.asyncio.to_thread",
+        "src.app.core.security.jwt_service.asyncio.to_thread",
         new=AsyncMock(side_effect=jwt.exceptions.PyJWTError("bad")),
     ):
         assert await verify_token("tok", TokenType.ACCESS, _make_db()) is None
@@ -190,21 +190,21 @@ async def test_verify_token_jwt_error() -> None:
 
 async def test_verify_token_missing_sub() -> None:
     payload = {"token_type": "access"}
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)):
         assert await verify_token("tok", TokenType.ACCESS, _make_db()) is None
 
 
 async def test_verify_token_wrong_type() -> None:
     payload = {"sub": "u", "token_type": "refresh"}
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)):
         assert await verify_token("tok", TokenType.ACCESS, _make_db()) is None
 
 
 async def test_verify_token_blacklisted_jti() -> None:
     payload = {"sub": "u", "token_type": "access", "jti": "abc"}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=True)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=True)),
     ):
         assert await verify_token("tok", TokenType.ACCESS, _make_db()) is None
 
@@ -212,8 +212,8 @@ async def test_verify_token_blacklisted_jti() -> None:
 async def test_verify_token_blacklisted_full_token() -> None:
     payload = {"sub": "u", "token_type": "access"}  # no jti
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=True)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=True)),
     ):
         assert await verify_token("tok", TokenType.ACCESS, _make_db()) is None
 
@@ -222,9 +222,9 @@ async def test_verify_token_redis_unavailable_db_none() -> None:
     payload = {"sub": "u", "token_type": "access", "jti": "abc"}
     db = _make_db()
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=None)),
-        patch("src.app.core.security._check_db_fallback", new=AsyncMock(return_value=None)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=None)),
+        patch("src.app.core.security.jwt_service._check_db_fallback", new=AsyncMock(return_value=None)),
     ):
         assert await verify_token("tok", TokenType.ACCESS, db) is None
 
@@ -233,9 +233,9 @@ async def test_verify_token_redis_unavailable_db_true() -> None:
     payload = {"sub": "u", "token_type": "access", "jti": "abc"}
     db = _make_db()
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=None)),
-        patch("src.app.core.security._check_db_fallback", new=AsyncMock(return_value=True)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=None)),
+        patch("src.app.core.security.jwt_service._check_db_fallback", new=AsyncMock(return_value=True)),
     ):
         assert await verify_token("tok", TokenType.ACCESS, db) is None
 
@@ -252,8 +252,8 @@ async def test_verify_token_token_version_mismatch_cache() -> None:
     redis_client = MagicMock()
     redis_client.get = AsyncMock(return_value=b"2")  # cached version 2 != 5
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
         patch("src.app.core.utils.cache.client", redis_client),
     ):
         assert await verify_token("tok", TokenType.ACCESS, db) is None
@@ -273,8 +273,8 @@ async def test_verify_token_token_version_db_mismatch() -> None:
     redis_client.set = AsyncMock(return_value=True)
     user = {"token_version": 2}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
         patch("src.app.core.utils.cache.client", redis_client),
         patch("src.app.modules.users.crud.crud_users.get", new=AsyncMock(return_value=user)),
     ):
@@ -295,8 +295,8 @@ async def test_verify_token_token_version_db_match_caches() -> None:
     redis_client.set = AsyncMock(return_value=True)
     user = {"token_version": 5}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
         patch("src.app.core.utils.cache.client", redis_client),
         patch("src.app.modules.users.crud.crud_users.get", new=AsyncMock(return_value=user)),
     ):
@@ -319,8 +319,8 @@ async def test_verify_token_token_version_cache_read_error() -> None:
     redis_client.set = AsyncMock(return_value=True)
     user = {"token_version": 5}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
         patch("src.app.core.utils.cache.client", redis_client),
         patch("src.app.modules.users.crud.crud_users.get", new=AsyncMock(return_value=user)),
     ):
@@ -342,8 +342,8 @@ async def test_verify_token_absolute_exp_reached() -> None:
     redis_client.get = AsyncMock(return_value=None)
     user = {"token_version": 0}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
         patch("src.app.core.utils.cache.client", redis_client),
         patch("src.app.modules.users.crud.crud_users.get", new=AsyncMock(return_value=user)),
     ):
@@ -359,8 +359,8 @@ async def test_verify_token_success_no_version() -> None:
     }
     db = _make_db()
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.is_token_blacklisted", new=AsyncMock(return_value=False)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)),
     ):
         result = await verify_token("tok", TokenType.ACCESS, db)
     assert isinstance(result, TokenData)
@@ -413,8 +413,8 @@ async def test_blacklist_tokens_both() -> None:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.add_tokens_to_blacklist", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.add_tokens_to_blacklist", new=AsyncMock()),
     ):
         await blacklist_tokens("atok", "rtok", db, access_payload=payload, refresh_payload=payload)
     db.commit.assert_awaited()
@@ -433,12 +433,12 @@ async def test_blacklist_tokens_resolve_tenant() -> None:
         "jti": "j1",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
         patch(
-            "src.app.core.security._resolve_tenant_id_for_token",
+            "src.app.core.security.jwt_service._resolve_tenant_id_for_token",
             new=AsyncMock(return_value="11111111-1111-1111-1111-111111111111"),
         ),
-        patch("src.app.core.security.add_tokens_to_blacklist", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.add_tokens_to_blacklist", new=AsyncMock()),
     ):
         await blacklist_tokens("atok", None, db, access_payload=payload)
     db.commit.assert_awaited()
@@ -448,9 +448,9 @@ async def test_blacklist_tokens_no_tenant_skip() -> None:
     db = _make_db()
     payload = {"exp": datetime.now(UTC).timestamp() + 100, "jti": "j1"}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
         patch(
-            "src.app.core.security._resolve_tenant_id_for_token",
+            "src.app.core.security.jwt_service._resolve_tenant_id_for_token",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -468,8 +468,8 @@ async def test_blacklist_tokens_integrity_error() -> None:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.add_tokens_to_blacklist", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.add_tokens_to_blacklist", new=AsyncMock()),
     ):
         await blacklist_tokens("atok", None, db, access_payload=payload)
     db.commit.assert_awaited()
@@ -483,7 +483,7 @@ async def test_blacklist_tokens_commit_error() -> None:
         "jti": "j1",
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)):
         await blacklist_tokens("atok", None, db, access_payload=payload)
     db.commit.assert_awaited()
 
@@ -491,7 +491,7 @@ async def test_blacklist_tokens_commit_error() -> None:
 async def test_blacklist_tokens_jwt_error() -> None:
     db = _make_db()
     with patch(
-        "src.app.core.security.asyncio.to_thread",
+        "src.app.core.security.jwt_service.asyncio.to_thread",
         new=AsyncMock(side_effect=jwt.exceptions.PyJWTError("bad")),
     ):
         await blacklist_tokens("atok", None, db)
@@ -511,9 +511,9 @@ async def test_blacklist_token_success() -> None:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.crud_token_blacklist.create", new=AsyncMock()),
-        patch("src.app.core.security.add_token_to_blacklist", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.crud_token_blacklist.create", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.add_token_to_blacklist", new=AsyncMock()),
     ):
         await blacklist_token("atok", db, payload=payload)
 
@@ -526,9 +526,9 @@ async def test_blacklist_token_no_payload() -> None:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
-        patch("src.app.core.security.crud_token_blacklist.create", new=AsyncMock()),
-        patch("src.app.core.security.add_token_to_blacklist", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.crud_token_blacklist.create", new=AsyncMock()),
+        patch("src.app.core.security.jwt_service.add_token_to_blacklist", new=AsyncMock()),
     ):
         await blacklist_token("atok", db)
 
@@ -536,7 +536,7 @@ async def test_blacklist_token_no_payload() -> None:
 async def test_blacklist_token_no_exp() -> None:
     db = _make_db()
     payload = {"jti": "j1", "tenant_id": "11111111-1111-1111-1111-111111111111"}
-    with patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)):
+    with patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)):
         await blacklist_token("atok", db, payload=payload)
     db.begin_nested.return_value.__aenter__.assert_not_awaited()
 
@@ -545,9 +545,9 @@ async def test_blacklist_token_resolve_tenant_raises() -> None:
     db = _make_db()
     payload = {"exp": datetime.now(UTC).timestamp() + 100, "jti": "j1"}
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
         patch(
-            "src.app.core.security._resolve_tenant_id_for_token",
+            "src.app.core.security.jwt_service._resolve_tenant_id_for_token",
             new=AsyncMock(return_value=None),
         ),
     ):
@@ -566,9 +566,9 @@ async def test_blacklist_token_integrity_error() -> None:
         "tenant_id": "11111111-1111-1111-1111-111111111111",
     }
     with (
-        patch("src.app.core.security.asyncio.to_thread", new=AsyncMock(return_value=payload)),
+        patch("src.app.core.security.jwt_service.asyncio.to_thread", new=AsyncMock(return_value=payload)),
         patch(
-            "src.app.core.security.crud_token_blacklist.create",
+            "src.app.core.security.jwt_service.crud_token_blacklist.create",
             new=AsyncMock(side_effect=IntegrityError("dup", None, None)),
         ),
     ):
@@ -578,7 +578,7 @@ async def test_blacklist_token_integrity_error() -> None:
 async def test_blacklist_token_jwt_error() -> None:
     db = _make_db()
     with patch(
-        "src.app.core.security.asyncio.to_thread",
+        "src.app.core.security.jwt_service.asyncio.to_thread",
         new=AsyncMock(side_effect=jwt.exceptions.PyJWTError("bad")),
     ):
         await blacklist_token("atok", db)

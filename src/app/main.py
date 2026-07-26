@@ -123,7 +123,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("ARQ background tasks are disabled, events will run synchronously")
 
         # Pre-register event handlers to avoid cold start penalties
-        # This scans modules and registers @event_bus.subscribe decorated functions
+        # Explicitly registers module-level event handlers without dynamic scanning
         event_bus.register_all_handlers()
 
         # Initialize session manager for concurrent session limiting
@@ -134,10 +134,17 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
 
         # FIXED: Initialize GCRA rate limiter for algorithm selection
         from src.app.core.utils.gcra_rate_limit import init_gcra_rate_limiter
+        from src.app.core.utils.lua_manager import get_lua_manager
 
         if redis_client:
             init_gcra_rate_limiter(redis_client)
             logger.info("GCRA rate limiter initialized")
+
+            try:
+                loaded_scripts = await get_lua_manager().preload_scripts(redis_client)
+                logger.info("Lua scripts preloaded", count=len(loaded_scripts))
+            except Exception as e:
+                logger.warning("Failed to preload Lua scripts", error=str(e))
 
         # Warm token blacklist cache from database
         await _warm_token_blacklist_cache()

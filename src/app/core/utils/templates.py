@@ -21,7 +21,7 @@ _TITLE_STRIP_PATTERN = re.compile(r"<title>.*?</title>", re.DOTALL)
 class EmailTemplatesService:
     """Service for rendering email templates."""
 
-    def __init__(self):
+    def __init__(self) -> None:
         """Initialize the email templates service."""
         from src.app.core.db.database import async_session_maker
 

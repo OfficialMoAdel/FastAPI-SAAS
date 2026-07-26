@@ -68,12 +68,12 @@ class SMTPProvider(EmailProvider):
         self,
         host: str,
         port: int,
-        username: str,
-        password: SecretStr,
+        username: str | None = None,
+        password: SecretStr | None = None,
         use_tls: bool = True,
         from_email: str | None = None,
         from_name: str | None = None,
-    ):
+    ) -> None:
         """Initialize SMTP provider."""
         self.host = host
         self.port = port

@@ -18,9 +18,6 @@ class PermissionRead(BaseRead, PermissionBase):
     pass
 
 
-# Backward compatibility alias
-PermissionOut = PermissionRead
-
 
 class RoleBase(BaseModel):
     """Base schema for Role."""
@@ -48,9 +45,6 @@ class RoleRead(BaseRead, RoleBase):
     is_system: bool
 
 
-# Backward compatibility alias
-RoleOut = RoleRead
-
 
 class RoleWithPermissions(RoleRead):
     """Role with its assigned permissions."""
@@ -73,9 +67,6 @@ class UserRoleRead(BaseRead):
     role_id: int
     tenant_id: UUID
 
-
-# Backward compatibility alias
-UserRoleOut = UserRoleRead
 
 
 class UserRolesResponse(BaseModel):

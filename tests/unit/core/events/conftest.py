@@ -116,7 +116,7 @@ def reset_metrics():
 
     Ensures metrics don't leak between tests.
     """
-    from src.app.core.monitoring_metrics import reset_r1_metrics
+    from src.app.core.monitoring import reset_r1_metrics
 
     reset_r1_metrics()
     yield

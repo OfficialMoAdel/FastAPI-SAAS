@@ -126,17 +126,22 @@ class BaseService(Generic[T]):
             from src.app.core.db.tenant_crud import TenantAwareCRUD
 
             if isinstance(self.crud, TenantAwareCRUD):
-                kwargs = self.crud._inject_tenant_filter(kwargs)
-            elif hasattr(self.crud, "_inject_tenant_filter"):
-                kwargs = self.crud._inject_tenant_filter(kwargs)
+                kwargs = self.crud.inject_tenant_filter(kwargs)
+            elif hasattr(self.crud, "inject_tenant_filter"):
+                kwargs = self.crud.inject_tenant_filter(kwargs)
 
-            # Apply kwargs filters via FastCRUD's processor
-            filters = self.crud._filter_processor.parse_filters(**kwargs)
-            query = query.filter(*filters)
+            # Apply filters via direct SQLAlchemy attributes
+            for key, value in kwargs.items():
+                if hasattr(self.model, key):
+                    query = query.filter(getattr(self.model, key) == value)
 
-            # Apply sorting
+            # Apply sorting via direct SQLAlchemy order_by
             if sort_columns:
-                query = self.crud._query_builder.apply_sorting(query, sort_columns, sort_orders)
+                orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
+                for col, order in zip(sort_columns, orders):
+                    attr = getattr(self.model, col, None)
+                    if attr:
+                        query = query.order_by(attr.desc() if order == "desc" else attr.asc())
 
             for relationship in eager_loads:
                 if hasattr(self.model, relationship):

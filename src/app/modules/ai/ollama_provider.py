@@ -103,12 +103,15 @@ class OllamaProvider(AIProvider):
             "temperature": temperature,
             **kwargs,
         }
+        chat_messages = options.pop("messages", None)
+        if chat_messages is None:
+            chat_messages = [{"role": "user", "content": prompt}]
         if max_tokens is not None:
             options["num_predict"] = max_tokens
 
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": chat_messages,
             "stream": False,
             "options": options,
         }
@@ -168,12 +171,15 @@ class OllamaProvider(AIProvider):
             "temperature": temperature,
             **kwargs,
         }
+        chat_messages = options.pop("messages", None)
+        if chat_messages is None:
+            chat_messages = [{"role": "user", "content": prompt}]
         if max_tokens is not None:
             options["num_predict"] = max_tokens
 
         payload = {
             "model": model,
-            "messages": [{"role": "user", "content": prompt}],
+            "messages": chat_messages,
             "stream": True,
             "options": options,
         }

@@ -48,7 +48,7 @@ def get_auth_service() -> "AuthService":
     Returns
     -------
     AuthService
-        Singleton-like auth service instance.
+        New AuthService instance.
     """
     return AuthService()
 

@@ -1,7 +1,7 @@
 """
 R1-UNIFIED Performance Metrics.
 
-Prometheus metrics for tracking R1-UNIFIED optimization performance.
+In-memory, Prometheus-compatible metrics for tracking R1-UNIFIED optimization performance.
 Provides counters, histograms, and gauges for all 7 optimization areas.
 
 Usage:

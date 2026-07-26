@@ -6,7 +6,7 @@ Business logic for AI chat sessions, messages, and user settings.
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
-from src.app.modules.ai.ollama_client import OllamaClient, OllamaError, get_ollama_client
+from src.app.modules.ai.ollama_client import OllamaError
 from src.app.modules.ai.schemas import (
     AISettingsUpdate,
     ChatCompletionRequest,
@@ -330,18 +330,120 @@ def get_ai_settings_service(db: AsyncSession) -> AISettingsService:
 
 
 class ChatCompletionService:
-    """Service for AI chat completions via Ollama."""
+    """Service for AI chat completions via AIProvider."""
 
     def __init__(
         self,
         db: AsyncSession,
-        ollama_client: OllamaClient | None = None,
+        provider: Any | None = None,
+        ollama_client: Any | None = None,
+        fallback_provider: Any | None = None,
     ):
         self.db = db
-        self.ollama = ollama_client or get_ollama_client()
+        resolved = provider or ollama_client
+        self._injected_provider = resolved is not None
+        if resolved is not None:
+            self.provider = resolved
+            self.ollama = resolved
+        else:
+            from src.app.modules.ai.factory import AIProviderFactory
+            self.provider = AIProviderFactory.get_provider()
+            self.ollama = self.provider
+        self._fallback_provider = fallback_provider
         self._session_service = ChatSessionService(db)
         self._message_service = ChatMessageService(db)
         self._settings_service = AISettingsService(db)
+
+    def _get_fallback_provider(self) -> Any | None:
+        if self._fallback_provider is not None:
+            return self._fallback_provider
+        if self._injected_provider:
+            return None
+        from src.app.modules.ai.factory import SUPPORTED_PROVIDERS, AIProviderFactory
+        current_name = getattr(self.provider, "provider_name", None)
+        for name in SUPPORTED_PROVIDERS:
+            if name != current_name:
+                try:
+                    return AIProviderFactory.get_provider(provider_name=name)
+                except Exception:
+                    continue
+        return None
+
+    async def _invoke_chat(
+        self,
+        provider: Any,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int | None,
+        system_prompt: str | None,
+    ) -> dict[str, Any]:
+        """Invoke chat on provider (handles both AIProvider and OllamaClient/mocks)."""
+        from src.app.modules.ai.providers import AIProvider
+        if isinstance(provider, AIProvider) or (hasattr(provider, "generate_text") and not hasattr(provider, "chat")):
+            prompt = messages[-1]["content"] if messages else ""
+            res = await provider.generate_text(
+                prompt=prompt,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                messages=messages,
+            )
+            return {
+                "message": res.content,
+                "role": "assistant",
+                "token_count": res.token_usage.total_tokens if res.token_usage else None,
+                "model": res.model or model,
+                "finish_reason": res.finish_reason,
+            }
+        else:
+            res = await provider.chat(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            )
+            return cast(dict[str, Any], res)
+
+    async def _invoke_chat_stream(
+        self,
+        provider: Any,
+        model: str,
+        messages: list[dict[str, str]],
+        temperature: float,
+        max_tokens: int | None,
+        system_prompt: str | None,
+    ) -> AsyncGenerator[dict[str, Any], None]:
+        """Stream chat from provider (handles both AIProvider and OllamaClient/mocks)."""
+        from src.app.modules.ai.providers import AIProvider
+
+        is_provider = isinstance(provider, AIProvider) or (
+            hasattr(provider, "generate_text_stream") and not hasattr(provider, "chat_stream")
+        )
+        if is_provider:
+            prompt = messages[-1]["content"] if messages else ""
+            async for chunk_str in provider.generate_text_stream(
+                prompt=prompt,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+                messages=messages,
+            ):
+                if chunk_str:
+                    yield {"content": chunk_str, "done": False, "token_count": None}
+            yield {"content": "", "done": True, "token_count": None}
+        else:
+            async for chunk in provider.chat_stream(
+                model=model,
+                messages=messages,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                system_prompt=system_prompt,
+            ):
+                yield chunk
 
     async def complete(
         self,
@@ -414,18 +516,41 @@ class ChatCompletionService:
         await self.db.commit()
 
         # Phase2: Call LLM (connection released, no DB hold during inference)
-        try:
-            logger.debug("Calling Ollama with model=, temperature=", model=model, temperature=temperature)
-            result = await self.ollama.chat(
-                model=model,
-                messages=history,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            )
-            logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
+        from src.app.core.utils.r1_error_handling import with_fallback, with_retry
+        from src.app.modules.ai.providers import AIProviderError
 
-        except OllamaError as e:
+        _last_err: list[Exception] = []
+
+        async def _primary_call() -> dict[str, Any]:
+            try:
+                return await with_retry(
+                    lambda: self._invoke_chat(
+                        self.provider, model, history, temperature, max_tokens, system_prompt
+                    ),
+                    max_attempts=2,
+                    delay_seconds=0.05,
+                    exceptions=(AIProviderError, OllamaError, Exception),
+                )
+            except Exception as e:
+                _last_err.append(e)
+                raise
+
+        async def _fallback_call() -> dict[str, Any]:
+            fb = self._get_fallback_provider()
+            if fb is not None and fb is not self.provider:
+                logger.warning("Primary AI provider failed after retries, attempting fallback provider")
+                return await self._invoke_chat(
+                    fb, model, history, temperature, max_tokens, system_prompt
+                )
+            if _last_err:
+                raise _last_err[0]
+            raise ChatCompletionError("No fallback provider available", "no_fallback", model)
+
+        try:
+            logger.debug("Calling AI provider with model=, temperature=", model=model, temperature=temperature)
+            result = await with_fallback(_primary_call, _fallback_call, error_msg="Primary AI completion failed")
+            logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
+        except (OllamaError, AIProviderError, ChatCompletionError, Exception) as e:
             # P2.20 FIX: the user message was already committed above. On LLM
             # failure it would be left as a dangling turn with no assistant reply,
             # so remove it to keep the conversation consistent.
@@ -440,8 +565,12 @@ class ChatCompletionService:
                         id=user_msg_id,
                         error=cleanup_err,
                     )
-            logger.error("Chat completion failed: ()", message=e.message, error_code=e.error_code)
-            raise ChatCompletionError(e.message, e.error_code, model) from e
+            err_code = getattr(e, "error_code", "completion_error")
+            err_msg = getattr(e, "message", str(e))
+            logger.error("Chat completion failed: ()", message=err_msg, error_code=err_code)
+            if isinstance(e, ChatCompletionError):
+                raise
+            raise ChatCompletionError(err_msg, err_code, model) from e
 
         # Phase 3: Get fresh session for writing response
         async with local_session() as fresh_db:
@@ -535,26 +664,48 @@ class ChatCompletionService:
         token_count = None
 
         from src.app.core.tenancy.context import get_tenant_context
+        from src.app.modules.ai.providers import AIProviderError
 
         current_tenant = get_tenant_context()
 
         try:
-            async for chunk in self.ollama.chat_stream(
-                model=model,
-                messages=history,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            ):
-                content = chunk.get("content", "")
-                if content:
-                    response_chunks.append(content)
-                if chunk.get("done"):
-                    token_count = chunk.get("token_count")
-                yield chunk
-
-        except OllamaError as e:
-            raise ChatCompletionError(e.message, e.error_code, model) from e
+            _last_err: list[Exception] = []
+            try:
+                async for chunk in self._invoke_chat_stream(
+                    self.provider, model, history, temperature, max_tokens, system_prompt
+                ):
+                    content = chunk.get("content", "")
+                    if content:
+                        response_chunks.append(content)
+                    if chunk.get("done"):
+                        token_count = chunk.get("token_count")
+                    yield chunk
+            except (AIProviderError, OllamaError, Exception) as primary_err:
+                _last_err.append(primary_err)
+                logger.warning("Primary provider streaming failed, checking fallback", error=str(primary_err))
+                fb = self._get_fallback_provider()
+                if fb is not None and fb is not self.provider:
+                    try:
+                        async for chunk in self._invoke_chat_stream(
+                            fb, model, history, temperature, max_tokens, system_prompt
+                        ):
+                            content = chunk.get("content", "")
+                            if content:
+                                response_chunks.append(content)
+                            if chunk.get("done"):
+                                token_count = chunk.get("token_count")
+                            yield chunk
+                    except Exception as fallback_err:
+                        logger.error("Fallback streaming also failed", error=str(fallback_err))
+                        err_code = getattr(fallback_err, "error_code", "streaming_error")
+                        err_msg = getattr(fallback_err, "message", str(fallback_err))
+                        raise ChatCompletionError(err_msg, err_code, model) from fallback_err
+                else:
+                    err_code = getattr(primary_err, "error_code", "streaming_error")
+                    err_msg = getattr(primary_err, "message", str(primary_err))
+                    if isinstance(primary_err, ChatCompletionError):
+                        raise primary_err
+                    raise ChatCompletionError(err_msg, err_code, model) from primary_err
 
         finally:
             # Phase 3: Get fresh session for writing response safely in the background
@@ -622,7 +773,11 @@ class ChatCompletionError(Exception):
 
 def get_chat_completion_service(
     db: AsyncSession,
-    ollama_client: OllamaClient | None = None,
+    provider: Any | None = None,
+    ollama_client: Any | None = None,
+    fallback_provider: Any | None = None,
 ) -> ChatCompletionService:
     """Get ChatCompletionService instance."""
-    return ChatCompletionService(db, ollama_client)
+    return ChatCompletionService(
+        db, provider=provider, ollama_client=ollama_client, fallback_provider=fallback_provider
+    )

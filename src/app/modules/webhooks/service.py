@@ -921,7 +921,6 @@ class WebhookService:
 
 
 # Event handler for webhook.trigger events
-@event_bus.subscribe("webhook.trigger")
 async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
     """Handle webhook trigger events by enqueuing deliveries.
 

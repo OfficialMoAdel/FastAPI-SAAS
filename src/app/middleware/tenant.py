@@ -22,7 +22,6 @@ from typing import cast
 
 from cachetools import TTLCache
 from fastapi import Request, Response, status
-from fastapi.responses import JSONResponse
 from sqlalchemy import select
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
@@ -105,9 +104,12 @@ class TenantMiddleware(BaseHTTPMiddleware):
         tenant_slug = request.headers.get(TENANT_HEADER)
         if not tenant_slug or not tenant_slug.strip():
             logger.warning("Tenant resolution failed: missing_header | path=%s", path)
-            return JSONResponse(
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.VALIDATION_ERROR,
+                message=f"Missing required header: {TENANT_HEADER}",
                 status_code=status.HTTP_400_BAD_REQUEST,
-                content={"detail": f"Missing required header: {TENANT_HEADER}"},
             )
 
         # Normalize slug to ensure case-insensitive lookup
@@ -121,17 +123,24 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
         if tenant is None:
             logger.warning("Tenant resolution failed: invalid_slug | slug=%s", tenant_slug)
-            return JSONResponse(
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.FORBIDDEN,
+                message="Access denied",
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Access denied"},
             )
 
         if not tenant.is_active:
             logger.warning("Tenant resolution failed: inactive_tenant | slug=%s", tenant_slug)
-            return JSONResponse(
+            from src.app.core.errors import ErrorCode, create_error_response
+
+            return create_error_response(
+                code=ErrorCode.FORBIDDEN,
+                message="Tenant inactive. Contact support.",
                 status_code=status.HTTP_403_FORBIDDEN,
-                content={"detail": "Tenant inactive. Contact support."},
             )
+
 
         # Set application-level tenant context (stored in ContextVar)
         # Downstream DB sessions will automatically use this for RLS variables.

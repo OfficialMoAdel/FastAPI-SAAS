@@ -2,7 +2,7 @@ from unittest.mock import patch
 
 import pytest
 
-from src.app.core.monitoring_metrics import get_r1_metrics, reset_r1_metrics
+from src.app.core.monitoring import get_r1_metrics, reset_r1_metrics
 from tests.conftest import patch_setting
 
 
@@ -16,7 +16,7 @@ async def test_fail_open_metrics_increment():
     assert metrics.get_counter("r1_security_fail_open_total") == 0
 
     # Import and call
-    from src.app.core.monitoring_metrics import record_fail_open
+    from src.app.core.monitoring import record_fail_open
 
     record_fail_open("test")
 

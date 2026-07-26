@@ -6,7 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.utils import cache
-from src.app.modules.rate_limits.schemas import sanitize_path
+from src.app.core.utils.path_utils import sanitize_path
 
 logger = get_logger(__name__)
 

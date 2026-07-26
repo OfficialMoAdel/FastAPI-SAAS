@@ -400,7 +400,6 @@ async def flush_audit_log_buffer(max_flush_per_run: int | None = None, db: Async
 
 
 # Event handler for audit logs
-@event_bus.subscribe("audit.log")
 async def handle_audit_log_event(data: dict[str, Any]) -> None:
     """Handle audit log events from the event bus.
 

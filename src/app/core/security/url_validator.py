@@ -81,7 +81,7 @@ def is_ip_blocked(ip: str) -> bool:
 
 
 async def validate_webhook_url(url: str) -> str:
-    """Validate a URL is safe for outbound webhook requests.
+    """Validate a URL is safe for outbound webhook requests and return its safe resolved IP address.
 
     Performs the following checks:
     1. URL must use HTTPS scheme

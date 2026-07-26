@@ -8,7 +8,7 @@ from pydantic import SecretStr
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
-from src.app.email_provider import EmailMessage, EmailProvider, SMTPProvider
+from src.app.modules.notifications.email_provider import EmailMessage, EmailProvider, SMTPProvider
 from src.app.modules.notifications.models import Notification, NotificationStatus
 
 logger = get_logger(__name__)

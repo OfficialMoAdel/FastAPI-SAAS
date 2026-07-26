@@ -50,6 +50,8 @@ class TestB7ParallelReads:
         service._message_service.add_message = AsyncMock()
 
         service.ollama = MagicMock()
+        service.provider = service.ollama
+        service._injected_provider = True
         service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
@@ -181,6 +183,8 @@ class TestB7UserMessageTiming:
             return {"message": "Hello!", "token_count": 10}
 
         service.ollama = MagicMock()
+        service.provider = service.ollama
+        service._injected_provider = True
         service.ollama.chat = AsyncMock(side_effect=track_ollama_chat)
 
         request = ChatCompletionRequest(message="Hello")
@@ -256,6 +260,8 @@ class TestB7BatchedWrites:
         service._message_service.add_message = AsyncMock()
 
         service.ollama = MagicMock()
+        service.provider = service.ollama
+        service._injected_provider = True
         service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
@@ -326,6 +332,8 @@ class TestB7BatchedWrites:
 
         expected_token_count = 42
         service.ollama = MagicMock()
+        service.provider = service.ollama
+        service._injected_provider = True
         service.ollama.chat = AsyncMock(return_value={"message": "Test response", "token_count": expected_token_count})
 
         request = ChatCompletionRequest(message="Hello")
@@ -399,6 +407,8 @@ class TestB7ErrorHandling:
 
         # Ollama fails
         service.ollama = MagicMock()
+        service.provider = service.ollama
+        service._injected_provider = True
         service.ollama.chat = AsyncMock(side_effect=OllamaError("Model not found", "MODEL_NOT_FOUND"))
 
         request = ChatCompletionRequest(message="Hello")

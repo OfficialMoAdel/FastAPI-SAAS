@@ -36,7 +36,7 @@ class TestBcryptRoundsConfigurable:
     @pytest.mark.asyncio
     async def test_bcrypt_rounds_configurable_10(self) -> None:
         """Setting BCRYPT_ROUNDS=10 should produce $2b$10$ prefix."""
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 10
             mock_settings.SECRET_KEY.get_secret_value.return_value = "a" * 32
             mock_settings.ALGORITHM = "HS256"
@@ -56,7 +56,7 @@ class TestBcryptRoundsConfigurable:
     @pytest.mark.asyncio
     async def test_bcrypt_rounds_configurable_8_dev(self) -> None:
         """Setting BCRYPT_ROUNDS=8 (dev mode) should produce $2b$08$ prefix."""
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 8
             mock_settings.SECRET_KEY.get_secret_value.return_value = "a" * 32
             mock_settings.ALGORITHM = "HS256"
@@ -75,12 +75,12 @@ class TestBcryptRoundsConfigurable:
         password = "cross_verify_test"
 
         # Create hash with 8 rounds
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 8
             hash_8 = await get_password_hash(password)
 
         # Create hash with 10 rounds
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 10
             hash_10 = await get_password_hash(password)
 
@@ -100,14 +100,14 @@ class TestBcryptRoundsConfigurable:
         password = "timing_test_password"
 
         # Time 8 rounds
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 8
             start = time.perf_counter()
             await get_password_hash(password)
             time_8 = time.perf_counter() - start
 
         # Time 10 rounds
-        with patch("src.app.core.security.settings") as mock_settings:
+        with patch("src.app.core.security.password.settings") as mock_settings:
             mock_settings.BCRYPT_ROUNDS = 10
             start = time.perf_counter()
             await get_password_hash(password)

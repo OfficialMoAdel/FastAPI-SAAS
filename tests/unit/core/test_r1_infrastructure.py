@@ -14,7 +14,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from src.app.core.monitoring_metrics import (
+from src.app.core.monitoring import (
     R1UnifiedMetrics,
     get_r1_metrics,
     measure_latency,
@@ -38,6 +38,7 @@ from src.app.core.utils.r1_error_handling import (
     CacheError,
     DLQError,
     ErrorTracker,
+    LuaScriptError,
     R1OptimizationError,
     RBACError,
     SessionError,
@@ -46,9 +47,6 @@ from src.app.core.utils.r1_error_handling import (
     with_fallback,
     with_fallback_sync,
     with_retry,
-)
-from src.app.core.utils.r1_error_handling import (
-    LuaScriptError as ErrorLuaScriptError,
 )
 
 # =============================================================================
@@ -320,8 +318,8 @@ class TestExceptionHierarchy:
         assert error.timestamp > 0
 
     def test_lua_script_error(self) -> None:
-        """Test LuaScriptError (from error handling)."""
-        error = ErrorLuaScriptError("script failed", "my_script")
+        """Test LuaScriptError."""
+        error = LuaScriptError("script failed", "my_script")
         assert error.script_name == "my_script"
         assert isinstance(error, R1OptimizationError)
 

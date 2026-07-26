@@ -2,13 +2,10 @@
 
 import asyncio
 from datetime import UTC, datetime, time
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from pathlib import Path
 from typing import Any
 from uuid import UUID
 
-import aiosmtplib
 from jinja2 import FileSystemLoader
 from jinja2.sandbox import SandboxedEnvironment
 from sqlalchemy import select
@@ -19,7 +16,9 @@ from src.app.core.config import settings
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.utils.cache import client as redis_client
+from src.app.core.utils.r1_error_handling import with_retry
 from src.app.core.utils.rate_limit import rate_limiter
+from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider
 from src.app.modules.notifications.models import EmailTemplateOverride, Notification, NotificationStatus
 
 logger = get_logger(__name__)
@@ -520,25 +519,34 @@ async def send_email_task(
         async def _run_with_context() -> None:
             service = NotificationService(db)
 
-            # Create SMTP message
-            msg = MIMEMultipart("alternative")
-            msg["Subject"] = subject
-            msg["From"] = settings.EMAIL_FROM_ADDRESS
-            msg["To"] = to_email
-
-            # Attach HTML content
-            html_part = MIMEText(html_content, "html")
-            msg.attach(html_part)
+            # Create SMTP provider and message
+            provider = SMTPProvider(
+                host=settings.SMTP_HOST,
+                port=settings.SMTP_PORT,
+                username=settings.SMTP_USER,
+                password=settings.SMTP_PASSWORD,
+                use_tls=settings.SMTP_USE_TLS,
+                from_email=settings.EMAIL_FROM_ADDRESS,
+            )
+            message = EmailMessage(
+                to_email=to_email,
+                subject=subject,
+                html_content=html_content,
+            )
 
             try:
-                # Send via async SMTP (non-blocking)
-                await aiosmtplib.send(
-                    msg,
-                    hostname=settings.SMTP_HOST,
-                    port=settings.SMTP_PORT,
-                    username=settings.SMTP_USER if settings.SMTP_USER else None,
-                    password=settings.SMTP_PASSWORD.get_secret_value() if settings.SMTP_PASSWORD else None,
-                    start_tls=settings.SMTP_USE_TLS,
+                # Protect transmission with automatic exponential backoff retry
+                async def _send_with_check() -> bool:
+                    result = await provider.send_email(message)
+                    if not result:
+                        raise RuntimeError(f"SMTPProvider failed to send email to {to_email}")
+                    return result
+
+                await with_retry(
+                    fn=_send_with_check,
+                    max_attempts=3,
+                    delay_seconds=1.0,
+                    backoff_factor=2.0,
                 )
 
                 # Mark as sent (inside context = RLS enforced)
@@ -568,7 +576,6 @@ async def send_email_task(
 
 
 # Event handler for notification.send events
-@event_bus.subscribe("notification.send")
 async def handle_notification_send_event(data: dict[str, Any]) -> None:
     """Handle notification send events by queuing email delivery.
 
@@ -657,7 +664,6 @@ async def _mark_notification_failed(notification_id: str | None, tenant_id: str 
         logger.error("failed_to_mark_notification_failed", notification_id=notification_id, error=str(e))
 
 
-@event_bus.subscribe("notification.request")
 async def handle_notification_request_event(data: dict[str, Any]) -> None:
     """Handle request to generate and send an email notification.
 

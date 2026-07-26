@@ -5,7 +5,7 @@ stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocke
 """
 
 
-from fastapi import Request, Response, status
+from fastapi import Request, status
 from starlette.types import ASGIApp
 
 from src.app.core.config import settings
@@ -120,10 +120,12 @@ class IPFilterMiddleware:
                         client_ip=client_ip,
                         user_agent=user_agent,
                     )
-                    response = Response(
-                        content='{"detail":"Forbidden - Bad bot detected"}',
+                    from src.app.core.errors import ErrorCode, create_error_response
+
+                    response = create_error_response(
+                        code=ErrorCode.FORBIDDEN,
+                        message="Forbidden - Bad bot detected",
                         status_code=status.HTTP_403_FORBIDDEN,
-                        media_type="application/json",
                     )
                     return await response(scope, receive, send)
 
@@ -141,10 +143,12 @@ class IPFilterMiddleware:
                 log_security_event(event)
 
                 logger.warning("IP blocked - blacklisted for", client_ip=client_ip, path=path)
-                response = Response(
-                    content='{"detail":"Forbidden - IP is blacklisted"}',
+                from src.app.core.errors import ErrorCode, create_error_response
+
+                response = create_error_response(
+                    code=ErrorCode.FORBIDDEN,
+                    message="Forbidden - IP is blacklisted",
                     status_code=status.HTTP_403_FORBIDDEN,
-                    media_type="application/json",
                 )
                 return await response(scope, receive, send)
 

@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, status
 
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.modules.rbac.schemas import PermissionOut, RoleCreate, RoleOut, RoleUpdate
+from src.app.modules.rbac.schemas import PermissionRead, RoleCreate, RoleRead, RoleUpdate
 from src.app.modules.rbac.service import RoleService, get_role_service
 
 router = APIRouter(prefix="/roles", tags=["rbac"])
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/roles", tags=["rbac"])
 
 @router.get(
     "",
-    response_model=list[RoleOut],
+    response_model=list[RoleRead],
     dependencies=[Depends(requires_permission(Permission.ROLES_READ))],
 )
 async def list_roles(
@@ -29,7 +29,7 @@ async def list_roles(
 
 @router.get(
     "/{role_id}",
-    response_model=RoleOut,
+    response_model=RoleRead,
     dependencies=[Depends(requires_permission(Permission.ROLES_READ))],
 )
 async def get_role(
@@ -43,7 +43,7 @@ async def get_role(
 
 @router.post(
     "",
-    response_model=RoleOut,
+    response_model=RoleRead,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(requires_permission(Permission.ROLES_MANAGE))],
 )
@@ -58,7 +58,7 @@ async def create_role(
 
 @router.put(
     "/{role_id}",
-    response_model=RoleOut,
+    response_model=RoleRead,
     dependencies=[Depends(requires_permission(Permission.ROLES_MANAGE))],
 )
 async def update_role(
@@ -87,7 +87,7 @@ async def delete_role(
 # Permission management for roles
 @router.get(
     "/{role_id}/permissions",
-    response_model=list[PermissionOut],
+    response_model=list[PermissionRead],
     dependencies=[Depends(requires_permission(Permission.ROLES_READ))],
 )
 async def get_role_permissions(

@@ -67,7 +67,7 @@ class TenantAwareCRUD(
         >>> users = await crud.get_multi(db)
     """
 
-    def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+    def inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Inject tenant_id from context if not explicitly provided.
 
         Args:
@@ -96,6 +96,10 @@ class TenantAwareCRUD(
                 # Fail-closed: raise an error if context is missing for a tenant-aware operation
                 raise RuntimeError("Tenant-scoped query executed without an active tenant context")
         return kwargs
+
+    def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
+        """Alias for inject_tenant_filter for backward compatibility."""
+        return self.inject_tenant_filter(kwargs)
 
     async def create(self, db: AsyncSession, object: CreateSchemaType | dict[str, Any], **kwargs: Any) -> Any:
         """Create a new record, automatically injecting tenant_id from context.
@@ -157,7 +161,7 @@ class TenantAwareCRUD(
         -------
             The record as a dict if found, None otherwise.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return cast(dict[Any, Any] | None, await super().get(db, **kwargs))
 
     async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:
@@ -171,17 +175,17 @@ class TenantAwareCRUD(
         -------
             A dict containing the records and pagination info.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return cast(dict[Any, Any], await super().get_multi(db, **kwargs))
 
     async def get_joined(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
         """Get a single record with joins, filtered by tenant context."""
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return cast(dict[Any, Any] | None, await super().get_joined(db, **kwargs))
 
     async def get_multi_joined(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
         """Get multiple records with joins, filtered by tenant context."""
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return cast(dict[Any, Any], await super().get_multi_joined(db, **kwargs))
 
     async def exists(self, db: AsyncSession, **kwargs: Any) -> bool:
@@ -195,7 +199,7 @@ class TenantAwareCRUD(
         -------
             True if a matching record exists, False otherwise.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return await super().exists(db, **kwargs)
 
     async def count(self, db: AsyncSession, **kwargs: Any) -> int:  # type: ignore[override]
@@ -209,7 +213,7 @@ class TenantAwareCRUD(
         -------
             The count of matching records.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         return await super().count(db, **kwargs)
 
     async def update(self, db: AsyncSession, object: UpdateSchemaType | dict[str, Any], **kwargs: Any) -> None:
@@ -220,7 +224,7 @@ class TenantAwareCRUD(
             object: The update data.
             **kwargs: Filter criteria for the update.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         await super().update(db, object, **kwargs)
 
     async def delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
@@ -230,7 +234,7 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter criteria for the delete.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         await super().delete(db, **kwargs)
 
     async def db_delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
@@ -240,5 +244,5 @@ class TenantAwareCRUD(
             db: The database session.
             **kwargs: Filter criteria for the delete.
         """
-        kwargs = self._inject_tenant_filter(kwargs)
+        kwargs = self.inject_tenant_filter(kwargs)
         await super().db_delete(db, **kwargs)

@@ -106,6 +106,13 @@ class LogSanitizer:
             re.compile(r"(?i)(authorization['\"]?\s*[:=]\s*['\"]?)[^'\"\s,}]+"),
             r"\1[REDACTED]",
         ),
+        # WebAuthn / Passkey sensitive data
+        (
+            re.compile(
+                r"(?i)(challenge|credential_id|public_key|signature|attestation_object|client_data_json|authenticator_data|user_handle)['\"]?\s*[:=]\s*['\"]?([^'\"\s,}]+)['\"]?"
+            ),
+            r"\1=[REDACTED]",
+        ),
     ]
 
     # Combined pre-check regex: single search to detect if ANY sensitive data
@@ -116,6 +123,8 @@ class LogSanitizer:
     _ANY_SENSITIVE: re.Pattern[str] = re.compile(
         r"eyJ[A-Za-z0-9\-_]+\."  # JWT prefix
         r"|(?:api[_-]?key|secret|token|password|passwd|pwd|bearer|authorization)"  # key-value secrets
+        r"|(?:challenge|credential_id|public_key|signature|attestation_object|"
+        r"client_data_json|authenticator_data|user_handle)"  # passkey data
         r"|(?:postgresql|mysql|redis|mongodb)(?:\+\w+)?://"  # DB connection strings
         r"|AKIA[0-9A-Z]{16}"  # AWS access keys
         r"|[sprk]k_(?:live|test)_"  # Stripe keys
@@ -163,22 +172,26 @@ class LogSanitizer:
 
         sanitized = {}
         for key, value in data.items():
-            sanitized[key] = cls.sanitize_value(value, _depth)
+            sanitized[key] = cls.sanitize_value(value, _depth, _max_depth)
 
         return sanitized
 
     @classmethod
-    def sanitize_value(cls, value: Any, _depth: int = 0) -> Any:
+    def sanitize_value(cls, value: Any, _depth: int = 0, _max_depth: int = 10) -> Any:
         """
         Sanitize a value based on its type.
 
         Args:
             value: Value to sanitize
             _depth: Current recursion depth (internal)
+            _max_depth: Maximum recursion depth to prevent stack overflow
 
         Returns:
             Sanitized value
         """
+        if _depth >= _max_depth:
+            return value
+
         # Pass through primitives unchanged
         if value is None or isinstance(value, int | float | bool):
             return value
@@ -189,15 +202,28 @@ class LogSanitizer:
 
         # Recursively sanitize dicts
         if isinstance(value, dict):
-            return cls.sanitize_dict(value, _depth + 1)
+            return cls.sanitize_dict(value, _depth + 1, _max_depth)
 
         # Recursively sanitize lists
         if isinstance(value, list):
-            return [cls.sanitize_value(item, _depth + 1) for item in value]
+            return [cls.sanitize_value(item, _depth + 1, _max_depth) for item in value]
 
         # Recursively sanitize tuples
         if isinstance(value, tuple):
-            return tuple(cls.sanitize_value(item, _depth + 1) for item in value)
+            return tuple(cls.sanitize_value(item, _depth + 1, _max_depth) for item in value)
+
+        # Recursively sanitize sets and frozensets
+        if isinstance(value, set | frozenset):
+            return type(value)(cls.sanitize_value(item, _depth + 1, _max_depth) for item in value)
+
+        # Sanitize bytes (e.g., WebAuthn passkey credential_id, challenge, public_key)
+        if isinstance(value, bytes):
+            try:
+                decoded = value.decode("utf-8", errors="replace")
+                sanitized_str = cls.sanitize_message(decoded)
+                return sanitized_str.encode("utf-8")
+            except Exception:
+                return value
 
         # For other types, try to convert to string and sanitize
         try:
@@ -233,13 +259,8 @@ class SanitizingProcessor:
 
     def __call__(self, logger: Any, method_name: str, event_dict: MutableMapping[str, Any]) -> dict[str, Any]:
         """Process log event by sanitizing all values in-place."""
-        for key, value in event_dict.items():
-            if isinstance(value, str):
-                event_dict[key] = LogSanitizer.sanitize_message(value)
-            elif isinstance(value, dict):
-                event_dict[key] = LogSanitizer.sanitize_dict(value, _max_depth=self._max_depth)
-            elif isinstance(value, list):
-                event_dict[key] = [LogSanitizer.sanitize_value(item) for item in value]
+        for key, value in list(event_dict.items()):
+            event_dict[key] = LogSanitizer.sanitize_value(value, _max_depth=self._max_depth)
         return event_dict  # type: ignore[return-value]
 
 
@@ -276,6 +297,9 @@ class SecureFormatter(logging.Formatter):
                 record.args = LogSanitizer.sanitize_dict(record.args)
             elif isinstance(record.args, list | tuple):
                 record.args = tuple(LogSanitizer.sanitize_value(arg) for arg in record.args)
+            else:
+                record.args = LogSanitizer.sanitize_value(record.args)
+
 
         # Format with parent formatter
         formatted = super().format(record)

@@ -29,13 +29,13 @@ class TestConnectionReleasePattern:
 
         source = inspect.getsource(ChatCompletionService.complete)
 
-        # Verify commit is called before ollama.chat
+        # Verify commit is called before LLM invocation
         commit_pos = source.find("await self.db.commit()")
-        ollama_pos = source.find("await self.ollama.chat")
+        ollama_pos = source.find("self._invoke_chat(")
 
         assert commit_pos != -1, "db.commit() should be in complete()"
-        assert ollama_pos != -1, "ollama.chat should be in complete()"
-        assert commit_pos < ollama_pos, "commit should happen before ollama.chat"
+        assert ollama_pos != -1, "_invoke_chat should be in complete()"
+        assert commit_pos < ollama_pos, "commit should happen before LLM invocation"
 
         logger.info("Connection release pattern: commit before LLM verified in source")
 
@@ -62,10 +62,10 @@ class TestConnectionReleasePattern:
         source = inspect.getsource(ChatCompletionService.complete_stream)
 
         commit_pos = source.find("await self.db.commit()")
-        stream_pos = source.find("self.ollama.chat_stream")
+        stream_pos = source.find("self._invoke_chat_stream(")
 
         assert commit_pos != -1, "db.commit() should be in complete_stream()"
-        assert stream_pos != -1, "ollama.chat_stream should be in complete_stream()"
+        assert stream_pos != -1, "_invoke_chat_stream should be in complete_stream()"
         assert commit_pos < stream_pos, "commit should happen before streaming"
 
         logger.info("Stream connection release pattern: verified in source")

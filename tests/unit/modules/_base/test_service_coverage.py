@@ -57,7 +57,7 @@ async def test_get_multi_eager_loading_enabled() -> None:
     original = settings.FEATURE_EAGER_LOADING
     settings.FEATURE_EAGER_LOADING = True
     try:
-        service.crud._inject_tenant_filter = MagicMock(side_effect=lambda k: k)
+        service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
         service.crud._filter_processor = MagicMock()
         service.crud._filter_processor.parse_filters.return_value = []
         service.crud._query_builder = MagicMock()

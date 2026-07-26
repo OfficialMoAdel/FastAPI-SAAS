@@ -468,7 +468,7 @@ class R1UnifiedE2EValidator:
                 mock_enc.return_value = mock_encryption
 
                 with patch("src.app.core.config.settings", settings_mock):
-                    with patch("src.app.core.monitoring_metrics.record_passkey_query"):
+                    with patch("src.app.core.monitoring.record_passkey_query"):
                         result = await service._get_existing_credentials(mock_db, user_id=1)
 
             details = {

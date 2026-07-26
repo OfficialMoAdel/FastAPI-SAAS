@@ -315,9 +315,9 @@ async def test_webhook_endpoint(
     """
     # Rate limiting for test endpoint
 
+    from src.app.core.utils.path_utils import sanitize_path
     from src.app.core.utils.rate_limit import rate_limiter
     from src.app.modules.rate_limits.models import RateLimit
-    from src.app.modules.rate_limits.schemas import sanitize_path
 
     # Query the database directly for the tenant's rate limit for this endpoint
     tier_id = current_user.get("tier_id")
