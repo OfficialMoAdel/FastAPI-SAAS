@@ -206,7 +206,7 @@ class SSOService:
             try:
                 token_response = await oauth_provider.exchange_code_for_token(code)
             except Exception as e:
-                logger.error("SSO Code Exchange Failed", error=str(e), provider=provider)
+                logger.error("SSO Code Exchange Failed", error_type=type(e).__name__, provider=provider)
                 raise BadRequestException("Failed to exchange code with provider")
 
             access_token = token_response.get("access_token")
@@ -226,7 +226,7 @@ class SSOService:
                 else:
                     user_info = await oauth_provider.get_user_info(access_token)
             except Exception as e:
-                logger.error("SSO User Info Fetch Failed", error=str(e), provider=provider)
+                logger.error("SSO User Info Fetch Failed", error_type=type(e).__name__, provider=provider)
                 raise BadRequestException("Failed to fetch user info from provider")
 
             current_tenant = get_tenant_context()
@@ -509,8 +509,6 @@ class SSOService:
 
             # Generate a secure random password that satisfies complexity requirements
             # so that even if the process crashes before the sentinel is set, the account is safe.
-            import string
-
             chars = string.ascii_letters + string.digits + "!@#$%^&*"
             secure_temp_password = "".join(secrets.choice(chars) for _ in range(32))
 

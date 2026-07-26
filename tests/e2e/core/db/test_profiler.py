@@ -66,10 +66,11 @@ class TestQueryProfilerE2E:
         admin_token = await create_access_token(
             data={"sub": admin_user.email, "email": admin_user.email, "tenant_id": str(tenant.id)}
         )
-        
-        from src.app.core.security.session_manager import session_manager
+
         import jwt
-        
+
+        from src.app.core.security.session_manager import session_manager
+
         user_decoded = jwt.decode(access_token, options={"verify_signature": False})
         if getattr(session_manager, "_redis_client", None):
             await session_manager.register_session(
@@ -77,7 +78,7 @@ class TestQueryProfilerE2E:
                 session_id=user_decoded.get("jti"),
                 device_info="test"
             )
-            
+
         admin_decoded = jwt.decode(admin_token, options={"verify_signature": False})
         if getattr(session_manager, "_redis_client", None):
             await session_manager.register_session(

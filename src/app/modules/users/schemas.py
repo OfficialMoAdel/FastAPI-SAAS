@@ -179,13 +179,7 @@ class UserUpdate(BaseUpdate):
     ]
     email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
 
-    @field_validator("username")
-    @classmethod
-    def validate_username_not_numeric(cls, v: str | None) -> str | None:
-        """Ensure username is not entirely numeric."""
-        if v and v.isdigit():
-            raise ValueError("Username cannot consist entirely of numbers")
-        return v
+
     profile_image_url: Annotated[
         str | None,
         Field(

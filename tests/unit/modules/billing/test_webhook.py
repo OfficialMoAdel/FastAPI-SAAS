@@ -287,7 +287,8 @@ async def test_handle_webhook_event_subscription_updated():
 
         assert result == {"status": "success"}
         mock_update.assert_called_once()
-        mock_tenant_db.commit.assert_called_once()
+        # handle_subscription_updated commits on the bypass db, not the tenant db
+        mock_bypass_db.commit.assert_called_once()
 
 
 @pytest.mark.asyncio

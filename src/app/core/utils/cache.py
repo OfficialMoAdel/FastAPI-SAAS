@@ -84,7 +84,7 @@ def tenant_cache_key(tenant_id: int | str, prefix: str, *key_parts: str | int) -
         'tenant:1:permissions:admin'
     """
     parts = [f"tenant:{tenant_id}", prefix]
-    parts.extend(str(p) for p in key_parts)
+    parts.extend(str(p).replace(":", "_") for p in key_parts)
     return ":".join(parts)
 
 

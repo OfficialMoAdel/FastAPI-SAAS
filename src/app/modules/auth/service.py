@@ -102,6 +102,8 @@ return new_attempts
         # in place of a real password. Passing it to verify_password raises UnknownHashError
         # (500). Treat the sentinel as an invalid password so the login fails cleanly with 401.
         if hash_to_verify and str(hash_to_verify).startswith("!SSO_ONLY"):
+            # Still perform dummy bcrypt to prevent timing-based account enumeration
+            await verify_password(password, self._DUMMY_BCRYPT_HASH)
             return None
         password_valid = await verify_password(password, hash_to_verify)
 
@@ -407,15 +409,30 @@ return new_attempts
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
-        new_access_token, new_refresh_token = await asyncio.gather(
-            create_access_token(data=token_data, expires_delta=access_token_expires),
-            create_refresh_token(data=token_data),
-        )
+        from src.app.core.utils.cache import client as redis_client
 
-        # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
-        await blacklist_token(
-            token=refresh_token, db=db, payload=user_data.model_dump(exclude_unset=True) if user_data else None
-        )
+        lock_key = None
+        if redis_client and user_data.jti:
+            lock_key = f"refresh_lock:{user_data.jti}"
+            lock_acquired = await redis_client.set(lock_key, "1", nx=True, ex=30)
+            if not lock_acquired:
+                raise UnauthorizedException("Token refresh already in progress.")
+        try:
+            new_access_token, new_refresh_token = await asyncio.gather(
+                create_access_token(data=token_data, expires_delta=access_token_expires),
+                create_refresh_token(data=token_data),
+            )
+
+            # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
+            await blacklist_token(
+                token=refresh_token, db=db, payload=user_data.model_dump(exclude_unset=True) if user_data else None
+            )
+        finally:
+            if redis_client and lock_key:
+                try:
+                    await redis_client.delete(lock_key)
+                except Exception:
+                    pass
 
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
         try:
@@ -725,9 +742,7 @@ return new_attempts
         # S5 FIX: Block password reset for SSO-only accounts
         if user:
             hashed_pw = (
-                user.get("hashed_password", "")
-                if isinstance(user, dict)
-                else getattr(user, "hashed_password", "")
+                user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
             )
             if str(hashed_pw).startswith("!SSO_ONLY"):
                 # Treat SSO-only accounts same as non-existent (timing equalized below)
@@ -767,9 +782,29 @@ return new_attempts
             )
         else:
             # SECURITY FIX: Equalize timing for enumeration prevention
-            # Simulate DB and event bus operations to match the "user exists" path timing
-            # Added jitter to prevent precise timing analysis
-            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
+            raw_token = generate_reset_token()
+            hashed_token = hash_token(raw_token)
+
+            try:
+                user_service = get_service("user", db)
+                await user_service.crud.get(db=db, id=-1)
+            except Exception:
+                pass
+
+            await event_bus.publish(
+                "notification.request",
+                {
+                    "tenant_id": None,
+                    "to_email": "dummy@example.com",
+                    "template_name": "dummy",
+                    "context": {},
+                    "user_id": 0,
+                },
+                priority=EventPriority.NORMAL,
+            )
+
+            # SECURITY FIX: Equalize timing for enumeration prevention
+            await asyncio.sleep(random.uniform(0.1, 0.2))
 
         return {"message": "If an account exists with that email, a reset link has been sent."}
 
@@ -828,11 +863,7 @@ return new_attempts
             raise UnauthorizedException("Invalid password reset token.")
 
         # S5 FIX: Prevent SSO-only accounts from setting a local password
-        hashed_pw = (
-            user.get("hashed_password", "")
-            if isinstance(user, dict)
-            else getattr(user, "hashed_password", "")
-        )
+        hashed_pw = user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
         if str(hashed_pw).startswith("!SSO_ONLY"):
             raise UnauthorizedException("This account uses SSO authentication. Password reset is not available.")
 
@@ -915,11 +946,6 @@ return new_attempts
         if user and not is_active and is_email_verified:
             user = None
 
-        is_email_verified = (
-            user.get("is_email_verified", False)
-            if isinstance(user, dict)
-            else getattr(user, "is_email_verified", False)
-        )
         if user and not is_email_verified:
             raw_token = generate_verification_token()
             hashed_token = hash_token(raw_token)

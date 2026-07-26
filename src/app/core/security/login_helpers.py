@@ -76,3 +76,6 @@ async def register_login_session(
         )
     except redis.exceptions.RedisError as e:
         logger.warning("session_registration_failed", error=str(e))
+        if getattr(settings.auth, "SESSION_REGISTRATION_FAIL_MODE", "fail_open") == "fail_closed":
+            from fastapi import HTTPException
+            raise HTTPException(status_code=503, detail="Authentication service temporarily unavailable")

@@ -448,7 +448,9 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
     tenant_id = None
     subscription_id = None
 
-    async with job_bypass_context("Webhook subscription lookup") as db:
+    # Find subscription by stripe_subscription_id using bypass context
+    # Use a single DB context to maintain the lock and avoid TOCTOU
+    async with job_bypass_context("Webhook subscription update") as db:
         result = await db.execute(
             select(crud_user_subscriptions.model)
             .where(crud_user_subscriptions.model.stripe_subscription_id == stripe_subscription_id)
@@ -463,38 +465,21 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
             )
             raise ValueError(f"Subscription not found for {stripe_subscription_id}")
 
-        tenant_id = db_subscription.tenant_id
         subscription_id = db_subscription.id
 
-    # Map Stripe status to our status
-    new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
+        # Map Stripe status to our status
+        new_status: SubscriptionStatus = map_stripe_status(subscription["status"])  # type: ignore
 
-    # Update subscription
-    update_data = UserSubscriptionUpdate(
-        status=new_status,
-        current_period_start=datetime.fromtimestamp(subscription["current_period_start"], UTC),
-        current_period_end=datetime.fromtimestamp(subscription["current_period_end"], UTC),
-        cancel_at_period_end=subscription.get("cancel_at_period_end", False),
-    )
-
-    if subscription.get("canceled_at"):
-        update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
-
-    async with job_tenant_context(tenant_id) as db:
-        # ATOMIC LOCK: Re-verify and lock record within tenant context to prevent TOCTOU
-        lock_result = await db.execute(
-            select(crud_user_subscriptions.model)
-            .where(crud_user_subscriptions.model.id == subscription_id)
-            .with_for_update()
+        # Update subscription
+        update_data = UserSubscriptionUpdate(
+            status=new_status,
+            current_period_start=datetime.fromtimestamp(subscription["current_period_start"], UTC),
+            current_period_end=datetime.fromtimestamp(subscription["current_period_end"], UTC),
+            cancel_at_period_end=subscription.get("cancel_at_period_end", False),
         )
-        db_subscription_locked = lock_result.scalar_one_or_none()
 
-        if not db_subscription_locked:
-            logger.warning(
-                "Subscription deleted in race condition gap, skipping update",
-                stripe_subscription_id=stripe_subscription_id,
-            )
-            return
+        if subscription.get("canceled_at"):
+            update_data.canceled_at = datetime.fromtimestamp(subscription["canceled_at"], UTC)
 
         await crud_user_subscriptions.update(
             db=db,

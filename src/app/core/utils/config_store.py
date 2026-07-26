@@ -31,3 +31,17 @@ async def set_runtime_config(config: dict) -> bool:
     except Exception as e:
         logger.error("Failed to persist runtime config", error=str(e))
         return False
+
+async def update_runtime_config(updates: dict) -> dict | None:
+    """Atomically merge updates into the runtime config using a lock."""
+    if cache.client is None:
+        return None
+    try:
+        async with cache.client.lock("lock:runtime_config", timeout=10):
+            current = await get_runtime_config() or {}
+            current.update(updates)
+            await set_runtime_config(current)
+            return current
+    except Exception as e:
+        logger.error("Failed to update runtime config", error=str(e))
+        return None

@@ -30,7 +30,6 @@ from src.app.core.security.auto_ban import (
     get_violation_stats,
     unban_ip,
 )
-from src.app.core.utils.config_store import get_runtime_config, set_runtime_config
 from src.app.modules.passkey.schemas import (
     PasskeyCredentialResponse,
     PasskeyDeleteResponse,
@@ -316,20 +315,21 @@ async def update_ip_filter_config(
     **Note**: This endpoint updates the in-memory settings only.
     For persistent configuration, modify environment variables.
     """
-    # Read current from Redis or fallback to settings
-    current_config = await get_runtime_config() or {}
+    from typing import Any
 
+    from src.app.core.utils.config_store import update_runtime_config
+    updates: dict[str, Any] = {}
     if config_update.whitelist_enabled is not None:
         settings.IP_WHITELIST_ENABLED = config_update.whitelist_enabled
-        current_config["IP_WHITELIST_ENABLED"] = config_update.whitelist_enabled
+        updates["IP_WHITELIST_ENABLED"] = config_update.whitelist_enabled
     if config_update.blacklist_enabled is not None:
         settings.IP_BLACKLIST_ENABLED = config_update.blacklist_enabled
-        current_config["IP_BLACKLIST_ENABLED"] = config_update.blacklist_enabled
+        updates["IP_BLACKLIST_ENABLED"] = config_update.blacklist_enabled
     if config_update.whitelist_bypass_rate_limit is not None:
         settings.IP_WHITELIST_BYPASS_RATE_LIMIT = config_update.whitelist_bypass_rate_limit
-        current_config["IP_WHITELIST_BYPASS_RATE_LIMIT"] = config_update.whitelist_bypass_rate_limit
+        updates["IP_WHITELIST_BYPASS_RATE_LIMIT"] = config_update.whitelist_bypass_rate_limit
 
-    await set_runtime_config(current_config)
+    await update_runtime_config(updates)
 
     return IPFilterConfig(
         whitelist_enabled=settings.IP_WHITELIST_ENABLED,
@@ -388,22 +388,24 @@ async def update_auto_ban_config(
     - `AUTO_BAN_DURATION` - Ban duration in seconds
     - `AUTO_BAN_ESCALATION` - Enable duration escalation
     """
-    current_config = await get_runtime_config() or {}
+    from typing import Any
 
+    from src.app.core.utils.config_store import update_runtime_config
+    updates: dict[str, Any] = {}
     if config_update.enabled is not None:
         settings.AUTO_BAN_ENABLED = config_update.enabled
-        current_config["AUTO_BAN_ENABLED"] = config_update.enabled
+        updates["AUTO_BAN_ENABLED"] = config_update.enabled
     if config_update.threshold is not None:
         settings.AUTO_BAN_THRESHOLD = config_update.threshold
-        current_config["AUTO_BAN_THRESHOLD"] = config_update.threshold
+        updates["AUTO_BAN_THRESHOLD"] = config_update.threshold
     if config_update.duration is not None:
         settings.AUTO_BAN_DURATION = config_update.duration
-        current_config["AUTO_BAN_DURATION"] = config_update.duration
+        updates["AUTO_BAN_DURATION"] = config_update.duration
     if config_update.escalation is not None:
         settings.AUTO_BAN_ESCALATION = config_update.escalation
-        current_config["AUTO_BAN_ESCALATION"] = config_update.escalation
+        updates["AUTO_BAN_ESCALATION"] = config_update.escalation
 
-    await set_runtime_config(current_config)
+    await update_runtime_config(updates)
 
     return AutoBanConfig(
         enabled=settings.AUTO_BAN_ENABLED,

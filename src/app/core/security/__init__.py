@@ -125,6 +125,7 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
             "exp": expire,
             "token_type": TokenType.ACCESS,
             "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            "iss": getattr(settings, "JWT_ISSUER", "fastapi-saas"),
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
@@ -159,6 +160,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
             "exp": expire,
             "token_type": TokenType.REFRESH,
             "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            "iss": getattr(settings, "JWT_ISSUER", "fastapi-saas"),
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
@@ -230,6 +232,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             _get_parsed_verification_key(),
             algorithms=[settings.ALGORITHM],
             audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+            issuer=getattr(settings, "JWT_ISSUER", "fastapi-saas"),
         )
     except JWTError:
         return None
@@ -308,8 +311,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             if redis_client:
                 try:
                     # Cache the token version for O(1) lookups. Atomic with EX.
-                    # Removed nx=True to allow cache updates on password change.
-                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300)
+                    # Use nx=True to prevent overwriting a newer version just written by a password change
+                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300, nx=True)
                 except Exception as e:
                     _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
 
@@ -346,7 +349,7 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
 
     sub = payload.get("sub")
     if sub:
-        stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub))
+        stmt = select(User.tenant_id).where((User.username == sub) | (User.email == sub)).limit(1)
         result = await db.execute(stmt)
         return result.scalar()
 
@@ -396,6 +399,7 @@ async def blacklist_tokens(
                     _get_parsed_verification_key(),
                     algorithms=[settings.ALGORITHM],
                     audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
+                    issuer=getattr(settings, "JWT_ISSUER", "fastapi-saas"),
                 )
             if payload is None:
                 continue
