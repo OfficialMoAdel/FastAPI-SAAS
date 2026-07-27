@@ -44,11 +44,13 @@ def _make_db() -> MagicMock:
     return MagicMock()
 
 
-async def test_authenticated_user_getitem() -> None:
+async def test_authenticated_user_attr_access() -> None:
+    from src.app.core.rbac.policy import _get_user_attr
+
     u = AuthenticatedUser(id=1, email="a@b.com", username="a")
-    assert u["email"] == "a@b.com"
-    assert u.get("email") == "a@b.com"
-    assert u.get("missing", "x") == "x"
+    assert u.email == "a@b.com"
+    assert _get_user_attr(u, "email") == "a@b.com"
+    assert _get_user_attr(u, "missing", "x") == "x"
 
 
 async def test_create_auth_context_from_dict() -> None:

@@ -77,7 +77,7 @@ class TestGetOptionalUserWithValidToken:
                     assert isinstance(result, AuthenticatedUser)
                     assert result.id == mock_user_dict["id"]
                     assert result.email == mock_user_dict["email"]
-                    assert result["tier_id"] == mock_user_dict["tier_id"]
+                    assert result.tier_id == mock_user_dict["tier_id"]
                     mock_verify.assert_called_once()
 
     @pytest.mark.asyncio
@@ -170,5 +170,5 @@ class TestGetOptionalUserRateLimitIntegration:
 
                     # Assert
                     assert result is not None
-                    assert result["tier_id"] == 2  # Premium tier preserved
-                    assert result["id"] == 123  # User ID available for rate limiting
+                    assert result.tier_id == 2  # Premium tier preserved
+                    assert result.id == 123  # User ID available for rate limiting

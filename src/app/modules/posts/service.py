@@ -6,6 +6,7 @@ from fastcrud import compute_offset, paginated_response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.exceptions.http_exceptions import ForbiddenException
+from src.app.core.utils.user_utils import _get_user_attr
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.posts.crud import crud_posts
@@ -34,7 +35,7 @@ class PostService(BaseService[Post]):
     async def create_post(
         self,
         post: PostCreate,
-        current_user: dict[str, Any],
+        current_user: Any,
     ) -> dict[str, Any]:
         """Create a new post.
 
@@ -58,7 +59,7 @@ class PostService(BaseService[Post]):
             If post creation fails
         """
         post_dict = post.model_dump()
-        post_dict["created_by_user_id"] = current_user["id"]
+        post_dict["created_by_user_id"] = _get_user_attr(current_user, "id")
 
         post_internal = PostCreateInternal(**post_dict)
         created_post = cast(
@@ -148,7 +149,7 @@ class PostService(BaseService[Post]):
         self,
         post_id: int,
         values: PostUpdate,
-        current_user: dict[str, Any],
+        current_user: Any,
     ) -> dict[str, str]:
         """Update a post with ownership validation.
 
@@ -181,7 +182,7 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        if created_by_user_id != current_user["id"]:
+        if created_by_user_id != _get_user_attr(current_user, "id"):
             raise ForbiddenException("You do not have permission to modify this post.")
 
 
@@ -192,7 +193,7 @@ class PostService(BaseService[Post]):
     async def delete_post(
         self,
         post_id: int,
-        current_user: dict[str, Any],
+        current_user: Any,
     ) -> dict[str, str]:
         """Soft delete a post with ownership validation.
 
@@ -223,7 +224,7 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        if created_by_user_id != current_user["id"]:
+        if created_by_user_id != _get_user_attr(current_user, "id"):
             raise ForbiddenException("You do not have permission to delete this post.")
 
 

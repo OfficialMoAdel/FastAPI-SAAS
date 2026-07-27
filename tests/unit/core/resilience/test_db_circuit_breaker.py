@@ -2,10 +2,12 @@ import time
 from unittest.mock import AsyncMock, Mock
 
 import pytest
+from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.resilience.db_circuit_breaker import (
     db_circuit,
+    db_circuit_guard,
     execute_query_with_circuit_breaker,
     execute_transaction_with_circuit_breaker,
     get_read_only_fallback,
@@ -46,18 +48,28 @@ async def test_execute_query_success(mock_db_session, reset_circuit):
     assert len(result) == 1
     assert result[0]["id"] == 1
     assert db_circuit.state == CircuitState.CLOSED
-    # _success_count is not incremented in CLOSED state
 
 
 @pytest.mark.asyncio
 async def test_execute_query_failure_record(mock_db_session, reset_circuit):
-    """Test that failures are recorded in the circuit breaker."""
-    mock_db_session.execute.side_effect = Exception("DB Error")
+    """Test that infrastructure failures are recorded in the circuit breaker."""
+    mock_db_session.execute.side_effect = ConnectionError("DB Connection Lost")
 
-    with pytest.raises(Exception):
+    with pytest.raises(ConnectionError):
         await execute_query_with_circuit_breaker(mock_db_session, "SELECT * FROM users")
 
     assert db_circuit._failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_execute_query_business_error_ignored(mock_db_session, reset_circuit):
+    """Test that non-infrastructure errors do not trip the circuit breaker."""
+    mock_db_session.execute.side_effect = Exception("SQL Syntax Error")
+
+    with pytest.raises(Exception, match="SQL Syntax Error"):
+        await execute_query_with_circuit_breaker(mock_db_session, "SELECT * FROM users")
+
+    assert db_circuit._failure_count == 0
 
 
 @pytest.mark.asyncio
@@ -97,17 +109,29 @@ async def test_transaction_success(mock_db_session, reset_circuit):
 
 @pytest.mark.asyncio
 async def test_transaction_retry(mock_db_session, reset_circuit):
-    """Test transaction retry logic."""
+    """Test transaction retry logic on infrastructure errors."""
     # Fail once then succeed
     op = AsyncMock()
-    op.side_effect = [Exception("Fail"), "Success"]
+    op.side_effect = [ConnectionError("Fail Connection"), "Success"]
 
     results = await execute_transaction_with_circuit_breaker(mock_db_session, [op], max_retries=3)
 
     assert results == ["Success"]
     assert op.call_count == 2
     assert db_circuit._failure_count == 1
-    # Success count only increments in HALF_OPEN
+
+
+@pytest.mark.asyncio
+async def test_transaction_business_error_no_retry(mock_db_session, reset_circuit):
+    """Test transaction does not retry or record failure on non-infrastructure errors."""
+    op = AsyncMock()
+    op.side_effect = ValueError("Validation Error")
+
+    with pytest.raises(ValueError, match="Validation Error"):
+        await execute_transaction_with_circuit_breaker(mock_db_session, [op], max_retries=3)
+
+    assert op.call_count == 1
+    assert db_circuit._failure_count == 0
 
 
 def test_get_read_only_fallback():
@@ -127,14 +151,13 @@ async def test_transaction_retry_has_jitter(mock_db_session, reset_circuit, monk
 
     async def spy_sleep(seconds):
         recorded_waits.append(seconds)
-        # Don't actually sleep in tests
         return
 
     monkeypatch.setattr(asyncio, "sleep", spy_sleep)
 
     # Fail twice then succeed
     op = AsyncMock()
-    op.side_effect = [Exception("Fail1"), Exception("Fail2"), "Success"]
+    op.side_effect = [ConnectionError("Fail1"), ConnectionError("Fail2"), "Success"]
 
     results = await execute_transaction_with_circuit_breaker(mock_db_session, [op], max_retries=3)
 
@@ -145,3 +168,46 @@ async def test_transaction_retry_has_jitter(mock_db_session, reset_circuit, monk
     assert 1.0 <= recorded_waits[0] <= 3.0, f"Wait 1 out of bounds: {recorded_waits[0]}"
     # Attempt 2: base = 2^2 = 4, jitter = 0.5..1.5 → range [2.0, 6.0]
     assert 2.0 <= recorded_waits[1] <= 6.0, f"Wait 2 out of bounds: {recorded_waits[1]}"
+
+
+# --- Tests for db_circuit_guard ---
+
+
+@pytest.mark.asyncio
+async def test_db_circuit_guard_success(reset_circuit):
+    """Test db_circuit_guard allows execution and records success."""
+    async with db_circuit_guard():
+        pass
+    assert db_circuit.state == CircuitState.CLOSED
+
+
+@pytest.mark.asyncio
+async def test_db_circuit_guard_infrastructure_failure(reset_circuit):
+    """Test db_circuit_guard records failure on infrastructure error."""
+    with pytest.raises(ConnectionError):
+        async with db_circuit_guard():
+            raise ConnectionError("DB Down")
+    assert db_circuit._failure_count == 1
+
+
+@pytest.mark.asyncio
+async def test_db_circuit_guard_business_error_ignored(reset_circuit):
+    """Test db_circuit_guard ignores non-infrastructure error."""
+    with pytest.raises(ValueError):
+        async with db_circuit_guard():
+            raise ValueError("Invalid ID")
+    assert db_circuit._failure_count == 0
+
+
+@pytest.mark.asyncio
+async def test_db_circuit_guard_open_blocks_request(reset_circuit):
+    """Test db_circuit_guard raises 503 when circuit is OPEN."""
+    db_circuit._open()
+    db_circuit._last_failure_time = time.time()
+
+    with pytest.raises(HTTPException) as exc_info:
+        async with db_circuit_guard():
+            pass
+
+    assert exc_info.value.status_code == 503
+    assert "temporarily degraded" in exc_info.value.detail

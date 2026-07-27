@@ -20,6 +20,7 @@ from fastcrud import FastCRUD
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
 from src.app.core.tenancy.context import get_tenant_context
 
 ModelType = TypeVar("ModelType")
@@ -148,7 +149,8 @@ class TenantAwareCRUD(
         else:
             raise RuntimeError("Tenant-scoped create executed without an active tenant context")
 
-        return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
+        async with db_circuit_guard():
+            return await super().create(db, object, **kwargs)  # type: ignore[arg-type]
 
     async def get(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
         """Get a single record, filtered by tenant context.
@@ -162,7 +164,8 @@ class TenantAwareCRUD(
             The record as a dict if found, None otherwise.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        return cast(dict[Any, Any] | None, await super().get(db, **kwargs))
+        async with db_circuit_guard():
+            return cast(dict[Any, Any] | None, await super().get(db, **kwargs))
 
     async def get_multi(self, db: AsyncSession, **kwargs: Any) -> dict:
         """Get multiple records, filtered by tenant context.
@@ -176,17 +179,20 @@ class TenantAwareCRUD(
             A dict containing the records and pagination info.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        return cast(dict[Any, Any], await super().get_multi(db, **kwargs))
+        async with db_circuit_guard():
+            return cast(dict[Any, Any], await super().get_multi(db, **kwargs))
 
     async def get_joined(self, db: AsyncSession, **kwargs: Any) -> dict | None:  # type: ignore[override]
         """Get a single record with joins, filtered by tenant context."""
         kwargs = self.inject_tenant_filter(kwargs)
-        return cast(dict[Any, Any] | None, await super().get_joined(db, **kwargs))
+        async with db_circuit_guard():
+            return cast(dict[Any, Any] | None, await super().get_joined(db, **kwargs))
 
     async def get_multi_joined(self, db: AsyncSession, **kwargs: Any) -> dict:  # type: ignore[override]
         """Get multiple records with joins, filtered by tenant context."""
         kwargs = self.inject_tenant_filter(kwargs)
-        return cast(dict[Any, Any], await super().get_multi_joined(db, **kwargs))
+        async with db_circuit_guard():
+            return cast(dict[Any, Any], await super().get_multi_joined(db, **kwargs))
 
     async def exists(self, db: AsyncSession, **kwargs: Any) -> bool:
         """Check if a record exists, filtered by tenant context.
@@ -200,7 +206,8 @@ class TenantAwareCRUD(
             True if a matching record exists, False otherwise.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        return await super().exists(db, **kwargs)
+        async with db_circuit_guard():
+            return await super().exists(db, **kwargs)
 
     async def count(self, db: AsyncSession, **kwargs: Any) -> int:  # type: ignore[override]
         """Count records, filtered by tenant context.
@@ -214,7 +221,8 @@ class TenantAwareCRUD(
             The count of matching records.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        return await super().count(db, **kwargs)
+        async with db_circuit_guard():
+            return await super().count(db, **kwargs)
 
     async def update(self, db: AsyncSession, object: UpdateSchemaType | dict[str, Any], **kwargs: Any) -> None:
         """Update records, filtered by tenant context.
@@ -225,7 +233,8 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the update.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        await super().update(db, object, **kwargs)
+        async with db_circuit_guard():
+            await super().update(db, object, **kwargs)
 
     async def delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Soft delete records, filtered by tenant context.
@@ -235,7 +244,8 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the delete.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        await super().delete(db, **kwargs)
+        async with db_circuit_guard():
+            await super().delete(db, **kwargs)
 
     async def db_delete(self, db: AsyncSession, **kwargs: Any) -> None:  # type: ignore[override]
         """Hard delete records, filtered by tenant context.
@@ -245,4 +255,5 @@ class TenantAwareCRUD(
             **kwargs: Filter criteria for the delete.
         """
         kwargs = self.inject_tenant_filter(kwargs)
-        await super().db_delete(db, **kwargs)
+        async with db_circuit_guard():
+            await super().db_delete(db, **kwargs)

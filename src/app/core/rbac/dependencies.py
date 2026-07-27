@@ -12,7 +12,7 @@ Bitmask Strategy:
 """
 
 from collections.abc import Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
@@ -21,12 +21,14 @@ from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import AuthContext, get_auth_context
+if TYPE_CHECKING:
+    pass
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
+from src.app.core.utils.user_utils import _get_user_attr
 
 logger = get_logger(__name__)
 
@@ -180,13 +182,14 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
+    from src.app.api.dependencies import get_auth_context
     from src.app.core.db.database import async_get_db
 
     async def _check_permission(
         request: Request = None,  # type: ignore[assignment]
         token: str = Depends(_oauth2_scheme),
         db: AsyncSession = Depends(async_get_db),
-        auth_context: AuthContext = Depends(get_auth_context),
+        auth_context: Any = Depends(get_auth_context),
     ) -> None:
         is_dependency_override = False
         if (
@@ -253,14 +256,8 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             )
         tenant_id = tenant_context.id
 
-        is_superuser = (
-            current_user.is_superuser
-            if hasattr(current_user, "is_superuser")
-            else current_user.get("is_superuser", False)
-        )
-        user_id_val = getattr(current_user, "id", None)
-        if user_id_val is None and isinstance(current_user, dict):
-            user_id_val = current_user.get("id")
+        is_superuser = _get_user_attr(current_user, "is_superuser", False)
+        user_id_val = _get_user_attr(current_user, "id")
 
         if user_id_val is None:
             raise HTTPException(
@@ -272,9 +269,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # Enforce tenant isolation before any permission bypass. Superusers may bypass
         # permission checks within their tenant, but they cannot act as another tenant.
         # Test dependency overrides are excluded because they are not production auth.
-        current_user_tenant_id = getattr(current_user, "tenant_id", None)
-        if current_user_tenant_id is None and isinstance(current_user, dict):
-            current_user_tenant_id = current_user.get("tenant_id")
+        current_user_tenant_id = _get_user_attr(current_user, "tenant_id")
 
         if (
             not is_dependency_override

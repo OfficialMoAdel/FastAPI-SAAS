@@ -11,6 +11,7 @@ from src.app.core.logger import get_logger
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
+from src.app.core.utils.user_utils import _get_user_attr
 from src.app.modules.rate_limits.crud import crud_rate_limits
 from src.app.modules.rate_limits.schemas import RateLimitRead
 
@@ -29,11 +30,13 @@ async def rate_limiter_dependency(
 
     path = sanitize_path(request.url.path)
     if user:
-        user_id = user["id"]
-        tier = user.get("tier")
+        user_id = str(_get_user_attr(user, "id"))
+        tier = _get_user_attr(user, "tier")
         if tier:
+            tier_id = tier["id"] if isinstance(tier, dict) else getattr(tier, "id", None)
+            tier_name = tier["name"] if isinstance(tier, dict) else getattr(tier, "name", "unknown")
             rate_limit = await crud_rate_limits.get(
-                db=db, tier_id=tier["id"], path=path, schema_to_select=RateLimitRead
+                db=db, tier_id=tier_id, path=path, schema_to_select=RateLimitRead
             )
             if rate_limit:
                 limit, period = rate_limit["limit"], rate_limit["period"]
@@ -41,7 +44,7 @@ async def rate_limiter_dependency(
                 logger.warning(
                     "path_rate_limit_missing_using_default",
                     user_id=user_id,
-                    tier_name=tier["name"],
+                    tier_name=tier_name,
                     path=path,
                 )
                 limit, period = DEFAULT_LIMIT, DEFAULT_PERIOD

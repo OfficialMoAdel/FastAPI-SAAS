@@ -69,6 +69,7 @@ class TenantContext:
 
 class _NoTenantContext(TenantContext):
     """Sentinel object for explicitly exempt paths to safely bypass tenancy checks."""
+
     def __bool__(self) -> bool:
         return False
 
@@ -77,7 +78,7 @@ NO_TENANT = _NoTenantContext(
     tenant_id=UUID(int=0),
     tenant_slug="no-tenant",
     tenant_name="No Tenant",
-    is_active=False
+    is_active=False,
 )
 
 
@@ -105,13 +106,8 @@ def get_tenant_context() -> "TenantContext | None":
 
 
 def get_lightweight_tenant_context() -> "TenantContext | None":
-    """Get the lightweight tenant context.
-
-    Returns
-    -------
-        The lightweight tenant context if set, None otherwise.
-    """
-    return _current_tenant.get()
+    """Alias for get_current_tenant() for backward compatibility."""
+    return get_current_tenant()
 
 
 def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:

@@ -21,7 +21,8 @@ Usage:
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar, cast
 
 from fastcrud import FastCRUD
@@ -67,6 +68,18 @@ class BaseService(Generic[T]):
         # SECURITY FIX: Use thread-safe cache access with lock
         self.crud = self._get_or_create_crud(model)
 
+    @asynccontextmanager
+    async def _circuit_guard(self) -> AsyncIterator[None]:
+        from src.app.core.db.tenant_crud import TenantAwareCRUD
+        from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
+
+        if isinstance(self.crud, TenantAwareCRUD) or hasattr(self.crud, "inject_tenant_filter"):
+            # TenantAwareCRUD already applies db_circuit_guard internally
+            yield
+        else:
+            async with db_circuit_guard():
+                yield
+
     @staticmethod
     def _get_or_create_crud(model: type[T]) -> FastCRUD:
         """Get cached FastCRUD instance or create new one.
@@ -88,7 +101,8 @@ class BaseService(Generic[T]):
         Returns:
             The record if found, None otherwise.
         """
-        result = await self.crud.get(db=self.db, id=id)
+        async with self._circuit_guard():
+            result = await self.crud.get(db=self.db, id=id)
         return cast(T | None, result)
 
     async def get_multi(
@@ -115,52 +129,53 @@ class BaseService(Generic[T]):
         """
         offset = (page - 1) * per_page
 
-        if settings.FEATURE_EAGER_LOADING and eager_loads:
-            # Must select the ORM entity to use eager loading options
-            query = select(self.model)
+        async with self._circuit_guard():
+            if settings.FEATURE_EAGER_LOADING and eager_loads:
+                # Must select the ORM entity to use eager loading options
+                query = select(self.model)
 
-            # Extract sorting kwargs as FastCRUD accepts them explicitly
-            sort_columns = kwargs.pop("sort_columns", None)
-            sort_orders = kwargs.pop("sort_orders", None)
+                # Extract sorting kwargs as FastCRUD accepts them explicitly
+                sort_columns = kwargs.pop("sort_columns", None)
+                sort_orders = kwargs.pop("sort_orders", None)
 
-            from src.app.core.db.tenant_crud import TenantAwareCRUD
+                from src.app.core.db.tenant_crud import TenantAwareCRUD
 
-            if isinstance(self.crud, TenantAwareCRUD):
-                kwargs = self.crud.inject_tenant_filter(kwargs)
-            elif hasattr(self.crud, "inject_tenant_filter"):
-                kwargs = self.crud.inject_tenant_filter(kwargs)
+                if isinstance(self.crud, TenantAwareCRUD):
+                    kwargs = self.crud.inject_tenant_filter(kwargs)
+                elif hasattr(self.crud, "inject_tenant_filter"):
+                    kwargs = self.crud.inject_tenant_filter(kwargs)
 
-            # Apply filters via direct SQLAlchemy attributes
-            for key, value in kwargs.items():
-                if hasattr(self.model, key):
-                    query = query.filter(getattr(self.model, key) == value)
+                # Apply filters via direct SQLAlchemy attributes
+                for key, value in kwargs.items():
+                    if hasattr(self.model, key):
+                        query = query.filter(getattr(self.model, key) == value)
 
-            # Apply sorting via direct SQLAlchemy order_by
-            if sort_columns:
-                orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
-                for col, order in zip(sort_columns, orders):
-                    attr = getattr(self.model, col, None)
-                    if attr:
-                        query = query.order_by(attr.desc() if order == "desc" else attr.asc())
+                # Apply sorting via direct SQLAlchemy order_by
+                if sort_columns:
+                    orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
+                    for col, order in zip(sort_columns, orders):
+                        attr = getattr(self.model, col, None)
+                        if attr:
+                            query = query.order_by(attr.desc() if order == "desc" else attr.asc())
 
-            for relationship in eager_loads:
-                if hasattr(self.model, relationship):
-                    attr = getattr(self.model, relationship)
-                    query = query.options(selectinload(attr))
-            query = query.offset(offset).limit(per_page)
-            result = await self.db.execute(query)
-            # Remove duplicate objects if they are duplicated due to joins and relationships handling
-            return list(result.scalars().unique().all())
-        else:
-            result = await self.crud.get_multi(
-                db=self.db,
-                offset=offset,
-                limit=per_page,
-                **kwargs,
-            )
-            if isinstance(result, dict):
-                return cast(list[T], result.get("data", []))
-            return cast(list[T], result)
+                for relationship in eager_loads:
+                    if hasattr(self.model, relationship):
+                        attr = getattr(self.model, relationship)
+                        query = query.options(selectinload(attr))
+                query = query.offset(offset).limit(per_page)
+                result = await self.db.execute(query)
+                # Remove duplicate objects if they are duplicated due to joins and relationships handling
+                return list(result.scalars().unique().all())
+            else:
+                result = await self.crud.get_multi(
+                    db=self.db,
+                    offset=offset,
+                    limit=per_page,
+                    **kwargs,
+                )
+                if isinstance(result, dict):
+                    return cast(list[T], result.get("data", []))
+                return cast(list[T], result)
 
     async def get_multi_joined(
         self,
@@ -203,13 +218,14 @@ class BaseService(Generic[T]):
             ```
         """
         offset = (page - 1) * per_page
-        result = await self.crud.get_multi_joined(
-            db=self.db,
-            offset=offset,
-            limit=per_page,
-            joins_config=joins_config,
-            **kwargs,
-        )
+        async with self._circuit_guard():
+            result = await self.crud.get_multi_joined(
+                db=self.db,
+                offset=offset,
+                limit=per_page,
+                joins_config=joins_config,
+                **kwargs,
+            )
         # FastCRUD returns dict with 'data' key containing the records list
         if isinstance(result, dict):
             return cast(list[dict[str, Any]], result.get("data", []))
@@ -224,7 +240,8 @@ class BaseService(Generic[T]):
         Returns:
             The created record.
         """
-        result = await self.crud.create(db=self.db, object=kwargs)
+        async with self._circuit_guard():
+            result = await self.crud.create(db=self.db, object=kwargs)
         return cast(T, result)
 
     async def update(self, id: Any, **kwargs: Any) -> T | None:
@@ -237,7 +254,8 @@ class BaseService(Generic[T]):
         Returns:
             The updated record if found, None otherwise.
         """
-        result = await self.crud.update(db=self.db, object=kwargs, id=id)
+        async with self._circuit_guard():
+            result = await self.crud.update(db=self.db, object=kwargs, id=id)
         return cast(T | None, result)
 
     async def delete(self, id: Any) -> None:
@@ -246,7 +264,8 @@ class BaseService(Generic[T]):
         Args:
             id: The record ID.
         """
-        await self.crud.delete(db=self.db, id=id)
+        async with self._circuit_guard():
+            await self.crud.delete(db=self.db, id=id)
 
 
 def get_base_service(model: type[T]) -> Callable[[AsyncSession], BaseService[T]]:

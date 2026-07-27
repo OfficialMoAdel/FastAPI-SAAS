@@ -146,8 +146,15 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        # Check ownership
-        if existing.user_id != user_id:
+        # Enforce unified authorization policy (ownership or superuser/admin bypass)
+        from ...core.rbac.policy import OwnershipPolicy
+
+        policy = OwnershipPolicy(
+            owner_field="user_id", allow_superuser=True, admin_permission="{{ module_name }}s:manage"
+        )
+        if not await policy.evaluate(
+            request=None, user={"id": user_id, "tenant_id": tenant_id}, resource=existing, db=self.db
+        ):
             raise ForbiddenException("You don't have permission to update this")
 
         # Update
@@ -192,8 +199,15 @@ class {{ ModelName }}Service(BaseService[{{ ModelName }}]):
         if not existing:
             raise ModelNotFoundError("{{ ModelName }}", id)
 
-        # Check ownership
-        if existing.user_id != user_id:
+        # Enforce unified authorization policy (ownership or superuser/admin bypass)
+        from ...core.rbac.policy import OwnershipPolicy
+
+        policy = OwnershipPolicy(
+            owner_field="user_id", allow_superuser=True, admin_permission="{{ module_name }}s:manage"
+        )
+        if not await policy.evaluate(
+            request=None, user={"id": user_id, "tenant_id": tenant_id}, resource=existing, db=self.db
+        ):
             raise ForbiddenException("You don't have permission to delete this")
 
         await self.crud.delete(db=self.db, id=id)

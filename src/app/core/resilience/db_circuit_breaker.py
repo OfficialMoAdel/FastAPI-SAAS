@@ -3,10 +3,20 @@
 import asyncio
 import json
 import random
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
+from contextlib import asynccontextmanager
 from typing import Any
 
+from fastapi import HTTPException, status
 from sqlalchemy import Executable, text
+from sqlalchemy.exc import (
+    DBAPIError,
+    DisconnectionError,
+    OperationalError,
+)
+from sqlalchemy.exc import (
+    TimeoutError as SQLAlchemyTimeoutError,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -16,15 +26,66 @@ from src.app.core.utils.circuit_breaker import CircuitState
 
 logger = get_logger(__name__)
 
-# Create database circuit breaker with lower thresholds (critical service)
+# Infrastructure errors that indicate DB outage/unavailability
+DB_INFRASTRUCTURE_ERRORS = (
+    OperationalError,
+    SQLAlchemyTimeoutError,
+    DisconnectionError,
+    DBAPIError,
+    asyncio.TimeoutError,
+    ConnectionError,
+    OSError,
+)
+
+# Create database circuit breaker with tuned thresholds for critical service stability
 db_circuit = create_circuit_breaker(
     name="database",
-    failure_threshold=3,  # Lower threshold for DB (critical)
-    recovery_timeout=30.0,  # Shorter timeout
-    success_threshold=3,
+    failure_threshold=5,  # Tuned for production stability against transient spikes
+    recovery_timeout=30.0,  # Shorter timeout for DB recovery
+    success_threshold=2,
     service_type=ServiceType.DATABASE,
     description="Database connection circuit breaker",
 )
+
+
+@asynccontextmanager
+async def db_circuit_guard() -> AsyncIterator[None]:
+    """Async context manager that protects database operations with the circuit breaker.
+
+    Checks if the database circuit breaker is OPEN before executing the wrapped code.
+    If OPEN, raises HTTPException(503 Service Unavailable) to fail fast without
+    overloading the struggling database.
+
+    Only records failures for actual database infrastructure/connection errors
+    (timeouts, operational errors, disconnections), ignoring business logic
+    errors (IntegrityError, ModelNotFoundError, validation errors).
+    """
+    current_state = db_circuit.state
+    if current_state == CircuitState.OPEN:
+        logger.warning("Database circuit OPEN, blocking database operation")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Database service temporarily degraded due to high failure rate. Please retry later.",
+        )
+
+    if current_state == CircuitState.HALF_OPEN:
+        logger.debug("Database circuit HALF_OPEN — allowing test request")
+
+    try:
+        yield
+        await db_circuit.record_success()
+    except DB_INFRASTRUCTURE_ERRORS as e:
+        await db_circuit.record_failure(e)
+        logger.error(
+            "Database infrastructure failure recorded on circuit breaker",
+            error=str(e),
+            error_type=type(e).__name__,
+            circuit_state=db_circuit.state.value,
+        )
+        raise
+    except Exception:
+        # Business errors (IntegrityError, 404s, validation) do not trip the DB circuit breaker
+        raise
 
 
 async def execute_query_with_circuit_breaker(
@@ -111,9 +172,13 @@ async def execute_query_with_circuit_breaker(
 
         return rows
 
-    except Exception as e:
+    except DB_INFRASTRUCTURE_ERRORS as e:
         await db_circuit.record_failure(e)
-        logger.error("Database query failed", error=str(e), circuit_state=db_circuit.state.value)
+        logger.error(
+            "Database query failed with infrastructure error",
+            error=str(e),
+            circuit_state=db_circuit.state.value,
+        )
 
         # Try fallback on failure
         if cache_key and cache.client:
@@ -128,6 +193,10 @@ async def execute_query_with_circuit_breaker(
         if fallback_data is not None:
             return fallback_data
 
+        raise
+    except Exception as e:
+        # Non-infrastructure error (e.g. SQL syntax, validation); do not trip circuit breaker
+        logger.error("Database query failed with non-infrastructure error", error=str(e))
         raise
 
 
@@ -172,7 +241,7 @@ async def execute_transaction_with_circuit_breaker(
             await db_circuit.record_success()
             return results
 
-        except Exception as e:
+        except DB_INFRASTRUCTURE_ERRORS as e:
             await db.rollback()
             await db_circuit.record_failure(e)
             last_error = e
@@ -190,6 +259,11 @@ async def execute_transaction_with_circuit_breaker(
                     error=str(e),
                 )
                 await asyncio.sleep(wait_time)
+        except Exception as e:
+            await db.rollback()
+            # Non-infrastructure error; do not retry or trip circuit breaker
+            logger.error("Transaction failed with non-infrastructure error", error=str(e))
+            raise
 
     # All retries exhausted
     logger.error("Transaction failed", max_attempts=max_retries, error=str(last_error))

@@ -275,18 +275,20 @@ class TestDatabaseCircuitBreaker:
     @pytest.mark.asyncio
     async def test_circuit_opens_after_threshold(self, real_postgres: AsyncSession):
         """Test circuit opens after reaching failure threshold."""
-        query = "SELECT * FROM non_existent_table"
+        from unittest.mock import patch
+
+        from sqlalchemy.exc import OperationalError
 
         # Reset circuit first
         db_circuit.reset()
 
-        # Execute enough failures to open circuit
-        # Default threshold is 3 for DB circuit
-        for _ in range(3):
-            try:
-                await execute_query_with_circuit_breaker(db=real_postgres, query=query)
-            except Exception:
-                pass
+        # Execute enough failures to open circuit (using an infrastructure error)
+        with patch.object(real_postgres, "execute", side_effect=OperationalError("mock", "mock", "mock")):
+            for _ in range(db_circuit.failure_threshold):
+                try:
+                    await execute_query_with_circuit_breaker(db=real_postgres, query="SELECT 1")
+                except Exception:
+                    pass
 
         assert db_circuit.state == CircuitState.OPEN
 
@@ -315,12 +317,14 @@ class TestDatabaseCircuitBreaker:
     @pytest.mark.asyncio
     async def test_transaction_retry_and_failure(self, real_postgres: AsyncSession):
         """Test transaction retries and eventual failure."""
+        from sqlalchemy.exc import OperationalError
+
         mock_fail_count = 0
 
         async def failing_op(session):
             nonlocal mock_fail_count
             mock_fail_count += 1
-            raise ValueError("Transaction failed")
+            raise OperationalError("Transaction failed", "mock", "mock")
 
         # Expect RuntimeError which wraps the original error
         with pytest.raises(RuntimeError) as excinfo:

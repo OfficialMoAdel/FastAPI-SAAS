@@ -160,6 +160,7 @@ class CircuitBreaker:
     def _open(self) -> None:
         """Open the circuit (start rejecting requests)."""
         self._state = CircuitState.OPEN
+        self._last_failure_time = time.time()
         self._success_count = 0
 
     def _close(self) -> None:
@@ -320,6 +321,8 @@ def reset_all_circuit_breakers() -> None:
     module-level circuit breaker. Call this in test fixtures to prevent
     'Lock bound to different event loop' errors during coverage runs.
     """
-    for breaker in (webhook_circuit, email_circuit, arq_circuit):
+    from src.app.core.resilience.db_circuit_breaker import db_circuit
+
+    for breaker in (webhook_circuit, email_circuit, arq_circuit, db_circuit):
         breaker.reset()
         breaker.reset_lock()

@@ -13,6 +13,14 @@ from src.app.core.rbac.dependencies import (
     requires_permission,
 )
 from src.app.core.rbac.permissions import Permission
+from src.app.core.rbac.policy import (
+    AllOf,
+    AnyOf,
+    OwnershipPolicy,
+    RBACPolicy,
+    ResourcePolicy,
+)
+from src.app.core.rbac.require_policy import require_policy
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
 
 __all__ = [
@@ -28,4 +36,10 @@ __all__ = [
     "requires_permission",
     "invalidate_user_permissions_cache",
     "invalidate_users_permissions_cache_batch",
+    "ResourcePolicy",
+    "RBACPolicy",
+    "OwnershipPolicy",
+    "AllOf",
+    "AnyOf",
+    "require_policy",
 ]
