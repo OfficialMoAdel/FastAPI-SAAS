@@ -10,7 +10,7 @@ from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.modules.auth.schemas import LoginTokenResponse
+from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.passkey.schemas import (
     PasskeyAuthenticationOptionsResponse,
     PasskeyCredentialResponse,
@@ -142,7 +142,7 @@ async def login_begin(
 
 @router.post(
     "/login/verify",
-    response_model=LoginTokenResponse,
+    response_model=LoginTokenResponse | LoginMFAResponse,
     dependencies=[Depends(passkey_login_rate_limit)],
 )
 async def login_complete(
@@ -168,5 +168,8 @@ async def login_complete(
     if refresh_token:
         from src.app.core.security.login_helpers import set_refresh_cookie
         set_refresh_cookie(response, refresh_token)
+
+    if result.get("mfa_required"):
+        return LoginMFAResponse(**result)
 
     return LoginTokenResponse(**result)

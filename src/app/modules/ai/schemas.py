@@ -32,6 +32,13 @@ class ChatSessionCreate(BaseCreate):
     model: AIModelType = "gemma3"
 
 
+class ChatSessionCreateInternal(ChatSessionCreate):
+    """Internal schema for creating a chat session with tenant and user IDs."""
+
+    tenant_id: UUID
+    user_id: int
+
+
 class ChatSessionUpdate(BaseUpdate):
     """Schema for updating a chat session."""
 

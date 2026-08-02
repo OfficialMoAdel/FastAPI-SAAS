@@ -11,16 +11,23 @@ from src.app.modules.ai.schemas import (
     AISettingsUpdate,
     ChatMessageCreateInternal,
     ChatMessageRead,
-    ChatSessionCreate,
+    ChatSessionCreateInternal,
     ChatSessionRead,
     ChatSessionUpdate,
 )
 
 
 class CRUDChatSession(
-    TenantAwareCRUD[AIChatSession, ChatSessionCreate, ChatSessionUpdate, ChatSessionUpdate, None, ChatSessionRead]  # type: ignore[type-var]
+    TenantAwareCRUD[
+        AIChatSession,
+        ChatSessionCreateInternal,
+        ChatSessionUpdate,
+        ChatSessionUpdate,
+        ChatSessionUpdate,
+        ChatSessionRead,
+    ]  # type: ignore[type-var]
 ):
-    create_schema = ChatSessionCreate
+    create_schema = ChatSessionCreateInternal
 
 
 class CRUDChatMessage(

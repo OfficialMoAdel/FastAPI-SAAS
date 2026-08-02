@@ -292,6 +292,8 @@ class EventBus:
                 tenant_info = {
                     "id": str(tenant.id),
                     "slug": tenant.slug,
+                    "name": tenant.name,
+                    "is_active": tenant.is_active,
                 }
 
             # Inject sequence and tenant into event data for consumers
@@ -781,6 +783,27 @@ class EventBus:
             self.register_handler("notification.send", handle_notification_send_event)
             self.register_handler("notification.request", handle_notification_request_event)
             self.register_handler("webhook.trigger", handle_webhook_trigger_event)
+
+            # R1-H9: Route common business events to webhook dispatcher
+            def make_webhook_adapter(event_type: str) -> Callable[[dict[str, Any]], Coroutine[Any, Any, None]]:
+                async def adapter(data: dict[str, Any]) -> None:
+                    tenant_id = data.get("tenant_id")
+                    if tenant_id:
+                        await handle_webhook_trigger_event({
+                            "tenant_id": str(tenant_id),
+                            "event_type": event_type,
+                            "payload": data
+                        })
+                return adapter
+
+            business_events = [
+                "user.created", "user.deleted", "user.updated",
+                "api_key.created", "api_key.deleted",
+                "sso.login", "auth.mfa.enabled", "auth.mfa.disabled",
+                "auth.login", "auth.logout"
+            ]
+            for evt in business_events:
+                self.register_handler(evt, make_webhook_adapter(evt))
 
             logger.info(
                 "Event handler registration complete",

@@ -5,6 +5,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, status
 
 from ...api.dependencies import AuthenticatedUser, get_current_user
+from ...core.db.database import async_get_db
 from ...core.tenancy.context import get_current_tenant, TenantContext
 from ...modules.users.models import User
 from .schemas import {{ ModelName }}Create, {{ ModelName }}List, {{ ModelName }}Read, {{ ModelName }}Update

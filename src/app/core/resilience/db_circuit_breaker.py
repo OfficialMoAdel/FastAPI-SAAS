@@ -69,6 +69,19 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         )
 
     if current_state == CircuitState.HALF_OPEN:
+        async with db_circuit._get_lock():
+            if db_circuit.state == CircuitState.HALF_OPEN:
+                if getattr(db_circuit, "_probe_in_progress", False):
+                    raise HTTPException(
+                        status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                        detail="Database service temporarily degraded. Probing recovery.",
+                    )
+                db_circuit._probe_in_progress = True
+            elif db_circuit.state == CircuitState.OPEN:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database service temporarily degraded due to high failure rate. Please retry later.",
+                )
         logger.debug("Database circuit HALF_OPEN — allowing test request")
 
     try:
@@ -142,6 +155,13 @@ async def execute_query_with_circuit_breaker(
     # NOTE: No manual _state manipulation is needed here — the circuit
     # is already in HALF_OPEN and will self-transition on the next outcome.
     if current_state == CircuitState.HALF_OPEN:
+        async with db_circuit._get_lock():
+            if db_circuit.state == CircuitState.HALF_OPEN:
+                if getattr(db_circuit, "_probe_in_progress", False):
+                    raise RuntimeError("Database circuit breaker is probing recovery and no fallback available")
+                db_circuit._probe_in_progress = True
+            elif db_circuit.state == CircuitState.OPEN:
+                raise RuntimeError("Database circuit breaker is OPEN and no fallback available")
         logger.debug("Database circuit HALF_OPEN — allowing test request")
 
     # Execute query

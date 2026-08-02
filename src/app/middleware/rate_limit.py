@@ -272,19 +272,20 @@ class RateLimitMiddleware:
         limit = None
         period = None
 
-        if tier_name and user_id and tier_id_raw is not None:
-            try:
-                tier_id_val = int(tier_id_raw)
-                if tier_id_val:
-                    tier_policies = await get_tier_policy(tier_id_val)
-                    if tier_policies:
-                        for policy in tier_policies:
-                            if policy.get("path") == path:
-                                limit = policy.get("limit")
-                                period = policy.get("period")
-                                break
-            except (ValueError, TypeError):
-                pass
+        if tier_name and user_id:
+            if tier_id_raw is not None:
+                try:
+                    tier_id_val = int(tier_id_raw)
+                    if tier_id_val:
+                        tier_policies = await get_tier_policy(tier_id_val)
+                        if tier_policies:
+                            for policy in tier_policies:
+                                if policy.get("path") == path:
+                                    limit = policy.get("limit")
+                                    period = policy.get("period")
+                                    break
+                except (ValueError, TypeError):
+                    pass
 
         if limit is None or period is None:
             # Fallback to settings tier config

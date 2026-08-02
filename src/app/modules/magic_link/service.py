@@ -214,9 +214,11 @@ class MagicLinkService:
             raise InvalidMagicLinkError("Temporary error, please try again")
 
         # Step 3: NOW consume the Redis token (safe — DB is marked)
-        await manager.consume(token)
+        consumed_data = await manager.consume(token)
+        if consumed_data is None:
+            raise MagicLinkAlreadyUsedError("Token already used or expired")
 
-        email = token_data.get("email")
+        email = consumed_data.get("email")
         if not email:
             raise InvalidMagicLinkError("Invalid token data")
 

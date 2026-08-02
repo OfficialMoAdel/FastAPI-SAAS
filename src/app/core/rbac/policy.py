@@ -8,6 +8,7 @@ from collections.abc import Sequence
 from typing import Any, Protocol, runtime_checkable
 
 from fastapi import Request
+from sqlalchemy.exc import StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
@@ -170,7 +171,7 @@ class OwnershipPolicy:
                 request.state.authorized_resource = record
                 owner_id = getattr(record, self.owner_field, None)
                 return bool(owner_id == user_id)
-            except Exception as e:
+            except (ValueError, TypeError, StatementError) as e:
                 logger.error("OwnershipPolicy DB lookup failed", error=str(e))
                 return False
 

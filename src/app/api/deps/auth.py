@@ -42,6 +42,21 @@ class AuthenticatedUser(BaseModel):
     api_key_id: str | int | None = None
     api_key_scopes: list[str] | None = None
 
+    def __getitem__(self, key: str) -> Any:
+        return self.model_dump()[key]
+
+    def get(self, key: str, default: Any = None) -> Any:
+        return self.model_dump().get(key, default)
+
+    def keys(self) -> Any:
+        return self.model_dump().keys()
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.model_dump()
+
+    def __len__(self) -> int:
+        return len(self.model_dump())
+
 
 class AuthContext(BaseModel):
     user: AuthenticatedUser

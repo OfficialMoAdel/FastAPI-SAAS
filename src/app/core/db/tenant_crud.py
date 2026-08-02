@@ -68,6 +68,7 @@ class TenantAwareCRUD(
         >>> users = await crud.get_multi(db)
     """
 
+
     def inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Inject tenant_id from context if not explicitly provided.
 

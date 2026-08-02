@@ -424,9 +424,8 @@ return new_attempts
             )
 
             # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
-            await blacklist_token(
-                token=refresh_token, db=db, payload=user_data.model_dump(exclude_unset=True) if user_data else None
-            )
+            # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
+            await blacklist_token(token=refresh_token, db=db)
         finally:
             if redis_client and lock_key:
                 try:

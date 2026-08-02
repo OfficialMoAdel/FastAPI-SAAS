@@ -148,6 +148,8 @@ async def with_fallback(
     """
     try:
         return await primary_fn()
+    except asyncio.CancelledError:
+        raise
     except Exception as primary_error:
         logger.warning(f"{error_msg}", error=str(primary_error))
 
@@ -160,6 +162,9 @@ async def with_fallback(
                 fallback_error=str(fallback_error),
             )
             if reraise_on_fallback_failure:
+                # If the fallback just re-raised the primary error, don't chain it to itself
+                if fallback_error is primary_error:
+                    raise fallback_error
                 raise fallback_error from primary_error
             raise
 
@@ -223,6 +228,8 @@ async def with_retry(
     for attempt in range(1, max_attempts + 1):
         try:
             return await fn()
+        except asyncio.CancelledError:
+            raise
         except exceptions as e:
             last_exception = e
 

@@ -415,8 +415,8 @@ class TestSanitizingProcessor:
         result = processor(None, "info", deep_event)
         # Should sanitize within depth limit (depth 1 < max_depth 2)
         assert "[JWT_TOKEN]" in result["level1"]["jwt_shallow"]
-        # Should stop recursion at max_depth 2, leaving deeper items untouched
-        assert result["level1"]["level2"]["level3"]["jwt_deep"] == "eyJhbGciOiJIUzI1NiJ9.eyJ0ZXN0Ijp0cnVlfQ.sig"
+        # Should stop recursion at max_depth 2 and return a placeholder error dict
+        assert result["level1"]["level2"] == {"_error": "[MAX_DEPTH_EXCEEDED]"}
 
     def test_processor_with_nested_structures(self) -> None:
         """Test processor handles nested dicts and lists."""

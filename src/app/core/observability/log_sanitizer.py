@@ -168,7 +168,7 @@ class LogSanitizer:
             Sanitized dictionary with same structure
         """
         if _depth >= _max_depth:
-            return data
+            return {"_error": "[MAX_DEPTH_EXCEEDED]"}
 
         sanitized = {}
         for key, value in data.items():
@@ -190,7 +190,7 @@ class LogSanitizer:
             Sanitized value
         """
         if _depth >= _max_depth:
-            return value
+            return "[MAX_DEPTH_EXCEEDED]"
 
         # Pass through primitives unchanged
         if value is None or isinstance(value, int | float | bool):

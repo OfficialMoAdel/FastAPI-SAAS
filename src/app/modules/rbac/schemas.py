@@ -12,10 +12,12 @@ class PermissionBase(BaseModel):
     description: str | None = None
 
 
-class PermissionRead(BaseRead, PermissionBase):
-    """Read schema for Permission with id and timestamps."""
+class PermissionRead(PermissionBase):
+    """Read schema for Permission with id."""
 
-    pass
+    id: int
+
+    model_config = {"from_attributes": True}
 
 
 
@@ -39,10 +41,13 @@ class RoleUpdate(BaseUpdate):
     description: str | None = None
 
 
-class RoleRead(BaseRead, RoleBase):
-    """Read schema for Role with id, timestamps, and system flag."""
+class RoleRead(RoleBase):
+    """Read schema for Role with id and system flag."""
 
+    id: int
     is_system: bool
+
+    model_config = {"from_attributes": True}
 
 
 

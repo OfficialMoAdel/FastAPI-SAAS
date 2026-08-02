@@ -103,7 +103,7 @@ class StripeGateway:
                 fn=lambda: asyncio.to_thread(lambda: stripe.checkout.Session.create(**kwargs)),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError, Exception),
+                exceptions=(stripe.StripeError,),
             )
         except stripe.StripeError as e:
             logger.error("Stripe checkout error", error=str(e))
@@ -123,7 +123,7 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError, Exception),
+                exceptions=(stripe.StripeError,),
             )
         except stripe.StripeError as e:
             logger.error("Stripe portal error", error=str(e))
@@ -141,7 +141,7 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError, Exception),
+                exceptions=(stripe.StripeError,),
             )
         except stripe.StripeError as e:
             logger.error("Stripe subscription modify error", error=str(e))
@@ -159,7 +159,7 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError, Exception),
+                exceptions=(stripe.StripeError,),
             )
         except stripe.StripeError as e:
             logger.error("Stripe subscription retrieve error", error=str(e))
@@ -177,7 +177,7 @@ class StripeGateway:
                 ),
                 max_attempts=3,
                 delay_seconds=0.2,
-                exceptions=(stripe.StripeError, Exception),
+                exceptions=(stripe.StripeError,),
             )
         except stripe.StripeError as e:
             logger.error("Stripe invoice retrieve error", error=str(e))
