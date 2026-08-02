@@ -395,13 +395,19 @@ class APIKeyService(BaseService[APIKey]):
         if key.expires_at and key.expires_at < datetime.now(UTC):
             return None
 
-        # Update last used timestamp (fire-and-forget, don't block validation)
-        await crud_api_keys.update(
-            db=self.db,
-            id=key.id,
-            object={"last_used_at": datetime.now(UTC)},
-        )
-        await self.db.commit()
+        # Update last_used_at without committing — let the request lifecycle handle commit.
+        # SECURITY FIX (C4): Previously committed here on the shared request-scoped session,
+        # which could flush unrelated pending changes from other parts of the request.
+        try:
+            from src.app.modules.api_keys.crud import crud_api_keys
+            await crud_api_keys.update(
+                db=self.db,
+                id=key.id,
+                object={"last_used_at": datetime.now(UTC)},
+                commit=False,
+            )
+        except Exception as e:
+            logger.warning("failed_to_update_api_key_last_used", key_id=key.id, error=str(e))
 
         return {
             "user_id": key.user_id,

@@ -749,12 +749,14 @@ class MFAService:
         import hashlib
         import hmac
 
-        # Use ENCRYPTION_KEY if available, fallback to SECRET_KEY for backward compatibility
-        base_key = (
-            settings.ENCRYPTION_KEY.get_secret_value()
-            if settings.ENCRYPTION_KEY
-            else settings.SECRET_KEY.get_secret_value()
-        )
+        # SECURITY FIX (M-6): Fail fast when ENCRYPTION_KEY is not set, consistent with core encryption.
+        if not settings.ENCRYPTION_KEY:
+            raise ValueError(
+                "ENCRYPTION_KEY must be set for MFA operations. "
+                'Generate with: python -c "from cryptography.fernet import '
+                'Fernet; print(Fernet.generate_key().decode())"'
+            )
+        base_key = settings.ENCRYPTION_KEY.get_secret_value()
         salt = f"{base_key}_{user_id}".encode()
         return hmac.new(salt, code.encode(), hashlib.sha256).hexdigest()
 
@@ -788,11 +790,14 @@ class MFAService:
             salt=salt,
             iterations=480000,  # OWASP recommended minimum
         )
-        base_key = (
-            settings.ENCRYPTION_KEY.get_secret_value()
-            if settings.ENCRYPTION_KEY
-            else settings.SECRET_KEY.get_secret_value()
-        )
+        # SECURITY FIX (M-6): Fail fast when ENCRYPTION_KEY is not set.
+        if not settings.ENCRYPTION_KEY:
+            raise ValueError(
+                "ENCRYPTION_KEY must be set for MFA encryption. "
+                'Generate with: python -c "from cryptography.fernet import '
+                'Fernet; print(Fernet.generate_key().decode())"'
+            )
+        base_key = settings.ENCRYPTION_KEY.get_secret_value()
         secret = base_key.encode()
         key = base64.urlsafe_b64encode(kdf.derive(secret))
         MFAService._fernet_instance = Fernet(key)

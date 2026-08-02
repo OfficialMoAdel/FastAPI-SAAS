@@ -248,15 +248,17 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
 
     tenant2_id = tenant2.id
 
-    # Cleanup tenant 2 settings
-    existing2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
-    if existing2:
-        await crud_stripe_settings.db_delete(db=db_session, id=existing2["id"])
+    tenant2_id = tenant2.id
 
     from src.app.core.tenancy.context import TenantContext
     mock_ctx_2 = TenantContext(tenant_id=tenant2_id, tenant_slug="tenant-2", tenant_name="Tenant 2", is_active=True)
 
     with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+        # Cleanup tenant 2 settings
+        existing2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
+        if existing2:
+            await crud_stripe_settings.db_delete(db=db_session, id=existing2["id"])
+
         data2 = {"stripe_customer_id": "cus_t2", "tenant_id": tenant2_id, "is_active": True}
         obj2 = StripeSettingsCreateInternal(**data2)
         s2 = await crud_stripe_settings.create(db=db_session, object=obj2, schema_to_select=StripeSettingsRead)
@@ -269,13 +271,15 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     assert f1["stripe_customer_id"] == "cus_t1"
 
     # Get for tenant 2 should return s2
-    f2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
-    assert f2["id"] == s2_id
-    assert f2["stripe_customer_id"] == "cus_t2"
+    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+        f2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
+        assert f2["id"] == s2_id
+        assert f2["stripe_customer_id"] == "cus_t2"
 
     # Cleanup
     await crud_stripe_settings.db_delete(db=db_session, id=s1_id)
-    await crud_stripe_settings.db_delete(db=db_session, id=s2_id)
+    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+        await crud_stripe_settings.db_delete(db=db_session, id=s2_id)
 
 
 # ==================== Subscription Plan Service ====================

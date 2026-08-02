@@ -587,7 +587,22 @@ class UserService(BaseService[User]):
             if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("username", values.username)
 
-        await self.crud.update(db=self.db, object=values, username=db_username)
+        await self.crud.update(db=self.db, object=values, username=db_username, commit=False)
+
+        # SECURITY FIX (C2): Permanently invalidate sessions on email/username change.
+        # Previously only set Redis keys with 300s TTL — old tokens worked again after expiry.
+        if bump_token_version:
+            from sqlalchemy import update as sa_update
+
+            from src.app.modules.users.models import User
+            user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
+            await self.db.execute(
+                sa_update(User).where(User.id == user_id_val).values(
+                    token_version=User.token_version + 1
+                )
+            )
+
+        await self.db.commit()
 
         # Invalidate cache after update
         await self._invalidate_user_cache(db_user, bump_token_version=bump_token_version)

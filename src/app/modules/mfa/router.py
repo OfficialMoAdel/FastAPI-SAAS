@@ -66,12 +66,9 @@ async def check_mfa_rate_limit(
     """
     # Use provided identifier or fall back to client IP
     if identifier is None:
-        # Get client IP, handling proxies
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            client_ip = forwarded.split(",")[0].strip()
-        else:
-            client_ip = get_client_ip(request)
+        # SECURITY FIX: Use get_client_ip() consistently instead of raw XFF parsing.
+        # Raw X-Forwarded-For leftmost entry is attacker-controlled.
+        client_ip = get_client_ip(request)
         identifier = client_ip
 
     # Build rate limit key
@@ -310,6 +307,11 @@ async def complete_mfa_login(
             client_ip=client_ip,
             user_id=token_data.get("user_id")
         )
+        # SECURITY FIX (M-1): Optionally reject IP mismatch to prevent stolen MFA tokens
+        if getattr(settings.auth, "MFA_ENFORCE_IP_BINDING", False):
+            raise UnauthorizedException(
+                "MFA verification rejected: IP address changed since login. Please try again."
+            )
 
     user_id = token_data.get("user_id")
     username = token_data.get("username")

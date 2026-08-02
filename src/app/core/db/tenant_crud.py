@@ -70,34 +70,33 @@ class TenantAwareCRUD(
 
 
     def inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
-        """Inject tenant_id from context if not explicitly provided.
+        """Inject tenant_id from context.
 
-        Args:
-            kwargs: The keyword arguments to inject tenant_id into.
-
-        Returns
-        -------
-            The kwargs dict with tenant_id added if context is available.
+        SECURITY FIX (M-4): Always override explicit tenant_id to prevent
+        callers from bypassing tenant isolation.
         """
-        if "tenant_id" not in kwargs:
-            tenant = get_tenant_context()
-            if tenant is not None:
-                tenant_id = tenant.id
-                # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
-                if isinstance(tenant_id, str):
-                    try:
-                        tenant_id = uuid.UUID(tenant_id)
-                    except (ValueError, TypeError) as e:
-                        # ISSUE 11 FIX: Log invalid UUID and fail fast
-                        from src.app.core.logger import get_logger
-
-                        get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
-                        raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
-                return {"tenant_id": tenant_id, **kwargs}
-            else:
-                # Fail-closed: raise an error if context is missing for a tenant-aware operation
-                raise RuntimeError("Tenant-scoped query executed without an active tenant context")
-        return kwargs
+        tenant = get_tenant_context()
+        if tenant is not None:
+            tenant_id = tenant.id
+            if isinstance(tenant_id, str):
+                try:
+                    tenant_id = uuid.UUID(tenant_id)
+                except (ValueError, TypeError) as e:
+                    from src.app.core.logger import get_logger
+                    get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
+                    raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
+            if "tenant_id" in kwargs and kwargs["tenant_id"] != tenant_id:
+                from src.app.core.logger import get_logger
+                get_logger(__name__).warning(
+                    "tenant_id_override_blocked",
+                    requested=str(kwargs["tenant_id"]),
+                    context=str(tenant_id),
+                )
+            return {"tenant_id": tenant_id, **{k: v for k, v in kwargs.items() if k != "tenant_id"}}
+        else:
+            if "tenant_id" in kwargs:
+                return kwargs
+            raise RuntimeError("Tenant-scoped query executed without an active tenant context")
 
     def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Alias for inject_tenant_filter for backward compatibility."""

@@ -324,6 +324,12 @@ class AuthSettings(BaseSettings):
     AUTH_SESSION_TTL_SECONDS: int = Field(
         default=86400 * 7, ge=3600, le=86400 * 30, description="Session TTL in seconds"
     )
+    # SECURITY FIX (M-1): When True, MFA completion is rejected if client IP
+    # differs from the IP used during the login phase.
+    MFA_ENFORCE_IP_BINDING: bool = Field(
+        default=False,
+        description="Reject MFA completion if client IP changed since login (prevents stolen MFA tokens)"
+    )
     # Token blacklist cache failure mode - fail_closed by default for security
     # "fail_open": Return None when Redis unavailable (allow auth to continue)
     # "fail_closed": Return True when Redis unavailable (treat as blacklisted, block auth)
