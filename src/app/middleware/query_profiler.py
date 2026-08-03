@@ -15,13 +15,12 @@ import threading
 import time
 from collections import defaultdict
 from contextvars import ContextVar
-from typing import Any, cast
+from typing import Any
 
-from fastapi import Request, Response
+from fastapi import Request
 from sqlalchemy import event
 from sqlalchemy.engine import Connection, Engine
-from starlette.middleware.base import BaseHTTPMiddleware
-from starlette.types import ASGIApp
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from src.app.core.config import EnvironmentOption, settings
 from src.app.core.db.database import async_engine
@@ -108,11 +107,11 @@ def _attach_global_listeners(engine: Engine) -> None:
         _profiler_initialized = True
 
 
-class QueryProfilerMiddleware(BaseHTTPMiddleware):
+class QueryProfilerMiddleware:
     """Middleware to profile SQL queries during request processing."""
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(app)
+        self.app = app
         self._is_enabled = self._check_enabled()
         self._engine: Engine | None = None
 
@@ -135,36 +134,50 @@ class QueryProfilerMiddleware(BaseHTTPMiddleware):
                 return None
         return self._engine
 
-    async def dispatch(self, request: Request, call_next) -> Response:
-        if not self._is_enabled:
-            return cast(Response, await call_next(request))
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
 
+        if not self._is_enabled:
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive)
         engine = self._get_engine()
         if not engine:
-            response = await call_next(request)
-            response = cast(Response, response)
-            response.headers["X-Query-Count"] = "0"
-            response.headers["X-Query-Time"] = "0"
-            return response
+            # Inject headers via send wrapper
+            async def send_with_headers(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"x-query-count", b"0"))
+                    headers.append((b"x-query-time", b"0"))
+                    message["headers"] = headers
+                await send(message)
+            await self.app(scope, receive, send_with_headers)
+            return
 
         stats = QueryStats()
         token = _query_stats_ctx.set(stats)
         start_time = time.perf_counter()
 
         try:
-            response = await call_next(request)
+            # Inject profiling headers via send wrapper
+            async def send_with_profiling(message: Message) -> None:
+                if message["type"] == "http.response.start":
+                    headers = list(message.get("headers", []))
+                    headers.append((b"x-query-count", str(len(stats.queries)).encode()))
+                    headers.append((b"x-query-time", str(round(stats.total_time_ms, 3)).encode()))
+                    if stats.slow_queries:
+                        headers.append((b"x-slow-queries", str(len(stats.slow_queries)).encode()))
+                    message["headers"] = headers
+                await send(message)
+
+            await self.app(scope, receive, send_with_profiling)
         finally:
             total_time_ms = (time.perf_counter() - start_time) * 1000
             self._log_results(request, stats, total_time_ms)
             _query_stats_ctx.reset(token)
-
-        response = cast(Response, response)
-        response.headers["X-Query-Count"] = str(len(stats.queries))
-        response.headers["X-Query-Time"] = str(round(stats.total_time_ms, 3))
-        if stats.slow_queries:
-            response.headers["X-Slow-Queries"] = str(len(stats.slow_queries))
-
-        return response
 
     def _log_results(self, request: Request, stats: QueryStats, total_time_ms: float) -> None:
         """Log query profiling results."""

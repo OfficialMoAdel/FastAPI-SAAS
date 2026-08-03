@@ -5,6 +5,7 @@ from src.app.core.config import settings
 from src.app.core.events import process_event_handler
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.worker.functions import (
+    cleanup_expired_tokens_task,
     deliver_webhook_task,
     flush_audit_logs_task,
     migrate_sessions_task,
@@ -58,6 +59,8 @@ class WorkerSettings:
         cron(flush_audit_logs_task, second={0, 30}, run_at_startup=True, timeout=60),
         # Recover stuck webhook deliveries every 5 minutes
         cron(recover_stuck_deliveries, minute=set(range(0, 60, 5))),
+        # Cleanup expired tokens from blacklist ZSET every hour
+        cron(cleanup_expired_tokens_task, minute=0, timeout=30),
     ]
 
     # Concurrency and timeout settings (configurable via environment)

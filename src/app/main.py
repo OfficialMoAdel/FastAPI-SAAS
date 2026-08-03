@@ -231,7 +231,7 @@ app = create_application(
 # - IPFilter: Block unwanted IPs early, sets ip_whitelisted state for RateLimit
 # - GZip: Added last = outermost (compresses ALL responses including 4xx/5xx errors)
 
-from fastapi.middleware.gzip import GZipMiddleware
+from src.app.middleware.gzip_filter import GZipFilterMiddleware
 
 app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
@@ -243,7 +243,8 @@ app.add_middleware(
 )  # Configurable limit (runs AFTER AttackDetection in LIFO)
 app.add_middleware(IPFilterMiddleware)  # Block unwanted IPs, sets ip_whitelisted state
 app.add_middleware(QueryProfilerMiddleware)  # Dev-mode query profiling (disabled in production)
-app.add_middleware(GZipMiddleware, minimum_size=500)  # Compresses all responses
+# Setup GZip with a content-type filter (exempts SSE and binary)
+app.add_middleware(GZipFilterMiddleware, minimum_size=500, compresslevel=6)
 
 # Admin mounting moved to lifespan
 

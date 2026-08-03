@@ -54,6 +54,23 @@ ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 MFA_PENDING_EXPIRY_SECONDS = settings.auth.MFA_PENDING_EXPIRY_SECONDS
 
 
+def _is_symmetric_algorithm() -> bool:
+    """Check if current JWT algorithm is symmetric (HS256/HS384/HS512)."""
+    return settings.ALGORITHM.startswith("HS")
+
+async def _jwt_encode(payload: dict, key: str, algorithm: str) -> str:
+    """Encode JWT, inlining for symmetric algorithms."""
+    if _is_symmetric_algorithm():
+        return jwt.encode(payload, key, algorithm)
+    return await asyncio.to_thread(jwt.encode, payload, key, algorithm)
+
+async def _jwt_decode(token: str, key: str | Any, algorithms: list[str], **kwargs: Any) -> dict[str, Any]:
+    """Decode JWT, inlining for symmetric algorithms."""
+    if _is_symmetric_algorithm():
+        return jwt.decode(token, key, algorithms=algorithms, **kwargs)  # type: ignore[no-any-return]
+    return await asyncio.to_thread(jwt.decode, token, key, algorithms=algorithms, **kwargs)  # type: ignore[no-any-return]
+
+
 class TokenType(str, Enum):
     ACCESS = "access"
     REFRESH = "refresh"
@@ -86,8 +103,8 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         }
     )
 
-    # Use to_thread to prevent blocking the event loop regardless of the algorithm
-    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
+    # Use _jwt_encode to inline symmetric algorithms or offload asymmetric algorithms
+    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -120,7 +137,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         }
     )
 
-    encoded_jwt: str = await asyncio.to_thread(jwt.encode, to_encode, _get_signing_key(), settings.ALGORITHM)
+    encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.ALGORITHM)
     return encoded_jwt
 
 
@@ -162,8 +179,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     atomically relative to the token content.
     """
     try:
-        payload = await asyncio.to_thread(
-            jwt.decode,
+        payload = await _jwt_decode(
             token,
             _get_parsed_verification_key(),
             algorithms=[settings.ALGORITHM],
@@ -289,8 +305,7 @@ async def blacklist_tokens(
             continue
         try:
             if not payload:
-                payload = await asyncio.to_thread(
-                    jwt.decode,
+                payload = await _jwt_decode(
                     token,
                     _get_parsed_verification_key(),
                     algorithms=[settings.ALGORITHM],
@@ -349,8 +364,7 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
     """Blacklist a single token after validating its signature."""
     try:
         if not payload:
-            payload = await asyncio.to_thread(
-                jwt.decode,
+            payload = await _jwt_decode(
                 token,
                 _get_parsed_verification_key(),
                 algorithms=[settings.ALGORITHM],

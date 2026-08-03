@@ -21,7 +21,7 @@ class TestMiddlewareOrder:
         source = inspect.getsource(main)
 
         # Find the middleware registration section
-        gzip_pos = source.find("app.add_middleware(GZipMiddleware")
+        gzip_pos = source.find("app.add_middleware(GZipFilterMiddleware")
         security_pos = source.find("app.add_middleware(SecurityHeadersMiddleware")
         body_limit_pos = source.find("RequestBodyLimitMiddleware, max_body_size")
         tenant_pos = source.find("app.add_middleware(TenantMiddleware")
@@ -29,7 +29,7 @@ class TestMiddlewareOrder:
         request_id_pos = source.find("app.add_middleware(RequestIDMiddleware")
 
         # All middleware should be registered
-        assert gzip_pos > 0, "GZipMiddleware not found"
+        assert gzip_pos > 0, "GZipFilterMiddleware not found"
         assert security_pos > 0, "SecurityHeadersMiddleware not found"
         assert body_limit_pos > 0, "RequestBodyLimitMiddleware not found"
         assert tenant_pos > 0, "TenantMiddleware not found"

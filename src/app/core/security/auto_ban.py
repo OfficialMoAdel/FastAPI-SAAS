@@ -111,17 +111,16 @@ async def get_ban_info(client_ip: str) -> BanInfo:
     count_key = BAN_COUNT_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # Check if currently banned
-        ban_data = await redis_client.get(ban_key)
+        # Concurrent reads: GET ban_key, TTL ban_key, GET count_key
+        ban_data, ttl, ban_count_str = await asyncio.gather(
+            redis_client.get(ban_key),
+            redis_client.ttl(ban_key),
+            redis_client.get(count_key),
+        )
 
         if ban_data:
-            ttl = await redis_client.ttl(ban_key)
             expires_at = time.time() + ttl if ttl > 0 else None
-
-            # Get historical ban count for escalation
-            ban_count_str = await redis_client.get(count_key)
             ban_count = int(ban_count_str) if ban_count_str else 1
-
             return BanInfo(
                 is_banned=True,
                 reason=ban_data.decode() if isinstance(ban_data, bytes) else ban_data,
@@ -129,10 +128,7 @@ async def get_ban_info(client_ip: str) -> BanInfo:
                 ban_count=ban_count,
             )
 
-        # Not banned - get historical count for potential escalation
-        ban_count_str = await redis_client.get(count_key)
         ban_count = int(ban_count_str) if ban_count_str else 0
-
         return BanInfo(is_banned=False, ban_count=ban_count)
 
     except Exception as e:

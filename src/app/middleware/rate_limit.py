@@ -21,7 +21,7 @@ from starlette.types import ASGIApp, Message, Receive, Scope, Send
 from src.app.core.config import settings
 from src.app.core.errors import ErrorCode, create_error_response
 from src.app.core.logger import get_logger
-from src.app.core.security.auto_ban import check_and_auto_ban, get_ban_info, is_ip_banned
+from src.app.core.security.auto_ban import check_and_auto_ban, get_ban_info
 from src.app.core.security.jwt_utils import extract_jwt_claims_to_state, get_cached_jwt_payload
 from src.app.core.security.logging import SecurityEvent, SecurityEventType, log_security_event
 from src.app.core.utils.ip_utils import get_client_ip
@@ -58,41 +58,42 @@ class RateLimitMiddleware:
         client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # SECURITY: Check if IP is banned before processing
-        if settings.AUTO_BAN_ENABLED and await is_ip_banned(client_ip):
+        if settings.AUTO_BAN_ENABLED:
             ban_info = await get_ban_info(client_ip)
-            logger.warning(
-                "Request from banned IP blocked | ip=%s | reason=%s",
-                client_ip,
-                ban_info.reason,
-            )
+            if ban_info.is_banned:
+                logger.warning(
+                    "Request from banned IP blocked | ip=%s | reason=%s",
+                    client_ip,
+                    ban_info.reason,
+                )
 
-            # Log security event
-            security_event = SecurityEvent(
-                event_type=SecurityEventType.ATTACK_DETECTED,
-                client_ip=client_ip,
-                request_path=str(request.url.path),
-                reason="Request from banned IP",
-                extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
-            )
-            log_security_event(security_event)
+                # Log security event
+                security_event = SecurityEvent(
+                    event_type=SecurityEventType.ATTACK_DETECTED,
+                    client_ip=client_ip,
+                    request_path=str(request.url.path),
+                    reason="Request from banned IP",
+                    extra={"ban_reason": ban_info.reason, "expires_at": ban_info.expires_at},
+                )
+                log_security_event(security_event)
 
-            headers = {
-                "X-Banned": "true",
-                "X-Ban-Reason": ban_info.reason or "Auto-ban",
-            }
-            if ban_info.expires_at:
-                retry_after = int(ban_info.expires_at - time.time()) + 1
-                if retry_after > 0:
-                    headers["Retry-After"] = str(retry_after)
+                headers = {
+                    "X-Banned": "true",
+                    "X-Ban-Reason": ban_info.reason or "Auto-ban",
+                }
+                if ban_info.expires_at:
+                    retry_after = int(ban_info.expires_at - time.time()) + 1
+                    if retry_after > 0:
+                        headers["Retry-After"] = str(retry_after)
 
-            response = create_error_response(
-                code=ErrorCode.FORBIDDEN,
-                message="Forbidden: IP address banned due to abuse",
-                status_code=status.HTTP_403_FORBIDDEN,
-                headers=headers,
-            )
-            await response(scope, receive, send)
-            return
+                response = create_error_response(
+                    code=ErrorCode.FORBIDDEN,
+                    message="Forbidden: IP address banned due to abuse",
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    headers=headers,
+                )
+                await response(scope, receive, send)
+                return
 
         # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
         if request.url.path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):

@@ -1040,10 +1040,26 @@ def cache(  # noqa: C901
                 if to_invalidate_extra is not None or pattern_to_invalidate_extra is not None:
                     raise InvalidRequestError
 
-                cached_data = await client.get(cache_key)
+                # Use Lua script for atomic GET+TTL (1 RT instead of 2)
+                try:
+                    lua_mgr = get_lua_manager()
+                    result = await lua_mgr.execute(
+                        client,
+                        "xfetch_get_with_ttl",
+                        keys=[cache_key],
+                        args=[],
+                    )
+                    cached_data = result[0]
+                    remaining_ttl = int(result[1]) if result[1] is not None else -2
+                    # Handle bytes → string
+                    if cached_data is not None and isinstance(cached_data, bytes):
+                        cached_data = cached_data.decode("utf-8")
+                except Exception:
+                    # Fallback: 2 separate calls
+                    cached_data = await client.get(cache_key)
+                    remaining_ttl = await client.ttl(cache_key) if cached_data else -2
+
                 if cached_data:
-                    # XFetch probabilistic early expiration (Stampede Protection)
-                    remaining_ttl = await client.ttl(cache_key)
                     if remaining_ttl > 0:
                         delta = expiration - remaining_ttl
                         if delta > 0:

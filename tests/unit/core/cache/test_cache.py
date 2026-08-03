@@ -92,8 +92,15 @@ async def test_cache_decorator_uses_setex():
 
     mock_redis.pipeline = mock_pipeline_cm
 
-    # Mock the module-level client
-    with patch("src.app.core.utils.cache.client", mock_redis):
+    # Mock the module-level client and lua manager
+    with (
+        patch("src.app.core.utils.cache.client", mock_redis),
+        patch("src.app.core.utils.cache.get_lua_manager") as mock_get_lua,
+    ):
+        mock_lua = AsyncMock()
+        mock_lua.execute.return_value = [None, None]
+        mock_get_lua.return_value = mock_lua
+
         # Define a dummy endpoint
         @cache(key_prefix="test", expiration=60)
         async def dummy_endpoint(request: Request, id: int):

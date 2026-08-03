@@ -231,14 +231,22 @@ async def decode_jwt_token(token: str) -> dict[str, Any] | None:
 
         alg = _get_algorithm()
         # Use pre-parsed key for better performance (especially RS256)
-        payload: dict[str, Any] = await asyncio.to_thread(
-            jwt.decode,
-            token,
-            _get_parsed_verification_key(),
-            algorithms=[alg],
-            audience=JWT_AUDIENCE,
-        )
-        return payload
+        if alg.startswith("HS"):
+            payload = jwt.decode(
+                token,
+                _get_parsed_verification_key(),
+                algorithms=[alg],
+                audience=JWT_AUDIENCE,
+            )
+        else:
+            payload = await asyncio.to_thread(
+                jwt.decode,
+                token,
+                _get_parsed_verification_key(),
+                algorithms=[alg],
+                audience=JWT_AUDIENCE,
+            )
+        return payload  # type: ignore[no-any-return]
     except PyJWTError as e:
         logger.debug("JWT decode failed: %s", e)
         return None

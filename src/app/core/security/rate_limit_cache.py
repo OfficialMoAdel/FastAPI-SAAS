@@ -7,12 +7,17 @@ and can be refreshed when tiers are updated.
 
 from typing import Any
 
+from cachetools import TTLCache
+
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 
 logger = get_logger(__name__)
+
+# Module-level L1 cache (256 entries, 5-minute TTL)
+_tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=256, ttl=300)
 
 # Redis key patterns
 POLICY_KEY_PREFIX = "rate_limit:policy:tier:"
@@ -29,7 +34,12 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
     Returns:
         List of policy dicts, or None if not cached
     """
+    # L1: In-memory check first (avoids Redis RT)
+    if tier_id in _tier_policy_l1:
+        return _tier_policy_l1[tier_id]
+
     if redis_client is None:
+        _tier_policy_l1[tier_id] = None
         return None
 
     try:
@@ -37,7 +47,9 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
         data = await redis_client.get(key)
         if data:
             result: list[dict[str, Any]] = json_loads(data)
+            _tier_policy_l1[tier_id] = result
             return result
+        _tier_policy_l1[tier_id] = None
         return None
     except Exception as e:
         logger.warning("Failed to get tier policy from cache", error=e)
@@ -87,6 +99,7 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
     Returns:
         True if invalidated successfully
     """
+    _tier_policy_l1.pop(tier_id, None)
     if redis_client is None:
         return False
 

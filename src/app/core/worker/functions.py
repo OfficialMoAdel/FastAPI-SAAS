@@ -118,6 +118,23 @@ async def flush_audit_logs_task(ctx: dict) -> str:
 
 
 # -------- base functions --------
+@monitor_job("cleanup_expired_tokens_task")
+async def cleanup_expired_tokens_task(ctx: dict) -> str:
+    """Periodic task to remove expired tokens from Redis blacklist ZSET.
+
+    Prevents unbounded memory growth of the token:blacklist sorted set.
+    """
+    from src.app.core.security.token_blacklist_cache import remove_expired_tokens
+
+    try:
+        removed = await remove_expired_tokens()
+        if removed > 0:
+            logger.info("Cleaned up expired tokens from blacklist", count=removed)
+        return f"Removed {removed} expired tokens."
+    except Exception as e:
+        logger.error("Failed to cleanup expired tokens", error=str(e))
+        raise
+
 async def startup(ctx: Worker) -> None:
     logger.info("Worker Started")
 

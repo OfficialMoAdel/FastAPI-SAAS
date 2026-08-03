@@ -4,11 +4,16 @@ import pytest
 
 from src.app.core.security.rate_limit_cache import (
     POLICY_KEY_PREFIX,
+    _tier_policy_l1,
     get_tier_policy,
     invalidate_tier_policy,
     warm_policy_cache,
 )
 
+
+@pytest.fixture(autouse=True)
+def clear_l1_cache():
+    _tier_policy_l1.clear()
 
 @pytest.fixture
 def mock_redis():
