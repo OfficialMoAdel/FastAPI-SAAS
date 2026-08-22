@@ -134,14 +134,27 @@ class OwnershipPolicy:
         if not user_id:
             return False
 
-        # 3. Check ownership on directly provided resource
+        # 3. Check ownership on directly provided resource (also enforce tenant isolation)
         if resource is not None:
             owner_id = (
                 _get_user_attr(resource, self.owner_field)
                 if not isinstance(resource, dict)
                 else resource.get(self.owner_field)
             )
-            return bool(owner_id == user_id)
+            if owner_id != user_id:
+                return False
+            # Tenant isolation: if resource is tenant-scoped, its tenant_id must match caller's tenant
+            res_tenant = _get_user_attr(resource, "tenant_id", None) if not isinstance(resource, dict) else resource.get("tenant_id")  # noqa: E501
+            if res_tenant is not None:
+                caller_tenant = _get_user_attr(user, "tenant_id")
+                if not caller_tenant:
+                    from src.app.core.tenancy.context import get_tenant_context
+                    ctx = get_tenant_context()
+                    caller_tenant = ctx.id if ctx else None
+                if caller_tenant is not None and str(res_tenant) != str(caller_tenant):
+                    logger.warning("OwnershipPolicy blocked cross-tenant access", resource_tenant=str(res_tenant), caller_tenant=str(caller_tenant))  # noqa: E501
+                    return False
+            return True
 
         # 4. If resource not provided, attempt DB lookup using request path params
         if request is not None and self.model is not None and db is not None:
@@ -166,6 +179,18 @@ class OwnershipPolicy:
                 if record is None:
                     # Record not found; return False to prevent unauthorized scanning
                     return False
+
+                # Tenant isolation before ownership: record.tenant_id must match caller's tenant
+                rec_tenant = getattr(record, "tenant_id", None)
+                if rec_tenant is not None:
+                    caller_tenant2 = _get_user_attr(user, "tenant_id")
+                    if not caller_tenant2:
+                        from src.app.core.tenancy.context import get_tenant_context as _get_ctx
+                        _ctx = _get_ctx()
+                        caller_tenant2 = _ctx.id if _ctx else None
+                    if caller_tenant2 is not None and str(rec_tenant) != str(caller_tenant2):
+                        logger.warning("OwnershipPolicy blocked cross-tenant DB lookup", resource_tenant=str(rec_tenant), caller_tenant=str(caller_tenant2))  # noqa: E501
+                        return False
 
                 # Stash in request state for route handler reuse
                 request.state.authorized_resource = record

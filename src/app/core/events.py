@@ -441,7 +441,17 @@ class EventBus:
                     handler=handler.__name__,
                 )
                 try:
-                    await handler(data)
+                    await asyncio.wait_for(
+                        handler(data),
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "Fallback sync handler timed out",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
                 except Exception as e:
                     logger.error(
                         "Fallback sync handler failed",
@@ -504,13 +514,23 @@ class EventBus:
                     error=str(result),
                 )
 
-                # Graceful degradation: try sync execution
+                # Graceful degradation: try sync execution with timeout
                 try:
-                    await handler(data)
+                    await asyncio.wait_for(
+                        handler(data),
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
                     logger.info(
                         "Handler executed synchronously after gather queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "Sync fallback timed out after gather failure",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except Exception as handler_error:
                     logger.error(
@@ -524,13 +544,23 @@ class EventBus:
             # Unpack result tuple (narrowed to tuple by isinstance check above)
             success, handler, error = result  # type: ignore[misc]
             if not success and error is not None:
-                # Graceful degradation: try sync execution
+                # Graceful degradation: try sync execution with timeout
                 try:
-                    await handler(data)
+                    await asyncio.wait_for(
+                        handler(data),
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
                     logger.info(
                         "Handler executed synchronously after queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
+                    )
+                except TimeoutError:
+                    logger.error(
+                        "Sync fallback timed out after queue failure",
+                        event_name=event_name,
+                        handler=handler.__name__,
+                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except Exception as handler_error:
                     logger.error(

@@ -24,6 +24,7 @@ from starlette.types import ASGIApp
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
+from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
 
 
@@ -224,7 +225,13 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
             "x-requested-with",
             "cookie",
             "x-forwarded-for",
+            "x-forwarded-host",
+            "x-forwarded-proto",
+            "x-real-ip",
+            "forwarded",
             "origin",
+            "authorization",
+            "x-originating-ip",
         ]
         for header_name in headers_to_check:
             header_value = request.headers.get(header_name, "")
@@ -241,7 +248,8 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
-            MAX_SCAN_SIZE = 128 * 1024
+            _raw_scan = getattr(settings, "ATTACK_DETECTION_MAX_SCAN_SIZE", 128 * 1024)
+            MAX_SCAN_SIZE = _raw_scan if isinstance(_raw_scan, int) else 128 * 1024
             content_length_str = request.headers.get("content-length")
             if content_length_str:
                 try:
@@ -328,7 +336,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                         "pattern_name": pattern_name,
                         "location": location,
                         "matched_content": (
-                            content[:100].decode("utf-8", errors="replace") if self._log_full_request else "[redacted]"
+                            LogSanitizer.sanitize_message(content[:100].decode("utf-8", errors="replace")) if self._log_full_request else "[redacted]"  # noqa: E501
                         ),
                     }
                 )

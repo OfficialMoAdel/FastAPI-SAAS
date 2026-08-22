@@ -209,7 +209,11 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 
     stmt = select(Tenant).where(Tenant.is_active.is_(True))
     result = await session.execute(stmt)
-    tenants = result.scalars().all()
+    tenants = list(result.scalars().all())
+    # M4: cap unbounded warmer load
+    if len(tenants) > 1000:
+        logger.warning("Warmer tenant fetch capped", total=len(tenants), cap=1000)
+        tenants = tenants[:1000]
 
     cached_count = 0
     try:
@@ -249,7 +253,11 @@ async def warm_tier_cache(session: AsyncSession) -> int:
 
     stmt = select(Tier)
     result = await session.execute(stmt)
-    tiers = result.scalars().all()
+    tiers = list(result.scalars().all())
+    # M4: cap unbounded warmer load
+    if len(tiers) > 1000:
+        logger.warning("Warmer tier fetch capped", total=len(tiers), cap=1000)
+        tiers = tiers[:1000]
 
     cached_count = 0
     try:

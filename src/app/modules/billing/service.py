@@ -327,13 +327,16 @@ class ProductService(BaseService[Product]):
         return product
 
     async def get_products(self, page: int = 1, limit: int = 20, is_active: bool | None = None) -> dict[str, Any]:
-        """Get paginated products."""
+        """Get paginated products (tenant-scoped)."""
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("Product", "list")
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if is_active is not None:
             filters["is_active"] = is_active
         return await crud_products.get_multi(
-            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, **filters
+            db=self.db, offset=offset, limit=limit, schema_to_select=ProductRead, tenant_id=tenant.id, **filters
         )
 
     async def update_product(self, product_id: int, data: ProductUpdate) -> dict[str, Any]:
@@ -348,8 +351,8 @@ class ProductService(BaseService[Product]):
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await crud_products.update(db=self.db, object=update_data, id=product_id)
-        result = await crud_products.get(db=self.db, id=product_id)
+        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tenant.id)
+        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
         return dict(result) if result else {}
 
     async def deactivate_product(self, product_id: int) -> dict[str, Any]:
@@ -363,8 +366,8 @@ class ProductService(BaseService[Product]):
             raise ModelNotFoundError("Product", product_id)
 
         update_data = {"is_active": False, "updated_at": datetime.now(UTC)}
-        await crud_products.update(db=self.db, object=update_data, id=product_id)
-        result = await crud_products.get(db=self.db, id=product_id)
+        await crud_products.update(db=self.db, object=update_data, id=product_id, tenant_id=tenant.id)
+        result = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
         return dict(result) if result else {}
 
     async def get_product_with_pricing(self, product_id: int) -> dict[str, Any]:
@@ -456,7 +459,13 @@ class PricingService(BaseService[Pricing]):
         return pricing
 
     async def get_product_pricing(self, product_id: int) -> dict[str, Any]:
-        """Get all pricing tiers for a product."""
+        """Get all pricing tiers for a product (tenant-scoped via parent product)."""
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("Product", product_id)
+        product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+        if product is None:
+            raise ModelNotFoundError("Product", product_id)
         return await crud_pricing.get_multi(db=self.db, product_id=product_id, schema_to_select=PricingRead)
 
     async def list_prices(
@@ -465,18 +474,40 @@ class PricingService(BaseService[Pricing]):
         limit: int = 100,
         product_id: int | None = None,
         is_active: bool | None = None,
-        tenant_id: int | str | None = None,
+        tenant_id: int | str | None = None,  # deprecated: ignored - tenant taken from context
     ) -> dict[str, Any]:
-        """List prices with optional filtering."""
+        """List prices with optional filtering (tenant-scoped)."""
+        tenant = get_current_tenant()
+        if tenant is None:
+            raise ModelNotFoundError("Pricing", "list")
+        if tenant_id is not None and str(tenant_id) != str(tenant.id):
+            from src.app.core.logger import get_logger as _get_logger
+            _get_logger(__name__).warning("tenant_id_override_blocked_in_list_prices", requested=str(tenant_id), context=str(tenant.id))  # noqa: E501
+        if product_id is not None:
+            product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
+            if product is None:
+                raise ModelNotFoundError("Product", product_id)
         offset = (page - 1) * limit
         filters: dict[str, Any] = {}
         if product_id is not None:
             filters["product_id"] = product_id
         if is_active is not None:
             filters["is_active"] = is_active
-        if tenant_id is not None:
-            filters["tenant_id"] = tenant_id
-
+        if product_id is None:
+            # Scope to tenant products: Pricing has no tenant_id column, so filter via tenant product set
+            prod_rows = await crud_products.get_multi(db=self.db, tenant_id=tenant.id, limit=1000, offset=0, schema_to_select=ProductRead)  # noqa: E501
+            ids = [r["id"] if isinstance(r, dict) else r.id for r in prod_rows.get("data", [])] if isinstance(prod_rows, dict) else []  # noqa: E501
+            if not ids:
+                return {"data": [], "total_count": 0}
+            result = await crud_pricing.get_multi(db=self.db, offset=offset, limit=limit, schema_to_select=PricingRead, **filters)  # noqa: E501
+            data = result.get("data", []) if isinstance(result, dict) else result
+            id_set = set(ids)
+            filtered = [r for r in data if (r.get("product_id") if isinstance(r, dict) else r.product_id) in id_set]
+            if isinstance(result, dict):
+                result["data"] = filtered
+                result["total_count"] = len(filtered)
+                return result
+            return {"data": filtered, "total_count": len(filtered)}
         return await crud_pricing.get_multi(
             db=self.db,
             offset=offset,

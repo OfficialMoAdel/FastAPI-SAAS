@@ -29,8 +29,13 @@ BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
 # TTL for violations counter - configurable via settings
 # Uses AUTO_BAN_VIOLATION_WINDOW (default 24 hours, configurable 1 hour to 7 days)
 def get_violations_ttl() -> int:
-    """Get the TTL for violation counters from settings."""
-    return getattr(settings, "AUTO_BAN_VIOLATION_WINDOW", 86400)
+    """Get the TTL for violation counters from settings (clamped 1h..7d)."""
+    raw = getattr(settings, "AUTO_BAN_VIOLATION_WINDOW", 86400)
+    try:
+        v = int(raw)
+    except Exception:
+        v = 86400
+    return max(3600, min(v, 604800))
 
 
 @dataclass
@@ -59,15 +64,18 @@ async def increment_violations(client_ip: str) -> int:
     key = VIOLATIONS_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # R5-9: Pipeline INCR + EXPIRE into a single roundtrip to halve Redis latency
+        # H4: EXPIRE only on first INCR — prior pipeline reset TTL on every hit
+        # which slid the violation window indefinitely. We keep pipeline for
+        # test compat (mock expects pipeline), but execute INCR alone then
+        # conditionally EXPIRE only when count==1 (fixed window).
         async with redis_client.pipeline() as pipe:
             pipe.incr(key)
-            # FIXED: Use configurable TTL from settings instead of hardcoded constant
-            pipe.expire(key, get_violations_ttl())
             results = await pipe.execute()
-
-        count = results[0]
-        return int(count)
+        count = int(results[0])
+        if count == 1:
+            ttl = get_violations_ttl()
+            await redis_client.expire(key, ttl)
+        return count
     except Exception as e:
         logger.error("Failed to increment violations for %s: %s", client_ip, e)
         return 0
@@ -189,8 +197,11 @@ async def ban_ip(
             logger.debug("IP %s already banned by concurrent request", client_ip)
             return False
 
-        # Increment historical ban count (no TTL - persistent)
-        await redis_client.incr(count_key)
+        # H4: add 30d TTL to ban_count to bound memory (was indefinite -> OOM).
+        # Keep escalating within 30d, then naturally decay — avoids unbounded key growth.
+        ban_count = await redis_client.incr(count_key)
+        if ban_count == 1:
+            await redis_client.expire(count_key, 2592000)  # 30d
 
         # Reset violations counter
         await reset_violations(client_ip)

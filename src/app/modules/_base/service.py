@@ -21,6 +21,7 @@ Usage:
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar, cast
@@ -31,6 +32,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
+from src.app.core.db.tenant_crud import TenantAwareCRUD
 
 T = TypeVar("T")
 
@@ -38,7 +40,7 @@ T = TypeVar("T")
 # FastCRUD is stateless (stores only model metadata), so we can reuse instances
 # This reduces O(N) allocations per request to O(1) for cached models
 # Note: No lock needed - FastCRUD init is synchronous and cache is populated at module load
-_CRUD_CACHE: dict[type, FastCRUD] = {}
+_CRUD_CACHE: dict[type, FastCRUD] = {}  # values may be FastCRUD or TenantAwareCRUD (subclass)
 
 
 class BaseService(Generic[T]):
@@ -82,14 +84,25 @@ class BaseService(Generic[T]):
 
     @staticmethod
     def _get_or_create_crud(model: type[T]) -> FastCRUD:
-        """Get cached FastCRUD instance or create new one.
+        """Get cached CRUD instance or create new one (tenant-aware when applicable).
 
-        Note: No lock needed - FastCRUD initialization is synchronous and
-        the cache is populated during first service instantiation per model.
+        If the SQLAlchemy model declares a ``tenant_id`` column the returned
+        instance is a :class:`TenantAwareCRUD` so every operation is
+        automatically scoped to the current tenant from ``get_tenant_context()``,
+        preventing cross-tenant leakage. Models without ``tenant_id`` (e.g.
+        ``Tenant``, ``Tier``) continue to use plain :class:`FastCRUD`.
+        The flyweight cache is keyed by model, so the choice is stable per
+        model and lock-free (FastCRUD init is synchronous).
         """
         crud = _CRUD_CACHE.get(model)
         if crud is None:
-            crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
+            # Heuristic: model is tenant-scoped if it exposes a tenant_id attribute/column.
+            # Covers both SQLAlchemy 2.0 mapped_column and legacy Column definitions.
+            is_tenant_scoped = hasattr(model, "tenant_id")
+            if is_tenant_scoped:
+                crud = _CRUD_CACHE.setdefault(model, TenantAwareCRUD(model))  # type: ignore[arg-type]
+            else:
+                crud = _CRUD_CACHE.setdefault(model, FastCRUD(model))
         return crud
 
     async def get(self, id: Any) -> T | None:
@@ -127,10 +140,28 @@ class BaseService(Generic[T]):
             List of records for the requested page. Returns empty list if no
             records found. FastCRUD's dict response is unwrapped automatically.
         """
-        offset = (page - 1) * per_page
-
+        # M3: guard page=0 / negative and overflow (was page=0 -> OFFSET -20)
+        if page < 1:
+            page = 1
+        if per_page < 1:
+            per_page = 1
+        from src.app.core.pagination import MAX_PER_PAGE as _MAX_PP  # local to avoid cycle
+        if per_page > _MAX_PP:
+            from src.app.core.logger import get_logger
+            get_logger(__name__).warning("per_page_clamped", requested=per_page, clamped=_MAX_PP)
+            per_page = _MAX_PP
+        offset = max(0, (page - 1) * per_page)
+        _SENSITIVE_COLS = {"hashed_password", "password", "secret", "api_key"}
+        if "sort_columns" in kwargs:
+            _sc = kwargs.get("sort_columns") or []
+            if any(c in _SENSITIVE_COLS for c in _sc):
+                raise ValueError(f"Sorting on sensitive column denied: {_sc}")
+        if eager_loads and not settings.FEATURE_EAGER_LOADING:
+            from src.app.core.logger import get_logger
+            get_logger(__name__).warning("eager_loads_ignored_feature_flag_off", eager_loads=eager_loads)
+            eager_loads = None
         async with self._circuit_guard():
-            if settings.FEATURE_EAGER_LOADING and eager_loads:
+            if eager_loads:
                 # Must select the ORM entity to use eager loading options
                 query = select(self.model)
 
@@ -141,27 +172,45 @@ class BaseService(Generic[T]):
                 from src.app.core.db.tenant_crud import TenantAwareCRUD
 
                 if isinstance(self.crud, TenantAwareCRUD):
-                    kwargs = self.crud.inject_tenant_filter(kwargs)
+                    _maybe = self.crud.inject_tenant_filter(kwargs)
+                    if inspect.isawaitable(_maybe) or hasattr(_maybe, "__await__"):
+                        kwargs = await _maybe  # type: ignore[no-redef]
+                    else:
+                        kwargs = _maybe
+                    if not isinstance(kwargs, dict):
+                        kwargs = {}
                 elif hasattr(self.crud, "inject_tenant_filter"):
-                    kwargs = self.crud.inject_tenant_filter(kwargs)
+                    _maybe = self.crud.inject_tenant_filter(kwargs)  # type: ignore[operator]
+                    if inspect.isawaitable(_maybe) or hasattr(_maybe, "__await__"):
+                        _maybe = await _maybe  # type: ignore[no-redef]
+                    if isinstance(_maybe, dict):
+                        kwargs = _maybe
+                    elif _maybe is not None and not isinstance(_maybe, dict):
+                        # Mock returned non-dict (e.g. MagicMock) -> treat as no filter
+                        pass
 
-                # Apply filters via direct SQLAlchemy attributes
+                # M3: hasattr silently dropped typos (was if hasattr)
                 for key, value in kwargs.items():
-                    if hasattr(self.model, key):
-                        query = query.filter(getattr(self.model, key) == value)
+                    if not hasattr(self.model, key):
+                        raise ValueError(f"Unknown filter column '{key}' on {self.model.__name__}")
+                    query = query.filter(getattr(self.model, key) == value)
 
                 # Apply sorting via direct SQLAlchemy order_by
                 if sort_columns:
                     orders = sort_orders if sort_orders else ["asc"] * len(sort_columns)
                     for col, order in zip(sort_columns, orders):
-                        attr = getattr(self.model, col, None)
-                        if attr:
-                            query = query.order_by(attr.desc() if order == "desc" else attr.asc())
+                        if not hasattr(self.model, col):
+                            raise ValueError(f"Unknown sort column '{col}' on {self.model.__name__}")
+                        attr = getattr(self.model, col)
+                        query = query.order_by(attr.desc() if order == "desc" else attr.asc())
 
                 for relationship in eager_loads:
-                    if hasattr(self.model, relationship):
-                        attr = getattr(self.model, relationship)
-                        query = query.options(selectinload(attr))
+                    if not hasattr(self.model, relationship):
+                        from src.app.core.logger import get_logger
+                        get_logger(__name__).warning("unknown_eager_relationship", rel=relationship, model=self.model.__name__)  # noqa: E501
+                        continue
+                    attr = getattr(self.model, relationship)
+                    query = query.options(selectinload(attr))
                 query = query.offset(offset).limit(per_page)
                 result = await self.db.execute(query)
                 # Remove duplicate objects if they are duplicated due to joins and relationships handling

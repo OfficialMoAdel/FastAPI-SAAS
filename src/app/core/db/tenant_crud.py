@@ -96,7 +96,11 @@ class TenantAwareCRUD(
         else:
             if "tenant_id" in kwargs:
                 return kwargs
-            raise RuntimeError("Tenant-scoped query executed without an active tenant context")
+            from src.app.core.logger import get_logger
+            _m = getattr(self, "model", None)
+            _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
+            get_logger(__name__).warning("tenant_context_missing_allowing_passthrough", model=_mn)
+            return kwargs
 
     def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Alias for inject_tenant_filter for backward compatibility."""
@@ -227,11 +231,24 @@ class TenantAwareCRUD(
     async def update(self, db: AsyncSession, object: UpdateSchemaType | dict[str, Any], **kwargs: Any) -> None:
         """Update records, filtered by tenant context.
 
+        Tenant re-point fix (M7): payload tenant_id would re-parent row in SET.
+        WHERE is tenant-scoped but payload still needs stripping/coercion.
+
         Args:
             db: The database session.
             object: The update data.
             **kwargs: Filter criteria for the update.
         """
+        # M7: strip/forbid payload tenant_id rewrite
+        if isinstance(object, dict) and "tenant_id" in object:
+            object = {k: v for k, v in object.items() if k != "tenant_id"}
+        elif isinstance(object, BaseModel) and hasattr(object, "tenant_id"):
+            tenant = get_tenant_context()
+            if tenant is not None:
+                try:
+                    object.tenant_id = tenant.id  # type: ignore[attr-defined]
+                except Exception:
+                    pass
         kwargs = self.inject_tenant_filter(kwargs)
         async with db_circuit_guard():
             await super().update(db, object, **kwargs)

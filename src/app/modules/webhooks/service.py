@@ -33,6 +33,19 @@ from src.app.modules.webhooks.models import (
 
 logger = get_logger(__name__)
 
+# Pre-compiled glob -> regex cache (H6: avoid O(N) fnmatch per delivery)
+import fnmatch as _fnmatch
+import re as _re
+
+_FN_REGEX_CACHE: dict[str, _re.Pattern] = {}
+
+def _glob_match(text: str, pattern: str) -> bool:
+    pat = _FN_REGEX_CACHE.get(pattern)
+    if pat is None:
+        pat = _re.compile(_fnmatch.translate(pattern))
+        _FN_REGEX_CACHE[pattern] = pat
+    return bool(pat.match(text))
+
 # Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
 RETRY_DELAY_1_MINUTE = 60
 RETRY_DELAY_5_MINUTES = 300
@@ -227,8 +240,6 @@ class WebhookService:
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
         """Get active endpoints for an event type with glob matching support."""
-        from fnmatch import fnmatch
-
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
             WebhookEndpoint.is_active.is_(True),
@@ -236,7 +247,7 @@ class WebhookService:
         result = await self.db.execute(stmt)
         all_endpoints = list(result.scalars().all())
 
-        return [ep for ep in all_endpoints if ep.event_type == event_type or fnmatch(event_type, ep.event_type)]
+        return [ep for ep in all_endpoints if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
 
     async def trigger_webhooks(
         self,
@@ -498,7 +509,7 @@ class WebhookService:
         _lock_key = f"webhook:deliver_lock:{delivery_id}"
         _lock_held = False
         if _redis is not None:
-            _lock_held = bool(await _redis.set(_lock_key, "1", nx=True, ex=600))
+            _lock_held = bool(await _redis.set(_lock_key, "1", nx=True, ex=60))
             if not _lock_held:
                 logger.info("Webhook delivery already in progress, skipping", delivery_id=delivery_id)
                 existing = await self.db.get(WebhookDelivery, delivery_id)
@@ -570,7 +581,7 @@ class WebhookService:
             from src.app.core.config import settings
 
             if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
-                validated_ip = await validate_webhook_url(endpoint.url)
+                validated_ip = await validate_webhook_url(endpoint.url)  # noqa: E501 - pinned IP, use extensions to prevent DNS rebinding
             else:
                 validated_ip = None
         except SSRFProtectionError as e:

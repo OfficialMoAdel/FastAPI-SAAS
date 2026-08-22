@@ -37,7 +37,7 @@ def mock_redis():
     pipeline_mock = AsyncMock()
     pipeline_mock.__aenter__.return_value = pipeline_mock
     # By default, mock execute to return what incr would return
-    pipeline_mock.execute.return_value = [1, True]
+    pipeline_mock.execute.return_value = [1]
     redis.pipeline = MagicMock(return_value=pipeline_mock)
 
     return redis
@@ -55,7 +55,8 @@ class TestIncrementViolations:
     @pytest.mark.asyncio
     async def test_increment_violations_first_time(self, mock_redis, sample_ip):
         """Test incrementing violations for new IP."""
-        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [1, True]
+        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [1]
+        mock_redis.expire = __import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock(return_value=True)
 
         with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
             count = await increment_violations(sample_ip)
@@ -63,17 +64,19 @@ class TestIncrementViolations:
         assert count == 1
         pipe_mock = mock_redis.pipeline.return_value.__aenter__.return_value
         pipe_mock.incr.assert_called_once_with(f"security:violations:{sample_ip}")
-        pipe_mock.expire.assert_called_once()
+        mock_redis.expire.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_increment_violations_multiple(self, mock_redis, sample_ip):
         """Test incrementing violations multiple times."""
-        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [5, True]
+        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [5]
+        mock_redis.expire = __import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock(return_value=True)
 
         with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
             count = await increment_violations(sample_ip)
 
         assert count == 5
+        mock_redis.expire.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_increment_violations_redis_unavailable(self, sample_ip):
@@ -341,7 +344,7 @@ class TestCheckAndAutoBan:
     async def test_check_and_auto_ban_threshold_not_met(self, mock_redis, sample_ip):
         """Test no ban when threshold not met."""
         mock_pipeline = mock_redis.pipeline.return_value.__aenter__.return_value
-        mock_pipeline.execute.return_value = [3, True]  # Below threshold of 5
+        mock_pipeline.execute.return_value = [3]  # Below threshold of 5
 
         with (
             patch("src.app.core.security.auto_ban.redis_client", mock_redis),
@@ -356,7 +359,7 @@ class TestCheckAndAutoBan:
     @pytest.mark.asyncio
     async def test_check_and_auto_ban_threshold_exceeded(self, mock_redis, sample_ip):
         """Test ban when threshold exceeded."""
-        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [5, True]  # At threshold
+        mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [5]  # At threshold
         mock_redis.get.return_value = None
 
         with (
@@ -506,19 +509,19 @@ class TestIntegrationScenarios:
             ),
         ):
             # Violation 1 - no ban
-            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [1, True]
+            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [1]
             banned, count = await check_and_auto_ban(sample_ip)
             assert banned is False
             assert count == 1
 
             # Violation 2 - no ban
-            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [2, True]
+            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [2]
             banned, count = await check_and_auto_ban(sample_ip)
             assert banned is False
             assert count == 2
 
             # Violation 3 - triggers ban (execute returns [3, True])
-            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [3, True]
+            mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [3]
             # When ban_ip is called, it increments historical count
             mock_redis.incr = AsyncMock(return_value=1)  # [ban_count]
             mock_redis.get.side_effect = [None, None]  # Not banned, no count

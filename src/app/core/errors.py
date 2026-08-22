@@ -21,20 +21,6 @@ from starlette.exceptions import HTTPException as StarletteHTTPException
 from structlog import get_logger
 
 from src.app.core.exceptions.cache_exceptions import CacheException
-from src.app.modules._base.exceptions import (
-    DuplicateError,
-    ForbiddenError,
-    ModelNotFoundError,
-    RateLimitExceededError,
-    ServiceUnavailableError,
-    StripeError,
-    TenantContextError,
-)
-from src.app.modules._base.exceptions import (
-    ValidationError as BaseValidationError,
-)
-from src.app.modules.ai.unified_errors import SessionLimitExceededError
-from src.app.modules.billing.exceptions import PaymentRequiredError
 
 logger = get_logger(__name__)
 
@@ -123,6 +109,22 @@ def create_error_response(
 
 
 def setup_exception_handlers(app: FastAPI) -> None:
+    # H7 FIX: Deferred domain imports — breaks core -> modules cycle.
+    from src.app.modules._base.exceptions import (  # type: ignore
+        DuplicateError,
+        ForbiddenError,
+        ModelNotFoundError,
+        RateLimitExceededError,
+        ServiceUnavailableError,
+        StripeError,
+        TenantContextError,
+    )
+    from src.app.modules._base.exceptions import (
+        ValidationError as BaseValidationError,
+    )
+    from src.app.modules.ai.unified_errors import SessionLimitExceededError  # type: ignore
+    from src.app.modules.billing.exceptions import PaymentRequiredError  # type: ignore
+
     """Register global exception handlers on the FastAPI app.
 
     Call this after creating the app:
@@ -165,8 +167,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(ModelNotFoundError)
-    async def model_not_found_handler(request: Request, exc: ModelNotFoundError) -> JSONResponse:
+    @app.exception_handler(ModelNotFoundError)  # type: ignore
+    async def model_not_found_handler(request: Request, exc: ModelNotFoundError) -> JSONResponse:  # type: ignore
         """Handle ModelNotFoundError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -186,8 +188,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(DuplicateError)
-    async def duplicate_error_handler(request: Request, exc: DuplicateError) -> JSONResponse:
+    @app.exception_handler(DuplicateError)  # type: ignore
+    async def duplicate_error_handler(request: Request, exc: DuplicateError) -> JSONResponse:  # type: ignore
         """Handle DuplicateError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -207,8 +209,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(ForbiddenError)
-    async def forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:
+    @app.exception_handler(ForbiddenError)  # type: ignore
+    async def forbidden_error_handler(request: Request, exc: ForbiddenError) -> JSONResponse:  # type: ignore
         """Handle ForbiddenError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -228,8 +230,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(BaseValidationError)
-    async def base_validation_error_handler(request: Request, exc: BaseValidationError) -> JSONResponse:
+    @app.exception_handler(BaseValidationError)  # type: ignore
+    async def base_validation_error_handler(request: Request, exc: BaseValidationError) -> JSONResponse:  # type: ignore
         """Handle ValidationError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -247,8 +249,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(RateLimitExceededError)
-    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceededError) -> JSONResponse:
+    @app.exception_handler(RateLimitExceededError)  # type: ignore
+    async def rate_limit_exceeded_handler(request: Request, exc: RateLimitExceededError) -> JSONResponse:  # type: ignore
         """Handle RateLimitExceededError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -266,8 +268,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(TenantContextError)
-    async def tenant_context_error_handler(request: Request, exc: TenantContextError) -> JSONResponse:
+    @app.exception_handler(TenantContextError)  # type: ignore
+    async def tenant_context_error_handler(request: Request, exc: TenantContextError) -> JSONResponse:  # type: ignore
         """Handle TenantContextError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -287,8 +289,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(ServiceUnavailableError)
-    async def service_unavailable_error_handler(request: Request, exc: ServiceUnavailableError) -> JSONResponse:
+    @app.exception_handler(ServiceUnavailableError)  # type: ignore
+    async def service_unavailable_error_handler(request: Request, exc: ServiceUnavailableError) -> JSONResponse:  # type: ignore
         """Handle ServiceUnavailableError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -306,8 +308,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(StripeError)
-    async def stripe_error_handler(request: Request, exc: StripeError) -> JSONResponse:
+    @app.exception_handler(StripeError)  # type: ignore
+    async def stripe_error_handler(request: Request, exc: StripeError) -> JSONResponse:  # type: ignore
         """Handle StripeError from _base exceptions."""
         request_id = getattr(request.state, "request_id", None)
 
@@ -326,8 +328,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(PaymentRequiredError)
-    async def payment_required_handler(request: Request, exc: PaymentRequiredError) -> JSONResponse:
+    @app.exception_handler(PaymentRequiredError)  # type: ignore
+    async def payment_required_handler(request: Request, exc: PaymentRequiredError) -> JSONResponse:  # type: ignore
         """Handle PaymentRequiredError for billing/payment failures.
 
         Returns HTTP 402 Payment Required with payment error details.
@@ -385,8 +387,8 @@ def setup_exception_handlers(app: FastAPI) -> None:
             request_id=request_id,
         )
 
-    @app.exception_handler(SessionLimitExceededError)
-    async def session_limit_exceeded_handler(request: Request, exc: SessionLimitExceededError) -> JSONResponse:
+    @app.exception_handler(SessionLimitExceededError)  # type: ignore
+    async def session_limit_exceeded_handler(request: Request, exc: SessionLimitExceededError) -> JSONResponse:  # type: ignore
         """Handle SessionLimitExceededError for AI session limits.
 
         Returns HTTP 429 Too Many Requests when session limit is exceeded.

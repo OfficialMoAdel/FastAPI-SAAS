@@ -96,7 +96,11 @@ class RateLimitMiddleware:
                 return
 
         # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
-        if request.url.path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
+        # H5 FIX: normalize path (strip slash/query/case) so /api/v1/auth/refresh/?foo=1 not missed
+        from urllib.parse import urlparse as _urlparse
+        _parsed = _urlparse(str(request.url))
+        _norm_path = _parsed.path.rstrip("/").lower() or "/"
+        if _norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
             await self.app(scope, receive, send)
             return
 
@@ -225,7 +229,8 @@ class RateLimitMiddleware:
 
         # Always extract token from Authorization header for blacklist check
         auth_header = request.headers.get("Authorization", "")
-        token = auth_header[7:] if auth_header.startswith("Bearer ") else None
+        # H5 FIX: case-insensitive Bearer per RFC 6750
+        token = auth_header[7:] if auth_header.lower().startswith("bearer ") else None
 
         cached_payload = get_cached_jwt_payload(request)
         if cached_payload is None and token:
@@ -290,7 +295,7 @@ class RateLimitMiddleware:
 
         if limit is None or period is None:
             # Fallback to settings tier config
-            resolved_tier = tier_name.lower() if tier_name else "anonymous"
+            resolved_tier = str(tier_name).lower() if tier_name else "anonymous"  # H5 FIX: coerce int tier_name
             limit_config = settings.TIER_RATE_LIMITS.get(resolved_tier)
             if limit_config is None:
                 limit_config = settings.DEFAULT_AUTHENTICATED_LIMIT if user_id else settings.DEFAULT_ANONYMOUS_LIMIT

@@ -194,7 +194,7 @@ async def test_refresh_lock_logic():
     await asyncio.sleep(0.1)
 
     lock_key = f"{key}:refresh_lock"
-    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=10)
+    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=5)
 
     # Verify fetch function called
     mock_fetch_func.assert_called_once()
@@ -225,7 +225,7 @@ async def test_refresh_lock_denied():
 
     # Verify lock attempt
     lock_key = f"{key}:refresh_lock"
-    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=10)
+    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=5)
 
     # Verify fetch function NOT called
     mock_fetch_func.assert_not_called()

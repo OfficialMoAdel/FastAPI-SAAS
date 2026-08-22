@@ -7,10 +7,10 @@ import asyncio
 
 from redis.asyncio import ConnectionPool, Redis
 
+import src.app.core.utils.cache as _cache_utils
 from src.app.core.cache.warmer import CacheWarmer, warmer
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as default_client
 
 logger = get_logger(__name__)
 
@@ -46,9 +46,8 @@ class CacheManager:
 
     @property
     def client(self) -> Redis | None:
-        """Get the active Redis client."""
-        # Fallback to the utils/cache.py client for backward compatibility
-        return default_client
+        """Get the active Redis client (live reference, not stale alias)."""
+        return _cache_utils.client
 
 
 # Global instance

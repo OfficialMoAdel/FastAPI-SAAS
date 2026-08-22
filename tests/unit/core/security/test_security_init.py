@@ -551,9 +551,8 @@ async def test_blacklist_token_resolve_tenant_raises() -> None:
             new=AsyncMock(return_value=None),
         ),
     ):
-        # tenant_id cannot be resolved -> ValueError raised (token not blacklisted)
-        with pytest.raises(ValueError):
-            await blacklist_token("atok", db, payload=payload)
+        # H3/H9 unify: missing tenant now warn+return (no ValueError) — consistent with blacklist_tokens
+        await blacklist_token("atok", db, payload=payload)
     db.begin_nested.return_value.__aenter__.assert_not_awaited()
 
 

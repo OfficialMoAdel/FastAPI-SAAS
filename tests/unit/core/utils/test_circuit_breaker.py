@@ -252,20 +252,23 @@ class TestDatabaseCircuitBreaker:
     @pytest.mark.asyncio
     async def test_execute_query_static_fallback(self, real_postgres: AsyncSession):
         """Test fallback to static data when DB fails and no cache."""
-        query = "SELECT * FROM non_existent_table"
+        # DBAPIError subclasses (ProgrammingError/UndefinedTable) no longer trip
+        # the circuit breaker (R4 intentional narrow to OperationalError). Use
+        # an infra error to exercise fallback path. Clean up transaction state
+        # between queries to avoid InFailedSQLTransactionError poisoning.
         fallback_data = [{"id": 0, "name": "fallback"}]
 
-        # Force DB error by using invalid table
-        # This should trigger circuit failure counting
-        try:
-            await execute_query_with_circuit_breaker(db=real_postgres, query=query, fallback_data=fallback_data)
-        except Exception:
-            pass  # Expected failure
-
-        # Manually open circuit to test fallback path
+        # Manually open circuit to test fallback path (skip infra-error-trip)
+        import time as _time
         db_circuit._state = CircuitState.OPEN
+        db_circuit._last_failure_time = _time.time()
 
-        # Now valid query should return fallback because circuit is open
+        # Clean any aborted transaction from prior operations
+        try:
+            await real_postgres.rollback()
+        except Exception:
+            pass
+
         result = await execute_query_with_circuit_breaker(
             db=real_postgres, query="SELECT 1", fallback_data=fallback_data
         )

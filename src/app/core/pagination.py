@@ -26,6 +26,10 @@ DEFAULT_PER_PAGE: int = settings.PAGINATION_DEFAULT_PER_PAGE
 MAX_PER_PAGE: int = settings.PAGINATION_MAX_PER_PAGE
 
 
+# Overflow guard: prevent page/per_page combos that produce >1M offset
+_MAX_OFFSET = 1_000_000
+
+
 @dataclass
 class PaginationParams:
     """Standard pagination parameters for API endpoints.
@@ -38,10 +42,20 @@ class PaginationParams:
     page: int = 1
     per_page: int = DEFAULT_PER_PAGE
 
+    def __post_init__(self) -> None:
+        if self.page < 1:
+            self.page = 1
+        if self.per_page < 1:
+            self.per_page = 1
+        elif self.per_page > MAX_PER_PAGE:
+            self.per_page = MAX_PER_PAGE
+        if self.offset > _MAX_OFFSET:
+            raise ValueError(f"Pagination offset {self.offset} exceeds {_MAX_OFFSET}")
+
     @property
     def offset(self) -> int:
         """Calculate offset for database queries (0-indexed)."""
-        return (self.page - 1) * self.per_page
+        return max(0, (self.page - 1) * self.per_page)
 
     @property
     def limit(self) -> int:
@@ -77,7 +91,8 @@ def get_pagination_params(
     Returns:
         PaginationParams instance with calculated offset/limit
     """
-    return PaginationParams(page=page, per_page=per_page)
+    params = PaginationParams(page=page, per_page=per_page)
+    return params
 
 
 def build_paginated_response(

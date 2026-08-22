@@ -128,7 +128,7 @@ async def test_stampede_protection_lock():
             )
 
             # Check if lock was attempted
-            mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
+            mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=5)
 
             # Check if background task was created
             mock_create_task.assert_called_once()
@@ -153,7 +153,7 @@ async def test_stampede_protection_lock():
         )
 
         # Lock attempt made
-        mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=10)
+        mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=5)
         # But no background task created
         mock_create_task.assert_not_called()
 

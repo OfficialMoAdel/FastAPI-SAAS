@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import inspect
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
@@ -32,8 +33,11 @@ from src.app.core.security.token_blacklist_cache import (
 )
 
 # P2.21: In-memory short-TTL cache for DB token lookups to prevent thundering herds on Redis miss
-_db_fallback_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=5)
+# H3 FIX: ttl=5 for negative (not blacklisted) poisons revocation for 5s. Cache only
+# positive (blacklisted=True) entries; negative results are not cached (fail-closed per call).
+_db_fallback_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=300)
 _in_flight_db_checks: dict[str, asyncio.Task[bool]] = {}
+_db_fallback_lock = asyncio.Lock()
 
 _jwt_logger = get_logger(__name__)
 
@@ -44,6 +48,11 @@ def _get_signing_key() -> str:
     if settings.ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
         return str(settings.JWT_PRIVATE_KEY.get_secret_value())
     return str(settings.SECRET_KEY.get_secret_value())
+
+
+def clear_signing_key_cache() -> None:
+    """Clear signing key cache (call on key rotation). H3: prevents lru_cache staleness."""
+    _get_signing_key.cache_clear()
 
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login", auto_error=False)
@@ -145,27 +154,37 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
     """Helper to perform DB fallback check for token blacklisting."""
     try:
         cache_key = jti if jti else token
+        # Fast path: positive cache (blacklisted=True only; negative not cached — H3)
         if cache_key in _db_fallback_cache:
             return _db_fallback_cache[cache_key]
-        elif cache_key in _in_flight_db_checks:
-            return await _in_flight_db_checks[cache_key]
 
-        async def _check_db() -> bool:
-            _is_bl = False
-            if jti:
-                _is_bl = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
-            if not _is_bl:
-                _is_bl = await crud_token_blacklist.exists(db, token=token)
-            return _is_bl
+        async with _db_fallback_lock:
+            if cache_key in _db_fallback_cache:
+                return _db_fallback_cache[cache_key]
+            if cache_key in _in_flight_db_checks:
+                task = _in_flight_db_checks[cache_key]
+            else:
 
-        task = asyncio.create_task(_check_db())
-        _in_flight_db_checks[cache_key] = task
+                async def _check_db() -> bool:
+                    _is_bl = False
+                    if jti:
+                        _is_bl = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
+                    if not _is_bl:
+                        _is_bl = await crud_token_blacklist.exists(db, token=token)
+                    return _is_bl
+
+                task = asyncio.create_task(_check_db())
+                _in_flight_db_checks[cache_key] = task
+
         try:
             is_blacklisted = await task
-            _db_fallback_cache[cache_key] = is_blacklisted
+            # H3: only cache positive (True) to avoid poisoning revocation; negative stays uncached
+            if is_blacklisted:
+                _db_fallback_cache[cache_key] = True
             return is_blacklisted
         finally:
-            _in_flight_db_checks.pop(cache_key, None)
+            async with _db_fallback_lock:
+                _in_flight_db_checks.pop(cache_key, None)
     except Exception as e:
         _jwt_logger.error("DB fallback failed during token verification. Failing closed.", error=str(e))
         return None
@@ -348,11 +367,17 @@ async def blacklist_tokens(
             async with db.begin_nested():
                 await db.flush()
         except IntegrityError:
+            _r = db.rollback()
+            if inspect.isawaitable(_r):
+                await _r
             _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
 
         try:
             await db.commit()
         except Exception as e:
+            _r = db.rollback()
+            if inspect.isawaitable(_r):
+                await _r
             _jwt_logger.warning("Failed to commit blacklisted tokens to DB", error=str(e))
             return
 
@@ -383,10 +408,7 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                     tenant_id = await _resolve_tenant_id_for_token(payload, db)
                     if not tenant_id:
                         _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
-                        raise ValueError(
-                            "Cannot blacklist token: tenant_id could not be determined. "
-                            "Ensure user has a valid tenant association."
-                        )
+                        return
 
                 async with db.begin_nested():
                     await crud_token_blacklist.create(
@@ -403,6 +425,9 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                 else:
                     await add_token_to_blacklist(token, expires_at)
             except IntegrityError:
+                _r = db.rollback()
+                if inspect.isawaitable(_r):
+                    await _r
                 _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))

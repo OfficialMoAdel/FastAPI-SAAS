@@ -10,7 +10,6 @@ from typing import Any
 from fastapi import HTTPException, status
 from sqlalchemy import Executable, text
 from sqlalchemy.exc import (
-    DBAPIError,
     DisconnectionError,
     OperationalError,
 )
@@ -26,12 +25,15 @@ from src.app.core.utils.circuit_breaker import CircuitState
 
 logger = get_logger(__name__)
 
-# Infrastructure errors that indicate DB outage/unavailability
+# Infrastructure errors that indicate DB outage/unavailability.
+# DBAPIError is intentionally excluded: it is the base for IntegrityError /
+# DataError / ProgrammingError which are business-logic errors and must NOT
+# trip the circuit breaker (otherwise duplicate-key / validation errors would
+# open the circuit under load).
 DB_INFRASTRUCTURE_ERRORS = (
     OperationalError,
     SQLAlchemyTimeoutError,
     DisconnectionError,
-    DBAPIError,
     asyncio.TimeoutError,
     ConnectionError,
     OSError,
@@ -97,7 +99,15 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         )
         raise
     except Exception:
-        # Business errors (IntegrityError, 404s, validation) do not trip the DB circuit breaker
+        # Business errors (IntegrityError, 404s, validation) do not trip
+        # the DB circuit breaker, but MUST clear the HALF_OPEN probe flag
+        # so the next recovery window can actually probe (otherwise wedge).
+        if getattr(db_circuit, "_probe_in_progress", False):
+            try:
+                async with db_circuit._get_lock():
+                    db_circuit._probe_in_progress = False
+            except Exception:
+                db_circuit._probe_in_progress = False  # best-effort fallback
         raise
 
 

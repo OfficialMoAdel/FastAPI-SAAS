@@ -141,25 +141,29 @@ class TestProductService:
                 await service.get_product(product_id)
 
     @pytest.mark.asyncio
-    async def test_get_products_list(self, mock_db_session):
+    async def test_get_products_list(self, mock_db_session, mock_tenant):
         """Test listing all products."""
         mock_result = {
             "data": [
-                {"id": 1, "tenant_id": 1, "name": "Product 1", "is_active": True},
-                {"id": 2, "tenant_id": 1, "name": "Product 2", "is_active": True},
+                {"id": 1, "tenant_id": mock_tenant.id, "name": "Product 1", "is_active": True},
+                {"id": 2, "tenant_id": mock_tenant.id, "name": "Product 2", "is_active": True},
             ],
             "total_count": 2,
         }
 
         with patch(
-            "src.app.modules.billing.crud.crud_products.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_result,
+            "src.app.modules.billing.service.get_current_tenant",
+            return_value=mock_tenant,
         ):
-            from src.app.modules.billing.service import ProductService
+            with patch(
+                "src.app.modules.billing.crud.crud_products.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_result,
+            ):
+                from src.app.modules.billing.service import ProductService
 
-            service = ProductService(mock_db_session)
-            result = await service.get_products()
+                service = ProductService(mock_db_session)
+                result = await service.get_products()
 
             assert result["data"][0]["name"] == "Product 1"
 
@@ -418,24 +422,28 @@ class TestProductServiceValidation:
                 mock_create.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_get_products_filters_by_active(self, mock_db_session):
+    async def test_get_products_filters_by_active(self, mock_db_session, mock_tenant):
         """Test listing products with active filter."""
         mock_active_products = {
             "data": [
-                {"id": 1, "tenant_id": 1, "name": "Active Product", "is_active": True},
+                {"id": 1, "tenant_id": mock_tenant.id, "name": "Active Product", "is_active": True},
             ],
             "total_count": 1,
         }
 
         with patch(
-            "src.app.modules.billing.crud.crud_products.get_multi",
-            new_callable=AsyncMock,
-            return_value=mock_active_products,
+            "src.app.modules.billing.service.get_current_tenant",
+            return_value=mock_tenant,
         ):
-            from src.app.modules.billing.service import ProductService
+            with patch(
+                "src.app.modules.billing.crud.crud_products.get_multi",
+                new_callable=AsyncMock,
+                return_value=mock_active_products,
+            ):
+                from src.app.modules.billing.service import ProductService
 
-            service = ProductService(mock_db_session)
-            result = await service.get_products(is_active=True)
+                service = ProductService(mock_db_session)
+                result = await service.get_products(is_active=True)
 
             assert len(result["data"]) == 1
             assert result["data"][0]["is_active"] is True

@@ -571,7 +571,7 @@ async def get_with_stampede_protection(
                 lock_key = f"{key}:refresh_lock"
                 # Try to acquire lock for 10s (short duration just for the trigger)
                 # nx=True ensures we only get it if it doesn't exist
-                lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
 
                 if lock_acquired:
                     stampede_logger.debug(
@@ -596,7 +596,7 @@ async def get_with_stampede_protection(
 
     # Cache miss - use lock-based fetch to prevent thundering herd
     lock_key = f"{key}:refresh_lock"
-    lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+    lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
     if lock_acquired:
         try:
             return await _refresh_cache(key, fetch_func, ttl)
@@ -1067,13 +1067,31 @@ def cache(  # noqa: C901
                             import random
                             if random.random() < probability:
                                 lock_key = f"{cache_key}:refresh_lock"
-                                lock_acquired = await client.set(lock_key, "1", nx=True, ex=10)
+                                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
                                 if lock_acquired:
                                     # We got the lock. Act as if cache miss to force synchronous refresh.
                                     cached_data = None
                                     request.state.cache_refresh_lock_key = lock_key
 
                     if cached_data is not None:
+                        # H2 FIX: re-apply route response_model on cache hit so exclude/alias are not bypassed
+                        try:
+                            route = request.scope.get("route")  # type: ignore[attr-defined]
+                            response_model = getattr(route, "response_model", None) if route else None
+                            if response_model is not None:
+                                import json as _json
+                                raw = _json.loads(cached_data) if isinstance(cached_data, str | bytes) else cached_data
+                                if hasattr(response_model, "model_validate"):
+                                    validated = response_model.model_validate(raw)
+                                    filtered = validated.model_dump(mode="json", by_alias=True)
+                                else:
+                                    validated = response_model.parse_obj(raw)
+                                    filtered = validated.dict(by_alias=True)
+                                if filtered is not None:
+                                    import json as _j2
+                                    cached_data = _j2.dumps(filtered, default=str)
+                        except Exception:
+                            pass
                         # P6: Skip re-parse - return raw JSON bytes directly
                         return Response(content=cached_data, media_type="application/json")
 
