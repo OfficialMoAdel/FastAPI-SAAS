@@ -96,11 +96,16 @@ class TenantAwareCRUD(
         else:
             if "tenant_id" in kwargs:
                 return kwargs
+            from src.app.core.exceptions.http_exceptions import TenantContextError
             from src.app.core.logger import get_logger
             _m = getattr(self, "model", None)
             _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
-            get_logger(__name__).warning("tenant_context_missing_allowing_passthrough", model=_mn)
-            return kwargs
+            get_logger(__name__).error("tenant_context_missing_rejected", model=_mn)
+            # Allow explicitly unscoped system queries via allow_unscoped flag
+            if kwargs.pop("_allow_unscoped", False) is True:
+                get_logger(__name__).warning("tenant_context_missing_allowed_via_flag", model=_mn)
+                return kwargs
+            raise TenantContextError(f"Tenant-scoped query on {_mn} without active tenant context")
 
     def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Alias for inject_tenant_filter for backward compatibility."""

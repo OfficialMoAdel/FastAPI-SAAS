@@ -73,12 +73,11 @@ async def db_circuit_guard() -> AsyncIterator[None]:
     if current_state == CircuitState.HALF_OPEN:
         async with db_circuit._get_lock():
             if db_circuit.state == CircuitState.HALF_OPEN:
-                if getattr(db_circuit, "_probe_in_progress", False):
+                if not db_circuit.try_acquire_probe():
                     raise HTTPException(
                         status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                         detail="Database service temporarily degraded. Probing recovery.",
                     )
-                db_circuit._probe_in_progress = True
             elif db_circuit.state == CircuitState.OPEN:
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -102,12 +101,7 @@ async def db_circuit_guard() -> AsyncIterator[None]:
         # Business errors (IntegrityError, 404s, validation) do not trip
         # the DB circuit breaker, but MUST clear the HALF_OPEN probe flag
         # so the next recovery window can actually probe (otherwise wedge).
-        if getattr(db_circuit, "_probe_in_progress", False):
-            try:
-                async with db_circuit._get_lock():
-                    db_circuit._probe_in_progress = False
-            except Exception:
-                db_circuit._probe_in_progress = False  # best-effort fallback
+        await db_circuit.clear_probe_async()
         raise
 
 
@@ -167,9 +161,8 @@ async def execute_query_with_circuit_breaker(
     if current_state == CircuitState.HALF_OPEN:
         async with db_circuit._get_lock():
             if db_circuit.state == CircuitState.HALF_OPEN:
-                if getattr(db_circuit, "_probe_in_progress", False):
+                if not db_circuit.try_acquire_probe():
                     raise RuntimeError("Database circuit breaker is probing recovery and no fallback available")
-                db_circuit._probe_in_progress = True
             elif db_circuit.state == CircuitState.OPEN:
                 raise RuntimeError("Database circuit breaker is OPEN and no fallback available")
         logger.debug("Database circuit HALF_OPEN — allowing test request")

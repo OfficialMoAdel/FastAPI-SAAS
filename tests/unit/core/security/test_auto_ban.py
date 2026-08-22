@@ -40,6 +40,10 @@ def mock_redis():
     pipeline_mock.execute.return_value = [1]
     redis.pipeline = MagicMock(return_value=pipeline_mock)
 
+    # increment_violations prefers the atomic EVAL (Lua) path. Force the
+    # pipeline fallback branch so pipeline-based assertions are deterministic.
+    redis.eval = AsyncMock(side_effect=NotImplementedError("EVAL not supported by test mock"))
+
     return redis
 
 
@@ -77,6 +81,20 @@ class TestIncrementViolations:
 
         assert count == 5
         mock_redis.expire.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_increment_violations_uses_atomic_eval(self, mock_redis, sample_ip):
+        """Test that the atomic EVAL (Lua INCR + conditional EXPIRE) path is preferred."""
+        mock_redis.eval = AsyncMock(return_value=1)
+
+        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+            count = await increment_violations(sample_ip)
+
+        assert count == 1
+        args = mock_redis.eval.call_args.args
+        assert "INCR" in args[0]
+        assert args[1] == 1
+        assert args[2] == f"security:violations:{sample_ip}"
 
     @pytest.mark.asyncio
     async def test_increment_violations_redis_unavailable(self, sample_ip):

@@ -9,11 +9,30 @@ This test suite verifies that:
 
 from __future__ import annotations
 
+import uuid
+from collections.abc import Generator
+
 import pytest
 from fastcrud import JoinConfig
 
+from src.app.core.tenancy.context import TenantContext, clear_tenant_context, set_current_tenant
 from src.app.modules._base.service import BaseService
 from src.app.modules.users.models import User
+
+
+@pytest.fixture(autouse=True)
+def _tenant_context() -> Generator[None, None, None]:
+    """Provide an active tenant context for tenant-scoped CRUD queries."""
+    set_current_tenant(
+        TenantContext(
+            tenant_id=uuid.UUID("00000000-0000-0000-0000-000000000001"),
+            tenant_slug="test-tenant",
+            tenant_name="Test Tenant",
+            is_active=True,
+        )
+    )
+    yield
+    clear_tenant_context()
 
 
 class TestBaseServiceGetMultiJoined:

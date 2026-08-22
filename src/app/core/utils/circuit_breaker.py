@@ -185,6 +185,25 @@ class CircuitBreaker:
         """
         self._lock = asyncio.Lock()
 
+    def try_acquire_probe(self) -> bool:
+        """Try to acquire the HALF_OPEN probe slot (non-blocking, caller must hold lock externally)."""
+        if self._probe_in_progress:
+            return False
+        self._probe_in_progress = True
+        return True
+
+    def release_probe(self) -> None:
+        """Release probe slot (idempotent)."""
+        self._probe_in_progress = False
+
+    async def clear_probe_async(self) -> None:
+        """Async-safe probe release for use in exception handlers."""
+        try:
+            async with self._get_lock():
+                self._probe_in_progress = False
+        except Exception:
+            self._probe_in_progress = False
+
 
 class CircuitBreakerOpen(Exception):
     """Raised when circuit is open and call is rejected."""

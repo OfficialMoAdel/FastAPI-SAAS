@@ -64,18 +64,27 @@ async def increment_violations(client_ip: str) -> int:
     key = VIOLATIONS_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # H4: EXPIRE only on first INCR — prior pipeline reset TTL on every hit
-        # which slid the violation window indefinitely. We keep pipeline for
-        # test compat (mock expects pipeline), but execute INCR alone then
-        # conditionally EXPIRE only when count==1 (fixed window).
-        async with redis_client.pipeline() as pipe:
-            pipe.incr(key)
-            results = await pipe.execute()
-        count = int(results[0])
-        if count == 1:
-            ttl = get_violations_ttl()
-            await redis_client.expire(key, ttl)
-        return count
+        ttl = get_violations_ttl()
+        # Atomic fixed-window increment: INCR + conditional EXPIRE only if first hit.
+        # Use Lua to avoid race between INCR and EXPIRE and to keep window from sliding.
+        try:
+            # Prefer EVAL for true atomicity
+            result = await redis_client.eval(  # type: ignore[misc]
+                "local c=redis.call('INCR',KEYS[1]); if c==1 then redis.call('EXPIRE',KEYS[1],ARGV[1]) end; return c",
+                1,
+                key,
+                str(ttl),
+            )
+            return int(result)  # type: ignore[arg-type]
+        except Exception:
+            # Fallback for FakeRedis / test mocks that don't support EVAL but support pipeline
+            async with redis_client.pipeline() as pipe:
+                pipe.incr(key)
+                results = await pipe.execute()
+            count = int(results[0])
+            if count == 1:
+                await redis_client.expire(key, ttl)
+            return count
     except Exception as e:
         logger.error("Failed to increment violations for %s: %s", client_ip, e)
         return 0

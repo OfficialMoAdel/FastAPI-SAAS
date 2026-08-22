@@ -15,7 +15,7 @@ Usage:
 from dataclasses import dataclass
 from typing import Any
 
-from fastapi import Query
+from fastapi import HTTPException, Query, status
 
 from src.app.core.config import settings
 
@@ -50,7 +50,10 @@ class PaginationParams:
         elif self.per_page > MAX_PER_PAGE:
             self.per_page = MAX_PER_PAGE
         if self.offset > _MAX_OFFSET:
-            raise ValueError(f"Pagination offset {self.offset} exceeds {_MAX_OFFSET}")
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail=f"Pagination offset {self.offset} exceeds {_MAX_OFFSET}",
+            )
 
     @property
     def offset(self) -> int:

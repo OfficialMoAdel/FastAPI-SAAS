@@ -354,8 +354,9 @@ async def blacklist_tokens(
                     if jti:
                         jti_key = f"jti:{jti}"
                         db.add(TokenBlacklist(token=jti_key, expires_at=expires_at, tenant_id=tenant_id))
-
-                    cache_key = jti_key if jti else token
+                        cache_key = jti_key
+                    else:
+                        cache_key = token
                     tokens_for_cache.append((cache_key, expires_at))
                 except Exception as e:
                     _jwt_logger.warning("Error preparing token for blacklist", error=str(e))
@@ -407,7 +408,16 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                 if not tenant_id:
                     tenant_id = await _resolve_tenant_id_for_token(payload, db)
                     if not tenant_id:
-                        _jwt_logger.warning("Could not determine tenant_id for token blacklisting")
+                        _jwt_logger.warning(
+                            "Could not determine tenant_id for token blacklisting, "
+                            "using Redis fallback"
+                        )
+                        # Fail-closed: still blacklist in Redis even without tenant_id
+                        if jti:
+                            jti_key = f"jti:{jti}"
+                            await add_token_to_blacklist(jti_key, expires_at)
+                        else:
+                            await add_token_to_blacklist(token, expires_at)
                         return
 
                 async with db.begin_nested():
@@ -419,11 +429,11 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                         await crud_token_blacklist.create(
                             db, object=TokenBlacklistCreate(token=jti_key, expires_at=expires_at, tenant_id=tenant_id)
                         )
+                        cache_key = jti_key
+                    else:
+                        cache_key = token
                 await db.commit()
-                if jti:
-                    await add_token_to_blacklist(jti_key, expires_at)
-                else:
-                    await add_token_to_blacklist(token, expires_at)
+                await add_token_to_blacklist(cache_key, expires_at)
             except IntegrityError:
                 _r = db.rollback()
                 if inspect.isawaitable(_r):

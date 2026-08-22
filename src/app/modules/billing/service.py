@@ -494,20 +494,15 @@ class PricingService(BaseService[Pricing]):
         if is_active is not None:
             filters["is_active"] = is_active
         if product_id is None:
-            # Scope to tenant products: Pricing has no tenant_id column, so filter via tenant product set
+            # Pricing has no tenant_id; must filter via tenant-owned products.
+            # Pre-fetch tenant product IDs then use DB-side IN filter to avoid
+            # loading and filtering in Python (which breaks pagination/total).
             prod_rows = await crud_products.get_multi(db=self.db, tenant_id=tenant.id, limit=1000, offset=0, schema_to_select=ProductRead)  # noqa: E501
             ids = [r["id"] if isinstance(r, dict) else r.id for r in prod_rows.get("data", [])] if isinstance(prod_rows, dict) else []  # noqa: E501
             if not ids:
                 return {"data": [], "total_count": 0}
-            result = await crud_pricing.get_multi(db=self.db, offset=offset, limit=limit, schema_to_select=PricingRead, **filters)  # noqa: E501
-            data = result.get("data", []) if isinstance(result, dict) else result
-            id_set = set(ids)
-            filtered = [r for r in data if (r.get("product_id") if isinstance(r, dict) else r.product_id) in id_set]
-            if isinstance(result, dict):
-                result["data"] = filtered
-                result["total_count"] = len(filtered)
-                return result
-            return {"data": filtered, "total_count": len(filtered)}
+            # Pass tenant product IDs to crud for proper WHERE product_id IN (...) so DB handles pagination/count
+            return await crud_pricing.get_multi(db=self.db, offset=offset, limit=limit, schema_to_select=PricingRead, product_ids=ids, **filters)  # noqa: E501
         return await crud_pricing.get_multi(
             db=self.db,
             offset=offset,
@@ -573,4 +568,3 @@ from src.app.modules.billing.subscription_service import (  # noqa: E402, F401
     get_subscription_plan_service,
     get_user_subscription_service,
 )
-

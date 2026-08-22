@@ -96,9 +96,12 @@ class BaseService(Generic[T]):
         """
         crud = _CRUD_CACHE.get(model)
         if crud is None:
-            # Heuristic: model is tenant-scoped if it exposes a tenant_id attribute/column.
-            # Covers both SQLAlchemy 2.0 mapped_column and legacy Column definitions.
-            is_tenant_scoped = hasattr(model, "tenant_id")
+            # Robust check: inspect actual table columns, not hasattr (which can be
+            # spoofed by descriptors / __getattr__ and caused false tenant-scoping).
+            try:
+                is_tenant_scoped = "tenant_id" in getattr(getattr(model, "__table__", None), "c", {})  # type: ignore[union-attr]
+            except Exception:
+                is_tenant_scoped = False
             if is_tenant_scoped:
                 crud = _CRUD_CACHE.setdefault(model, TenantAwareCRUD(model))  # type: ignore[arg-type]
             else:
