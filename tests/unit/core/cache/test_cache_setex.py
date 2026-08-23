@@ -17,8 +17,8 @@ class TestSetexUsage:
         """Verify cache.set_with_ttl uses SETEX."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
-        source = cache_path.read_text()
+        cache_dir = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache"
+        source = "\n".join(p.read_text() for p in sorted(cache_dir.glob("*.py")))
 
         # Verify setex is used for cache writes with TTL
         assert "setex" in source.lower()
@@ -204,8 +204,8 @@ class TestNoSeparateExpireCalls:
         """Verify cache.py doesn't use SET followed by EXPIRE."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
-        source = cache_path.read_text()
+        cache_dir = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache"
+        source = "\n".join(p.read_text() for p in sorted(cache_dir.glob("*.py")))
         lines = source.split("\n")
 
         # Look for patterns like:
@@ -222,8 +222,8 @@ class TestNoSeparateExpireCalls:
         """Verify SET with ex= parameter is also acceptable (equivalent to SETEX)."""
         from pathlib import Path
 
-        cache_path = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache.py"
-        source = cache_path.read_text()
+        cache_dir = Path(__file__).parents[4] / "src" / "app" / "core" / "utils" / "cache"
+        source = "\n".join(p.read_text() for p in sorted(cache_dir.glob("*.py")))
 
         # SET with ex= is fine (atomic like SETEX)
         # Example: await client.set(key, value, ex=ttl)

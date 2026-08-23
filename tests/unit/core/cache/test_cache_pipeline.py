@@ -59,9 +59,9 @@ class TestCachePipeline:
         # Read the source to verify pipeline pattern
         import inspect
 
-        from src.app.core.utils import cache
+        from src.app.core.utils.cache import decorator
 
-        source = inspect.getsource(cache)
+        source = inspect.getsource(decorator)
 
         # Check for pipeline usage in cache invalidation
         assert "pipeline()" in source
