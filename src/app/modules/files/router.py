@@ -13,10 +13,9 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.files.schemas import (
     FileList,
     FileRead,
@@ -35,7 +34,6 @@ from src.app.modules.files.service import (
     get_file_service,
 )
 from src.app.modules.storage_settings import StorageNotConfiguredError
-from src.app.modules.tenants import Tenant
 
 router = APIRouter(prefix="/files", tags=["files"])
 
@@ -47,9 +45,8 @@ router = APIRouter(prefix="/files", tags=["files"])
     dependencies=[Depends(requires_permission(Permission.FILES_WRITE))],
 )
 async def upload_file(
+    ctx: RequestContextDep,
     file: UploadFile = File(..., description="File to upload"),
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Upload a file to tenant storage.
@@ -79,8 +76,8 @@ async def upload_file(
 
     try:
         result = await service.upload_file(
-            tenant_id=tenant.id,
-            user_id=get_user_attr(_user, "id"),
+            tenant_id=ctx.tenant_id,
+            user_id=ctx.user_id,
             file=file.file,
             filename=file.filename or "unnamed",
             mime_type=(
@@ -126,12 +123,11 @@ async def upload_file(
     dependencies=[Depends(requires_permission(Permission.FILES_READ))],
 )
 async def list_files(
+    ctx: RequestContextDep,
     user_id: int | None = Query(None, description="Filter by owner user ID"),
     mime_type: str | None = Query(None, description="Filter by MIME type"),
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(50, ge=1, le=100, description="Page size"),
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """List files for the current tenant.
@@ -144,7 +140,7 @@ async def list_files(
     offset = (page - 1) * per_page
 
     files_data = await service.list_files(
-        tenant_id=tenant.id,
+        tenant_id=ctx.tenant_id,
         user_id=user_id,
         mime_type=mime_type,
         limit=per_page,
@@ -166,8 +162,7 @@ async def list_files(
 
 @router.get("/quota", response_model=QuotaResponse, dependencies=[Depends(requires_permission(Permission.FILES_READ))])
 async def get_quota(
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
+    ctx: RequestContextDep,
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Get active storage quota and usage.
@@ -178,9 +173,9 @@ async def get_quota(
     from src.app.modules.storage_settings.service import StorageSettingsService
 
     settings_service = StorageSettingsService(service.db)
-    settings = await settings_service.get_settings_or_raise(tenant.id)
+    settings = await settings_service.get_settings_or_raise(ctx.tenant_id)
 
-    count, used = await service._get_quota_stats(tenant.id)
+    count, used = await service._get_quota_stats(ctx.tenant_id)
     limit = settings.storage_quota_bytes
     remaining = max(0, limit - used)
 
@@ -198,8 +193,7 @@ async def get_quota(
 )
 async def download_file(
     file_id: int,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
+    ctx: RequestContextDep,
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Download a file.
@@ -216,12 +210,12 @@ async def download_file(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
+        file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=ctx.user_id)
 
         # SECURITY FIX: RFC 5987 content-disposition
         filename_encoded = quote(file.original_name)
         return StreamingResponse(
-            service.download_file(tenant.id, file_id, user_id=get_user_attr(_user, "id")),
+            service.download_file(ctx.tenant_id, file_id, user_id=ctx.user_id),
             media_type=file.mime_type,
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
@@ -243,8 +237,7 @@ async def download_file(
 )
 async def get_file_info(
     file_id: int,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
+    ctx: RequestContextDep,
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Get file metadata without downloading.
@@ -259,7 +252,7 @@ async def get_file_info(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
+        file = await service.get_file_or_raise(ctx.tenant_id, file_id, user_id=ctx.user_id)
         return file
 
     except FileServiceNotFoundError:
@@ -275,10 +268,9 @@ async def get_file_info(
     dependencies=[Depends(requires_permission(Permission.FILES_READ))],
 )
 async def get_signed_url(
+    ctx: RequestContextDep,
     file_id: int,
     expires_in: int = Query(3600, ge=60, le=86400, description="Expiration in seconds"),
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Get a signed URL for file access.
@@ -296,7 +288,7 @@ async def get_signed_url(
         404: If file not found.
     """
     try:
-        url = await service.get_signed_url(tenant.id, file_id, expires_in, user_id=get_user_attr(_user, "id"))
+        url = await service.get_signed_url(ctx.tenant_id, file_id, expires_in, user_id=ctx.user_id)
         return SignedUrlResponse(url=url, expires_in=expires_in)
 
     except FileServiceNotFoundError:
@@ -314,8 +306,7 @@ async def get_signed_url(
 async def update_file(
     file_id: int,
     data: FileUpdate,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
+    ctx: RequestContextDep,
     service: FileService = Depends(get_file_service),
 ) -> Any:
     """Update file metadata.
@@ -331,7 +322,7 @@ async def update_file(
         404: If file not found.
     """
     try:
-        file = await service.update_file(tenant.id, file_id, data, user_id=get_user_attr(_user, "id"))
+        file = await service.update_file(ctx.tenant_id, file_id, data, user_id=ctx.user_id)
         return file
 
     except FileServiceNotFoundError:
@@ -349,8 +340,7 @@ async def update_file(
 )
 async def delete_file(
     file_id: int,
-    tenant: Tenant = Depends(get_current_tenant),
-    _user: Any = Depends(get_current_user),
+    ctx: RequestContextDep,
     service: FileService = Depends(get_file_service),
 ) -> Response:
     """Delete a file.
@@ -364,7 +354,7 @@ async def delete_file(
         404: If file not found.
     """
     try:
-        await service.delete_file(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
+        await service.delete_file(ctx.tenant_id, file_id, user_id=ctx.user_id)
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except FileServiceNotFoundError:

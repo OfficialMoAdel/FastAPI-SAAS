@@ -4,6 +4,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import UploadFile
 
+from src.app.api.deps.request_context import RequestContext
+from src.app.core.tenancy.context import TenantContext
 from src.app.modules.files.router import upload_file
 from src.app.modules.storage.local_storage import CHUNK_SIZE, LocalStorage
 from src.app.modules.storage.s3_storage import S3Storage
@@ -23,8 +25,18 @@ async def test_router_upload_file_optimization():
     mock_file.read = AsyncMock()  # Should NOT be called
 
     # Mock dependencies
-    mock_tenant = MagicMock(id=uuid.uuid4())
-    mock_user = MagicMock(id=uuid.uuid4())  # Added user mock
+    mock_tenant_id = uuid.uuid4()
+    tenant_ctx = TenantContext(
+        tenant_id=mock_tenant_id,
+        tenant_slug="acme",
+        tenant_name="Acme",
+        is_active=True,
+    )
+    ctx = RequestContext(
+        user=MagicMock(id=12345),  # AuthenticatedUser-like; only .id accessed via get_user_attr
+        tenant=tenant_ctx,
+        db=MagicMock(),
+    )
     mock_service = AsyncMock()
     # Mock service result
     mock_result = MagicMock()
@@ -40,8 +52,7 @@ async def test_router_upload_file_optimization():
     with patch("src.app.modules.files.router.get_file_service", return_value=mock_service):
         await upload_file(
             file=mock_file,
-            tenant=mock_tenant,
-            _user=mock_user,  # Use _user (matches router parameter name)
+            ctx=ctx,
             service=mock_service,
         )
 

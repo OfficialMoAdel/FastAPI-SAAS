@@ -16,6 +16,11 @@ from src.app.api.deps.auth import (
     requires_api_key_scope,
 )
 from src.app.api.deps.core import rate_limiter_dependency
+from src.app.api.deps.request_context import (
+    RequestContext,
+    RequestContextDep,
+    get_request_context,
+)
 from src.app.api.deps.tenant import get_current_tenant
 
 __all__ = [
@@ -30,4 +35,7 @@ __all__ = [
     "get_current_superuser",
     "get_current_tenant",
     "rate_limiter_dependency",
+    "RequestContext",
+    "RequestContextDep",
+    "get_request_context",
 ]
