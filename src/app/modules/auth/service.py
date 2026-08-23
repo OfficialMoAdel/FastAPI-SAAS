@@ -1,8 +1,5 @@
 """Auth service layer - encapsulates all authentication business logic."""
 
-import asyncio
-import random
-from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
 
@@ -10,7 +7,6 @@ from fastapi import Request, Response
 from jwt import ExpiredSignatureError
 from jwt.exceptions import PyJWTError as JWTError
 from redis.asyncio import Redis
-from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from structlog import get_logger
 
@@ -21,23 +17,17 @@ from src.app.core.security import (
     TokenType,
     blacklist_token,
     blacklist_tokens,
-    create_access_token,
-    create_refresh_token,
     get_mfa_pending_token_manager,
-    get_password_hash,
     verify_password,
     verify_token,
 )
-from src.app.core.security.tokens import hash_token
 from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.core.utils.ip_utils import get_client_ip
-from src.app.modules.auth.models import (
-    EmailVerificationToken,
-    PasswordResetToken,
-    generate_reset_token,
-    generate_verification_token,
-)
+from src.app.modules.auth.services.email_verification import EmailVerificationService
+from src.app.modules.auth.services.lockout import LoginLockoutPolicy
+from src.app.modules.auth.services.passwords import PasswordLifecycleService
+from src.app.modules.auth.services.tokens import TokenIssuer
 
 logger = get_logger(__name__)
 
@@ -60,20 +50,6 @@ class AuthService:
     # Used when user doesn't exist to ensure constant-time authentication.
     _DUMMY_BCRYPT_HASH = "$2b$12$DOUePotH1f1kDX4WZ21DzuRgFk7C8xFhasEURTDHCx1KnvQstFIvi"  # noqa: S105
 
-    # Atomic Lua script for login attempt checking.
-    # Combines lockout check + increment + expire into single Redis roundtrip.
-    # Returns -1 if locked out, otherwise the new attempt count.
-    # OPT-11: Always execute EXPIRE to ensure constant-time Redis operations regardless of user existence.
-    _LOGIN_CHECK_LUA = """
-local attempts = redis.call('GET', KEYS[1])
-if attempts and tonumber(attempts) >= tonumber(ARGV[1]) then
-    return -1
-end
-local new_attempts = redis.call('INCR', KEYS[1])
--- SECURITY FIX: Always set/refresh expiry to ensure constant timing and prevent enumeration
-redis.call('EXPIRE', KEYS[1], tonumber(ARGV[2]))
-return new_attempts
-"""
 
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
@@ -197,26 +173,11 @@ return new_attempts
         # SECURITY FIX: Normalize username for consistent lockout tracking
         # Prevents bypass via case variations (e.g., User@example.com vs user@example.com)
         normalized_username = username.lower().strip()
-        login_attempts_key = f"login_attempts:{normalized_username}"
 
         # SECURITY FIX: Check lockout BEFORE authentication to prevent CPU exhaustion (DoS)
-        # Atomic Lua script: check lockout + increment in single roundtrip
-        # Returns: -1 if locked out, otherwise the new attempt count
         # This records the attempt tentatively. If login succeeds, we clear it.
-        result = await redis.eval(  # type: ignore[misc]
-            self._LOGIN_CHECK_LUA,
-            1,
-            login_attempts_key,
-            str(settings.AUTH_MAX_LOGIN_ATTEMPTS),
-            str(settings.AUTH_LOCKOUT_DURATION_SECONDS),
-        )
-
-        # BUG FIX: Coerce result to int to handle bytes when Redis client is not initialized
-        # with decode_responses=True. Without this, b'-1' != -1, disabling lockout entirely.
-        try:
-            result = int(result)
-        except (TypeError, ValueError):
-            result = -1  # Fail-closed: default to locked on Redis error
+        lockout = LoginLockoutPolicy()
+        result = await lockout.check_and_increment(redis, normalized_username)
 
         if result == -1:
             # Fetch user to get tenant and user ID for audit log
@@ -248,7 +209,7 @@ return new_attempts
             raise UnauthorizedException("User account is no longer active.")
 
         # Clear failed attempts on success (single roundtrip)
-        await redis.delete(login_attempts_key)
+        await lockout.clear(redis, normalized_username)
 
         # Check if MFA is enabled for this user
         from src.app.modules.mfa.service import get_mfa_service
@@ -313,25 +274,12 @@ return new_attempts
             dict with access_token and token_type.
         """
         # Include tier info in JWT claims for Zero-DB rate limiting
-        # tier_name allows middleware to apply correct limits without DB lookup
         # SECURITY FIX: Include token_version for session invalidation on password change
         # SECURITY FIX: Include tenant_id for tenant context validation
-        tier = user.get("tier")
-        tier_name = tier.get("name") if tier else None
-        token_data: dict[str, Any] = {
-            "sub": user["username"],
-            "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
-            "tier_id": user.get("tier_id"),
-            "tier_name": tier_name,
-            "token_version": user.get("token_version", 0),
-        }
+        token_data = TokenIssuer.build_token_data(subject=user["username"], user=user)
 
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         # Generate both tokens in parallel using asyncio.gather for better performance
-        access_token, refresh_token = await asyncio.gather(
-            create_access_token(data=token_data, expires_delta=access_token_expires),
-            create_refresh_token(data=token_data),
-        )
+        access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
 
         # Cookie security settings based on environment
         from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
@@ -394,19 +342,9 @@ return new_attempts
             raise UnauthorizedException("Session invalidated due to password change or security event.")
 
         # Include tier info in JWT claims for Zero-DB rate limiting
-        tier = db_user.get("tier") if db_user else None
-        tier_name = tier.get("name") if tier else None
         # SECURITY FIX: Include token_version for session invalidation
         # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
-        token_data = {
-            "sub": user_data.username_or_email,
-            "tenant_id": str(db_user.get("tenant_id")) if db_user and db_user.get("tenant_id") else None,
-            "tier_id": db_user.get("tier_id") if db_user else None,
-            "tier_name": tier_name,
-            "token_version": db_user.get("token_version", 0) if db_user else 0,
-        }
-
-        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
         from src.app.core.utils.cache import client as redis_client
@@ -418,10 +356,7 @@ return new_attempts
             if not lock_acquired:
                 raise UnauthorizedException("Token refresh already in progress.")
         try:
-            new_access_token, new_refresh_token = await asyncio.gather(
-                create_access_token(data=token_data, expires_delta=access_token_expires),
-                create_refresh_token(data=token_data),
-            )
+            new_access_token, new_refresh_token = await TokenIssuer.create_token_pair(token_data)
 
             # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
             # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
@@ -557,6 +492,11 @@ return new_attempts
             logger.error("logout_jwt_error", error=str(e))
             raise UnauthorizedException("Invalid token.")
 
+
+    # ------------------------------------------------------------------
+    # Password lifecycle — delegated to PasswordLifecycleService
+    # ------------------------------------------------------------------
+
     async def change_password(
         self,
         user_id: int,
@@ -564,248 +504,24 @@ return new_attempts
         new_password: str,
         db: AsyncSession,
     ) -> dict[str, str]:
-        """Change user password.
-
-        SECURITY FIX: Invalidates all user sessions on password change.
-        This ensures that if an account is compromised, changing the password
-        immediately terminates all active sessions.
-
-        Parameters
-        ----------
-        user_id : int
-            The user's ID
-        current_password : str
-            Current password for verification
-        new_password : str
-            New password to set
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            Success message
-
-        Raises
-        ------
-        UnauthorizedException
-            If current password is incorrect
-        """
-        # SECURITY FIX: Only active users can change their password
-        # Ensure we properly fallback to False when checking active status in cached payload manually
-        user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, id=user_id, is_deleted=False, is_active=True)
-        if not user:
-            raise UnauthorizedException("User not found.")
-
-        # Verify current password
-        if not await verify_password(current_password, user["hashed_password"]):
-            raise UnauthorizedException("Current password is incorrect.")
-
-        # SECURITY FIX: Enforce password complexity
-        try:
-            from src.app.modules.users.schemas import UserCreate
-
-            UserCreate.validate_password_complexity(new_password)
-        except ValueError as e:
-            from src.app.core.exceptions.http_exceptions import BadRequestException
-
-            raise BadRequestException(str(e))
-
-        # Hash and update new password
-        new_hashed = await get_password_hash(new_password)
-        await user_service.crud.update(db=db, id=user_id, object={"hashed_password": new_hashed}, commit=False)
-
-        # SECURITY FIX: Invalidate ALL user sessions
-        await self._invalidate_all_user_sessions(user, db)
-
-        # Commit the combined transaction of password change + token version increment
-        await db.commit()
-
-        # Invalidate auth cache so new password works immediately, AFTER commit
-        # to prevent race condition where concurrent reads see old DB value and re-cache it.
-        user_service = get_service("user", db)
-        await user_service._invalidate_user_cache(user)
-        await self._delete_user_token_cache(user)
-
-        logger.info(
-            "Password changed successfully",
-            extra={"user_id": user["id"]},
-        )
-
-        # SECURITY FIX: Add audit log for password change (H-13)
-        try:
-            await event_bus.publish(
-                "audit.log",
-                {
-                    "action": "auth.password_changed",
-                    "entity_type": "user",
-                    "entity_id": str(user_id),
-                    "tenant_id": str(user.get("tenant_id", "0")),
-                    "user_id": user_id,
-                    "details": {"message": "User password was changed"},
-                },
-                priority=EventPriority.NORMAL,
-            )
-        except Exception as e:
-            logger.error("failed_to_publish_password_change_audit_log", error=str(e))
-
-        return {"message": "Password changed successfully. All other sessions have been logged out."}
+        """Change user password (delegates to PasswordLifecycleService)."""
+        return await PasswordLifecycleService().change_password(user_id, current_password, new_password, db)
 
     async def _invalidate_all_user_sessions(self, user: dict[str, Any], db: AsyncSession) -> None:
-        """Increment token_version in DB to invalidate all active sessions for a user.
-
-        This implementation uses token_versioning for instant global invalidation.
-        When token_version is incremented in the DB, all previously issued tokens
-        (which contain the old version) will be rejected by verify_token().
-
-        NOTE: Cache invalidation (via _delete_user_token_cache) should be called
-        separately AFTER the DB transaction is committed to prevent race conditions.
-        """
-        user_id = user.get("id")
-
-        user_service = get_service("user", db)
-        User = user_service.model
-        # Update DB - increment token_version
-        await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
-        # Note: We do NOT commit here to allow callers to manage their own transactions (e.g. change_password)
-
-        logger.info("invalidated_all_user_sessions_in_db", user_id=user_id)
+        """Increment token_version to invalidate all sessions (see PasswordLifecycleService)."""
+        await PasswordLifecycleService().invalidate_all_user_sessions(user, db)
 
     async def _delete_user_token_cache(self, user: dict[str, Any]) -> None:
-        """Delete token_version cache keys for a user.
-
-        Should be called AFTER DB commit to ensure next reads get the new version.
-        """
-        user_id = user.get("id")
-
-        # Invalidate all active Redis sessions
-        try:
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            if user_id is not None:
-                await global_session_manager.invalidate_all_sessions(str(user_id))
-        except Exception as e:
-            logger.error("failed_to_invalidate_redis_sessions", user_id=user_id, error=str(e))
-
-        try:
-            from src.app.core.utils.cache import client as redis_client
-
-            if redis_client:
-                username = user.get("username")
-                email = user.get("email")
-                tenant_id = user.get("tenant_id")
-                keys = []
-                from src.app.core.utils.cache import build_tenant_key
-
-                if username:
-                    keys.append(build_tenant_key(f"user:{username}:token_version", tenant_id))
-                if email:
-                    keys.append(build_tenant_key(f"user:{email}:token_version", tenant_id))
-                if keys:
-                    # Fix P0.2: Forcefully overwrite the cache with the new token version
-                    # to prevent stale-read race conditions that could allow old tokens.
-                    new_version = user.get("token_version", 0) + 1
-                    async with redis_client.pipeline() as pipe:
-                        for key in keys:
-                            pipe.set(key, str(new_version), ex=300)
-                        await pipe.execute()
-                    logger.debug("overwrote_user_token_cache", user_id=user_id, keys=keys)
-        except Exception as e:
-            logger.warning("Failed to delete token_version cache", user_id=user_id, error=str(e))
+        """Delete token_version cache keys for a user (see PasswordLifecycleService)."""
+        await PasswordLifecycleService().delete_user_token_cache(user)
 
     async def request_password_reset(
         self,
         email: str,
         db: AsyncSession,
     ) -> dict[str, str]:
-        """Request password reset (sends email with reset token).
-
-        Parameters
-        ----------
-        email : str
-            User's email address
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            Success message (always returns success for security)
-        """
-        # BUG FIX: Also require is_active=True to prevent inactive accounts from
-        # resetting their password without going through account reactivation.
-        user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
-
-        # S5 FIX: Block password reset for SSO-only accounts
-        if user:
-            hashed_pw = (
-                user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
-            )
-            if str(hashed_pw).startswith("!SSO_ONLY"):
-                # Treat SSO-only accounts same as non-existent (timing equalized below)
-                user = None
-
-        # Always return success to prevent email enumeration
-        if user:
-            raw_token = generate_reset_token()
-            hashed_token = hash_token(raw_token)
-            # Create password reset token (expires in 1 hour)
-            reset_token = PasswordResetToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
-            db.add(reset_token)
-            await db.commit()
-            await db.refresh(reset_token)
-
-            logger.info("Password reset token created", user_id=user["id"], token_id=reset_token.id)
-
-            reset_link = f"{settings.FRONTEND_URL}/reset-password?token={raw_token}"
-            # BUG FIX: Previously published directly to "notification.send" with keys
-            # `template_name` and `context`. The only subscriber requires `notification_id`,
-            # `subject`, and `html_content` (pre-rendered). The mismatched payload caused the
-            # event to be silently dropped → password reset emails were NEVER sent.
-            # Fix: delegate to "notification.request" event which NotificationService listens to.
-            await event_bus.publish(
-                "notification.request",
-                {
-                    "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
-                    "to_email": email,
-                    "template_name": "password_reset",
-                    "context": {
-                        "reset_link": reset_link,
-                        "username": user["username"],
-                    },
-                    "user_id": user["id"],
-                },
-                priority=EventPriority.NORMAL,
-            )
-        else:
-            # SECURITY FIX: Equalize timing for enumeration prevention
-            raw_token = generate_reset_token()
-            hashed_token = hash_token(raw_token)
-
-            try:
-                user_service = get_service("user", db)
-                await user_service.crud.get(db=db, id=-1)
-            except Exception:
-                pass
-
-            await event_bus.publish(
-                "notification.request",
-                {
-                    "tenant_id": None,
-                    "to_email": "dummy@example.com",
-                    "template_name": "dummy",
-                    "context": {},
-                    "user_id": 0,
-                },
-                priority=EventPriority.NORMAL,
-            )
-
-            # SECURITY FIX: Equalize timing for enumeration prevention
-            await asyncio.sleep(random.uniform(0.1, 0.2))
-
-        return {"message": "If an account exists with that email, a reset link has been sent."}
+        """Request password reset (delegates to PasswordLifecycleService)."""
+        return await PasswordLifecycleService().request_password_reset(email, db)
 
     async def reset_password(
         self,
@@ -813,238 +529,25 @@ return new_attempts
         new_password: str,
         db: AsyncSession,
     ) -> dict[str, str]:
-        """Reset password using reset token.
+        """Reset password using reset token (delegates to PasswordLifecycleService)."""
+        return await PasswordLifecycleService().reset_password(token, new_password, db)
 
-        SECURITY FIX: Explicitly checks if user account is deleted or inactive
-        before allowing password reset. Prevents reactivation of deleted accounts.
-
-        Parameters
-        ----------
-        token : str
-            Password reset token
-        new_password : str
-            New password to set
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            Success message
-
-        Raises
-        ------
-        UnauthorizedException
-            If token is invalid, expired, or account is deleted/inactive
-        """
-        # SECURITY FIX: Use SELECT FOR UPDATE to prevent concurrent token reuse.
-        # Without this lock, two concurrent requests with the same token could both
-        # pass the is_valid check before either marks the token as used.
-        hashed_token = hash_token(token)
-        stmt = select(PasswordResetToken).where(PasswordResetToken.token == hashed_token).with_for_update()
-        result = await db.execute(stmt)
-        reset_token = result.scalar_one_or_none()
-
-        if not reset_token:
-            raise UnauthorizedException("Invalid password reset token.")
-
-        if not reset_token.is_valid:
-            if reset_token.used:
-                raise UnauthorizedException("This password reset token has already been used.")
-            if reset_token.is_expired:
-                raise UnauthorizedException("This password reset token has expired.")
-            raise UnauthorizedException("Invalid password reset token.")
-
-        # SECURITY FIX: Get user WITHOUT is_deleted filter to check account status
-        user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, id=reset_token.user_id)
-        if not user:
-            raise UnauthorizedException("Invalid password reset token.")
-
-        # S5 FIX: Prevent SSO-only accounts from setting a local password
-        hashed_pw = user.get("hashed_password", "") if isinstance(user, dict) else getattr(user, "hashed_password", "")
-        if str(hashed_pw).startswith("!SSO_ONLY"):
-            raise UnauthorizedException("This account uses SSO authentication. Password reset is not available.")
-
-        # SECURITY FIX: Use generic message for deleted/inactive accounts
-        # Prevents account enumeration attacks - attackers cannot determine account status
-        is_deleted = user.get("is_deleted", False) if isinstance(user, dict) else getattr(user, "is_deleted", False)
-        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        if is_deleted or not is_active:
-            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
-            raise UnauthorizedException("This account is not accessible. Please contact support for assistance.")
-
-        # SECURITY FIX: Enforce password complexity BEFORE marking token as used
-        try:
-            from src.app.modules.users.schemas import UserCreate
-
-            UserCreate.validate_password_complexity(new_password)
-        except ValueError as e:
-            from src.app.core.exceptions.http_exceptions import BadRequestException
-
-            raise BadRequestException(str(e))
-
-        # Mark token as used AFTER successful validation
-        # SECURITY FIX: Prevents token reuse if password change fails later, but avoids burning on bad input
-        reset_token.used = True
-        await db.flush()  # Ensure token is marked as used before proceeding
-
-        # Update password
-        new_hashed = await get_password_hash(new_password)
-        await user_service.crud.update(
-            db=db, id=reset_token.user_id, object={"hashed_password": new_hashed}, commit=False
-        )
-
-        # Invalidate ALL user sessions after password reset
-        await self._invalidate_all_user_sessions(user, db)
-
-        await db.commit()
-
-        # Invalidate auth cache AFTER commit
-        user_service = get_service("user", db)
-        await user_service._invalidate_user_cache(user)
-        await self._delete_user_token_cache(user)
-
-        logger.info("Password reset successful", user_id=reset_token.user_id, token_id=reset_token.id)
-
-        return {"message": "Password reset successfully. Please log in with your new password."}
+    # ------------------------------------------------------------------
+    # Email verification — delegated to EmailVerificationService
+    # ------------------------------------------------------------------
 
     async def send_verification_email(
         self,
         email: str,
         db: AsyncSession,
     ) -> dict[str, str]:
-        """Send email verification link.
-
-        Parameters
-        ----------
-        email : str
-            User's email address
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            Success message
-        """
-
-        # BUG FIX: Allow unverified (inactive) accounts to request verification.
-        # But prevent admin-disabled (inactive AND verified) accounts from abusing this.
-        user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, email=email, is_deleted=False)
-
-        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        is_email_verified = (
-            user.get("is_email_verified", False)
-            if isinstance(user, dict)
-            else getattr(user, "is_email_verified", False)
-        )
-
-        # If inactive and ALREADY verified, it means admin disabled the account. Do not send email.
-        if user and not is_active and is_email_verified:
-            user = None
-
-        if user and not is_email_verified:
-            raw_token = generate_verification_token()
-            hashed_token = hash_token(raw_token)
-            # Create verification token
-            token_model = EmailVerificationToken(user_id=user["id"], token=hashed_token, tenant_id=user["tenant_id"])
-            db.add(token_model)
-            await db.commit()
-            await db.refresh(token_model)
-
-            verification_link = f"{settings.FRONTEND_URL}/verify-email?token={raw_token}"
-
-            # BUG FIX: Use NotificationService for correctly shaped events
-            from uuid import UUID as _UUID
-
-            from src.app.modules.notifications.service import NotificationService
-
-            notification_service = NotificationService(db)
-            await notification_service.send_email(
-                tenant_id=_UUID(str(user["tenant_id"])) if user.get("tenant_id") else None,
-                to_email=email,
-                template_name="email_verification",
-                context={
-                    "username": user["username"],
-                    "verification_link": verification_link,
-                },
-                user_id=user["id"],
-            )
-        else:
-            # SECURITY FIX: Equalize timing for enumeration prevention
-            # Simulate DB writes and event bus publishing latency
-            # Added jitter to prevent precise timing analysis
-            await asyncio.sleep(0.15 + random.uniform(-0.05, 0.05))
-
-        return {"message": "If the email is registered and unverified, a verification link has been sent."}
+        """Send email verification link (delegates to EmailVerificationService)."""
+        return await EmailVerificationService().send_verification_email(email, db)
 
     async def verify_email(
         self,
         token: str,
         db: AsyncSession,
     ) -> dict[str, str]:
-        """Verify email using verification token.
-
-        Parameters
-        ----------
-        token : str
-            Email verification token
-        db : AsyncSession
-            Database session
-
-        Returns
-        -------
-        dict[str, str]
-            Success message
-
-        Raises
-        ------
-        UnauthorizedException
-            If token is invalid or expired
-        """
-        hashed_token = hash_token(token)
-        # Find token in database
-        stmt = select(EmailVerificationToken).where(EmailVerificationToken.token == hashed_token).with_for_update()
-        result = await db.execute(stmt)
-        verification_token = result.scalar_one_or_none()
-
-        if not verification_token:
-            raise UnauthorizedException("Invalid verification token.")
-
-        if verification_token.is_expired:
-            raise UnauthorizedException("Verification token has expired.")
-
-        # Get user
-        user_service = get_service("user", db)
-        user = await user_service.crud.get(db=db, id=verification_token.user_id, is_deleted=False)
-        if not user:
-            raise UnauthorizedException("User not found.")
-
-        # BUG FIX: Reject verification for admin-disabled accounts.
-        # But if they are inactive ONLY because they are unverified, we activate them here.
-        is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
-        is_email_verified = (
-            user.get("is_email_verified", False)
-            if isinstance(user, dict)
-            else getattr(user, "is_email_verified", False)
-        )
-        if not is_active and is_email_verified:
-            # Already verified but inactive -> Admin disabled
-            raise UnauthorizedException("This account is inactive. Please contact support.")
-
-        # Update user status to verified and active
-        await user_service.crud.update(
-            db=db, id=verification_token.user_id, object={"is_email_verified": True, "is_active": True}, commit=False
-        )
-
-        # Delete token (it's single use)
-        await db.delete(verification_token)
-        await db.commit()
-
-        # Invalidate auth cache AFTER commit
-        user_service = get_service("user", db)
-        await user_service._invalidate_user_cache(user)
-
-        return {"message": "Email verified successfully."}
+        """Verify email using verification token (delegates to EmailVerificationService)."""
+        return await EmailVerificationService().verify_email(token, db)

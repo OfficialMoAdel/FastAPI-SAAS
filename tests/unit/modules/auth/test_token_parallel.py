@@ -245,10 +245,10 @@ class TestAuthServiceIntegration:
 
         import inspect
 
-        from src.app.modules.auth.service import AuthService
+        from src.app.modules.auth.services.tokens import TokenIssuer
 
-        # asyncio.gather is in _generate_auth_tokens (called by login)
-        source = inspect.getsource(AuthService._generate_auth_tokens)
+        # asyncio.gather lives in TokenIssuer.create_token_pair (called by login/refresh)
+        source = inspect.getsource(TokenIssuer.create_token_pair)
 
         # Assert - should use asyncio.gather
         assert "asyncio.gather" in source, "Token generation should use asyncio.gather for parallel creation"

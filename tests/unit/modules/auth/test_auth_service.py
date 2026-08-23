@@ -160,8 +160,8 @@ class TestAuthServiceLockout:
 
         with (
             patch("src.app.modules.auth.service.AuthService.authenticate_user", new_callable=AsyncMock) as mock_auth,
-            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_access,
-            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
+            patch("src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock) as mock_access,
+            patch("src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
             patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_service),
         ):
             mock_auth.return_value = mock_user
@@ -295,8 +295,12 @@ class TestAuthServiceTokenRefresh:
             patch("src.app.modules.auth.service.settings") as mock_settings,
             patch("src.app.core.security.login_helpers.settings") as mock_helpers_settings,
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
-            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
+            patch(
+                "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
+            ) as mock_create_access,
+            patch(
+                "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
+            ) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
             patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
@@ -405,10 +409,10 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.service.get_service") as mock_get_service,
-            patch("src.app.modules.auth.service.event_bus.publish", new_callable=AsyncMock) as mock_publish,
-            patch("src.app.modules.auth.service.PasswordResetToken") as mock_token_model,
-            patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.modules.auth.services.passwords.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.passwords.event_bus.publish", new_callable=AsyncMock) as mock_publish,
+            patch("src.app.modules.auth.services.passwords.PasswordResetToken") as mock_token_model,
+            patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
@@ -461,9 +465,9 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.service.get_service") as mock_get_service,
-            patch("src.app.modules.auth.service.EmailVerificationToken") as mock_token_cls,
-            patch("src.app.modules.auth.service.settings") as mock_settings,
+            patch("src.app.modules.auth.services.email_verification.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.EmailVerificationToken") as mock_token_cls,
+            patch("src.app.modules.auth.services.email_verification.settings") as mock_settings,
             patch("src.app.modules.notifications.service.NotificationService") as mock_notification_cls,
         ):
             mock_user_service = MagicMock()
@@ -507,7 +511,7 @@ class TestAuthServiceEmailFlows:
         mock_user = {"id": 99, "is_email_verified": False, "is_active": True}
 
         with (
-            patch("src.app.modules.auth.service.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.get_service") as mock_get_service,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
@@ -635,8 +639,12 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.settings") as mock_settings,
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
-            patch("src.app.modules.auth.service.create_access_token", new_callable=AsyncMock) as mock_create_access,
-            patch("src.app.modules.auth.service.create_refresh_token", new_callable=AsyncMock) as mock_create_refresh,
+            patch(
+                "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
+            ) as mock_create_access,
+            patch(
+                "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
+            ) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
