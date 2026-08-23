@@ -12,7 +12,7 @@ from sqlalchemy.exc import StatementError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 
 logger = get_logger(__name__)
 
@@ -58,15 +58,15 @@ class RBACPolicy:
     ) -> bool:
         """Evaluate RBAC permission against user's bitmask."""
         # 1. Superuser bypass
-        if self.allow_superuser and _get_user_attr(user, "is_superuser", False):
+        if self.allow_superuser and get_user_attr(user, "is_superuser", False):
             return True
 
         if db is None:
             logger.warning("RBACPolicy evaluation failed: db AsyncSession is required")
             return False
 
-        user_id = _get_user_attr(user, "id")
-        tenant_id = _get_user_attr(user, "tenant_id")
+        user_id = get_user_attr(user, "id")
+        tenant_id = get_user_attr(user, "tenant_id")
         if not tenant_id:
             from src.app.core.tenancy.context import get_tenant_context
 
@@ -112,13 +112,13 @@ class OwnershipPolicy:
     ) -> bool:
         """Evaluate if user is owner of resource or qualifies for admin bypass."""
         # 1. Superuser bypass
-        if self.allow_superuser and _get_user_attr(user, "is_superuser", False):
+        if self.allow_superuser and get_user_attr(user, "is_superuser", False):
             return True
 
         # 2. Admin permission bypass
         if self.admin_permission and db is not None:
-            user_id = _get_user_attr(user, "id")
-            tenant_id = _get_user_attr(user, "tenant_id")
+            user_id = get_user_attr(user, "id")
+            tenant_id = get_user_attr(user, "tenant_id")
             if not tenant_id:
                 from src.app.core.tenancy.context import get_tenant_context
 
@@ -130,23 +130,23 @@ class OwnershipPolicy:
                 if await has_permission_cached(user_id, tenant_id, self.admin_permission, db):
                     return True
 
-        user_id = _get_user_attr(user, "id")
+        user_id = get_user_attr(user, "id")
         if not user_id:
             return False
 
         # 3. Check ownership on directly provided resource (also enforce tenant isolation)
         if resource is not None:
             owner_id = (
-                _get_user_attr(resource, self.owner_field)
+                get_user_attr(resource, self.owner_field)
                 if not isinstance(resource, dict)
                 else resource.get(self.owner_field)
             )
             if owner_id != user_id:
                 return False
             # Tenant isolation: if resource is tenant-scoped, its tenant_id must match caller's tenant
-            res_tenant = _get_user_attr(resource, "tenant_id", None) if not isinstance(resource, dict) else resource.get("tenant_id")  # noqa: E501
+            res_tenant = get_user_attr(resource, "tenant_id", None) if not isinstance(resource, dict) else resource.get("tenant_id")  # noqa: E501
             if res_tenant is not None:
-                caller_tenant = _get_user_attr(user, "tenant_id")
+                caller_tenant = get_user_attr(user, "tenant_id")
                 if not caller_tenant:
                     from src.app.core.tenancy.context import get_tenant_context
                     ctx = get_tenant_context()
@@ -162,7 +162,7 @@ class OwnershipPolicy:
             if hasattr(request.state, "authorized_resource") and request.state.authorized_resource is not None:
                 resource = request.state.authorized_resource
                 owner_id = (
-                    _get_user_attr(resource, self.owner_field)
+                    get_user_attr(resource, self.owner_field)
                     if not isinstance(resource, dict)
                     else resource.get(self.owner_field)
                 )
@@ -183,7 +183,7 @@ class OwnershipPolicy:
                 # Tenant isolation before ownership: record.tenant_id must match caller's tenant
                 rec_tenant = getattr(record, "tenant_id", None)
                 if rec_tenant is not None:
-                    caller_tenant2 = _get_user_attr(user, "tenant_id")
+                    caller_tenant2 = get_user_attr(user, "tenant_id")
                     if not caller_tenant2:
                         from src.app.core.tenancy.context import get_tenant_context as _get_ctx
                         _ctx = _get_ctx()

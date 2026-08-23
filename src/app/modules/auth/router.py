@@ -14,7 +14,7 @@ from src.app.core.security import oauth2_scheme
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.auth.schemas import (
     EmailVerificationConfirm,
     EmailVerificationRequest,
@@ -146,7 +146,7 @@ async def change_password(
 ) -> PasswordChangeResponse:
     """Change current user's password."""
     result = await auth_service.change_password(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         current_password=body.current_password,
         new_password=body.new_password,
         db=db,
@@ -207,7 +207,7 @@ async def list_sessions(
 ) -> SessionListResponse:
     """List all active sessions for current user."""
     session_manager = SessionManager(redis)
-    sessions = await session_manager.get_active_sessions(user_id=_get_user_attr(current_user, "id"))
+    sessions = await session_manager.get_active_sessions(user_id=get_user_attr(current_user, "id"))
 
     from datetime import datetime
 
@@ -256,7 +256,7 @@ async def list_sessions(
         session_infos.append(
             SessionInfo(
                 id=s.get("session_id", ""),
-                user_id=_get_user_attr(current_user, "id"),
+                user_id=get_user_attr(current_user, "id"),
                 created_at=created_at_ts,
                 last_accessed_at=last_accessed_ts,
                 ip_address=ip_address,
@@ -274,5 +274,5 @@ async def count_sessions(
 ) -> SessionCountResponse:
     """Count active sessions for current user."""
     session_manager = SessionManager(redis)
-    count = await session_manager.count_active_sessions(user_id=_get_user_attr(current_user, "id"))
+    count = await session_manager.count_active_sessions(user_id=get_user_attr(current_user, "id"))
     return SessionCountResponse(count=count)

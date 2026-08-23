@@ -10,7 +10,7 @@ from src.app.api.dependencies import AuthenticatedUser, get_current_superuser, g
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
 from src.app.modules.posts.service import PostService, get_post_service
 
@@ -31,7 +31,7 @@ async def write_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Create a new post."""
-    if _get_user_attr(current_user, "username") != username:
+    if get_user_attr(current_user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
@@ -54,11 +54,11 @@ async def read_posts(
     per_page: int = Query(10, ge=1, le=100, description="Page size"),
 ) -> Any:
     """Get paginated list of posts for a user."""
-    if _get_user_attr(current_user, "username") != username:
+    if get_user_attr(current_user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_posts(_get_user_attr(current_user, "id"), page, per_page)
+    return await service.get_posts(get_user_attr(current_user, "id"), page, per_page)
 
 
 @router.get("/{username}/posts/{id}", response_model=PostRead)
@@ -71,11 +71,11 @@ async def read_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, Any]:
     """Get a single post by ID."""
-    if _get_user_attr(current_user, "username") != username:
+    if get_user_attr(current_user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
-    return await service.get_post(id, _get_user_attr(current_user, "id"))
+    return await service.get_post(id, get_user_attr(current_user, "id"))
 
 
 @router.patch("/{username}/posts/{id}", response_model=MessageResponse)
@@ -94,7 +94,7 @@ async def patch_post(
     service: PostService = Depends(_get_post_service),
 ) -> dict[str, str]:
     """Update a post."""
-    if _get_user_attr(current_user, "username") != username:
+    if get_user_attr(current_user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()
@@ -116,7 +116,7 @@ async def erase_post(
     service: PostService = Depends(_get_post_service),
 ) -> Response:
     """Soft delete a post."""
-    if _get_user_attr(current_user, "username") != username:
+    if get_user_attr(current_user, "username") != username:
         from src.app.core.exceptions.http_exceptions import ForbiddenException
 
         raise ForbiddenException()

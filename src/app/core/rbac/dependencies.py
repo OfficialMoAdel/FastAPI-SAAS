@@ -28,7 +28,7 @@ from src.app.core.logger import get_logger
 from src.app.core.rbac.bitmask import PermissionBitmask
 from src.app.core.rbac.permissions import Permission as PermissionEnum
 from src.app.core.rbac.utils import PERMISSIONS_CACHE_TTL
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 
 logger = get_logger(__name__)
 
@@ -256,8 +256,8 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             )
         tenant_id = tenant_context.id
 
-        is_superuser = _get_user_attr(current_user, "is_superuser", False)
-        user_id_val = _get_user_attr(current_user, "id")
+        is_superuser = get_user_attr(current_user, "is_superuser", False)
+        user_id_val = get_user_attr(current_user, "id")
 
         if user_id_val is None:
             raise HTTPException(
@@ -269,7 +269,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         # Enforce tenant isolation before any permission bypass. Superusers may bypass
         # permission checks within their tenant, but they cannot act as another tenant.
         # Test dependency overrides are excluded because they are not production auth.
-        current_user_tenant_id = _get_user_attr(current_user, "tenant_id")
+        current_user_tenant_id = get_user_attr(current_user, "tenant_id")
 
         if (
             not is_dependency_override

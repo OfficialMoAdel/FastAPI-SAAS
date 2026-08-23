@@ -3,7 +3,7 @@
 from typing import Any
 
 
-def _get_user_attr(user: Any, attr: str, default: Any = None) -> Any:
+def get_user_attr(user: Any, attr: str, default: Any = None) -> Any:
     """Safely get an attribute or key from user object (dict or Pydantic model/object).
 
     Provides seamless compatibility between dict-based user representations (Phase 2)

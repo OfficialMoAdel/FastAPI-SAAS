@@ -27,7 +27,7 @@ from src.app.core.security import (
 from src.app.core.utils import cache as _redis_cache
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.mfa.schemas import (
     MFABackupCodesResponse,
     MFACompleteLoginRequest,
@@ -101,7 +101,7 @@ async def setup_mfa(
         MFASetupResponse with secret and provisioning URI.
     """
     result = await service.generate_totp_secret(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         db=db,
     )
     return MFASetupResponse(**result)
@@ -129,7 +129,7 @@ async def enable_mfa(
         BadRequestException: If MFA already enabled or token is invalid.
     """
     return await service.enable_mfa(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         request=request,
         db=db,
     )
@@ -159,10 +159,10 @@ async def verify_mfa(
         UnauthorizedException: If token is invalid or MFA not enabled.
     """
     # Check rate limit
-    await check_mfa_rate_limit(fastapi_request, identifier=str(_get_user_attr(current_user, "id")))
+    await check_mfa_rate_limit(fastapi_request, identifier=str(get_user_attr(current_user, "id")))
 
     result = await service.verify_totp_token(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         request=request,
         db=db,
     )
@@ -191,7 +191,7 @@ async def disable_mfa(
         UnauthorizedException: If verification fails.
     """
     return await service.disable_mfa(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         password=request.password,
         totp_token=request.totp_token,
         backup_code=request.backup_code,
@@ -214,7 +214,7 @@ async def get_mfa_status(
         MFAStatusResponse with MFA status information.
     """
     result = await service.get_mfa_status(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         db=db,
     )
     return MFAStatusResponse(**result)
@@ -244,7 +244,7 @@ async def regenerate_backup_codes(
         UnauthorizedException: If verification fails.
     """
     result = await service.regenerate_backup_codes(
-        user_id=_get_user_attr(current_user, "id"),
+        user_id=get_user_attr(current_user, "id"),
         password=request.password,
         totp_token=request.totp_token,
         backup_code=request.backup_code,

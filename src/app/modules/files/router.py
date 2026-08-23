@@ -16,7 +16,7 @@ from fastapi.responses import Response, StreamingResponse
 from src.app.api.dependencies import get_current_tenant, get_current_user
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.files.schemas import (
     FileList,
     FileRead,
@@ -80,7 +80,7 @@ async def upload_file(
     try:
         result = await service.upload_file(
             tenant_id=tenant.id,
-            user_id=_get_user_attr(_user, "id"),
+            user_id=get_user_attr(_user, "id"),
             file=file.file,
             filename=file.filename or "unnamed",
             mime_type=(
@@ -216,12 +216,12 @@ async def download_file(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id, user_id=_get_user_attr(_user, "id"))
+        file = await service.get_file_or_raise(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
 
         # SECURITY FIX: RFC 5987 content-disposition
         filename_encoded = quote(file.original_name)
         return StreamingResponse(
-            service.download_file(tenant.id, file_id, user_id=_get_user_attr(_user, "id")),
+            service.download_file(tenant.id, file_id, user_id=get_user_attr(_user, "id")),
             media_type=file.mime_type,
             headers={
                 "Content-Disposition": f"attachment; filename*=UTF-8''{filename_encoded}",
@@ -259,7 +259,7 @@ async def get_file_info(
         404: If file not found.
     """
     try:
-        file = await service.get_file_or_raise(tenant.id, file_id, user_id=_get_user_attr(_user, "id"))
+        file = await service.get_file_or_raise(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
         return file
 
     except FileServiceNotFoundError:
@@ -296,7 +296,7 @@ async def get_signed_url(
         404: If file not found.
     """
     try:
-        url = await service.get_signed_url(tenant.id, file_id, expires_in, user_id=_get_user_attr(_user, "id"))
+        url = await service.get_signed_url(tenant.id, file_id, expires_in, user_id=get_user_attr(_user, "id"))
         return SignedUrlResponse(url=url, expires_in=expires_in)
 
     except FileServiceNotFoundError:
@@ -331,7 +331,7 @@ async def update_file(
         404: If file not found.
     """
     try:
-        file = await service.update_file(tenant.id, file_id, data, user_id=_get_user_attr(_user, "id"))
+        file = await service.update_file(tenant.id, file_id, data, user_id=get_user_attr(_user, "id"))
         return file
 
     except FileServiceNotFoundError:
@@ -364,7 +364,7 @@ async def delete_file(
         404: If file not found.
     """
     try:
-        await service.delete_file(tenant.id, file_id, user_id=_get_user_attr(_user, "id"))
+        await service.delete_file(tenant.id, file_id, user_id=get_user_attr(_user, "id"))
         return Response(status_code=status.HTTP_204_NO_CONTENT)
 
     except FileServiceNotFoundError:

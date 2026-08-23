@@ -12,7 +12,7 @@ from src.app.core.logger import get_logger
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
 from src.app.core.tenancy.context import get_current_tenant as get_tenant_context
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
@@ -425,8 +425,8 @@ def requires_api_key_scope(required_scope: str) -> Any:
         if current_user is None:
             raise UnauthorizedException("Not authenticated")
 
-        key_id = _get_user_attr(current_user, "api_key_id")
-        scopes = _get_user_attr(current_user, "api_key_scopes", [])
+        key_id = get_user_attr(current_user, "api_key_id")
+        scopes = get_user_attr(current_user, "api_key_scopes", [])
 
         if key_id and required_scope not in scopes:
             raise ForbiddenException(f"API key missing required scope: {required_scope}")
@@ -439,9 +439,9 @@ def requires_api_key_scope(required_scope: str) -> Any:
 async def get_current_superuser(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
 ) -> AuthenticatedUser:
-    if not _get_user_attr(current_user, "is_active", False):
+    if not get_user_attr(current_user, "is_active", False):
         raise ForbiddenException("User account is no longer active.")
-    if not _get_user_attr(current_user, "is_superuser", False):
+    if not get_user_attr(current_user, "is_superuser", False):
         raise ForbiddenException("You do not have enough privileges.")
 
     return current_user

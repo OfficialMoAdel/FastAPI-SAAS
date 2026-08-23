@@ -11,7 +11,7 @@ from src.app.core.logger import get_logger
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
-from src.app.core.utils.user_utils import _get_user_attr
+from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.rate_limits.crud import crud_rate_limits
 from src.app.modules.rate_limits.schemas import RateLimitRead
 
@@ -30,8 +30,8 @@ async def rate_limiter_dependency(
 
     path = sanitize_path(request.url.path)
     if user:
-        user_id = str(_get_user_attr(user, "id"))
-        tier = _get_user_attr(user, "tier")
+        user_id = str(get_user_attr(user, "id"))
+        tier = get_user_attr(user, "tier")
         if tier:
             tier_id = tier["id"] if isinstance(tier, dict) else getattr(tier, "id", None)
             tier_name = tier["name"] if isinstance(tier, dict) else getattr(tier, "name", "unknown")
