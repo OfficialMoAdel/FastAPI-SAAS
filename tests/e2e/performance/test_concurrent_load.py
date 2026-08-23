@@ -11,6 +11,22 @@ import pytest
 from tests.e2e.conftest import PerformanceMetrics
 
 
+@pytest.fixture()
+def mock_event_bus():
+    """Override the global autouse event-bus mock for this module.
+
+    These tests exercise REAL event-bus handler dispatch (subscribe + publish),
+    which the MagicMock singleton in tests/conftest.py silently swallows —
+    handlers registered on the mock never fire and every assertion on handler
+    side effects fails. Yield the real singleton instead.
+    """
+    from src.app.core.events import event_bus, reset_event_bus
+
+    reset_event_bus()
+    yield event_bus
+    reset_event_bus()
+
+
 class TestConcurrentLoad:
     """Validate system performance under concurrent load."""
 

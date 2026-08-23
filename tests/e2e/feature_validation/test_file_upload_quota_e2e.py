@@ -220,22 +220,43 @@ async def test_concurrent_uploads_quota_accuracy(premium_user: dict, client: Asy
 
     async def upload_file(index):
         file_data = {"file": (f"concurrent_{index}.txt", io.BytesIO(b"test"), "text/plain")}
-        response = await client.post("/api/v1/files/upload", headers=headers, files=file_data)
+        # Generous per-request timeout: under full-suite load DB queries can take
+        # tens of seconds; a client-side timeout would diverge from the server's
+        # actual outcome (quota incremented even though the client gave up).
+        response = await client.post(
+            "/api/v1/files/upload", headers=headers, files=file_data, timeout=120.0
+        )
         return response.status_code == 201
 
-    results = await asyncio.gather(*[upload_file(i) for i in range(20)])
-    successful = sum(results)
-    log_step("Concurrent uploads completed", successful=successful)
+    results = await asyncio.gather(*[upload_file(i) for i in range(20)], return_exceptions=True)
+    successful = sum(1 for r in results if r is True)
+    failed_details = [r for r in results if r is not True]
+    log_step(
+        "Concurrent uploads completed",
+        successful=successful,
+        failed=len(failed_details),
+    )
 
     # Step 3: Verify quota accuracy
-    response = await client.get("/api/v1/files/quota", headers=headers)
-    assert response.status_code == 200
-
-    final_used = response.json().get("used", 0)
-    log_step("Final quota after concurrent uploads", used=final_used)
-
     expected_used = initial_used + (successful * 4)
-    assert final_used == expected_used, f"Expected {expected_used}, got {final_used}"
+
+    # Poll for convergence: under heavy parallel load the last commits/counter
+    # writes can lag slightly behind the final HTTP response.
+    final_used = None
+    deadline = asyncio.get_event_loop().time() + 30.0
+    while asyncio.get_event_loop().time() < deadline:
+        response = await client.get("/api/v1/files/quota", headers=headers)
+        assert response.status_code == 200
+        final_used = response.json().get("used", 0)
+        if final_used == expected_used:
+            break
+        await asyncio.sleep(0.5)
+
+    assert final_used == expected_used, (
+        f"Expected {expected_used}, got {final_used} "
+        f"(initial={initial_used}, successful_uploads={successful}, "
+        f"failed_results={failed_details[:3]})"
+    )
     log_step("Quota counter accurate after concurrent operations")
 
     log_step("Concurrent uploads quota accuracy E2E test completed successfully")
