@@ -1,39 +1,15 @@
-"""Event bus for publish/subscribe pattern across modules.
-
-Supports priority-based event handling:
-- CRITICAL: Synchronous, fire-and-forget (audit logs)
-- NORMAL/LOW: Asynchronous via ARQ queue (emails, webhooks)
-"""
+"""The EventBus class, its singleton instance, and the test-reset helper."""
 
 import asyncio
 from collections import defaultdict
 from collections.abc import Callable, Coroutine
 from datetime import UTC
-from enum import Enum
 from typing import Any
 
 from arq.connections import ArqRedis
-from arq.constants import default_queue_name, job_key_prefix
-from arq.jobs import serialize_job
-from arq.utils import timestamp_ms
-from structlog import get_logger
 
-from src.app.core.config import settings
-from src.app.core.json_utils import json_dumps, json_loads
-from src.app.core.monitoring.r1_unified_metrics import record_event_idempotency
-from src.app.core.observability.tracing import trace_span
-from src.app.core.utils.circuit_breaker import arq_circuit
-from src.app.core.utils.lua_manager import get_lua_manager
-
-logger = get_logger(__name__)
-
-
-class EventPriority(str, Enum):
-    """Event priority levels."""
-
-    CRITICAL = "CRITICAL"
-    NORMAL = "NORMAL"
-    LOW = "LOW"
+from src.app.core import events as _pkg
+from src.app.core.events.priority import EventPriority
 
 
 class EventBus:
@@ -63,7 +39,7 @@ class EventBus:
         self._redis_client = None  # Set via set_redis_client()
         self._registration_complete = False
         # P3-2: Semaphore to bound concurrent sync execution
-        self._concurrency_semaphore = asyncio.Semaphore(settings.EVENT_BUS_CONCURRENCY)
+        self._concurrency_semaphore = asyncio.Semaphore(_pkg.settings.EVENT_BUS_CONCURRENCY)
 
     @property
     def is_ready(self) -> bool:
@@ -77,7 +53,7 @@ class EventBus:
             redis_client: Async Redis client instance
         """
         self._redis_client = redis_client
-        logger.info("Event bus Redis client configured for DLQ persistence")
+        _pkg.logger.info("Event bus Redis client configured for DLQ persistence")
 
     def set_arq_queue(self, queue: Any) -> None:
         """Set ARQ queue for async event processing.
@@ -112,12 +88,12 @@ class EventBus:
         try:
             return await self._redis_client.incr(seq_key)
         except Exception as e:
-            logger.error(
+            _pkg.logger.error(
                 "Failed to get sequence from Redis",
                 event_name=event_name,
                 error=str(e),
             )
-            logger.warning(
+            _pkg.logger.warning(
                 "Falling back to -1 sentinel — ordering guarantees compromised",
                 event_name=event_name,
             )
@@ -144,7 +120,7 @@ class EventBus:
 
         def decorator(func: Callable[..., Coroutine[Any, Any, None]]) -> Callable[..., Coroutine[Any, Any, None]]:
             self._handlers[event_name].append(func)
-            logger.info("Event handler registered", event_name=event_name, handler=func.__name__)
+            _pkg.logger.info("Event handler registered", event_name=event_name, handler=func.__name__)
             return func
 
         return decorator
@@ -161,7 +137,7 @@ class EventBus:
             handler: Async function to handle the event
         """
         self._handlers[event_name].append(handler)
-        logger.info("Event handler registered", event_name=event_name, handler=handler.__name__)
+        _pkg.logger.info("Event handler registered", event_name=event_name, handler=handler.__name__)
 
     # TTL for processed event IDs (24 hours)
     IDEMPOTENCY_TTL_SECONDS = 86400
@@ -188,10 +164,10 @@ class EventBus:
 
         idempotency_key = f"{self.IDEMPOTENCY_KEY_PREFIX}{event_id}"
 
-        if settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
+        if _pkg.settings.EVENT_BUS_USE_LUA_IDEMPOTENCY:
             # Optimized path: Atomic Lua script (no race condition)
             try:
-                lua_manager = get_lua_manager()
+                lua_manager = _pkg.get_lua_manager()
                 result = await lua_manager.execute(
                     self._redis_client,
                     "idempotency_check",
@@ -200,12 +176,12 @@ class EventBus:
                 )
                 # Script returns 1 if key was set (first time), 0 or None if exists
                 is_duplicate = result is None or result == 0
-                record_event_idempotency(is_duplicate)
+                _pkg.record_event_idempotency(is_duplicate)
                 return is_duplicate
 
             except Exception as e:
                 # Fallback to original behavior on Lua script failure
-                logger.warning(
+                _pkg.logger.warning(
                     "Lua idempotency check failed, using fallback",
                     error=str(e),
                     event_id=event_id,
@@ -223,11 +199,11 @@ class EventBus:
 
         if not is_new:
             # Key already existed -> duplicate event
-            record_event_idempotency(is_duplicate=True)
+            _pkg.record_event_idempotency(is_duplicate=True)
             return True
 
         # Key was just set -> new event
-        record_event_idempotency(is_duplicate=False)
+        _pkg.record_event_idempotency(is_duplicate=False)
         return False
 
     async def publish(
@@ -254,7 +230,7 @@ class EventBus:
                 event_id="user-created-12345-abc"
             )
         """
-        with trace_span(
+        with _pkg.trace_span(
             "event_bus_publish",
             attributes={"event_name": event_name, "priority": priority.value, "event_id": event_id or "none"},
         ):
@@ -262,7 +238,7 @@ class EventBus:
             if event_id and self._redis_client:
                 is_duplicate = await self._check_idempotency(event_id)
                 if is_duplicate:
-                    logger.info(
+                    _pkg.logger.info(
                         "Duplicate event skipped",
                         event_name=event_name,
                         event_id=event_id,
@@ -272,12 +248,12 @@ class EventBus:
             handlers = self._handlers.get(event_name, [])
 
             if not handlers:
-                logger.debug("Event published no handlers", event_name=event_name)
+                _pkg.logger.debug("Event published no handlers", event_name=event_name)
                 return
 
             # R5-10: Gate get_next_sequence behind a setting or consumer check
             # Avoids hitting Redis on every single event unless strict ordering is explicitly required
-            if getattr(settings, "EVENT_BUS_REQUIRE_STRICT_ORDERING", False):
+            if getattr(_pkg.settings, "EVENT_BUS_REQUIRE_STRICT_ORDERING", False):
                 sequence = await self.get_next_sequence(event_name)
             else:
                 sequence = 0
@@ -307,7 +283,7 @@ class EventBus:
                 },
             }
 
-            logger.info(
+            _pkg.logger.info(
                 "Event published",
                 event_name=event_name,
                 priority=priority,
@@ -346,24 +322,24 @@ class EventBus:
                     # Apply timeout protection
                     await asyncio.wait_for(
                         handler(data),
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
-                    logger.debug(
+                    _pkg.logger.debug(
                         "Event handler success",
                         event_name=event_name,
                         handler=handler.__name__,
                     )
                 except TimeoutError:
-                    logger.error(
+                    _pkg.logger.error(
                         "Event handler timed out",
                         event_name=event_name,
                         handler=handler.__name__,
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                     # We do not re-raise TimeoutError to prevent blocking other handlers
                     # in the gather group (though return_exceptions=True handles that too).
                 except Exception as e:
-                    logger.error(
+                    _pkg.logger.error(
                         "Event handler failed",
                         event_name=event_name,
                         handler=handler.__name__,
@@ -381,7 +357,7 @@ class EventBus:
         # Log CRITICAL exceptions (they are already logged inside _call_handler but we can keep the logger.critical)
         for i, result in enumerate(results):
             if isinstance(result, Exception):
-                logger.critical(
+                _pkg.logger.critical(
                     "Event handler task failed with unhandled exception",
                     event_name=event_name,
                     handler=handlers[i].__name__,
@@ -405,7 +381,7 @@ class EventBus:
             priority: Event priority for queue scheduling
         """
         if not self._arq_queue:
-            logger.warning(
+            _pkg.logger.warning(
                 "Event handler ARQ not configured",
                 event_name=event_name,
                 message="ARQ queue not set, falling back to sync execution",
@@ -417,12 +393,12 @@ class EventBus:
         # Changes Sum(RTT) to Max(RTT) for multiple handlers
 
         # P3-3: Batch enqueue using Redis pipeline if enabled
-        if settings.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
+        if _pkg.settings.EVENT_BUS_USE_BATCH_ENQUEUE and len(handlers) > 1:
             try:
                 await self._publish_async_batch(event_name, data, handlers, priority)
                 return
             except Exception as e:
-                logger.warning(
+                _pkg.logger.warning(
                     "Batch enqueue failed, falling back to parallel enqueue",
                     event_name=event_name,
                     error=str(e),
@@ -434,8 +410,8 @@ class EventBus:
         ) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
             """Enqueue a single handler, returning (success, handler, error)."""
             # Check circuit breaker before attempting Redis enqueue
-            if not arq_circuit.is_closed:
-                logger.warning(
+            if not _pkg.arq_circuit.is_closed:
+                _pkg.logger.warning(
                     "ARQ circuit breaker open - falling back to sync execution",
                     event_name=event_name,
                     handler=handler.__name__,
@@ -443,17 +419,17 @@ class EventBus:
                 try:
                     await asyncio.wait_for(
                         handler(data),
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except TimeoutError:
-                    logger.error(
+                    _pkg.logger.error(
                         "Fallback sync handler timed out",
                         event_name=event_name,
                         handler=handler.__name__,
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except Exception as e:
-                    logger.error(
+                    _pkg.logger.error(
                         "Fallback sync handler failed",
                         event_name=event_name,
                         handler=handler.__name__,
@@ -462,12 +438,14 @@ class EventBus:
                 return (True, handler, None)  # Handled via fallback
 
             try:
-                # Type assertion: we checked _arq_queue at line 337
+                # Type assertion: we checked _arq_queue earlier
                 assert self._arq_queue is not None, "ARQ queue should be set"
                 # SECURITY FIX: Unified queue naming with _publish_async_batch.
                 # Batch jobs prepend 'arq:queue' prefix; single jobs must match to avoid worker misses.
                 q_name = (
-                    default_queue_name if priority == EventPriority.NORMAL else f"{default_queue_name}_low_priority"
+                    _pkg.default_queue_name
+                    if priority == EventPriority.NORMAL
+                    else f"{_pkg.default_queue_name}_low_priority"
                 )
                 await self._arq_queue.enqueue_job(
                     "process_event_handler",
@@ -477,8 +455,8 @@ class EventBus:
                     data,
                     _queue_name=q_name,
                 )
-                await arq_circuit.record_success()
-                logger.debug(
+                await _pkg.arq_circuit.record_success()
+                _pkg.logger.debug(
                     "Event handler queued",
                     event_name=event_name,
                     handler=handler.__name__,
@@ -486,8 +464,8 @@ class EventBus:
                 )
                 return (True, handler, None)
             except Exception as e:
-                await arq_circuit.record_failure(e)
-                logger.error(
+                await _pkg.arq_circuit.record_failure(e)
+                _pkg.logger.error(
                     "Event handler queue failed",
                     event_name=event_name,
                     handler=handler.__name__,
@@ -507,7 +485,7 @@ class EventBus:
             if isinstance(result, Exception):
                 handler = handlers[i]
                 # asyncio.gather caught an unexpected exception
-                logger.error(
+                _pkg.logger.error(
                     "Unexpected error during parallel enqueue",
                     event_name=event_name,
                     handler=handler.__name__,
@@ -518,22 +496,22 @@ class EventBus:
                 try:
                     await asyncio.wait_for(
                         handler(data),
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
-                    logger.info(
+                    _pkg.logger.info(
                         "Handler executed synchronously after gather queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
                     )
                 except TimeoutError:
-                    logger.error(
+                    _pkg.logger.error(
                         "Sync fallback timed out after gather failure",
                         event_name=event_name,
                         handler=handler.__name__,
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except Exception as handler_error:
-                    logger.error(
+                    _pkg.logger.error(
                         "Sync fallback also failed",
                         event_name=event_name,
                         handler=handler.__name__,
@@ -548,22 +526,22 @@ class EventBus:
                 try:
                     await asyncio.wait_for(
                         handler(data),
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
-                    logger.info(
+                    _pkg.logger.info(
                         "Handler executed synchronously after queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
                     )
                 except TimeoutError:
-                    logger.error(
+                    _pkg.logger.error(
                         "Sync fallback timed out after queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
-                        timeout=settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
                     )
                 except Exception as handler_error:
-                    logger.error(
+                    _pkg.logger.error(
                         "Sync fallback also failed",
                         event_name=event_name,
                         handler=handler.__name__,
@@ -585,29 +563,31 @@ class EventBus:
             raise RuntimeError("ARQ queue not configured")
 
         # Check circuit breaker once for the batch
-        if not arq_circuit.is_closed:
-            logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
+        if not _pkg.arq_circuit.is_closed:
+            _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
             # Fallback to sync execution for all handlers
             await self._publish_sync(event_name, data, handlers, priority=priority)
             return
 
         queue_name = "default" if priority == EventPriority.NORMAL else "low_priority"
-        queue_prefix = default_queue_name if queue_name == "default" else f"{default_queue_name}_{queue_name}"
+        queue_prefix = (
+            _pkg.default_queue_name if queue_name == "default" else f"{_pkg.default_queue_name}_{queue_name}"
+        )
 
         try:
             # Prepare all jobs
             async with self._arq_queue.pipeline() as pipe:
-                enqueue_time_ms = timestamp_ms()
+                enqueue_time_ms = _pkg.timestamp_ms()
 
                 # Constants from arq
                 from uuid import uuid4
 
                 for handler in handlers:
                     job_id = uuid4().hex
-                    job_key = job_key_prefix + job_id
+                    job_key = _pkg.job_key_prefix + job_id
 
                     # Serialize job
-                    job_data = serialize_job(
+                    job_data = _pkg.serialize_job(
                         function_name="process_event_handler",
                         args=(event_name, handler.__module__, handler.__name__, data),
                         kwargs={},
@@ -625,13 +605,15 @@ class EventBus:
 
                 # Execute batch
                 await pipe.execute()
-            await arq_circuit.record_success()
+            await _pkg.arq_circuit.record_success()
 
-            logger.debug("Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority)
+            _pkg.logger.debug(
+                "Batch event handlers queued", event_name=event_name, count=len(handlers), priority=priority
+            )
 
         except Exception as e:
-            await arq_circuit.record_failure(e)
-            logger.error(
+            await _pkg.arq_circuit.record_failure(e)
+            _pkg.logger.error(
                 "Batch event handler queue failed",
                 event_name=event_name,
                 error=str(e),
@@ -699,7 +681,7 @@ class EventBus:
                     alert_threshold = settings.DLQ_ALERT_THRESHOLD_PCT
 
                     async with self._redis_client.pipeline(transaction=True) as pipe:
-                        pipe.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
+                        pipe.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
                         pipe.ltrim(self.DLQ_REDIS_KEY, 0, max_size - 1)  # Keep newest entries
                         pipe.llen(self.DLQ_REDIS_KEY)
                         results = await pipe.execute()
@@ -710,7 +692,7 @@ class EventBus:
                     # Warn when approaching capacity
                     threshold = max_size * alert_threshold / 100
                     if dlq_size > threshold:
-                        logger.warning(
+                        _pkg.logger.warning(
                             "DLQ approaching capacity",
                             dlq_size=dlq_size,
                             max_size=max_size,
@@ -718,20 +700,20 @@ class EventBus:
                         )
                 else:
                     # Original path (fallback)
-                    await self._redis_client.lpush(self.DLQ_REDIS_KEY, json_dumps(dlq_entry, as_str=True))
+                    await self._redis_client.lpush(self.DLQ_REDIS_KEY, _pkg.json_dumps(dlq_entry, as_str=True))
                     dlq_size = await self._redis_client.llen(self.DLQ_REDIS_KEY)
                     update_dlq_size(dlq_size)
             except Exception as e:
-                logger.error("Failed to add to DLQ", error=str(e), event_name=event_name)
+                _pkg.logger.error("Failed to add to DLQ", error=str(e), event_name=event_name)
                 # Re-raise to avoid silent failures
                 raise
         else:
-            logger.warning(
+            _pkg.logger.warning(
                 "Redis not configured for DLQ, event will be lost on restart",
                 event_name=event_name,
             )
 
-        logger.warning(
+        _pkg.logger.warning(
             "Event moved to DLQ",
             event_name=event_name,
             handler=handler_name,
@@ -753,7 +735,7 @@ class EventBus:
             return []
 
         entries = await self._redis_client.lrange(self.DLQ_REDIS_KEY, 0, limit - 1)
-        return [json_loads(entry) for entry in entries]
+        return [_pkg.json_loads(entry) for entry in entries]
 
     async def get_dlq_size(self) -> int:
         """Get the number of entries in the DLQ.
@@ -779,7 +761,7 @@ class EventBus:
         # Use rpop (FIFO) to ensure we retry oldest entries
         entry = await self._redis_client.rpop(self.DLQ_REDIS_KEY)
         if entry:
-            return json_loads(entry)
+            return _pkg.json_loads(entry)
         return None
 
     async def clear_dlq(self) -> int:
@@ -835,13 +817,13 @@ class EventBus:
             for evt in business_events:
                 self.register_handler(evt, make_webhook_adapter(evt))
 
-            logger.info(
+            _pkg.logger.info(
                 "Event handler registration complete",
                 total_handlers=sum(len(handlers) for handlers in self._handlers.values()),
             )
             self._registration_complete = True
         except Exception as e:
-            logger.error(
+            _pkg.logger.error(
                 "Failed to register event handlers during startup",
                 error=str(e),
                 exc_info=True,
@@ -858,151 +840,5 @@ def reset_event_bus() -> None:
     Creates a fresh EventBus instance, clearing all handlers and state.
     Use this in test fixtures to ensure clean state between tests.
     """
-    global event_bus
-    event_bus = EventBus()
-    logger.debug("Event bus singleton reset")
-
-
-# ARQ worker function to process queued event handlers
-async def process_event_handler(
-    ctx: dict[str, Any],
-    event_name: str,
-    handler_module: str,
-    handler_name: str,
-    data: dict[str, Any],
-) -> None:
-    """ARQ worker function to execute event handlers asynchronously.
-
-    Args:
-        ctx: ARQ context (includes job_try for retry count)
-        event_name: Name of event
-        handler_module: Module containing handler
-        handler_name: Name of handler function
-        data: Event payload
-    """
-    job_try = ctx.get("job_try", 1)
-    with trace_span(
-        "process_event_handler",
-        attributes={
-            "event_name": event_name,
-            "handler": f"{handler_module}.{handler_name}",
-            "job_try": job_try,
-        },
-    ):
-        # SECURITY FIX: Restore tenant context from event metadata
-        # This ensures RLS-protected operations in background tasks work correctly.
-        meta = data.get("_event_meta", {})
-        tenant_info = meta.get("tenant")
-        if tenant_info:
-            try:
-                from uuid import UUID
-
-                from src.app.core.tenancy.context import TenantContext, set_current_tenant
-
-                if not all(tenant_info.get(k) is not None for k in ("id", "slug", "name", "is_active")):
-                    raise KeyError(f"Missing or null required keys in tenant_info: {tenant_info}")
-
-                tenant_context = TenantContext(
-                    tenant_id=UUID(tenant_info["id"]),
-                    tenant_slug=tenant_info["slug"],
-                    tenant_name=tenant_info["name"],
-                    is_active=tenant_info["is_active"],
-                )
-                set_current_tenant(tenant_context)
-                logger.debug("Tenant context restored for background task", tenant_id=tenant_info["id"])
-            except Exception as e:
-                logger.error("Failed to restore tenant context in worker - moving to DLQ", error=str(e))
-                await event_bus.add_to_dlq(
-                    event_name=event_name,
-                    handler_name=f"{handler_module}.{handler_name}",
-                    data=data,
-                    error=f"Malformed tenant context: {e}",
-                    attempt_count=job_try,
-                )
-                return
-
-        try:
-            # Dynamically import and execute handler
-            import importlib
-
-            module = importlib.import_module(handler_module)
-            handler = getattr(module, handler_name)
-
-            # Apply timeout protection for async worker execution
-            try:
-                timeout_val = settings.EVENT_HANDLER_TIMEOUT_SECONDS
-                await asyncio.wait_for(
-                    handler(data),
-                    timeout=timeout_val,
-                )
-            except TimeoutError:
-                logger.error(
-                    "ARQ event handler timed out",
-                    event_name=event_name,
-                    handler=f"{handler_module}.{handler_name}",
-                    timeout=timeout_val,
-                )
-                raise TimeoutError(f"Handler timed out after {timeout_val}s")
-
-            logger.info(
-                "ARQ event handler success",
-                event_name=event_name,
-                handler=f"{handler_module}.{handler_name}",
-            )
-        except (ImportError, AttributeError) as e:
-            # ISSUE 10 FIX: Do not retry on permanent configuration/import errors
-            handler_full_name = f"{handler_module}.{handler_name}"
-            logger.error(
-                "Critical configuration error in ARQ handler - will not retry",
-                event_name=event_name,
-                handler=handler_full_name,
-                error=str(e),
-            )
-            # Move to DLQ immediately
-            await event_bus.add_to_dlq(
-                event_name=event_name,
-                handler_name=handler_full_name,
-                data=data,
-                error=f"Permanent Error: {e}",
-                attempt_count=job_try,
-            )
-            return
-
-        except Exception as e:
-            handler_full_name = f"{handler_module}.{handler_name}"
-
-            # Check if max retries exceeded
-            if job_try >= EventBus.MAX_RETRIES:
-                logger.error(
-                    "ARQ event handler max retries exceeded - moving to DLQ",
-                    event_name=event_name,
-                    handler=handler_full_name,
-                    attempt_count=job_try,
-                    error=str(e),
-                )
-                # Add to dead-letter queue
-                await event_bus.add_to_dlq(
-                    event_name=event_name,
-                    handler_name=handler_full_name,
-                    data=data,
-                    error=str(e),
-                    attempt_count=job_try,
-                )
-                # Don't re-raise - event is now in DLQ
-                return
-
-            logger.warning(
-                "ARQ event handler failed - will retry",
-                event_name=event_name,
-                handler=handler_full_name,
-                attempt=job_try,
-                max_attempts=EventBus.MAX_RETRIES,
-                error=str(e),
-            )
-            raise  # Re-raise for ARQ retry logic
-        finally:
-            # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
-            from src.app.core.tenancy.context import clear_tenant_context
-
-            clear_tenant_context()
-            logger.debug("Tenant context cleared after background task")
+    _pkg.event_bus = EventBus()
+    _pkg.logger.debug("Event bus singleton reset")
