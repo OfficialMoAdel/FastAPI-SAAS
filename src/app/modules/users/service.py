@@ -20,7 +20,6 @@ from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils import cache
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
-from src.app.modules._base.service import BaseService
 from src.app.modules.tiers.models import Tier
 from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
@@ -98,14 +97,25 @@ def _user_auth_cache_key(identifier: str, tenant_id: int | str | None = None) ->
     return f"{AUTH_INFO_CACHE_PREFIX}:{t_id}:{normalized}"
 
 
-class UserService(BaseService[User]):
-    """Service class for user-related business logic."""
+class UserService:
+    """Service class for user-related business logic.
 
-    crud: CRUDUser  # Override type for custom CRUD with get_user_with_tier_eager
+    Note
+    ----
+    ``UserService`` deliberately does **not** subclass ``BaseService``.
+    Its read/update/delete contracts return validated dicts / message dicts
+    rather than ORM entities, which would violate Liskov Substitution if
+    inherited. It composes the same primitives (``model``, ``db``, ``crud``)
+    directly instead.
+    """
+
+    model = User
+
+    crud: CRUDUser  # Custom CRUD with get_user_with_tier_eager
 
     def __init__(self, db: AsyncSession) -> None:
-        super().__init__(User, db)
-        self.crud = crud_users  # type: ignore[assignment]
+        self.db = db
+        self.crud = crud_users
 
     async def list_users(
         self,
@@ -279,7 +289,7 @@ class UserService(BaseService[User]):
             logger.warning("Failed to get cached user", error=e)
         return None
 
-    async def create(self, user: UserCreate) -> User:  # type: ignore[override]
+    async def create(self, user: UserCreate) -> User:
         """Create a new user with validation and password hashing.
 
         Parameters
@@ -466,7 +476,7 @@ class UserService(BaseService[User]):
 
         return UserRead.model_validate(db_user).model_dump(mode="json")
 
-    async def get(self, user_id: Any) -> dict[str, Any] | None:  # type: ignore[override]
+    async def get(self, user_id: Any) -> dict[str, Any] | None:
         """Get a user by ID with Redis caching.
 
         Parameters
@@ -520,7 +530,7 @@ class UserService(BaseService[User]):
             return UserRead.model_validate(user).model_dump(mode="json")
         return None
 
-    async def update(  # type: ignore[override]
+    async def update(
         self,
         username: str,
         values: UserUpdate,
@@ -609,7 +619,7 @@ class UserService(BaseService[User]):
 
         return {"message": "User updated"}
 
-    async def delete(  # type: ignore[override]
+    async def delete(
         self,
         username: str,
         current_user: dict[str, Any],
