@@ -16,8 +16,8 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security.tokens import hash_token
-from src.app.core.service_registry import get_service
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
+from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 
@@ -37,7 +37,7 @@ class EmailVerificationService:
 
         # BUG FIX: Allow unverified (inactive) accounts to request verification.
         # But prevent admin-disabled (inactive AND verified) accounts from abusing this.
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         user = await user_service.crud.get(db=db, email=email, is_deleted=False)
 
         is_active = user.get("is_active", False) if isinstance(user, dict) else getattr(user, "is_active", False)
@@ -103,7 +103,7 @@ class EmailVerificationService:
             raise UnauthorizedException("Verification token has expired.")
 
         # Get user
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=verification_token.user_id, is_deleted=False)
         if not user:
             raise UnauthorizedException("User not found.")
@@ -130,7 +130,7 @@ class EmailVerificationService:
         await db.commit()
 
         # Invalidate auth cache AFTER commit
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         await user_service._invalidate_user_cache(user)
 
         return {"message": "Email verified successfully."}

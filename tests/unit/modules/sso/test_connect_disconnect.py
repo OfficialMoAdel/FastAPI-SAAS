@@ -157,11 +157,11 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+        with patch("src.app.modules.sso.service.UserService") as mock_user_service_cls:
             # Mock user service to return user with password
             mock_user_service = MagicMock()
             mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": "hashed_pw_value"})
-            mock_get_service.return_value = mock_user_service
+            mock_user_service_cls.return_value = mock_user_service
 
             result = await service._can_disconnect(
                 db=mock_db,
@@ -177,11 +177,11 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+        with patch("src.app.modules.sso.service.UserService") as mock_user_service_cls:
             # Mock user service to return user without password
             mock_user_service = MagicMock()
             mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
-            mock_get_service.return_value = mock_user_service
+            mock_user_service_cls.return_value = mock_user_service
 
             with patch(
                 "src.app.modules.sso.crud.crud_user_sso_connections.count_for_user",
@@ -204,11 +204,11 @@ class TestCanDisconnectLogic:
         service = SSOService()
         mock_db = AsyncMock()
 
-        with patch("src.app.modules.sso.service.get_service") as mock_get_service:
+        with patch("src.app.modules.sso.service.UserService") as mock_user_service_cls:
             # Mock user service to return user without password
             mock_user_service = MagicMock()
             mock_user_service.get = AsyncMock(return_value={"id": 123, "hashed_password": None})
-            mock_get_service.return_value = mock_user_service
+            mock_user_service_cls.return_value = mock_user_service
 
             with patch(
                 "src.app.modules.sso.crud.crud_user_sso_connections.count_for_user",

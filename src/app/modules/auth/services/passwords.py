@@ -18,8 +18,8 @@ from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
 from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
-from src.app.core.service_registry import get_service
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
+from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 
@@ -42,7 +42,7 @@ class PasswordLifecycleService:
         """
         # SECURITY FIX: Only active users can change their password
         # Ensure we properly fallback to False when checking active status in cached payload manually
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=user_id, is_deleted=False, is_active=True)
         if not user:
             raise UnauthorizedException("User not found.")
@@ -71,7 +71,7 @@ class PasswordLifecycleService:
 
         # Invalidate auth cache so new password works immediately, AFTER commit
         # to prevent race condition where concurrent reads see old DB value and re-cache it.
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         await user_service._invalidate_user_cache(user)
         await self.delete_user_token_cache(user)
 
@@ -111,7 +111,7 @@ class PasswordLifecycleService:
         """
         user_id = user.get("id")
 
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         User = user_service.model
         # Update DB - increment token_version
         await db.execute(update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
@@ -172,7 +172,7 @@ class PasswordLifecycleService:
         """
         # BUG FIX: Also require is_active=True to prevent inactive accounts from
         # resetting their password without going through account reactivation.
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         user = await user_service.crud.get(db=db, email=email, is_deleted=False, is_active=True)
 
         # S5 FIX: Block password reset for SSO-only accounts
@@ -222,7 +222,7 @@ class PasswordLifecycleService:
             hashed_token = hash_token(raw_token)
 
             try:
-                user_service = get_service("user", db)
+                user_service = UserService(db)
                 await user_service.crud.get(db=db, id=-1)
             except Exception:
                 pass
@@ -266,7 +266,7 @@ class PasswordLifecycleService:
             raise UnauthorizedException("Invalid password reset token.")
 
         # SECURITY FIX: Get user WITHOUT is_deleted filter to check account status
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         user = await user_service.crud.get(db=db, id=reset_token.user_id)
         if not user:
             raise UnauthorizedException("Invalid password reset token.")
@@ -309,7 +309,7 @@ class PasswordLifecycleService:
         await db.commit()
 
         # Invalidate auth cache AFTER commit
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         await user_service._invalidate_user_cache(user)
         await self.delete_user_token_cache(user)
 

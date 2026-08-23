@@ -81,8 +81,8 @@ async def test_get_enabled_providers(mock_get_settings, service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
-async def test_disconnect_provider_success(mock_get_service, mock_crud_sso, service, mock_db):
+@patch("src.app.modules.sso.service.UserService")
+async def test_disconnect_provider_success(mock_user_service_cls, mock_crud_sso, service, mock_db):
     mock_connection = MagicMock()
     mock_connection.id = uuid4()
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=mock_connection)
@@ -92,7 +92,7 @@ async def test_disconnect_provider_success(mock_get_service, mock_crud_sso, serv
     mock_user.hashed_password = "hashed_password"
     mock_user_service = MagicMock()
     mock_user_service.get = AsyncMock(return_value=mock_user)
-    mock_get_service.return_value = mock_user_service
+    mock_user_service_cls.return_value = mock_user_service
 
     tenant_id = uuid4()
     await service.disconnect_provider(mock_db, 1, SSOProvider.GOOGLE, tenant_id=tenant_id)
@@ -102,8 +102,8 @@ async def test_disconnect_provider_success(mock_get_service, mock_crud_sso, serv
 
 @pytest.mark.asyncio
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
-async def test_disconnect_provider_fails_only_method(mock_get_service, mock_crud_sso, service, mock_db):
+@patch("src.app.modules.sso.service.UserService")
+async def test_disconnect_provider_fails_only_method(mock_user_service_cls, mock_crud_sso, service, mock_db):
     mock_connection = MagicMock()
     mock_crud_sso.get_by_criteria = AsyncMock(return_value=mock_connection)
 
@@ -111,7 +111,7 @@ async def test_disconnect_provider_fails_only_method(mock_get_service, mock_crud
     mock_user.hashed_password = None
     mock_user_service = MagicMock()
     mock_user_service.get = AsyncMock(return_value=mock_user)
-    mock_get_service.return_value = mock_user_service
+    mock_user_service_cls.return_value = mock_user_service
 
     mock_crud_sso.count_for_user = AsyncMock(return_value=1)  # Only 1 connection
 
@@ -273,8 +273,8 @@ async def test_get_authorization_url_connect_mode(mock_get_settings, service, mo
 
 @pytest.mark.asyncio
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
-async def test_disconnect_provider_success_with_user_check(mock_get_service, mock_crud_sso, service, mock_db):
+@patch("src.app.modules.sso.service.UserService")
+async def test_disconnect_provider_success_with_user_check(mock_user_service_cls, mock_crud_sso, service, mock_db):
     """Test disconnect provider validates user has password."""
     mock_connection = MagicMock()
     mock_connection.id = uuid4()
@@ -285,7 +285,7 @@ async def test_disconnect_provider_success_with_user_check(mock_get_service, moc
     mock_user.hashed_password = "hashed_password"
     mock_user_service = MagicMock()
     mock_user_service.get = AsyncMock(return_value=mock_user)
-    mock_get_service.return_value = mock_user_service
+    mock_user_service_cls.return_value = mock_user_service
 
     mock_crud_sso.count_for_user = AsyncMock(return_value=2)  # More than 1 connection
 

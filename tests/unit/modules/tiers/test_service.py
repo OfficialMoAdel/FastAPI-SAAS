@@ -186,10 +186,9 @@ async def test_warm_tiers_non_dict_data():
     redis.setex.assert_not_awaited()
 
 
-async def test_register_tier_service():
-    with patch("src.app.core.service_registry.register_service") as reg:
-        tiers_service._register_tier_service()
-    reg.assert_called_once()
-    name, factory = reg.call_args.args
-    assert name == "tier"
-    assert callable(factory)
+async def test_tier_service_factory_returns_instance():
+    """get_tier_service constructs TierService around the given session."""
+    db = AsyncMock()
+    svc = get_tier_service(db=db)
+    assert isinstance(svc, TierService)
+    assert svc.db is db

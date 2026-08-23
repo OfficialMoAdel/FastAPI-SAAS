@@ -302,7 +302,7 @@ class TestAuthServiceTokenRefresh:
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock) as mock_blacklist,
-            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption
@@ -409,7 +409,7 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.services.passwords.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.passwords.UserService") as mock_get_service,
             patch("src.app.modules.auth.services.passwords.event_bus.publish", new_callable=AsyncMock) as mock_publish,
             patch("src.app.modules.auth.services.passwords.PasswordResetToken") as mock_token_model,
             patch("src.app.modules.auth.services.passwords.settings") as mock_settings,
@@ -465,7 +465,7 @@ class TestAuthServiceEmailFlows:
         }
 
         with (
-            patch("src.app.modules.auth.services.email_verification.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
             patch("src.app.modules.auth.services.email_verification.EmailVerificationToken") as mock_token_cls,
             patch("src.app.modules.auth.services.email_verification.settings") as mock_settings,
             patch("src.app.modules.notifications.service.NotificationService") as mock_notification_cls,
@@ -511,7 +511,7 @@ class TestAuthServiceEmailFlows:
         mock_user = {"id": 99, "is_email_verified": False, "is_active": True}
 
         with (
-            patch("src.app.modules.auth.services.email_verification.get_service") as mock_get_service,
+            patch("src.app.modules.auth.services.email_verification.UserService") as mock_get_service,
         ):
             mock_user_service = MagicMock()
             mock_user_service.crud = MagicMock()
@@ -577,7 +577,7 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
@@ -613,7 +613,7 @@ class TestAuthServiceSecurityBugFixes:
         with (
             patch("src.app.modules.auth.service.verify_token", new_callable=AsyncMock) as mock_verify,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             mock_verify.return_value = mock_token_data
@@ -646,7 +646,7 @@ class TestAuthServiceSecurityBugFixes:
                 "src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock
             ) as mock_create_refresh,
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
-            patch("src.app.modules.auth.service.get_service") as mock_get_user_service,
+            patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
         ):
             from src.app.core.config import EnvironmentOption

@@ -14,6 +14,7 @@ from src.app.modules._base.service import BaseService
 from src.app.modules.rate_limits.crud import crud_rate_limits
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
+from src.app.modules.tiers.service import TierService
 
 
 class RateLimitService(BaseService[RateLimit]):
@@ -31,10 +32,7 @@ class RateLimitService(BaseService[RateLimit]):
 
     async def _get_tier_or_404(self, tier_name: str) -> dict[str, Any]:
         """Get tier by name or raise ModelNotFoundError."""
-        # Use service registry for cross-module decoupling
-        from src.app.core.service_registry import get_service
-
-        tier_service = get_service("tier", self.db)
+        tier_service = TierService(self.db)
         return cast(dict[str, Any], await tier_service.get_tier(tier_name))
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:

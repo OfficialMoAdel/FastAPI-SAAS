@@ -16,11 +16,11 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
 from src.app.core.security import blacklist_token, get_password_hash
-from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils import cache
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.tiers.models import Tier
+from src.app.modules.tiers.service import TierService
 from src.app.modules.users.crud import CRUDUser, crud_users
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
@@ -807,7 +807,7 @@ class UserService:
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
 
         # Validate tier exists via registry
-        tier_svc = get_service("tier", self.db)
+        tier_svc = TierService(self.db)
         try:
             await tier_svc.get_tier_by_id(values.tier_id)
         except ModelNotFoundError:

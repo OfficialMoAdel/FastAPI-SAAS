@@ -582,10 +582,3 @@ def get_api_key_service(db: AsyncSession) -> APIKeyService:
     """
     return APIKeyService(db)
 
-
-# DI factory registration with service registry
-def _register_api_key_service() -> None:
-    """Register APIKeyService with the service registry."""
-    from src.app.core.service_registry import register_service
-
-    register_service("api_key", lambda db: APIKeyService(db))

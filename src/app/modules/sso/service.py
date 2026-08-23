@@ -15,7 +15,6 @@ from src.app.core.exceptions.http_exceptions import (
 from src.app.core.logger import get_logger
 from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
-from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context, set_current_tenant, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.sso.crud import crud_user_sso_connections
@@ -27,6 +26,7 @@ from src.app.modules.sso.providers.microsoft import MicrosoftProvider
 from src.app.modules.sso.schemas import SSOProvider, UserSSOConnectionCreate, UserSSOConnectionUpdate
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.schemas import UserCreate
+from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 
@@ -264,7 +264,7 @@ class SSOService:
                 else:
                     await self._link_account(db, connect_user_id, provider, user_info)
 
-                found_user_data = await get_service("user", db).get(connect_user_id)
+                found_user_data = await UserService(db).get(connect_user_id)
                 if not found_user_data:
                     raise NotFoundException("User to connect not found")
             else:
@@ -276,7 +276,7 @@ class SSOService:
                         ),
                         id=connection.id,
                     )
-                    found_user_data = await get_service("user", db).get(connection.user_id)
+                    found_user_data = await UserService(db).get(connection.user_id)
                     if not found_user_data:
                         raise NotFoundException("Associated user not found")
                 else:
@@ -292,7 +292,7 @@ class SSOService:
                     if not verified:
                         raise BadRequestException("Unverified provider emails are not permitted for security reasons")
 
-                    user_by_email = await get_service("user", db).get_by_email(user_info.email)
+                    user_by_email = await UserService(db).get_by_email(user_info.email)
 
                     if user_by_email:
                         # M27: Security - prevent account takeover via IdP
@@ -348,7 +348,7 @@ class SSOService:
 
             # Fetch fully normalized User object with tier eager loaded for token claims
             email_val = found_user_data.email if hasattr(found_user_data, "email") else found_user_data["email"]
-            user_svc = get_service("user", db)
+            user_svc = UserService(db)
             normalized_user = await user_svc.get_user_auth_info(email=email_val)
 
             if not normalized_user:
@@ -493,13 +493,12 @@ class SSOService:
         import string
 
         from src.app.core.exceptions.http_exceptions import DuplicateValueException
-        from src.app.core.service_registry import get_service
 
         base_username = user_info.email.split("@")[0]
         # Ensure username is lowercase and alphanumeric
         clean_base = "".join(c for c in base_username if c.isalnum()).lower()
 
-        user_svc = get_service("user", db)
+        user_svc = UserService(db)
 
         # M26: Retry loop for username collisions
         max_retries = 3
@@ -628,7 +627,7 @@ class SSOService:
 
         # Check if user has a real password (SSO-only accounts store a sentinel
         # "!SSO_ONLY_ACCOUNT_NO_PASSWORD" placeholder, which is NOT a valid password).
-        user = await get_service("user", db).get(user_id)
+        user = await UserService(db).get(user_id)
         if user:
             hashed_pw = (
                 user.get("hashed_password") if isinstance(user, dict) else getattr(user, "hashed_password", None)

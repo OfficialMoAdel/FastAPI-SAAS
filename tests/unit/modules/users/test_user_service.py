@@ -557,10 +557,10 @@ class TestUserServiceTierAndRateLimits:
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_existing_user
 
-            # Mock Service Registry - patch the source since it is imported inside the function
-            with patch("src.app.core.service_registry.get_service") as mock_get_service:
+            # Patch TierService at its usage site (direct construction)
+            with patch("src.app.modules.users.service.TierService") as mock_tier_service_cls:
                 tier_svc = AsyncMock()
-                mock_get_service.return_value = tier_svc
+                mock_tier_service_cls.return_value = tier_svc
                 tier_svc.get_tier_by_id.return_value = {"id": 2}
 
                 with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:
@@ -593,9 +593,9 @@ class TestUserServiceTierAndRateLimits:
         with patch.object(user_service.crud, "get", new_callable=AsyncMock) as mock_get:
             mock_get.return_value = mock_user_dict
 
-            with patch("src.app.core.service_registry.get_service") as mock_get_service:
+            with patch("src.app.modules.users.service.TierService") as mock_tier_service_cls:
                 tier_svc = AsyncMock()
-                mock_get_service.return_value = tier_svc
+                mock_tier_service_cls.return_value = tier_svc
                 tier_svc.get_tier_by_id.return_value = {"id": 2}
 
                 with patch.object(user_service.crud, "update", new_callable=AsyncMock) as mock_update:

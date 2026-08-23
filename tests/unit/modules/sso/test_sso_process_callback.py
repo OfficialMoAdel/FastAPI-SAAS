@@ -92,13 +92,13 @@ async def test_process_callback_exchange_failed(
 @patch("src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
+@patch("src.app.modules.sso.service.UserService")
 @patch("src.app.modules.sso.service.create_access_token")
 @patch("src.app.modules.sso.service.create_refresh_token")
 async def test_process_callback_success(
     mock_create_refresh,
     mock_create_access,
-    mock_get_service,
+    mock_user_service_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -153,7 +153,7 @@ async def test_process_callback_success(
             "is_active": True,
         }
     )
-    mock_get_service.return_value = mock_user_svc
+    mock_user_service_cls.return_value = mock_user_svc
 
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
@@ -177,13 +177,13 @@ async def test_process_callback_success(
 @patch("src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
+@patch("src.app.modules.sso.service.UserService")
 @patch("src.app.modules.sso.service.create_access_token")
 @patch("src.app.modules.sso.service.create_refresh_token")
 async def test_process_callback_connect_mode(
     mock_create_refresh,
     mock_create_access,
-    mock_get_service,
+    mock_user_service_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -238,7 +238,7 @@ async def test_process_callback_connect_mode(
             "is_active": True,
         }
     )
-    mock_get_service.return_value = mock_user_svc
+    mock_user_service_cls.return_value = mock_user_svc
 
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
@@ -261,15 +261,13 @@ async def test_process_callback_connect_mode(
 @patch("src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings")
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
-@patch("src.app.modules.sso.service.get_service")
-@patch("src.app.core.service_registry.get_service")
+@patch("src.app.modules.sso.service.UserService")
 @patch("src.app.modules.sso.service.create_access_token")
 @patch("src.app.modules.sso.service.create_refresh_token")
 async def test_process_callback_apple_custom_flow(
     mock_create_refresh,
     mock_create_access,
-    mock_core_get_service,
-    mock_get_service,
+    mock_user_service_cls,
     mock_crud_sso,
     mock_get_provider,
     mock_get_settings,
@@ -325,8 +323,7 @@ async def test_process_callback_apple_custom_flow(
             "is_active": True,
         }
     )
-    mock_get_service.return_value = mock_user_svc
-    mock_core_get_service.return_value = mock_user_svc
+    mock_user_service_cls.return_value = mock_user_svc
     # _create_sso_user awaits user_svc.crud.update -> must be awaitable
     mock_user_svc.crud.update = AsyncMock()
 

@@ -21,13 +21,13 @@ from src.app.core.security import (
     verify_password,
     verify_token,
 )
-from src.app.core.service_registry import get_service
 from src.app.core.tenancy.context import get_tenant_context
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
 from src.app.modules.auth.services.passwords import PasswordLifecycleService
 from src.app.modules.auth.services.tokens import TokenIssuer
+from src.app.modules.users.service import UserService
 
 logger = get_logger(__name__)
 
@@ -64,7 +64,7 @@ class AuthService:
         """
         # Use eager loading to get tier info for JWT claims (enables Zero-DB rate limiting)
         # Use UserService to benefit from auth info caching
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         if "@" in username_or_email:
             db_user = await user_service.get_user_auth_info(email=username_or_email)
         else:
@@ -182,7 +182,7 @@ class AuthService:
 
         if result == -1:
             # Fetch user to get tenant and user ID for audit log
-            user_service = get_service("user", db)
+            user_service = UserService(db)
             if "@" in normalized_username:
                 db_user = await user_service.get_user_auth_info(email=normalized_username)
             else:
@@ -324,7 +324,7 @@ class AuthService:
 
         # Fetch user with tier for Zero-DB rate limiting
         # Use UserService to benefit from auth info caching
-        user_service = get_service("user", db)
+        user_service = UserService(db)
         if "@" in user_data.username_or_email:
             # Fallback for email-based subjects (rare but safe)
             db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
@@ -443,7 +443,7 @@ class AuthService:
             user_service = None
             if user_data:
                 try:
-                    user_service = get_service("user", db)
+                    user_service = UserService(db)
                     if "@" in user_data.username_or_email:
                         db_user = await user_service.get_user_auth_info(email=user_data.username_or_email)
                     else:

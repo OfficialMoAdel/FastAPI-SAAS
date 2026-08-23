@@ -21,7 +21,7 @@ def _patch_tier():
     tier_service = AsyncMock()
     tier_service.get_tier.return_value = {"id": 5, "name": "free"}
     return patch(
-        "src.app.core.service_registry.get_service",
+        "src.app.modules.rate_limits.service.TierService",
         return_value=tier_service,
     )
 
