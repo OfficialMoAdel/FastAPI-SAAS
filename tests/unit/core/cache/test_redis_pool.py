@@ -37,13 +37,13 @@ class TestRedisPoolSingleton:
         """Verify no pool is created per-request."""
         import inspect
 
-        from src.app.core.utils import cache
+        from src.app.core.cache.dependencies import async_get_redis
 
-        source = inspect.getsource(cache.async_get_redis)
+        source = inspect.getsource(async_get_redis)
 
         # Should yield existing client, not create new pool
         assert "ConnectionPool" not in source
-        assert "yield client" in source
+        assert "yield _cache.client" in source
 
 
 class TestPoolSharing:

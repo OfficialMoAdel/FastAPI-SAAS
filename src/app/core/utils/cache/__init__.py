@@ -63,6 +63,9 @@ stampede_logger: Any = get_logger("src.app.core.utils.cache.stampede")
 
 from uuid import UUID  # noqa: E402
 
+# DI provider relocated to core/cache/dependencies.py; re-exported here
+# for backward compatibility with existing import sites.
+from src.app.core.cache.dependencies import async_get_redis  # noqa: E402,F401
 from src.app.core.tenancy.context import get_current_tenant  # noqa: E402
 
 from .decorator import (  # noqa: E402,F401
@@ -100,25 +103,4 @@ from .tenant_index import (  # noqa: E402,F401
     remove_from_tenant_index,
     set_tenant_cache,
 )
-
-
-async def async_get_redis() -> AsyncGenerator[Redis, None]:
-    """Get the shared Redis client from the pool.
-
-    Note: The module-level `client` is initialized at startup and reuses
-    the connection pool for all requests, avoiding per-request overhead.
-
-    Yields
-    ------
-    Redis
-        The shared Redis client instance.
-
-    Raises
-    ------
-    MissingClientError
-        If the Redis client has not been initialized.
-    """
-    if client is None:
-        raise MissingClientError("Redis client not initialized")
-    yield client
 
