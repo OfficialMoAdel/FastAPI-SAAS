@@ -110,7 +110,18 @@ class LuaScriptManager:
             local ttl = redis.call('TTL', KEYS[1])
             return {value, ttl}
         """,
-        # Session eviction helper - Atomic ZPOPMIN + HDEL
+
+        # Distributed lock release - compare-and-delete (ownership token)
+        "lock_release_if_owned": """
+            -- KEYS[1]: lock key
+            -- ARGV[1]: ownership token
+            -- Returns: 1 if lock was released, 0 if not owned
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                return redis.call('DEL', KEYS[1])
+            end
+            return 0
+        """,
+
         "session_evict_oldest": """
             -- KEYS[1]: session order zset key
             -- KEYS[2]: session hash key

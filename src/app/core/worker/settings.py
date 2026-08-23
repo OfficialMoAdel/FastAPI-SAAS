@@ -1,4 +1,5 @@
 from arq.connections import RedisSettings
+from arq.constants import default_queue_name
 from arq.cron import cron
 
 from src.app.core.config import settings
@@ -44,6 +45,10 @@ class WorkerSettings:
         send_email_task,  # FIXED: Was missing - handles email notifications
         send_magic_link_email_task,
     ]
+    # Consume both the default queue and the low-priority event queue.
+    # Without this, EventPriority.LOW events enqueued to
+    # f"{default_queue_name}_low_priority" (see events/bus.py) were never consumed.
+    queues = [default_queue_name, f"{default_queue_name}_low_priority"]
     redis_settings = RedisSettings(
         host=settings.REDIS_QUEUE_HOST,
         port=settings.REDIS_QUEUE_PORT,

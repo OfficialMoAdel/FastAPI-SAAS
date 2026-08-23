@@ -127,18 +127,18 @@ async def test_stampede_protection_lock():
                 beta=100.0,  # Force high probability
             )
 
-            # Check if lock was attempted
-            mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=5)
+            # Check if lock was attempted (with a unique ownership token)
+            set_args, set_kwargs = mock_client.set.call_args
+            assert set_args[0] == "test:key:refresh_lock"
+            assert isinstance(set_args[1], str) and len(set_args[1]) > 8  # unique token, not constant "1"
+            assert set_kwargs == {"nx": True, "ex": 5}
 
             # Check if background task was created
             mock_create_task.assert_called_once()
 
             # Now verify what happens inside _refresh_cache_with_lock
-            # We can call it manually to verify it releases lock
-            await _refresh_cache_with_lock("test:key", fetch_func, 3600, "test:key:refresh_lock")
-
-            # Verify lock was deleted
-            mock_client.delete.assert_called_with("test:key:refresh_lock")
+            # We can call it manually to verify it releases lock only when owned.
+            await _refresh_cache_with_lock("test:key", fetch_func, 3600, "test:key:refresh_lock", "token123")
             assert fetch_called
 
         # Test lock contention (lock not acquired)
@@ -152,8 +152,11 @@ async def test_stampede_protection_lock():
             beta=100.0,
         )
 
-        # Lock attempt made
-        mock_client.set.assert_called_with("test:key:refresh_lock", "1", nx=True, ex=5)
+        # Lock attempt made (with ownership token)
+        set_args2, set_kwargs2 = mock_client.set.call_args
+        assert set_args2[0] == "test:key:refresh_lock"
+        assert isinstance(set_args2[1], str) and len(set_args2[1]) > 8
+        assert set_kwargs2 == {"nx": True, "ex": 5}
         # But no background task created
         mock_create_task.assert_not_called()
 

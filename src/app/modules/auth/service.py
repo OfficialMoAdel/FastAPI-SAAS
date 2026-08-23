@@ -77,7 +77,8 @@ class AuthService:
         # SSO-only accounts store a non-bcrypt sentinel ("!SSO_ONLY_ACCOUNT_NO_PASSWORD")
         # in place of a real password. Passing it to verify_password raises UnknownHashError
         # (500). Treat the sentinel as an invalid password so the login fails cleanly with 401.
-        if hash_to_verify and str(hash_to_verify).startswith("!SSO_ONLY"):
+        # Empty/missing hashes (e.g. partially migrated rows) are handled the same way.
+        if not hash_to_verify or str(hash_to_verify).startswith("!SSO_ONLY"):
             # Still perform dummy bcrypt to prevent timing-based account enumeration
             await verify_password(password, self._DUMMY_BCRYPT_HASH)
             return None
@@ -365,8 +366,9 @@ class AuthService:
             if redis_client and lock_key:
                 try:
                     await redis_client.delete(lock_key)
-                except Exception:
-                    pass
+                except Exception as e:
+                    # Bounded by ex=30, but log for incident diagnosis
+                    logger.debug("Failed to delete refresh lock key", lock_key=lock_key, error=str(e))
 
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
         try:

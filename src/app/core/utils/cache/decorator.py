@@ -354,8 +354,7 @@ def cache(  # noqa: C901
                         delta = expiration - remaining_ttl
                         if delta > 0:
                             probability = min((delta / expiration) ** 2, 1.0)
-                            import random
-                            if random.random() < probability:
+                            if _state.random.random() < probability:
                                 lock_key = f"{cache_key}:refresh_lock"
                                 lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
                                 if lock_acquired:
@@ -380,8 +379,15 @@ def cache(  # noqa: C901
                                 if filtered is not None:
                                     import json as _j2
                                     cached_data = _j2.dumps(filtered, default=str)
-                        except Exception:
-                            pass
+                        except Exception as e:
+                            # Never return an unfiltered cached payload on validation failure:
+                            # fall through to a fresh handler call (treat as cache miss).
+                            _state.stampede_logger.warning(
+                                "Cached response re-validation failed; forcing fresh handler call",
+                                error=str(e),
+                                cache_key=cache_key,
+                            )
+                            cached_data = None
                         # P6: Skip re-parse - return raw JSON bytes directly
                         return Response(content=cached_data, media_type="application/json")
 
@@ -411,12 +417,15 @@ def cache(  # noqa: C901
                             pipe.sadd(_state._tenant_index_key(tenant_id), cache_key)
                             pipe.expire(_state._tenant_index_key(tenant_id), expiration * 2)
 
-                            # Also add to prefix-sharded index
-                            if len(parts) >= 3:
-                                prefix = parts[2]
-                                sharded_idx_key = _state._tenant_prefix_index_key(tenant_id, prefix)
-                                pipe.sadd(sharded_idx_key, cache_key)
-                                pipe.expire(sharded_idx_key, expiration * 2)
+                            # Also add to prefix-sharded index.
+                            # NOTE: shard by the business prefix (key_prefix), NOT parts[2] —
+                            # for user_scoped keys parts[2] is "user", which would make
+                            # invalidate_tenant_cache(tenant_id, prefix="...") find nothing.
+                            sharded_idx_key = _state._tenant_prefix_index_key(
+                                tenant_id, _format_prefix(key_prefix, kwargs)
+                            )
+                            pipe.sadd(sharded_idx_key, cache_key)
+                            pipe.expire(sharded_idx_key, expiration * 2)
 
                     # Release refresh lock if we acquired it
                     refresh_lock_key = getattr(request.state, "cache_refresh_lock_key", None)

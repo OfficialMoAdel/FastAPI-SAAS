@@ -227,19 +227,11 @@ class PasswordLifecycleService:
             except Exception:
                 pass
 
-            await event_bus.publish(
-                "notification.request",
-                {
-                    "tenant_id": None,
-                    "to_email": "dummy@example.com",
-                    "template_name": "dummy",
-                    "context": {},
-                    "user_id": 0,
-                },
-                priority=EventPriority.NORMAL,
-            )
-
-            # SECURITY FIX: Equalize timing for enumeration prevention
+            # SECURITY FIX: Equalize timing for enumeration prevention.
+            # NOTE: Do NOT publish a real notification event here — the dummy path
+            # previously published "notification.request" to dummy@example.com,
+            # creating outbound-send attempts/log noise on every enumeration probe.
+            # A pure async delay matching the real branch's cost is sufficient.
             await asyncio.sleep(random.uniform(0.1, 0.2))
 
         return {"message": "If an account exists with that email, a reset link has been sent."}

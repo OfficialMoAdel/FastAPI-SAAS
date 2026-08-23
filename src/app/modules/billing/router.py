@@ -3,7 +3,7 @@
 from typing import Annotated, Any
 from uuid import UUID
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -57,7 +57,6 @@ logger = get_logger(__name__)
 @router.post("/webhook", response_model=WebhookResponse, status_code=status.HTTP_200_OK)
 async def stripe_webhook(
     request: Request,
-    background_tasks: BackgroundTasks,
     tenant_id: UUID | None = Query(None, description="Optional tenant ID for per-tenant webhook secrets"),
     db: AsyncSession = Depends(async_get_db),
 ) -> Any:
@@ -121,7 +120,7 @@ async def stripe_webhook(
     )
 
     # Handle event directly so that exceptions propagate and Stripe can retry
-    await handle_webhook_event(event, background_tasks)
+    await handle_webhook_event(event)
 
     return {"status": "success"}
 

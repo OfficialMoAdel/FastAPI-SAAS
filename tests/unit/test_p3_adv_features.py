@@ -194,7 +194,10 @@ async def test_refresh_lock_logic():
     await asyncio.sleep(0.1)
 
     lock_key = f"{key}:refresh_lock"
-    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=5)
+    set_args, set_kwargs = mock_client.set.call_args
+    assert set_args[0] == lock_key
+    assert isinstance(set_args[1], str) and len(set_args[1]) > 8  # unique ownership token
+    assert set_kwargs == {"nx": True, "ex": 5}
 
     # Verify fetch function called
     mock_fetch_func.assert_called_once()
@@ -223,9 +226,12 @@ async def test_refresh_lock_denied():
             with patch("random.random", return_value=0.0):
                 result = await cache.get_with_stampede_protection(key, mock_fetch_func, ttl=ttl, beta=100.0)
 
-    # Verify lock attempt
+    # Verify lock attempt (with ownership token)
     lock_key = f"{key}:refresh_lock"
-    mock_client.set.assert_called_with(lock_key, "1", nx=True, ex=5)
+    set_args, set_kwargs = mock_client.set.call_args
+    assert set_args[0] == lock_key
+    assert isinstance(set_args[1], str) and len(set_args[1]) > 8
+    assert set_kwargs == {"nx": True, "ex": 5}
 
     # Verify fetch function NOT called
     mock_fetch_func.assert_not_called()

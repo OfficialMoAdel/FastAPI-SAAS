@@ -248,6 +248,12 @@ class EventBus:
             handlers = self._handlers.get(event_name, [])
 
             if not handlers:
+                if not self._registration_complete:
+                    _pkg.logger.error(
+                        "Event published before handler registration completed; "
+                        "event may be silently dropped",
+                        event_name=event_name,
+                    )
                 _pkg.logger.debug("Event published no handlers", event_name=event_name)
                 return
 
@@ -503,12 +509,19 @@ class EventBus:
                         event_name=event_name,
                         handler=handler.__name__,
                     )
-                except TimeoutError:
+                except TimeoutError as e:
                     _pkg.logger.error(
                         "Sync fallback timed out after gather failure",
                         event_name=event_name,
                         handler=handler.__name__,
                         timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
+                    await self.add_to_dlq(
+                        event_name=event_name,
+                        handler_name=getattr(handler, "__name__", repr(handler)),
+                        data=data,
+                        error=str(e),
+                        attempt_count=0,
                     )
                 except Exception as handler_error:
                     _pkg.logger.error(
@@ -516,6 +529,13 @@ class EventBus:
                         event_name=event_name,
                         handler=handler.__name__,
                         error=str(handler_error),
+                    )
+                    await self.add_to_dlq(
+                        event_name=event_name,
+                        handler_name=getattr(handler, "__name__", repr(handler)),
+                        data=data,
+                        error=str(handler_error),
+                        attempt_count=0,
                     )
                 continue
 
@@ -533,12 +553,19 @@ class EventBus:
                         event_name=event_name,
                         handler=handler.__name__,
                     )
-                except TimeoutError:
+                except TimeoutError as e:
                     _pkg.logger.error(
                         "Sync fallback timed out after queue failure",
                         event_name=event_name,
                         handler=handler.__name__,
                         timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+                    )
+                    await self.add_to_dlq(
+                        event_name=event_name,
+                        handler_name=getattr(handler, "__name__", repr(handler)),
+                        data=data,
+                        error=str(e),
+                        attempt_count=0,
                     )
                 except Exception as handler_error:
                     _pkg.logger.error(
@@ -546,6 +573,13 @@ class EventBus:
                         event_name=event_name,
                         handler=handler.__name__,
                         error=str(handler_error),
+                    )
+                    await self.add_to_dlq(
+                        event_name=event_name,
+                        handler_name=getattr(handler, "__name__", repr(handler)),
+                        data=data,
+                        error=str(handler_error),
+                        attempt_count=0,
                     )
 
     async def _publish_async_batch(
@@ -799,7 +833,12 @@ class EventBus:
             # R1-H9: Route common business events to webhook dispatcher
             def make_webhook_adapter(event_type: str) -> Callable[[dict[str, Any]], Coroutine[Any, Any, None]]:
                 async def adapter(data: dict[str, Any]) -> None:
+                    # Prefer top-level tenant_id, fall back to canonical publish metadata
                     tenant_id = data.get("tenant_id")
+                    if not tenant_id:
+                        meta = data.get("_event_meta") or {}
+                        tenant = meta.get("tenant") or {}
+                        tenant_id = tenant.get("id")
                     if tenant_id:
                         await handle_webhook_trigger_event({
                             "tenant_id": str(tenant_id),
@@ -837,8 +876,19 @@ event_bus = EventBus()
 def reset_event_bus() -> None:
     """Reset the event bus singleton for test isolation.
 
-    Creates a fresh EventBus instance, clearing all handlers and state.
+    Resets the existing singleton in place rather than rebinding it: most
+    publishers bind the singleton at import time
+    (``from src.app.core.events import event_bus``), so replacing ``_pkg.event_bus``
+    would leave those modules publishing to a stale instance while tests inspect
+    the new one.
+
     Use this in test fixtures to ensure clean state between tests.
     """
-    _pkg.event_bus = EventBus()
+    fresh = EventBus()
+    existing = _pkg.event_bus
+    # Copy fresh state onto the existing instance so all import-time bindings observe it.
+    existing._handlers = fresh._handlers
+    existing._registration_complete = fresh._registration_complete
+    existing._redis_client = fresh._redis_client
+    existing._arq_queue = fresh._arq_queue
     _pkg.logger.debug("Event bus singleton reset")

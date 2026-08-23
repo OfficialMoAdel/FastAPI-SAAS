@@ -1,6 +1,9 @@
-"""Webhook idempotency — exactly-once processing under Stripe's at-least-once delivery.
+"""Webhook idempotency — duplicate suppression under Stripe's at-least-once delivery.
 
-Primary lock: Redis SET NX with a short processing-window TTL.
+Primary lock: Redis SET NX with a SHORT processing-window TTL (dedup window =
+``_WEBHOOK_PROCESSING_TTL_SECONDS``, default 5 minutes). Handlers MUST be
+internally idempotent (upserts, exists-checks) because a Stripe redelivery more
+than one dedup window after the first delivery will be reprocessed.
 Fallback: DB insert-claim on the ``WebhookEvent`` table when Redis is down.
 Fail-closed: if both fail, the event is rejected so Stripe retries later
 rather than risking duplicate side effects.
@@ -31,11 +34,10 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
     try:
         key = f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}"
         # SET key value NX EX ttl - atomic set-if-not-exists with a SHORT
-        # processing-window TTL. This is a *processing* lock, NOT the
-        # "processed" marker. The durable marker is written only AFTER the
-        # handler commits (see _mark_event_processed), so a crash mid-handling
-        # lets the short lock expire and Stripe retry instead of silently
-        # losing the event for 7 days.
+        # processing-window TTL. This is a *processing* lock, NOT a durable
+        # "processed" marker: no durable marker is written on success (handlers
+        # are expected to be internally idempotent), so a crash mid-handling or
+        # a late Stripe redelivery outside the TTL window simply reprocesses.
         result = await redis_client.set(key, "processing", nx=True, ex=_pkg._WEBHOOK_PROCESSING_TTL_SECONDS)
         return result is not None  # True = lock acquired, False = already processed
     except Exception as e:

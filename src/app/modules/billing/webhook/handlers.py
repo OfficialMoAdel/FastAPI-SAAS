@@ -196,7 +196,7 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
 
             _pkg.logger.info("Created subscription for user in tenant", user_id=user_id, tenant_id=tenant_id)
 
-        except stripe.error.StripeError as e:
+        except stripe.StripeError as e:
             _pkg.logger.error("Stripe API error retrieving subscription", error=e)
             raise
     else:
@@ -444,10 +444,20 @@ async def handle_invoice_payment_succeeded(event: stripe.Event) -> None:
             )
             return
 
-        await _pkg.crud_billing_records.create(
-            db=db,
-            object=billing_record,
-        )
+        try:
+            await _pkg.crud_billing_records.create(
+                db=db,
+                object=billing_record,
+            )
+        except IntegrityError:
+            # Concurrent redelivery inside the dedup window already inserted the
+            # record (unique constraint on stripe_invoice_id). Skip duplicate.
+            await db.rollback()
+            _pkg.logger.info(
+                "Billing record with stripe_invoice_id already exists (race), skipping duplicate insert",
+                stripe_invoice_id=invoice_id,
+            )
+            return
 
         # P1.7: A successful payment must restore a past_due subscription to
         # active. Otherwise the user stays past_due (and locked out of paid
@@ -548,11 +558,21 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
             )
             return
 
-        await _pkg.crud_billing_records.create(
-            db=db,
-            object=billing_record,
-            commit=False,
-        )
+        try:
+            await _pkg.crud_billing_records.create(
+                db=db,
+                object=billing_record,
+                commit=False,
+            )
+        except IntegrityError:
+            # Concurrent redelivery inside the dedup window already inserted the
+            # record. Roll back and skip both insert and past_due update.
+            await db.rollback()
+            _pkg.logger.info(
+                "Failed billing record with stripe_invoice_id already exists (race), skipping duplicate insert",
+                stripe_invoice_id=invoice["id"],
+            )
+            return
 
         # Update subscription to past_due
         update_data = UserSubscriptionUpdate(status="past_due")
@@ -606,7 +626,7 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
             )
             invoice = await asyncio.to_thread(stripe.Invoice.retrieve, stripe_invoice_id, api_key=api_key)
             stripe_subscription_id = invoice.get("subscription")
-        except stripe.error.StripeError as e:
+        except stripe.StripeError as e:
             _pkg.logger.error("Error retrieving invoice", error=e)
             raise ValueError(f"Failed to retrieve invoice {stripe_invoice_id} from Stripe") from e
 

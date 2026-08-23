@@ -1,10 +1,46 @@
 """Cache stampede protection — XFetch probabilistic early expiration + locks."""
 
+import secrets
 import time
 from collections.abc import Callable
 from typing import Any
 
 from src.app.core.utils import cache as _state
+
+
+def _make_lock_token() -> str:
+    """Generate a unique ownership token for a distributed lock."""
+    return secrets.token_hex(16)
+
+
+async def _acquire_lock(client: Any, lock_key: str, ttl_seconds: int) -> str | None:
+    """Acquire a distributed lock with a unique ownership token.
+
+    Returns the token on success, None if the lock is held elsewhere.
+    """
+    token = _make_lock_token()
+    acquired = await client.set(lock_key, token, nx=True, ex=ttl_seconds)
+    return token if acquired else None
+
+
+async def _release_lock(client: Any, lock_key: str, token: str | None) -> None:
+    """Release a lock only if we still own it (compare-and-delete).
+
+    Prevents a slow worker whose lock has expired from deleting the lock of
+    another worker that acquired it afterwards.
+    Falls back to unconditional delete if the Lua script cannot run.
+    """
+    if token is None:
+        return
+    try:
+        lua_manager = _state.get_lua_manager()
+        released = await lua_manager.execute(client, "lock_release_if_owned", keys=[lock_key], args=[token])
+        if not released:
+            _state.stampede_logger.debug("Lock already expired or owned by another worker", key=lock_key)
+    except Exception as e:
+        # Fallback: without ownership check this is best-effort only
+        _state.stampede_logger.warning("Lock release Lua failed; falling back to delete", error=str(e), key=lock_key)
+        await client.delete(lock_key)
 
 
 async def get_with_stampede_protection(
@@ -98,11 +134,9 @@ async def get_with_stampede_protection(
                 # P3-1: Add background refresh lock to prevent stampede
                 # Only one process should trigger the background refresh
                 lock_key = f"{key}:refresh_lock"
-                # Try to acquire lock for 10s (short duration just for the trigger)
-                # nx=True ensures we only get it if it doesn't exist
-                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
+                lock_token = await _acquire_lock(client, lock_key, 5)
 
-                if lock_acquired:
+                if lock_token is not None:
                     _state.stampede_logger.debug(
                         "Cache early refresh triggered",
                         key=key,
@@ -112,8 +146,11 @@ async def get_with_stampede_protection(
                     # Refresh in background, return stale data
                     # Pass lock_key to cleanup after refresh
                     # Track task to prevent GC while running
-                    task = _state.asyncio.create_task(_refresh_cache_with_lock(key, fetch_func, ttl, lock_key))
+                    task = _state.asyncio.create_task(
+                        _refresh_cache_with_lock(key, fetch_func, ttl, lock_key, lock_token)
+                    )
                     _state._background_tasks.add(task)
+                    task.add_done_callback(_log_background_task_exception)
                     task.add_done_callback(_state._background_tasks.discard)
                 else:
                     _state.stampede_logger.debug(
@@ -125,12 +162,12 @@ async def get_with_stampede_protection(
 
     # Cache miss - use lock-based fetch to prevent thundering herd
     lock_key = f"{key}:refresh_lock"
-    lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
-    if lock_acquired:
+    lock_token = await _acquire_lock(client, lock_key, 5)
+    if lock_token is not None:
         try:
             return await _refresh_cache(key, fetch_func, ttl)
         finally:
-            await client.delete(lock_key)
+            await _release_lock(client, lock_key, lock_token)
     else:
         # Wait and retry with simple polling
         for _ in range(20):
@@ -143,14 +180,26 @@ async def get_with_stampede_protection(
         return await fetch_func()
 
 
-async def _refresh_cache_with_lock(key: str, fetch_func: Callable[[], Any], ttl: int, lock_key: str) -> Any:
+def _log_background_task_exception(task: Any) -> None:
+    """Log exceptions from fire-and-forget background refresh tasks."""
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        _state.stampede_logger.error("Background cache refresh failed", error=str(exc))
+
+
+async def _refresh_cache_with_lock(
+    key: str, fetch_func: Callable[[], Any], ttl: int, lock_key: str, lock_token: str | None = None
+) -> Any:
     """Refresh cache and cleanup lock."""
     try:
         return await _refresh_cache(key, fetch_func, ttl)
     finally:
-        if _state.client:
+        client = _state.client
+        if client:
             # Release the lock so subsequent refreshes can happen
-            await _state.client.delete(lock_key)
+            await _release_lock(client, lock_key, lock_token)
 
 
 async def _refresh_cache(key: str, fetch_func: Callable[[], Any], ttl: int) -> Any:
@@ -206,9 +255,9 @@ async def get_with_lock(
 
     # Cache miss - try to acquire lock
     lock_key = f"{key}:lock"
-    lock_acquired = await client.set(lock_key, "1", nx=True, ex=lock_timeout)
+    lock_token = await _acquire_lock(client, lock_key, lock_timeout)
 
-    if lock_acquired:
+    if lock_token is not None:
         try:
             # Double-check cache after acquiring lock
             cached = await client.get(key)
@@ -222,7 +271,7 @@ async def get_with_lock(
             await client.setex(key, ttl, serialized)
             return data
         finally:
-            await client.delete(lock_key)
+            await _release_lock(client, lock_key, lock_token)
     else:
         # Another process has the lock - wait and retry with exponential backoff
         elapsed = 0.0

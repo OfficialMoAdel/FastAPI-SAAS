@@ -4,7 +4,6 @@ Adding a new Stripe event type means registering one entry in
 ``EVENT_HANDLERS``; the dispatcher itself never changes.
 """
 
-from typing import Any
 
 import stripe
 
@@ -27,7 +26,7 @@ EVENT_HANDLERS: dict[str, str] = {
 }
 
 
-async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None) -> dict[str, str]:
+async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
     """
     Route and handle specific Stripe webhook events.
 
@@ -38,7 +37,6 @@ async def handle_webhook_event(event: stripe.Event, background_tasks: Any = None
 
     Args:
         event: The Stripe event object
-        background_tasks: FastAPI BackgroundTasks object (optional)
 
     Returns:
         Status dict

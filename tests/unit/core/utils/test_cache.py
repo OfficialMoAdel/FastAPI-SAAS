@@ -521,6 +521,8 @@ async def test_cache_get_hit(client: MagicMock) -> None:
     request = MagicMock(spec=Request)
     request.method = "GET"
     request.state = MagicMock()
+    # No route/response_model in scope: cached payload should be returned unfiltered
+    request.scope = {"route": None}
 
     @cache(key_prefix="p", resource_id_name="rid")
     async def handler(request, rid):
