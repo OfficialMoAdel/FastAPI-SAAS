@@ -212,17 +212,20 @@ def test_nested_structures_serialized(db, sample_tenant_id):
 
 
 def test_feature_flag_off_uses_legacy(db_session, sample_product):
-    """Test that when feature flag is off, original code path is used.
+    """Test that when the optimization flag is off, original code path is used.
 
-    Note: This test verifies the behavior when FEATURE_BILLING_DICT_OPTimization
-    is False. The actual implementation would need to be updated to use the
-    feature flag, but this test documents the expected behavior.
+    Flags live in the Settings pipeline (``settings.r1_unified`` /
+    ``settings.performance``, env-overridable) since removal of the dead
+    ``core/feature_flags.py`` module (ADR-0002). This test documents the
+    legacy-vs-optimized behavior contract without import-time globals.
     """
-    from src.app.core.feature_flags import FEATURE_BILLING_DICT_OPTIMIZATION
+    from src.app.core.config import settings
 
-    # If feature flag is False, we should use the original Pydantic serialization
-    # This test documents the expected behavior
-    if not FEATURE_BILLING_DICT_OPTIMIZATION:
+    # Any optimization toggle can be flipped per-test by constructing or
+    # overriding settings values; no module reload hacks needed.
+    optimization_enabled = settings.r1_unified.EVENT_BUS_USE_LUA_IDEMPOTENCY
+
+    if not optimization_enabled:
         # Original code path would use Pydantic model_dump()
         pydantic_model = ProductRead.model_validate(sample_product)
         original_dict = pydantic_model.model_dump()

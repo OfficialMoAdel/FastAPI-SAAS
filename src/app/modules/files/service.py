@@ -17,10 +17,10 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
-from src.app.core.service_registry import get_service
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
 from src.app.modules.storage.metrics import storage_metrics
+from src.app.modules.storage_settings.service import StorageSettingsService
 from src.app.modules.tenants.models import Tenant
 
 if TYPE_CHECKING:
@@ -61,7 +61,7 @@ class FileService:
             db: Async database session.
         """
         self.db = db
-        self._storage_service = get_service("storage_settings", db)
+        self._storage_service = StorageSettingsService(db)
 
     async def upload_file(
         self,
