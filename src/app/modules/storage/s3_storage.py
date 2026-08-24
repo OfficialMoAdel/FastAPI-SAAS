@@ -21,7 +21,10 @@ from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
 from src.app.core.config import settings
+from src.app.core.logger import get_logger
 from src.app.modules.storage.interfaces import StorageProvider, StorageResult
+
+logger = get_logger(__name__)
 
 # Lazy import for boto3 - only needed at runtime, not for testing with mocks
 if TYPE_CHECKING:
@@ -201,6 +204,10 @@ class S3Storage(StorageProvider):
     async def delete(self, path: str) -> StorageResult:
         """Delete a file from S3.
 
+        Idempotent: deleting an absent object is a success, matching the
+        Azure adapter's semantics. Other failures return success=False with
+        the error detail.
+
         Args:
             path: Path (key) to the file in S3.
 
@@ -216,6 +223,11 @@ class S3Storage(StorageProvider):
             )
             return StorageResult(success=True, path=path)
         except Exception as e:
+            error_code = self._get_error_code(e)
+            if error_code in ("404", "NoSuchKey"):
+                logger.info("S3 delete of missing object treated as success", path=path)
+                return StorageResult(success=True, path=path)
+            logger.error("Failed to delete S3 object", path=path, error=e)
             return StorageResult(
                 success=False,
                 path=path,
@@ -225,11 +237,18 @@ class S3Storage(StorageProvider):
     async def exists(self, path: str) -> bool:
         """Check if file exists in S3.
 
+        Only a definitive 404/NoSuchKey answer maps to False. Any other error
+        (403 access denied, 500, network failure) is re-raised so callers
+        never mistake a misconfiguration for a missing file.
+
         Args:
             path: Path (key) to check.
 
         Returns:
-            True if file exists, False otherwise.
+            True if file exists, False if definitively absent.
+
+        Raises:
+            Exception: On any S3 error other than not-found.
         """
         try:
             # Wrap blocking head_object in asyncio.to_thread to avoid blocking event loop
@@ -241,13 +260,13 @@ class S3Storage(StorageProvider):
             return True
         except Exception as e:
             error_code = self._get_error_code(e)
-            if error_code in ("404", "NoSuchKey", "403"):
+            if error_code in ("404", "NoSuchKey"):
                 return False
 
             from src.app.core.logger import get_logger
 
-            get_logger(__name__).error("S3 exists check failed", error=e)
-            return False
+            get_logger(__name__).error("S3 exists check failed", error=e, path=path)
+            raise
 
     async def get_url(self, path: str, expires_in: int = 3600) -> str:
         """Get signed URL for S3 object.

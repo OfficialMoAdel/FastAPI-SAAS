@@ -196,11 +196,11 @@ class TestS3Storage:
 
     @pytest.mark.asyncio
     async def test_s3_delete_failure(self, mock_s3_client):
-        """Test S3 file deletion failure."""
+        """Test S3 deletion failure on a real error (404 is idempotent success)."""
         from src.app.modules.storage.s3_storage import S3Storage
 
         mock_s3_client.delete_object.side_effect = MockClientError(
-            {"Error": {"Code": "404", "Message": "Not Found"}}, "DeleteObject"
+            {"Error": {"Code": "500", "Message": "Internal Error"}}, "DeleteObject"
         )
 
         storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
@@ -236,6 +236,35 @@ class TestS3Storage:
         exists = await storage.exists("uploads/nonexistent.txt")
 
         assert exists is False
+
+    @pytest.mark.asyncio
+    async def test_s3_exists_403_raises(self, mock_s3_client):
+        """403 (access denied) must NOT masquerade as missing file — it raises."""
+        from src.app.modules.storage.s3_storage import S3Storage
+
+        mock_s3_client.head_object.side_effect = MockClientError(
+            {"Error": {"Code": "403", "Message": "Forbidden"}}, "HeadObject"
+        )
+
+        storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
+
+        with pytest.raises(Exception, match="Forbidden"):
+            await storage.exists("uploads/secret.txt")
+
+    @pytest.mark.asyncio
+    async def test_s3_delete_missing_object_is_idempotent_success(self, mock_s3_client):
+        """Deleting an absent object is a success (matches Azure semantics)."""
+        from src.app.modules.storage.s3_storage import S3Storage
+
+        mock_s3_client.delete_object.side_effect = MockClientError(
+            {"Error": {"Code": "404", "Message": "Not Found"}}, "DeleteObject"
+        )
+
+        storage = S3Storage(s3_client=mock_s3_client, bucket="test-bucket")
+
+        result = await storage.delete("uploads/gone.txt")
+
+        assert result.success is True
 
     @pytest.mark.asyncio
     async def test_s3_get_url(self, mock_s3_client):
@@ -283,30 +312,10 @@ class TestStorageModuleExports:
         assert StorageProvider is not None
         assert StorageResult is not None
 
-    def test_storage_module_exports_s3(self):
-        """Test that storage module exports S3Storage."""
-        from src.app.modules.storage import S3Storage
+    def test_storage_module_no_global_factory(self):
+        """The stale global-settings factory is gone; provider selection is tenant-scoped."""
+        import src.app.modules.storage as storage_pkg
 
-        assert S3Storage is not None
+        assert not hasattr(storage_pkg, "get_storage")
 
 
-class TestStorageDependencyInjection:
-    """Test dependency injection support for storage."""
-
-    @pytest.fixture
-    def mock_s3_client(self):
-        """Fixture for mock S3 client."""
-        client = MagicMock()
-        client.put_object = MagicMock(return_value={"ETag": '"test"'})
-        client.get_object = MagicMock()
-        client.delete_object = MagicMock()
-        client.head_object = MagicMock()
-        client.generate_presigned_url = MagicMock(return_value="https://signed-url")
-        return client
-
-    def test_get_storage_unsupported_provider(self):
-        """Test get_storage raises ValueError for unsupported provider."""
-        from src.app.modules.storage import get_storage
-
-        with pytest.raises(ValueError, match="Unsupported storage provider"):
-            get_storage(provider="unsupported")

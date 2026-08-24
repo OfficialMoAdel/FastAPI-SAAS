@@ -13,6 +13,7 @@ from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
+from src.app.modules.billing.checkout_service import get_checkout_service
 from src.app.modules.billing.schemas import (
     BillingRecordList,
     BillingRecordRead,
@@ -36,10 +37,11 @@ from src.app.modules.billing.schemas import (
     WebhookResponse,
 )
 from src.app.modules.billing.service import (
-    get_billing_record_service,
-    get_checkout_service,
     get_product_service,
     get_stripe_settings_service,
+)
+from src.app.modules.billing.subscription_service import (
+    get_billing_record_service,
     get_subscription_plan_service,
     get_user_subscription_service,
 )
@@ -365,24 +367,9 @@ async def cancel_subscription(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> Any:
-    """Cancel a subscription at period end."""
+    """Cancel a subscription at period end (ownership enforced in service)."""
     service = get_user_subscription_service(db)
-    subscription = await service.get_subscription(subscription_id)
-
-    from src.app.core.tenancy.context import get_current_tenant
-
-    tenant = get_current_tenant()
-
-    # Verify ownership and tenant isolation
-    if subscription["user_id"] != current_user["id"] or (
-        tenant and subscription.get("tenant_id") and subscription["tenant_id"] != tenant.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to cancel this subscription",
-        )
-
-    return await service.cancel_subscription(subscription_id)
+    return await service.cancel_subscription_for_user(subscription_id, user_id=current_user["id"])
 
 
 # =============================================================================
@@ -456,21 +443,6 @@ async def get_billing_record(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> Any:
-    """Get a billing record by ID."""
+    """Get a billing record by ID (ownership enforced in service)."""
     service = get_billing_record_service(db)
-    record = await service.get_record(record_id)
-
-    from src.app.core.tenancy.context import get_current_tenant
-
-    tenant = get_current_tenant()
-
-    # Verify ownership and tenant isolation
-    if record["user_id"] != current_user["id"] or (
-        tenant and record.get("tenant_id") and record["tenant_id"] != tenant.id
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not authorized to view this record",
-        )
-
-    return record
+    return await service.get_record_for_user(record_id, user_id=current_user["id"])

@@ -4,6 +4,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules.billing.checkout_service import CheckoutService
 from src.app.modules.billing.schemas import (
     BillingRecordCreate,
     ProductUpdate,
@@ -12,11 +13,12 @@ from src.app.modules.billing.schemas import (
     UserSubscriptionUpdate,
 )
 from src.app.modules.billing.service import (
-    BillingRecordService,
-    CheckoutService,
     PricingService,
     ProductService,
     StripeSettingsService,
+)
+from src.app.modules.billing.subscription_service import (
+    BillingRecordService,
     SubscriptionPlanService,
     UserSubscriptionService,
 )
@@ -41,9 +43,11 @@ def mock_db():
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_stripe_settings")
-async def test_stripe_settings_service_update(mock_crud, mock_get_tenant, mock_db, mock_tenant):
-    mock_get_tenant.return_value = mock_tenant
+async def test_stripe_settings_service_update(mock_crud, mock_get_tenancy, mock_get_svc, mock_db, mock_tenant):
+    mock_get_tenancy.return_value = mock_tenant
+    mock_get_svc.return_value = mock_tenant
     mock_crud.get = AsyncMock(return_value={"id": 1, "stripe_customer_id": "old_cus"})
     mock_crud.update = AsyncMock()
 
@@ -66,8 +70,8 @@ async def test_stripe_settings_service_update(mock_crud, mock_get_tenant, mock_d
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.crud_subscription_plans")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
 async def test_subscription_plan_service_get_and_list(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
     mock_crud.get = AsyncMock(return_value={"id": 1, "tenant_id": mock_tenant.id, "name": "Pro"})
@@ -85,8 +89,8 @@ async def test_subscription_plan_service_get_and_list(mock_crud, mock_get_tenant
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.crud_subscription_plans")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
 async def test_subscription_plan_service_delete(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
     mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Pro", "tenant_id": mock_tenant.id})
@@ -103,9 +107,11 @@ async def test_subscription_plan_service_delete(mock_crud, mock_get_tenant, mock
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
-async def test_product_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
-    mock_get_tenant.return_value = mock_tenant
+async def test_product_service_operations(mock_crud, mock_get_tenant_sub, mock_get_tenant_svc, mock_db, mock_tenant):
+    mock_get_tenant_sub.return_value = mock_tenant
+    mock_get_tenant_svc.return_value = mock_tenant
     mock_crud.get = AsyncMock(return_value={"id": 1, "name": "Test", "tenant_id": mock_tenant.id})
     mock_crud.get_multi = AsyncMock(return_value={"data": [{"id": 1}], "total_count": 1})
     mock_crud.update = AsyncMock()
@@ -156,8 +162,8 @@ async def test_pricing_service_operations(mock_crud, mock_products, mock_get_ten
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.crud_user_subscriptions")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.crud_user_subscriptions")
 async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "status": "active"})
@@ -199,8 +205,8 @@ async def test_user_subscription_service_operations(mock_crud, mock_get_tenant, 
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.crud_billing_records")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.crud_billing_records")
 async def test_billing_record_service_operations(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "amount_cents": 1000})
@@ -224,28 +230,23 @@ async def test_billing_record_service_operations(mock_crud, mock_get_tenant, moc
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.settings")
-@patch("src.app.modules.billing.service.StripeSettingsService.get_settings")
-@patch("asyncio.to_thread")
+@patch("src.app.modules.billing.checkout_service.get_current_tenant")
+@patch("src.app.modules.billing.service.StripeSettingsService.get_settings", new_callable=AsyncMock)
+@patch("src.app.modules.billing.gateway.get_payment_gateway")
 async def test_checkout_service_create_portal_session(
-    mock_to_thread, mock_get_settings, mock_settings, mock_get_tenant, mock_db, mock_tenant
+    mock_gateway_fn, mock_get_settings, mock_get_tenant, mock_db, mock_tenant
 ):
     mock_get_tenant.return_value = mock_tenant
-
-    mock_secret = MagicMock()
-    mock_secret.get_secret_value.return_value = "sk_test_123"
-    mock_settings.STRIPE_SECRET_KEY = mock_secret
-    mock_settings.FRONTEND_URL = "http://localhost:3000/"
-
     mock_get_settings.return_value = {"stripe_customer_id": "cus_123"}
 
     mock_session = MagicMock()
     mock_session.url = "https://billing.stripe.com/p/session/test"
-    mock_to_thread.return_value = mock_session
+    mock_gateway = AsyncMock()
+    mock_gateway.get_api_key = AsyncMock(return_value="sk_test_123")
+    mock_gateway.create_portal_session = AsyncMock(return_value=mock_session)
+    mock_gateway_fn.return_value = mock_gateway
 
     service = CheckoutService(mock_db)
 
     url = await service.create_portal_session("/billing")
     assert url == "https://billing.stripe.com/p/session/test"
-    mock_to_thread.assert_awaited_once()

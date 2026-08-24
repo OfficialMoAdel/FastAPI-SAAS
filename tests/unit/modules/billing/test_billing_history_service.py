@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.billing.service import BillingRecordService
+from src.app.modules.billing.subscription_service import BillingRecordService
 
 
 @pytest.fixture
@@ -63,7 +63,9 @@ class TestBillingHistoryService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -88,7 +90,9 @@ class TestBillingHistoryService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -109,7 +113,9 @@ class TestBillingHistoryService:
         mock_empty = {"data": [], "total_count": 0}
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -141,7 +147,9 @@ class TestBillingHistoryService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -172,7 +180,9 @@ class TestBillingHistoryService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get",
                 new_callable=AsyncMock,
@@ -214,7 +224,9 @@ class TestBillingHistoryService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -243,7 +255,9 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -265,7 +279,9 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,
@@ -287,7 +303,9 @@ class TestBillingRecordStatusFiltering:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_billing_records.get_multi",
                 new_callable=AsyncMock,

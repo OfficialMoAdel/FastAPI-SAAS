@@ -93,8 +93,8 @@ async def test_process_callback_exchange_failed(
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
 @patch("src.app.modules.sso.service.UserService")
-@patch("src.app.modules.sso.service.create_access_token")
-@patch("src.app.modules.sso.service.create_refresh_token")
+@patch("src.app.modules.auth.services.tokens.create_access_token")
+@patch("src.app.modules.auth.services.tokens.create_refresh_token")
 async def test_process_callback_success(
     mock_create_refresh,
     mock_create_access,
@@ -178,8 +178,8 @@ async def test_process_callback_success(
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
 @patch("src.app.modules.sso.service.UserService")
-@patch("src.app.modules.sso.service.create_access_token")
-@patch("src.app.modules.sso.service.create_refresh_token")
+@patch("src.app.modules.auth.services.tokens.create_access_token")
+@patch("src.app.modules.auth.services.tokens.create_refresh_token")
 async def test_process_callback_connect_mode(
     mock_create_refresh,
     mock_create_access,
@@ -262,8 +262,8 @@ async def test_process_callback_connect_mode(
 @patch.object(SSOService, "_get_provider_instance")
 @patch("src.app.modules.sso.service.crud_user_sso_connections")
 @patch("src.app.modules.sso.service.UserService")
-@patch("src.app.modules.sso.service.create_access_token")
-@patch("src.app.modules.sso.service.create_refresh_token")
+@patch("src.app.modules.auth.services.tokens.create_access_token")
+@patch("src.app.modules.auth.services.tokens.create_refresh_token")
 async def test_process_callback_apple_custom_flow(
     mock_create_refresh,
     mock_create_access,

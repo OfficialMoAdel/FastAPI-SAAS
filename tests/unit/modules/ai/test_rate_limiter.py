@@ -43,22 +43,16 @@ class TestAIRateLimiterLuaScript:
         assert retry_after == 45
 
     @pytest.mark.asyncio
-    async def test_script_sha_is_cached(self) -> None:
-        """Should cache script SHA across calls."""
+    async def test_evalsha_per_call(self) -> None:
+        """Should EVALSHA on every check (script loading owned by LuaScriptManager)."""
         mock_redis = AsyncMock()
-        mock_redis.script_load = AsyncMock(return_value="cached_sha")
         mock_redis.evalsha = AsyncMock(return_value=[1, 60])
-
-        # Reset class-level cache
-        AIRateLimiter._script_sha = None
 
         limiter = AIRateLimiter(mock_redis)
         await limiter.check_rate_limit(user_id=1)
         await limiter.check_rate_limit(user_id=2)
         await limiter.check_rate_limit(user_id=3)
 
-        # Script should only be loaded once
-        assert mock_redis.script_load.call_count == 1
         assert mock_redis.evalsha.call_count == 3
 
     @pytest.mark.asyncio
@@ -84,25 +78,20 @@ class TestAIRateLimiterLuaScript:
         mock_redis.ttl.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_script_reload_on_noscripterror(self) -> None:
-        """Should reload script when Redis flushes it."""
+    async def test_noscript_retried_by_manager(self) -> None:
+        """NOSCRIPT recovery is owned by LuaScriptManager; the limiter sees success."""
         from redis.exceptions import NoScriptError
 
         mock_redis = AsyncMock()
-        mock_redis.script_load = AsyncMock(return_value="new_sha")
-        # First call raises NoScriptError, second succeeds
-        mock_redis.evalsha = AsyncMock(side_effect=[NoScriptError("NOSCRIPT"), [3, 55]])
-
-        # Reset cache
-        AIRateLimiter._script_sha = None
+        # First EVALSHA raises NoScriptError, manager falls back to EVAL which succeeds.
+        mock_redis.evalsha = AsyncMock(side_effect=NoScriptError("NOSCRIPT"))
+        mock_redis.eval = AsyncMock(return_value=[3, 55])
 
         limiter = AIRateLimiter(mock_redis, max_requests=10)
         is_allowed, remaining, retry_after = await limiter.check_rate_limit(user_id=42)
 
         assert is_allowed is True
         assert remaining == 7
-        # Script loaded twice (initial + after NoScriptError)
-        assert mock_redis.script_load.call_count == 2
 
 
 class TestRateLimitError:

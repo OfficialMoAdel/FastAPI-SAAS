@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.modules.billing.service import UserSubscriptionService
+from src.app.modules.billing.subscription_service import UserSubscriptionService
 
 
 @pytest.fixture
@@ -53,7 +53,9 @@ class TestSubscriptionLifecycleStates:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -80,7 +82,9 @@ class TestSubscriptionLifecycleStates:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -113,7 +117,9 @@ class TestSubscriptionStateTransitions:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,

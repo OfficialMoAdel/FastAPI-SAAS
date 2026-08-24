@@ -29,6 +29,7 @@ See Also:
 
 from __future__ import annotations
 
+import asyncio
 import base64
 from functools import lru_cache
 from typing import TYPE_CHECKING, Any, Union, cast
@@ -75,12 +76,19 @@ REQUEST_STATE_KEY: str = "jwt_payload"
 
 
 def _get_algorithm() -> str:
-    """Get the JWT algorithm from settings.
+    """Get the JWT algorithm.
 
-    Returns:
-        Algorithm string: 'RS256' for asymmetric or 'HS256' for symmetric.
+    Single source of truth for algorithm selection: ``settings.ALGORITHM``
+    (validated at startup by CryptSettings). The key-presence heuristic this
+    function once used disagreed with jwt_service's settings-driven check,
+    giving the two decode engines different security postures.
     """
-    return "RS256" if (settings.JWT_PRIVATE_KEY or settings.JWT_PUBLIC_KEY) else "HS256"
+    return settings.ALGORITHM
+
+
+def _is_symmetric_algorithm() -> bool:
+    """Check if the configured JWT algorithm is symmetric (HS256/HS384/HS512)."""
+    return _get_algorithm().startswith("HS")
 
 
 def _get_verification_key() -> str:
@@ -201,34 +209,38 @@ def validate_jwt_length(token: str, max_length: int = 4096) -> bool:
     if not token:
         return False
     return len(token) <= max_length
+async def decode_verified_token(
+    token: str,
+    *,
+    verify_issuer: bool = True,
+) -> dict[str, Any] | None:
+    """Decode and cryptographically verify a JWT token — the ONE decode path.
 
+    Every verification in the app (jwt_service.verify_token, blacklist
+    decoding, decode_jwt_token for middleware/session registration) routes
+    through this function so all callers share one security posture:
 
-async def decode_jwt_token(token: str) -> dict[str, Any] | None:
-    """Decode and verify a JWT token without database checks.
-
-    This performs cryptographic verification only:
-    - Signature validation
+    - Signature validation (pre-parsed key)
     - Expiration check
-    - Audience validation
+    - Audience validation (JWT_AUDIENCE)
+    - Issuer validation (settings.JWT_ISSUER) unless ``verify_issuer=False``
 
-    It does NOT check:
-    - Token blacklist (requires Redis)
-    - User existence (requires database)
-    - Token type validation
-
-    Performance Note:
-        Uses pre-parsed key for RS256 to avoid repeated PEM parsing.
-        Saves ~10-20μs per decode for asymmetric key deployments.
+    It does NOT check token blacklist, user existence, or token type —
+    those are policy concerns owned by callers.
 
     Args:
         token: The JWT token string.
+        verify_issuer: Validate the ``iss`` claim. Only disable for tokens
+            known to predate issuer stamping.
 
     Returns:
         Decoded payload dict if valid, None if invalid/expired.
     """
-    try:
-        import asyncio
+    kwargs: dict[str, Any] = {"audience": JWT_AUDIENCE}
+    if verify_issuer:
+        kwargs["issuer"] = getattr(settings, "JWT_ISSUER", "fastapi-saas")
 
+    try:
         alg = _get_algorithm()
         # Use pre-parsed key for better performance (especially RS256)
         if alg.startswith("HS"):
@@ -236,7 +248,7 @@ async def decode_jwt_token(token: str) -> dict[str, Any] | None:
                 token,
                 _get_parsed_verification_key(),
                 algorithms=[alg],
-                audience=JWT_AUDIENCE,
+                **kwargs,
             )
         else:
             payload = await asyncio.to_thread(
@@ -244,12 +256,28 @@ async def decode_jwt_token(token: str) -> dict[str, Any] | None:
                 token,
                 _get_parsed_verification_key(),
                 algorithms=[alg],
-                audience=JWT_AUDIENCE,
+                **kwargs,
             )
         return payload  # type: ignore[no-any-return]
     except PyJWTError as e:
         logger.debug("JWT decode failed: %s", e)
         return None
+
+
+async def decode_jwt_token(token: str) -> dict[str, Any] | None:
+    """Decode and verify a JWT token without database checks.
+
+    Thin wrapper over :func:`decode_verified_token` (full audience + issuer
+    validation). Kept as the named entry point for request-scoped claim
+    extraction in middleware and session registration.
+
+    Args:
+        token: The JWT token string.
+
+    Returns:
+        Decoded payload dict if valid, None if invalid/expired.
+    """
+    return await decode_verified_token(token)
 
 
 async def extract_jwt_claims_to_state(request: Request) -> dict[str, Any] | None:

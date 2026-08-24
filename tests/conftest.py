@@ -1408,11 +1408,28 @@ class FakeRedis:
         """Simulate Lua scripts based on context.
 
         Handles multiple Redis Lua patterns:
+        - GETDEL (matched by registered script SHA from LuaScriptManager)
         - Token blacklist (2 keys, 5+ args): returns 0/1
         - GCRA rate limit (key starts with 'gcra:', 5 args): returns list [allowed, remaining, retry, reset]
         - MFA lockout (key contains 'mfa'/'login_attempts', 3 args): returns count or -1
         - Fixed-window rate limit (default): returns int count
         """
+        # --- GETDEL (get_delete script) ---
+        # Matched by SHA because LuaScriptManager routes through EVALSHA with
+        # only the hex digest — the source-based sniff in eval() can't apply.
+        try:
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            if sha == get_lua_manager().get_script("get_delete").sha1:
+                key = keys_and_args[0]
+                value = self.store.get(key)
+                if key in self.store:
+                    del self.store[key]
+                return value
+        except Exception:
+            pass
+
+
         # --- Token blacklist script ---
         # KEYS[1]=negative_key, KEYS[2]=blacklist_key, ARGV[1]=token, ARGV[2]=now, ARGV[3]=ttl
         if numkeys == 2 and len(keys_and_args) >= 5:

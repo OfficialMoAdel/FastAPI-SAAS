@@ -1,5 +1,4 @@
 import uuid
-from datetime import timedelta
 from typing import Any, cast
 from uuid import UUID
 
@@ -13,10 +12,10 @@ from src.app.core.exceptions.http_exceptions import (
     UnauthorizedException,
 )
 from src.app.core.logger import get_logger
-from src.app.core.security import create_access_token, create_refresh_token
 from src.app.core.security.tokens import get_sso_state_manager
 from src.app.core.tenancy.context import get_tenant_context, set_current_tenant, set_tenant_context
 from src.app.modules.auth.schemas import AuthTokenResponse
+from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.sso.crud import crud_user_sso_connections
 from src.app.modules.sso.providers.apple import AppleProvider
 from src.app.modules.sso.providers.base import BaseOAuthProvider
@@ -354,11 +353,6 @@ class SSOService:
             if not normalized_user:
                 raise UnauthorizedException("Account not found")
 
-            access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-
-            tier = normalized_user.get("tier")
-            tier_name = tier.get("name") if tier else None
-
             # SECURITY FIX: Check if MFA is enabled before issuing access token
             from src.app.modules.mfa.service import get_mfa_service
 
@@ -392,36 +386,17 @@ class SSOService:
                     "message": "MFA verification required",
                 }
 
-            token_data = {
-                "sub": normalized_user.get("username") or normalized_user.get("email"),
-                "id": normalized_user.get("id"),
-                "email": normalized_user.get("email"),
-                "tenant_id": str(normalized_user["tenant_id"]) if normalized_user.get("tenant_id") else None,
-                "tier_id": normalized_user.get("tier_id"),
-                "tier_name": tier_name,
-                "token_version": normalized_user.get("token_version", 0),
-            }
-
-            access_token = await create_access_token(
-                data=token_data,
-                expires_delta=access_token_expires,
+            # Legacy SSO tokens carried extra id/email claims; kept via
+            # extra_claims so existing consumers of those tokens are unaffected.
+            issued = await TokenIssuer.issue_session(
+                normalized_user,
+                channel="sso",
+                request=request,
+                extra_claims={
+                    "id": normalized_user.get("id"),
+                    "email": normalized_user.get("email"),
+                },
             )
-
-            refresh_token = await create_refresh_token(
-                data=token_data,
-            )
-
-            try:
-                from src.app.core.security.login_helpers import register_login_session
-
-                await register_login_session(
-                    user_id=normalized_user["id"],
-                    access_token=access_token,
-                    request=request,
-                    verify=True,
-                )
-            except Exception as e:
-                logger.warning("session_registration_failed", error=str(e))
 
             # Audit log SSO login success
             try:
@@ -462,9 +437,9 @@ class SSOService:
                 logger.error("failed_to_publish_sso_audit_log", error=str(e))
 
             return AuthTokenResponse(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                expires_in=int(access_token_expires.total_seconds()),
+                access_token=issued.access_token,
+                refresh_token=issued.refresh_token,
+                expires_in=issued.expires_in,
                 token_type="bearer",
             )
         finally:

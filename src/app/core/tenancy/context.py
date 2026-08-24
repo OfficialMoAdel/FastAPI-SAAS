@@ -17,6 +17,19 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
+
+class TenantContextError(Exception):
+    """Raised when tenant context is missing or inactive.
+
+    Defined here (not in modules._base) so the tenancy seam stays
+    dependency-free: core must not import from modules.
+    """
+
+    def __init__(self, message: str = "Tenant context required or inactive"):
+        self.message = message
+        super().__init__(message)
+
+
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant
 
@@ -89,33 +102,21 @@ _current_tenant: ContextVar["TenantContext | None"] = ContextVar("current_tenant
 def get_current_tenant() -> "TenantContext | None":
     """Get the current tenant from the context.
 
-    Returns
-    -------
+    Returns:
         The current tenant context if set, None otherwise.
 
     Note:
-        Returns TenantContext (lightweight dataclass) when optimization is enabled.
-        Returns None if optimization is enabled but not set.
+        Returns TenantContext (lightweight dataclass). Returns None when no
+        tenant has been set for this request/task.
     """
     return _current_tenant.get()
-
-
-def get_tenant_context() -> "TenantContext | None":
-    """Alias for get_current_tenant() for backward compatibility."""
-    return get_current_tenant()
-
-
-def get_lightweight_tenant_context() -> "TenantContext | None":
-    """Alias for get_current_tenant() for backward compatibility."""
-    return get_current_tenant()
 
 
 def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:
     """Set the current tenant in the context.
 
     Args:
-    ----
-        tenant: The tenant model or context to set
+        tenant: The tenant model or context to set. None clears the context.
     """
     if tenant is None:
         _current_tenant.set(None)
@@ -125,11 +126,6 @@ def set_current_tenant(tenant: "Tenant | TenantContext | None") -> None:
         _current_tenant.set(TenantContext.from_model(tenant))
 
 
-def set_tenant_context(tenant: "Tenant | None") -> None:
-    """Alias for set_current_tenant() for backward compatibility."""
-    set_current_tenant(tenant)
-
-
 def clear_tenant_context() -> None:
     """Clear the tenant context.
 
@@ -137,3 +133,40 @@ def clear_tenant_context() -> None:
     to prevent context leakage.
     """
     _current_tenant.set(None)
+
+
+# --- Backward-compatibility aliases -----------------------------------------
+# Canonical interface is the get/set/clear triple above. These aliases exist
+# because ~35 call sites import them; new code should use the canonical names.
+
+
+def get_tenant_context() -> "TenantContext | None":
+    """Alias for :func:`get_current_tenant`."""
+    return get_current_tenant()
+
+
+def set_tenant_context(tenant: "Tenant | None") -> None:
+    """Alias for :func:`set_current_tenant`."""
+    set_current_tenant(tenant)
+
+
+def require_active_tenant() -> "TenantContext":
+    """Get the current tenant or raise — the ONE fail-closed accessor.
+
+    Callers that cannot proceed without a tenant (services enforcing
+    isolation, billing, etc.) must use this instead of ad-hoc None checks,
+    so the failure mode is uniform: ``TenantContextError`` for both a
+    missing context and an inactive tenant.
+
+    Returns:
+        The active TenantContext.
+
+    Raises:
+        TenantContextError: If no tenant is set, or the tenant is inactive.
+    """
+    tenant = get_current_tenant()
+    if tenant is None:
+        raise TenantContextError("No tenant context available")
+    if not tenant.is_active:
+        raise TenantContextError("Tenant is not active")
+    return tenant

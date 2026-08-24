@@ -65,15 +65,12 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
     stripe_subscription_id = session.get("subscription")
     # stripe_customer_id = session.get("customer")  # Unused
 
-    # Retrieve subscription details from Stripe
+    # Retrieve subscription details from Stripe via the PaymentGateway seam
     if stripe_subscription_id:
         try:
-            api_key = (
-                _pkg.settings.STRIPE_SECRET_KEY.get_secret_value()
-                if hasattr(_pkg.settings.STRIPE_SECRET_KEY, "get_secret_value")
-                else getattr(_pkg.settings, "STRIPE_SECRET_KEY", None)
-            )
-            stripe_sub = await asyncio.to_thread(stripe.Subscription.retrieve, stripe_subscription_id, api_key=api_key)
+            from src.app.modules.billing.gateway import get_payment_gateway
+
+            stripe_sub = await get_payment_gateway(None).retrieve_subscription(stripe_subscription_id)
             period_start = stripe_sub.get("current_period_start")
             period_end = stripe_sub.get("current_period_end")
             if period_start is None or period_end is None:
@@ -259,31 +256,15 @@ async def handle_subscription_updated(event: stripe.Event) -> None:
 
         # M-04: Explicitly downgrade user to free tier if canceled/expired
         if new_status in ("canceled", "expired"):
-            from sqlalchemy import func
+            from src.app.modules.users.service import UserService
 
-            from src.app.modules.tiers.crud import crud_tiers
-            from src.app.modules.users.crud import crud_users
-
-            # Find the free plan
-            # BUG FIX: Use exact match and lower case for case-insensitivity
-            free_plan_stmt = (
-                select(crud_tiers.model)
-                .where(func.lower(crud_tiers.model.name) == _pkg.settings.DEFAULT_FREE_TIER_NAME.lower())
-                .limit(1)
+            await UserService(db).downgrade_to_free_tier(db_subscription.user_id)
+            _pkg.logger.info(
+                "Downgraded user to free tier due to subscription cancellation",
+                user_id=db_subscription.user_id,
+                tenant_id=tenant_id,
+                reason=new_status,
             )
-            free_plan_result = await db.execute(free_plan_stmt)
-            free_plan = free_plan_result.scalar_one_or_none()
-
-            if free_plan:
-                await crud_users.update(db=db, id=db_subscription.user_id, object={"tier_id": free_plan.id})
-                _pkg.logger.info(
-                    "Downgraded user to free tier due to subscription cancellation",
-                    user_id=db_subscription.user_id,
-                    tenant_id=tenant_id,
-                    tier_id=free_plan.id,
-                    reason=new_status,
-                )
-
         await db.commit()
 
     _pkg.logger.info(
@@ -353,24 +334,9 @@ async def handle_subscription_deleted(event: stripe.Event) -> None:
         )
 
         # M-04: Explicitly downgrade user to free tier
-        from sqlalchemy import func
+        from src.app.modules.users.service import UserService
 
-        from src.app.modules.tiers.crud import crud_tiers
-        from src.app.modules.users.crud import crud_users
-
-        # Find the free plan
-        # BUG FIX: Use exact match and lower case for case-insensitivity
-        free_plan_stmt = (
-            select(crud_tiers.model)
-            .where(func.lower(crud_tiers.model.name) == _pkg.settings.DEFAULT_FREE_TIER_NAME.lower())
-            .limit(1)
-        )
-        free_plan_result = await db.execute(free_plan_stmt)
-        free_plan = free_plan_result.scalar_one_or_none()
-
-        if free_plan:
-            await crud_users.update(db=db, id=db_subscription.user_id, object={"tier_id": free_plan.id})
-            _pkg.logger.info("Downgraded user to free tier ()", user_id=db_subscription.user_id, id=free_plan.id)
+        await UserService(db).downgrade_to_free_tier(db_subscription.user_id)
 
         await db.commit()
 

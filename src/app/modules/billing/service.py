@@ -10,30 +10,21 @@ __all__ = [
     "crud_pricing",
     "crud_products",
     "crud_stripe_settings",
-    "crud_subscription_plans",
-    "crud_user_subscriptions",
     # Core & Tenant
     "get_current_tenant",
     "_require_active_tenant",
     "settings",
-    # Services
+    # Services (this module)
     "StripeSettingsService",
     "ProductService",
     "PricingService",
-    "SubscriptionPlanService",
-    "UserSubscriptionService",
-    "BillingRecordService",
-    "CheckoutService",
     # Service Getters
     "get_stripe_settings_service",
     "get_product_service",
     "get_pricing_service",
-    "get_subscription_plan_service",
-    "get_user_subscription_service",
-    "get_billing_record_service",
-    "get_checkout_service",
     # Helpers
-    "_subscription_plan_to_dict",
+    "_pricing_tier_to_dict",
+    "_product_to_dict",
     # Models
     "BillingRecord",
     "Pricing",
@@ -117,8 +108,6 @@ from src.app.modules.billing.crud import (
     crud_pricing,
     crud_products,
     crud_stripe_settings,
-    crud_subscription_plans,
-    crud_user_subscriptions,
 )
 from src.app.modules.billing.models import (
     BillingRecord,
@@ -181,17 +170,10 @@ from src.app.modules.billing.schemas import (
 
 
 def _require_active_tenant():
-    """Get the current active tenant or raise 403.
+    """Get the current active tenant (delegates to the canonical seam)."""
+    from src.app.core.tenancy.context import require_active_tenant
 
-    Raises:
-        HTTPException: If tenant is not set or not active.
-    """
-    tenant = get_current_tenant()
-    if tenant is None:
-        raise TenantContextError("No tenant context available")
-    if not tenant.is_active:
-        raise TenantContextError("Tenant is not active")
-    return tenant
+    return require_active_tenant()
 
 
 def _pricing_tier_to_dict(pricing: Pricing) -> dict[str, Any]:
@@ -555,16 +537,3 @@ def get_pricing_service(db: AsyncSession) -> PricingService:
     return PricingService(db)
 
 
-from src.app.modules.billing.checkout_service import (  # noqa: E402, F401
-    CheckoutService,
-    get_checkout_service,
-)
-from src.app.modules.billing.subscription_service import (  # noqa: E402, F401
-    BillingRecordService,
-    SubscriptionPlanService,
-    UserSubscriptionService,
-    _subscription_plan_to_dict,
-    get_billing_record_service,
-    get_subscription_plan_service,
-    get_user_subscription_service,
-)

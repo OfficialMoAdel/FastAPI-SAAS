@@ -35,7 +35,7 @@ class TestCheckoutAPI:
 
         with (
             patch(
-                "src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock
+                "src.app.modules.billing.checkout_service.CheckoutService.create_session", new_callable=AsyncMock
             ) as mock_create,
             patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
         ):
@@ -58,7 +58,7 @@ class TestCheckoutAPI:
         """POST /billing/checkout should return 404 for non-existent plan."""
         with (
             patch(
-                "src.app.modules.billing.service.SubscriptionPlanService.get_plan",
+                "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
                 new_callable=AsyncMock,
             ) as mock_get_plan,
             patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
@@ -127,7 +127,7 @@ class TestCheckoutAPI:
 
         with (
             patch(
-                "src.app.modules.billing.service.CheckoutService.create_session", new_callable=AsyncMock
+                "src.app.modules.billing.checkout_service.CheckoutService.create_session", new_callable=AsyncMock
             ) as mock_create,
             patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
         ):
@@ -172,7 +172,7 @@ class TestMySubscriptionAPI:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.get_user_subscriptions",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.get_user_subscriptions",
             new_callable=AsyncMock,
             return_value=[mock_subscription],
         ):
@@ -183,7 +183,7 @@ class TestMySubscriptionAPI:
     def test_get_my_subscription_no_subscription(self, client_auth) -> None:
         """GET /billing/subscriptions/me should return 404 when no subscription."""
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.get_user_subscriptions",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.get_user_subscriptions",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -210,7 +210,7 @@ class TestCancelSubscriptionAPI:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_subscription,
         ):
@@ -221,7 +221,7 @@ class TestCancelSubscriptionAPI:
     def test_cancel_subscription_no_subscription(self, client_auth) -> None:
         """POST /billing/subscriptions/me/cancel should return 404 when no subscription."""
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             side_effect=Exception("No subscription found"),
         ):
@@ -252,7 +252,7 @@ class TestBillingHistoryAPI:
         ]
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_records,
         ):
@@ -262,7 +262,7 @@ class TestBillingHistoryAPI:
     def test_billing_history_pagination(self, client_auth) -> None:
         """GET /billing/history should support pagination parameters."""
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=[],
         ):
@@ -275,7 +275,7 @@ class TestBillingHistoryAPI:
     def test_billing_history_empty(self, client_auth) -> None:
         """GET /billing/history should return empty list when no records."""
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=[],
         ):

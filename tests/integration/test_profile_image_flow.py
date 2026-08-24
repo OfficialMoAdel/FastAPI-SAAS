@@ -84,15 +84,22 @@ async def test_upload_profile_image_success(service, mock_db, valid_image_bytes)
         content_type="image/png",
     )
 
-    with patch("src.app.modules.user_preferences.service.get_storage") as mock_get_storage:
-        mock_storage = AsyncMock()
-        mock_storage.upload.return_value = StorageResult(
-            success=True,
-            path="users/123/profile.png",
-            size=len(valid_image_bytes),
-        )
-        mock_storage.get_url.return_value = "https://storage.example.com/users/123/profile.png"
-        mock_get_storage.return_value = mock_storage
+    mock_storage = AsyncMock()
+    mock_storage.upload.return_value = StorageResult(
+        success=True,
+        path="users/123/profile.png",
+        size=len(valid_image_bytes),
+    )
+    mock_storage.get_url.return_value = "https://storage.example.com/users/123/profile.png"
+
+    fake_tenant = MagicMock()
+    fake_tenant.tenant_id = "tenant-uuid"
+
+    with (
+        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
+    ):
+        mock_settings_svc.return_value.get_provider = AsyncMock(return_value=mock_storage)
 
         with patch("src.app.modules.user_preferences.service.crud_users") as mock_crud:
             mock_user = MagicMock()
@@ -167,10 +174,17 @@ def test_upload_profile_image_flow(client, regular_user_token_headers):
         b"\x00\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00\x05\x18\xd8N"
         b"\x00\x00\x00\x00IEND\xaeB`\x82"
     )
+
+    fake_tenant = MagicMock()
+    fake_tenant.tenant_id = "tenant-uuid"
+
     # Mock storage to avoid actual S3 calls
-    with patch("src.app.modules.user_preferences.service.get_storage") as mock_get_storage:
+    with (
+        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
+    ):
         mock_storage = AsyncMock()
-        mock_get_storage.return_value = mock_storage
+        mock_settings_svc.return_value.get_provider = AsyncMock(return_value=mock_storage)
 
         mock_storage.upload.return_value = StorageResult(success=True, path="users/1/profile.png")
         mock_storage.get_url.return_value = "https://s3.example.com/users/1/profile.png"
@@ -198,10 +212,17 @@ def test_upload_invalid_file_type(client, regular_user_token_headers):
     assert "Invalid file type" in response.json()["detail"]
 
 
+
 def test_delete_profile_image_flow(client, regular_user_token_headers):
-    with patch("src.app.modules.user_preferences.service.get_storage") as mock_get_storage:
+    fake_tenant = MagicMock()
+    fake_tenant.tenant_id = "tenant-uuid"
+
+    with (
+        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
+    ):
         mock_storage = AsyncMock()
-        mock_get_storage.return_value = mock_storage
+        mock_settings_svc.return_value.get_provider = AsyncMock(return_value=mock_storage)
         mock_storage.delete.return_value = StorageResult(success=True, path="users/1/profile.png")
         # exists() must return True so that the delete code path is triggered
         mock_storage.exists.return_value = True

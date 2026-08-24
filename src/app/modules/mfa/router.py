@@ -8,8 +8,6 @@ Provides API endpoints for:
 - MFA login completion
 """
 
-import asyncio
-from datetime import timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Request, Response
@@ -19,15 +17,12 @@ from src.app.api.dependencies import get_current_user
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
-from src.app.core.security import (
-    create_access_token,
-    create_refresh_token,
-    get_mfa_pending_token_manager,
-)
+from src.app.core.security import get_mfa_pending_token_manager
 from src.app.core.utils import cache as _redis_cache
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.user_utils import get_user_attr
+from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.mfa.schemas import (
     MFABackupCodesResponse,
     MFACompleteLoginRequest,
@@ -340,33 +335,16 @@ async def complete_mfa_login(
     if not user or user.get("is_deleted") or not user.get("is_active", False):
         raise UnauthorizedException("User account is no longer active")
 
-    tier = user.get("tier")
-    tier_name = tier.get("name") if tier else None
-    token_data_payload = {
-        "sub": user["username"],
-        "tier_id": user.get("tier_id"),
-        "tier_name": tier_name,
-        "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,  # SECURITY FIX: include tenant_id
-        "token_version": user.get("token_version", 0),  # M-06: Include for session invalidation
-    }
-
-    # Generate tokens
-    access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
-    access_token, refresh_token = await asyncio.gather(
-        create_access_token(data=token_data_payload, expires_delta=access_token_expires),
-        create_refresh_token(data=token_data_payload),
+    issued = await TokenIssuer.issue_session(
+        user,
+        channel="mfa",
+        request=fastapi_request,
+        response=response,
+        subject=user["username"],
+        verify=False,  # MFA completion: session registered from unverified jti extraction
     )
-
-    from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
-
-    # Set refresh token cookie
-    set_refresh_cookie(response, refresh_token)
-
-    # Register session
-    await register_login_session(user_id=user["id"], access_token=access_token, request=fastapi_request, verify=False)
-
     return MFACompleteLoginResponse(
-        access_token=access_token,
+        access_token=issued.access_token,
         token_type="bearer",
         message="Login successful",
     )

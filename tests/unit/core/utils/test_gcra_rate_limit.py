@@ -35,7 +35,7 @@ class TestGCRARateLimiter:
         assert result.is_limited is False
         assert result.remaining == 9
         assert result.retry_after == 0.0
-        mock_redis.script_load.assert_called_once()
+        # Script loading is owned by LuaScriptManager; the limiter only evals.
         mock_redis.evalsha.assert_called_once()
 
     @pytest.mark.asyncio
@@ -89,14 +89,12 @@ class TestGCRARateLimiter:
         assert result is True
 
     @pytest.mark.asyncio
-    async def test_script_loaded_once(self, gcra_limiter, mock_redis):
-        """Should load Lua script only once."""
+    async def test_evalsha_per_call(self, gcra_limiter, mock_redis):
+        """Should EVALSHA on every check (script loading owned by LuaScriptManager)."""
         await gcra_limiter.check_rate_limit("user:1", limit=10, period=60)
         await gcra_limiter.check_rate_limit("user:2", limit=10, period=60)
         await gcra_limiter.check_rate_limit("user:3", limit=10, period=60)
 
-        # Script should only be loaded once, reused for subsequent calls
-        assert mock_redis.script_load.call_count == 1
         assert mock_redis.evalsha.call_count == 3
 
     @pytest.mark.asyncio

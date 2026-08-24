@@ -39,7 +39,7 @@ class TestBillingHistoryEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -55,7 +55,7 @@ class TestBillingHistoryEndpoint:
         mock_result = {"data": [], "total_count": 0}
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -70,7 +70,7 @@ class TestBillingHistoryEndpoint:
         mock_result = {"data": [], "total_count": 0}
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -89,7 +89,7 @@ class TestBillingHistoryEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -122,7 +122,7 @@ class TestBillingHistoryEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -164,7 +164,7 @@ class TestBillingRecordDetailEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_record",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_record",
             new_callable=AsyncMock,
             return_value=mock_record,
         ):
@@ -176,7 +176,7 @@ class TestBillingRecordDetailEndpoint:
         from src.app.modules._base.exceptions import ModelNotFoundError
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_record",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_record",
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("BillingRecord", 9999),
         ):
@@ -196,7 +196,7 @@ class TestBillingRecordDetailEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_record",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_record",
             new_callable=AsyncMock,
             return_value=mock_record,
         ):
@@ -213,7 +213,7 @@ class TestBillingHistoryPagination:
         mock_result = {"data": [], "total_count": 0}
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -231,7 +231,7 @@ class TestBillingHistoryPagination:
         mock_result = {"data": [], "total_count": 100}
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -250,7 +250,7 @@ class TestBillingHistoryPagination:
         mock_result = {"data": [], "total_count": 25}
 
         with patch(
-            "src.app.modules.billing.service.BillingRecordService.get_user_records",
+            "src.app.modules.billing.subscription_service.BillingRecordService.get_user_records",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):

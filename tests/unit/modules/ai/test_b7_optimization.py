@@ -15,6 +15,22 @@ import pytest
 from src.app.modules.ai.schemas import ChatCompletionRequest
 from src.app.modules.ai.service import ChatCompletionService
 
+
+def _make_provider_mock(content: str, token_count: int):
+    """Create a mock AIProvider returning a fixed completion."""
+    provider = MagicMock(spec=["provider_name", "generate_text", "close"])
+    provider.provider_name = "ollama"
+    response = MagicMock()
+    response.content = content
+    response.model = "gemma3"
+    response.finish_reason = "stop"
+
+    usage = MagicMock()
+    usage.total_tokens = token_count
+    response.token_usage = usage
+    provider.generate_text = AsyncMock(return_value=response)
+    return provider
+
 logger = logging.getLogger(__name__)
 
 
@@ -49,10 +65,8 @@ class TestB7ParallelReads:
         service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
-        service.ollama = MagicMock()
-        service.provider = service.ollama
+        service.provider = _make_provider_mock("Hello!", 10)
         service._injected_provider = True
-        service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -178,14 +192,19 @@ class TestB7UserMessageTiming:
 
         service._message_service.add_message = AsyncMock(side_effect=track_add_message)
 
-        async def track_ollama_chat(*args, **kwargs):
-            call_order.append("ollama_chat")
-            return {"message": "Hello!", "token_count": 10}
+        async def track_generate_text(*args, **kwargs):
+            call_order.append("provider_generate")
+            res = MagicMock()
+            res.content = "Hello!"
+            res.model = "gemma3"
+            res.finish_reason = "stop"
+            res.token_usage = None
+            return res
 
-        service.ollama = MagicMock()
-        service.provider = service.ollama
+        service.provider = MagicMock(spec=["provider_name", "generate_text", "close"])
+        service.provider.provider_name = "ollama"
+        service.provider.generate_text = AsyncMock(side_effect=track_generate_text)
         service._injected_provider = True
-        service.ollama.chat = AsyncMock(side_effect=track_ollama_chat)
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -226,10 +245,10 @@ class TestB7UserMessageTiming:
 
         # Assert - user message must come before ollama
         user_msg_index = call_order.index("add_user_message")
-        ollama_index = call_order.index("ollama_chat")
+        ollama_index = call_order.index("provider_generate")
 
         assert user_msg_index < ollama_index, (
-            f"User message should be saved before Ollama call. Order was: {call_order}"
+            f"User message should be saved before provider call. Order was: {call_order}"
         )
 
         logger.info(f"Verified: Call order correct - {call_order}")
@@ -259,10 +278,8 @@ class TestB7BatchedWrites:
         service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
-        service.ollama = MagicMock()
-        service.provider = service.ollama
+        service.provider = _make_provider_mock("Hello!", 10)
         service._injected_provider = True
-        service.ollama.chat = AsyncMock(return_value={"message": "Hello!", "token_count": 10})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -331,10 +348,8 @@ class TestB7BatchedWrites:
         service._message_service.add_message = AsyncMock()
 
         expected_token_count = 42
-        service.ollama = MagicMock()
-        service.provider = service.ollama
+        service.provider = _make_provider_mock("Test response", expected_token_count)
         service._injected_provider = True
-        service.ollama.chat = AsyncMock(return_value={"message": "Test response", "token_count": expected_token_count})
 
         request = ChatCompletionRequest(message="Hello")
 
@@ -387,7 +402,7 @@ class TestB7ErrorHandling:
     @pytest.mark.asyncio
     async def test_ollama_error_propagates(self) -> None:
         """Verify that OllamaError is properly converted to ChatCompletionError."""
-        from src.app.modules.ai.ollama_client import OllamaError
+        from src.app.modules.ai.providers import AIProviderError
         from src.app.modules.ai.service import ChatCompletionError
 
         mock_db = AsyncMock()
@@ -405,11 +420,13 @@ class TestB7ErrorHandling:
         service._message_service.get_session_messages = AsyncMock(return_value={"data": [], "total": 0})
         service._message_service.add_message = AsyncMock()
 
-        # Ollama fails
-        service.ollama = MagicMock()
-        service.provider = service.ollama
+        # Provider fails
+        service.provider = MagicMock(spec=["provider_name", "generate_text", "close"])
+        service.provider.provider_name = "ollama"
+        service.provider.generate_text = AsyncMock(
+            side_effect=AIProviderError("Model not found", error_code="MODEL_NOT_FOUND", provider="ollama")
+        )
         service._injected_provider = True
-        service.ollama.chat = AsyncMock(side_effect=OllamaError("Model not found", "MODEL_NOT_FOUND"))
 
         request = ChatCompletionRequest(message="Hello")
 

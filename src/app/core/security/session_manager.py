@@ -23,6 +23,7 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.monitoring.r1_unified_metrics import record_session_eviction
+from src.app.core.utils.lua_manager import get_lua_manager
 
 logger = get_logger(__name__)
 
@@ -115,103 +116,26 @@ class SessionManager:
             "last_accessed": now.isoformat(),
         }
 
-        # Atomic Lua script to enforce max_sessions and avoid race conditions
-        lua_script = """
-        local zset_key = KEYS[1]
-        local hash_key = KEYS[2]
-        local max_sessions = tonumber(ARGV[1])
-        local session_id = ARGV[2]
-        local session_data = ARGV[3]
-        local timestamp = ARGV[4]
-        local ttl = tonumber(ARGV[5])
-        local max_batch = tonumber(ARGV[6])
-
-        if redis.call('HEXISTS', hash_key, session_id) == 1 or redis.call('ZSCORE', zset_key, session_id) then
-            return {"already_exists"}
-        end
-
-        local current_count = redis.call('ZCARD', zset_key)
-        if current_count == 0 then
-            current_count = redis.call('HLEN', hash_key)
-        end
-
-        local evicted_data = {}
-        local final_count = current_count + 1
-
-        if current_count >= max_sessions then
-            local sessions_to_remove = current_count - max_sessions + 1
-            if sessions_to_remove > max_batch then
-                sessions_to_remove = max_batch
-            end
-
-            local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
-            for i, sid in ipairs(session_ids) do
-                local data = redis.call('HGET', hash_key, sid)
-                if data then
-                    table.insert(evicted_data, data)
-                end
-                redis.call('HDEL', hash_key, sid)
-                redis.call('ZREM', zset_key, sid)
-            end
-            final_count = final_count - #session_ids
-        end
-
-        redis.call('ZADD', zset_key, timestamp, session_id)
-        redis.call('HSET', hash_key, session_id, session_data)
-        redis.call('EXPIRE', zset_key, ttl)
-        redis.call('EXPIRE', hash_key, ttl)
-
-        local result = {"success", tostring(final_count)}
-        for _, d in ipairs(evicted_data) do
-            table.insert(result, d)
-        end
-        return result
-        """
-
         invalidated_sessions: list[dict[str, Any]] = []
         try:
-            # N-7: Optimize Lua script execution using EVALSHA
-            if not SessionManager._lua_script_sha:
-                import hashlib
-
-                SessionManager._lua_script_sha = hashlib.sha1(lua_script.encode("utf-8")).hexdigest()
-
-            try:
-                result = cast(
-                    Any,
-                    await self._redis_client.evalsha(
-                        SessionManager._lua_script_sha,
-                        2,
-                        zset_key,
-                        hash_key,
-                        self._max_sessions,
+            # N-7: atomic registration + eviction via the shared LuaScriptManager
+            # (EVALSHA with automatic NOSCRIPT fallback owned centrally).
+            result = cast(
+                Any,
+                await get_lua_manager().execute(
+                    self._redis_client,
+                    "session_register_with_eviction",
+                    keys=[zset_key, hash_key],
+                    args=[
+                        str(self._max_sessions),
                         session_id,
-                        json_dumps(new_session, as_str=True),
-                        timestamp,
-                        self.SESSION_TTL_SECONDS,
-                        settings.SESSION_MAX_EVICTION_BATCH_SIZE,
-                    ),
-                )
-            except Exception as e:
-                # Fallback to eval if script is not loaded
-                if "NOSCRIPT" in str(e) or "No matching script" in str(e):
-                    result = cast(
-                        Any,
-                        await self._redis_client.eval(
-                            lua_script,
-                            2,
-                            zset_key,
-                            hash_key,
-                            self._max_sessions,
-                            session_id,
-                            json_dumps(new_session, as_str=True),
-                            timestamp,
-                            self.SESSION_TTL_SECONDS,
-                            settings.SESSION_MAX_EVICTION_BATCH_SIZE,
-                        ),
-                    )
-                else:
-                    raise e
+                        cast(str, json_dumps(new_session, as_str=True)),
+                        str(timestamp),
+                        str(self.SESSION_TTL_SECONDS),
+                        str(settings.SESSION_MAX_EVICTION_BATCH_SIZE),
+                    ],
+                ),
+            )
 
             if result and result[0] in (b"already_exists", "already_exists"):
                 return {"registered": True, "already_exists": True}

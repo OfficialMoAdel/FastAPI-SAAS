@@ -13,6 +13,7 @@ from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.utils.r1_error_handling import with_retry
 from src.app.modules._base.exceptions import StripeError
+from src.app.modules.billing.crud import crud_stripe_settings
 
 logger = get_logger(__name__)
 
@@ -60,30 +61,28 @@ class StripeGateway:
         self.db = db
 
     async def get_api_key(self, tenant_id: Any = None) -> str | None:
-        """Resolve Stripe API key for a tenant, falling back to global config."""
+        """Resolve Stripe API key for a tenant, falling back to global config.
+
+        Owns its dependency on Stripe settings (via crud_stripe_settings and
+        CredentialEncryption directly) instead of reaching back through the
+        billing service facade — breaking the gateway→service→gateway cycle.
+        """
         api_key = None
         if tenant_id is not None and self.db is not None:
-            from src.app.modules.billing.service import StripeSettingsService
+            from src.app.core.security.encryption import CredentialEncryption
 
-            stripe_settings_record = await StripeSettingsService(self.db).get_settings()
-            if stripe_settings_record and stripe_settings_record.get("encrypted_secret_key"):
-                from src.app.core.security.encryption import CredentialEncryption
-
-                api_key = CredentialEncryption().decrypt_column(stripe_settings_record["encrypted_secret_key"])
+            record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
+            if record and record.get("encrypted_secret_key"):
+                api_key = CredentialEncryption().decrypt_column(record["encrypted_secret_key"])
         if not api_key:
-            import src.app.modules.billing.service as billing_service
-
-            active_settings = getattr(billing_service, "settings", settings)
-            secret_key_obj = getattr(
-                active_settings, "STRIPE_SECRET_KEY", getattr(settings, "STRIPE_SECRET_KEY", None)
-            )
+            secret_key_obj = settings.STRIPE_SECRET_KEY
             if secret_key_obj is not None:
                 val = (
                     secret_key_obj.get_secret_value()
                     if hasattr(secret_key_obj, "get_secret_value")
-                    else getattr(secret_key_obj, "STRIPE_SECRET_KEY", secret_key_obj)
+                    else str(secret_key_obj)
                 )
-                api_key = str(val) if val is not None else None
+                api_key = val or None
         return api_key
 
     async def _require_api_key(self, tenant_id: Any = None, provided_key: str | None = None) -> str:

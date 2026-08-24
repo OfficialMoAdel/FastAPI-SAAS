@@ -29,6 +29,7 @@ def mock_redis_lifespan():
         patch("src.app.core.setup.create_redis_cache_pool", new_callable=AsyncMock),
         patch("src.app.core.utils.cache.client", mock_redis),
         patch_setting("STRIPE_WEBHOOK_SECRET", SecretStr("whsec_test")),
+        patch_setting("STRIPE_SECRET_KEY", SecretStr("sk_test_dummy")),
     ):
         yield
 

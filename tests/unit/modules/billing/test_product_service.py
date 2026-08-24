@@ -73,9 +73,15 @@ class TestProductService:
             "updated_at": None,
         }
 
-        with patch(
-            "src.app.modules.billing.service.get_current_tenant",
-            return_value=mock_tenant,
+        with (
+            patch(
+                "src.app.modules.billing.service.get_current_tenant",
+                return_value=mock_tenant,
+            ),
+            patch(
+                "src.app.core.tenancy.context.get_current_tenant",
+                return_value=mock_tenant,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.create",
@@ -106,7 +112,9 @@ class TestProductService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
                 new_callable=AsyncMock,
@@ -151,9 +159,15 @@ class TestProductService:
             "total_count": 2,
         }
 
-        with patch(
-            "src.app.modules.billing.service.get_current_tenant",
-            return_value=mock_tenant,
+        with (
+            patch(
+                "src.app.modules.billing.service.get_current_tenant",
+                return_value=mock_tenant,
+            ),
+            patch(
+                "src.app.core.tenancy.context.get_current_tenant",
+                return_value=mock_tenant,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.get_multi",
@@ -191,7 +205,9 @@ class TestProductService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
                 new_callable=AsyncMock,
@@ -231,7 +247,9 @@ class TestProductService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
                 new_callable=AsyncMock,
@@ -279,7 +297,9 @@ class TestProductPricingService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_products.get",
                 new_callable=AsyncMock,
@@ -375,7 +395,11 @@ class TestProductPricingService:
         mock_result.scalar_one_or_none.return_value = mock_product
         mock_db_session.execute = AsyncMock(return_value=mock_result)
 
-        with patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant):
+        with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
+        ):
             from src.app.modules.billing.service import ProductService
 
             service = ProductService(mock_db_session)
@@ -402,9 +426,15 @@ class TestProductServiceValidation:
             "is_active": True,
         }
 
-        with patch(
-            "src.app.modules.billing.service.get_current_tenant",
-            return_value=mock_tenant,
+        with (
+            patch(
+                "src.app.modules.billing.service.get_current_tenant",
+                return_value=mock_tenant,
+            ),
+            patch(
+                "src.app.core.tenancy.context.get_current_tenant",
+                return_value=mock_tenant,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.create",
@@ -431,9 +461,15 @@ class TestProductServiceValidation:
             "total_count": 1,
         }
 
-        with patch(
-            "src.app.modules.billing.service.get_current_tenant",
-            return_value=mock_tenant,
+        with (
+            patch(
+                "src.app.modules.billing.service.get_current_tenant",
+                return_value=mock_tenant,
+            ),
+            patch(
+                "src.app.core.tenancy.context.get_current_tenant",
+                return_value=mock_tenant,
+            ),
         ):
             with patch(
                 "src.app.modules.billing.crud.crud_products.get_multi",

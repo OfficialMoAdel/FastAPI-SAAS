@@ -33,7 +33,7 @@ class TestCancellationEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -46,7 +46,7 @@ class TestCancellationEndpoint:
         from src.app.modules._base.exceptions import ModelNotFoundError
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             side_effect=ModelNotFoundError("UserSubscription", 9999),
         ):
@@ -64,7 +64,7 @@ class TestCancellationEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.get_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.get_subscription",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -84,7 +84,7 @@ class TestCancellationEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -109,7 +109,7 @@ class TestCancellationWithStripeIntegration:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_subscription,
         ):
@@ -145,7 +145,7 @@ class TestCancellationResponse:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -170,7 +170,7 @@ class TestCancellationResponse:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):
@@ -198,7 +198,7 @@ class TestSubscriptionStatusEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.get_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.get_subscription",
             new_callable=AsyncMock,
             return_value=mock_subscription,
         ):
@@ -221,7 +221,7 @@ class TestSubscriptionStatusEndpoint:
         }
 
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.get_user_subscriptions",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.get_user_subscriptions",
             new_callable=AsyncMock,
             return_value=mock_result,
         ):

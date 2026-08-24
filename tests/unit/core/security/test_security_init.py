@@ -34,7 +34,7 @@ from src.app.core.security import (
 @pytest.fixture(autouse=True)
 def _clear_security_caches() -> None:
     """Clear module-level caches that persist across tests."""
-    from src.app.core.security import (
+    from src.app.core.security.jwt_service import (
         _db_fallback_cache,
         _in_flight_db_checks,
     )
@@ -135,7 +135,7 @@ async def test_create_refresh_token_custom() -> None:
 
 
 async def test_check_db_fallback_cache_hit() -> None:
-    from src.app.core.security import _db_fallback_cache
+    from src.app.core.security.jwt_service import _db_fallback_cache
 
     _db_fallback_cache["jti:abc"] = True
     try:
@@ -146,7 +146,7 @@ async def test_check_db_fallback_cache_hit() -> None:
 
 
 async def test_check_db_fallback_in_flight() -> None:
-    from src.app.core.security import _in_flight_db_checks
+    from src.app.core.security.jwt_service import _in_flight_db_checks
 
     task = asyncio.create_task(asyncio.sleep(0))  # placeholder
     _in_flight_db_checks["tok"] = task

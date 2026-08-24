@@ -6,7 +6,7 @@ Business logic for AI chat sessions, messages, and user settings.
 import asyncio
 from collections.abc import AsyncGenerator
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,7 +17,7 @@ from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
 from src.app.modules.ai.models import AIChatMessage, AIChatSession, AISettings
-from src.app.modules.ai.ollama_client import OllamaError
+from src.app.modules.ai.providers import AIProvider, AIProviderError
 from src.app.modules.ai.schemas import (
     AISettingsUpdate,
     ChatCompletionRequest,
@@ -335,20 +335,17 @@ class ChatCompletionService:
     def __init__(
         self,
         db: AsyncSession,
-        provider: Any | None = None,
-        ollama_client: Any | None = None,
-        fallback_provider: Any | None = None,
+        provider: AIProvider | None = None,
+        fallback_provider: AIProvider | None = None,
     ):
         self.db = db
-        resolved = provider or ollama_client
-        self._injected_provider = resolved is not None
-        if resolved is not None:
-            self.provider = resolved
-            self.ollama = resolved
+        if provider is not None:
+            self.provider = provider
+            self._injected_provider = True
         else:
             from src.app.modules.ai.factory import AIProviderFactory
             self.provider = AIProviderFactory.get_provider()
-            self.ollama = self.provider
+            self._injected_provider = False
         self._fallback_provider = fallback_provider
         self._session_service = ChatSessionService(db)
         self._message_service = ChatMessageService(db)
@@ -371,79 +368,53 @@ class ChatCompletionService:
 
     async def _invoke_chat(
         self,
-        provider: Any,
+        provider: AIProvider,
         model: str,
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int | None,
         system_prompt: str | None,
     ) -> dict[str, Any]:
-        """Invoke chat on provider (handles both AIProvider and OllamaClient/mocks)."""
-        from src.app.modules.ai.providers import AIProvider
-        if isinstance(provider, AIProvider) or (hasattr(provider, "generate_text") and not hasattr(provider, "chat")):
-            prompt = messages[-1]["content"] if messages else ""
-            res = await provider.generate_text(
-                prompt=prompt,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-                messages=messages,
-            )
-            return {
-                "message": res.content,
-                "role": "assistant",
-                "token_count": res.token_usage.total_tokens if res.token_usage else None,
-                "model": res.model or model,
-                "finish_reason": res.finish_reason,
-            }
-        else:
-            res = await provider.chat(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            )
-            return cast(dict[str, Any], res)
+        """Invoke chat on the AIProvider seam (single dialect)."""
+        prompt = messages[-1]["content"] if messages else ""
+        res = await provider.generate_text(
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            messages=messages,
+        )
+        return {
+            "message": res.content,
+            "role": "assistant",
+            "token_count": res.token_usage.total_tokens if res.token_usage else None,
+            "model": res.model or model,
+            "finish_reason": res.finish_reason,
+        }
 
     async def _invoke_chat_stream(
         self,
-        provider: Any,
+        provider: AIProvider,
         model: str,
         messages: list[dict[str, str]],
         temperature: float,
         max_tokens: int | None,
         system_prompt: str | None,
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Stream chat from provider (handles both AIProvider and OllamaClient/mocks)."""
-        from src.app.modules.ai.providers import AIProvider
-
-        is_provider = isinstance(provider, AIProvider) or (
-            hasattr(provider, "generate_text_stream") and not hasattr(provider, "chat_stream")
-        )
-        if is_provider:
-            prompt = messages[-1]["content"] if messages else ""
-            async for chunk_str in provider.generate_text_stream(
-                prompt=prompt,
-                model=model,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-                messages=messages,
-            ):
-                if chunk_str:
-                    yield {"content": chunk_str, "done": False, "token_count": None}
-            yield {"content": "", "done": True, "token_count": None}
-        else:
-            async for chunk in provider.chat_stream(
-                model=model,
-                messages=messages,
-                temperature=temperature,
-                max_tokens=max_tokens,
-                system_prompt=system_prompt,
-            ):
-                yield chunk
+        """Stream chat from the AIProvider seam (single dialect)."""
+        prompt = messages[-1]["content"] if messages else ""
+        async for chunk_str in provider.generate_text_stream(
+            prompt=prompt,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            system_prompt=system_prompt,
+            messages=messages,
+        ):
+            if chunk_str:
+                yield {"content": chunk_str, "done": False, "token_count": None}
+        yield {"content": "", "done": True, "token_count": None}
 
     async def complete(
         self,
@@ -517,7 +488,6 @@ class ChatCompletionService:
 
         # Phase2: Call LLM (connection released, no DB hold during inference)
         from src.app.core.utils.r1_error_handling import with_fallback, with_retry
-        from src.app.modules.ai.providers import AIProviderError
 
         _last_err: list[Exception] = []
 
@@ -529,7 +499,7 @@ class ChatCompletionService:
                     ),
                     max_attempts=2,
                     delay_seconds=0.05,
-                    exceptions=(AIProviderError, OllamaError, Exception),
+                    exceptions=(AIProviderError,),
                 )
             except Exception as e:
                 _last_err.append(e)
@@ -550,7 +520,7 @@ class ChatCompletionService:
             logger.debug("Calling AI provider with model=, temperature=", model=model, temperature=temperature)
             result = await with_fallback(_primary_call, _fallback_call, error_msg="Primary AI completion failed")
             logger.info("Chat completion successful, tokens=", val=result.get("token_count"))
-        except (OllamaError, AIProviderError, ChatCompletionError, Exception) as e:
+        except (AIProviderError, ChatCompletionError) as e:
             # P2.20 FIX: the user message was already committed above. On LLM
             # failure it would be left as a dangling turn with no assistant reply,
             # so remove it to keep the conversation consistent.
@@ -664,7 +634,6 @@ class ChatCompletionService:
         token_count = None
 
         from src.app.core.tenancy.context import get_tenant_context
-        from src.app.modules.ai.providers import AIProviderError
 
         current_tenant = get_tenant_context()
 
@@ -680,7 +649,7 @@ class ChatCompletionService:
                     if chunk.get("done"):
                         token_count = chunk.get("token_count")
                     yield chunk
-            except (AIProviderError, OllamaError, Exception) as primary_err:
+            except (AIProviderError, ChatCompletionError) as primary_err:
                 _last_err.append(primary_err)
                 logger.warning("Primary provider streaming failed, checking fallback", error=str(primary_err))
                 fb = self._get_fallback_provider()
@@ -773,11 +742,8 @@ class ChatCompletionError(Exception):
 
 def get_chat_completion_service(
     db: AsyncSession,
-    provider: Any | None = None,
-    ollama_client: Any | None = None,
-    fallback_provider: Any | None = None,
+    provider: AIProvider | None = None,
+    fallback_provider: AIProvider | None = None,
 ) -> ChatCompletionService:
     """Get ChatCompletionService instance."""
-    return ChatCompletionService(
-        db, provider=provider, ollama_client=ollama_client, fallback_provider=fallback_provider
-    )
+    return ChatCompletionService(db, provider=provider, fallback_provider=fallback_provider)

@@ -6,8 +6,6 @@ from typing import Any, cast
 import orjson
 from redis.asyncio import Redis
 
-from src.app.core.utils.redis_utils import _GETDEL_LUA
-
 
 class PendingTokenStore:
     """Redis-backed one-time token store with atomic GETDEL consumption.
@@ -56,7 +54,9 @@ class PendingTokenStore:
             Dictionary of stored data if valid, None if expired/used/invalid.
         """
         key = self._get_key(token)
-        data = await self._redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        data = await get_lua_manager().execute(self._redis, "get_delete", keys=[key])
 
         if data is None:
             return None

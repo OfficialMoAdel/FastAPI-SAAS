@@ -39,12 +39,13 @@ from src.app.core.config import EnvironmentOption, settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, NotFoundException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
+from src.app.core.utils.lua_manager import get_lua_manager
+from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.passkey.crud import crud_passkey_credentials
 from src.app.modules.passkey.schemas import PasskeyCredentialCreate
 
 logger = get_logger(__name__)
 
-from src.app.core.utils.redis_utils import _GETDEL_LUA
 
 # Constants
 CHALLENGE_TTL = 300  # 5 minutes
@@ -506,7 +507,7 @@ class PasskeyService:
         """Retrieve and atomically delete registration challenge from Redis."""
         key = f"passkey:reg_challenge:{registration_id}"
         # Atomic get and delete to prevent race conditions
-        data = await redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
+        data = await get_lua_manager().execute(redis, "get_delete", keys=[key])
         if not data:
             return None
 
@@ -602,7 +603,7 @@ class PasskeyService:
         """Retrieve and atomically delete authentication challenge from Redis."""
         key = f"passkey:auth_challenge:{challenge_id}"
         # Atomic get and delete to prevent race conditions
-        data = await redis.eval(_GETDEL_LUA, 1, key)  # type: ignore[misc]
+        data = await get_lua_manager().execute(redis, "get_delete", keys=[key])
         if not data:
             return None
         return base64url_to_bytes(data)
@@ -748,48 +749,20 @@ class PasskeyService:
         return user_dict
 
     async def _generate_auth_tokens(self, user: dict) -> dict[str, Any]:
-        """Generate JWT authentication tokens for a user with tier info for rate limiting."""
-        from src.app.core.security import create_access_token, create_refresh_token
+        """Generate JWT authentication tokens and register the session.
 
-        # Include tier info in JWT claims for Zero-DB rate limiting
-        tier = user.get("tier")
-        tier_name = tier.get("name") if tier else None
-
-        # Consistent with standard login, we need to include token_version and tenant_id
-        token_data = {
-            "sub": user.get("username") or user.get("email"),
-            "tier_id": user.get("tier_id"),
-            "tier_name": tier_name,
-            "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
-            "token_version": user.get("token_version", 0),
-        }
-
-        access_token = await create_access_token(data=token_data)
-        refresh_token = await create_refresh_token(data=token_data)
-
-        try:
-            import json
-
-            from src.app.core.security.jwt_utils import extract_jti_unverified
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            session_id = extract_jti_unverified(access_token) or access_token[:32]
-
-            device_info_str = json.dumps({"user_agent": "Passkey Login", "ip": "Unknown"})
-
-            await global_session_manager.register_session(
-                user_id=user["id"],
-                session_id=session_id,
-                device_info=device_info_str,
-            )
-        except Exception as e:
-            logger.warning("session_registration_failed", error=str(e))
-
+        Delegates to the shared TokenIssuer seam; the "Passkey Login" device
+        label applies because this flow has no HTTP request context.
+        """
+        issued = await TokenIssuer.issue_session(
+            user,
+            channel="passkey",
+        )
         return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
+            "access_token": issued.access_token,
+            "refresh_token": issued.refresh_token,
             "token_type": "bearer",
-            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "expires_in": issued.expires_in,
         }
 
 

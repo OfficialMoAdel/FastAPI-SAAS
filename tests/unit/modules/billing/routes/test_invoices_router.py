@@ -39,10 +39,10 @@ def test_all_endpoints_exist():
 def test_delegates_to_billing_record_service():
     """Test that the router delegates to billing BillingRecordService."""
     from src.app.modules.billing.routes.invoices import get_billing_record_service
-    from src.app.modules.billing.service import get_billing_record_service as billing_get_service
+    from src.app.modules.billing.subscription_service import get_billing_record_service as subscription_get_service
 
     # Should be the same function
-    assert get_billing_record_service is billing_get_service
+    assert get_billing_record_service is subscription_get_service
 
 
 def test_list_supports_pagination():

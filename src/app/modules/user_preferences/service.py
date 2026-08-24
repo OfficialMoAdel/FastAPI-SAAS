@@ -17,10 +17,10 @@ from typing import Any
 from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.core.config import settings
 from src.app.core.logger import get_logger
+from src.app.core.tenancy.context import get_tenant_context
 from src.app.modules._base import ModelNotFoundError, ValidationError
-from src.app.modules.storage import get_storage
+from src.app.modules.storage_settings.service import StorageSettingsService
 from src.app.modules.user_preferences.crud import crud_user_preferences
 from src.app.modules.user_preferences.models import DEFAULT_PREFERENCES
 from src.app.modules.user_preferences.schemas import UserPreferencesUpdate
@@ -214,17 +214,11 @@ class PreferencesService:
         if not user:
             raise ModelNotFoundError("User", user_id)
 
-        # 4. Prepare storage
-        storage = get_storage(
-            provider=settings.STORAGE_PROVIDER,
-            bucket=settings.STORAGE_BUCKET,
-            region=settings.STORAGE_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=(
-                settings.AWS_SECRET_ACCESS_KEY.get_secret_value() if settings.AWS_SECRET_ACCESS_KEY else None
-            ),
-            endpoint_url=settings.AWS_ENDPOINT_URL,
-        )
+        # 4. Prepare storage — tenant-aware provider from storage settings
+        tenant_ctx = get_tenant_context()
+        if tenant_ctx is None:
+            raise StorageError("upload", "Tenant context not available")
+        storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)
 
         filename = file.filename or "image.png"
         file_ext = filename.split(".")[-1] if "." in filename else "png"
@@ -289,19 +283,11 @@ class PreferencesService:
         # Let's assume we want to delete whatever is there.
         # But S3 delete requires key.
 
-        storage = get_storage(
-            provider=settings.STORAGE_PROVIDER,
-            bucket=settings.STORAGE_BUCKET,
-            region=settings.STORAGE_REGION,
-            aws_access_key_id=settings.AWS_ACCESS_KEY_ID,
-            aws_secret_access_key=(
-                settings.AWS_SECRET_ACCESS_KEY.get_secret_value() if settings.AWS_SECRET_ACCESS_KEY else None
-            ),
-            endpoint_url=settings.AWS_ENDPOINT_URL,
-        )
-
-        # We need to know the extension to delete the exact file.
-        # We can fetch the user to get `profile_image_url` and try to extract key.
+        # Tenant-aware provider from storage settings
+        tenant_ctx = get_tenant_context()
+        if tenant_ctx is None:
+            raise StorageError("delete", "Tenant context not available")
+        storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)
         user = await crud_users.get(db=db, id=user_id)
         if not user:
             return  # Nothing to delete

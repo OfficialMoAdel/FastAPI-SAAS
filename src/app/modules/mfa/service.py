@@ -52,26 +52,6 @@ MFA_ACTION_VERIFY_FAILED = "mfa.verify.failed"
 MFA_ACTION_BACKUP_CODE_USED = "mfa.backup_code.used"
 MFA_ACTION_BACKUP_CODES_REGENERATED = "mfa.backup_codes.regenerated"
 
-# Lua script for atomic MFA lockout check + increment
-# Returns: -1 if locked out, otherwise new attempt count
-_MFA_CHECK_LUA = """
-    local key = KEYS[1]
-    local max_attempts = tonumber(ARGV[1])
-    local lockout_duration = tonumber(ARGV[2])
-
-    local current = redis.call('GET', key)
-    if current and tonumber(current) >= max_attempts then
-        local ttl = redis.call('TTL', key)
-        if ttl > 0 then
-            return -1
-        end
-    end
-
-    local new_count = redis.call('INCR', key)
-    redis.call('EXPIRE', key, lockout_duration)
-    return new_count
-"""
-
 
 class MFAService:
     """Service for multi-factor authentication operations."""
@@ -258,14 +238,15 @@ class MFAService:
 
         mfa_attempts_key = f"mfa_attempts:{user_id}"
         try:
-            raw_result = await cache.client.eval(  # type: ignore[misc]
-                _MFA_CHECK_LUA,
-                1,
-                mfa_attempts_key,
-                str(MFA_MAX_ATTEMPTS),
-                str(MFA_LOCKOUT_DURATION_SECONDS),
+            from src.app.core.utils.lua_manager import get_lua_manager
+
+            raw_result = await get_lua_manager().execute(
+                cache.client,
+                "mfa_lockout_check",
+                keys=[mfa_attempts_key],
+                args=[str(MFA_MAX_ATTEMPTS), str(MFA_LOCKOUT_DURATION_SECONDS)],
             )
-            # Handle potential bytes return from redis.eval
+            # Handle potential bytes return from Redis
             result = int(raw_result) if raw_result is not None else 0
         except Exception as e:
             from src.app.core.config import settings

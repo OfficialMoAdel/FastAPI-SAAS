@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
+from src.app.modules.ai.factory import AIProviderFactory
 from src.app.modules.ai.middleware import RateLimitedUser
-from src.app.modules.ai.ollama_client import get_ollama_client
 from src.app.modules.ai.schemas import (
     AIModelsListResponse,
     AIServiceError,
@@ -179,13 +179,13 @@ async def update_ai_settings(
 async def list_available_models(
     current_user: Annotated[dict, Depends(get_current_user)],
 ) -> Any:
-    """List available AI models from Ollama.
+    """List available AI models.
 
-    Returns a list of model names that are currently available in the
-    configured Ollama instance, plus the default model.
+    Returns a list of model names available on the configured provider,
+    plus the default model.
     """
-    client = get_ollama_client()
-    models = await client.list_models()
+    provider = AIProviderFactory.get_provider()
+    models = await provider.list_models()
     return {
         "models": models,
         "default_model": "gemma3",

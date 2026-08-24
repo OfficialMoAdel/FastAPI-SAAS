@@ -1,4 +1,3 @@
-"""JWT creation, verification, and blacklisting services."""
 
 from __future__ import annotations
 
@@ -24,7 +23,6 @@ from src.app.core.db.crud_token_blacklist import crud_token_blacklist
 from src.app.core.db.token_blacklist import TokenBlacklist
 from src.app.core.logger import get_logger
 from src.app.core.schemas import TokenBlacklistCreate, TokenData
-from src.app.core.security.jwt_utils import _get_parsed_verification_key
 from src.app.core.security.pending_token_store import PendingTokenStore
 from src.app.core.security.token_blacklist_cache import (
     add_token_to_blacklist,
@@ -45,8 +43,10 @@ _jwt_logger = get_logger(__name__)
 @lru_cache(maxsize=1)
 def _get_signing_key() -> str:
     """Get the key for signing tokens (private key for RS256, secret for HS256)."""
-    if settings.ALGORITHM == "RS256" and settings.JWT_PRIVATE_KEY:
-        return str(settings.JWT_PRIVATE_KEY.get_secret_value())
+    from src.app.core.security.jwt_utils import _is_symmetric_algorithm
+
+    if not _is_symmetric_algorithm():
+        return str(settings.JWT_PRIVATE_KEY.get_secret_value())  # type: ignore[union-attr]
     return str(settings.SECRET_KEY.get_secret_value())
 
 
@@ -63,21 +63,13 @@ ACCESS_TOKEN_EXPIRE_MINUTES = settings.ACCESS_TOKEN_EXPIRE_MINUTES
 MFA_PENDING_EXPIRY_SECONDS = settings.auth.MFA_PENDING_EXPIRY_SECONDS
 
 
-def _is_symmetric_algorithm() -> bool:
-    """Check if current JWT algorithm is symmetric (HS256/HS384/HS512)."""
-    return settings.ALGORITHM.startswith("HS")
-
 async def _jwt_encode(payload: dict, key: str, algorithm: str) -> str:
     """Encode JWT, inlining for symmetric algorithms."""
-    if _is_symmetric_algorithm():
-        return jwt.encode(payload, key, algorithm)
-    return await asyncio.to_thread(jwt.encode, payload, key, algorithm)
+    from src.app.core.security.jwt_utils import _is_symmetric_algorithm
 
-async def _jwt_decode(token: str, key: str | Any, algorithms: list[str], **kwargs: Any) -> dict[str, Any]:
-    """Decode JWT, inlining for symmetric algorithms."""
     if _is_symmetric_algorithm():
-        return jwt.decode(token, key, algorithms=algorithms, **kwargs)  # type: ignore[no-any-return]
-    return await asyncio.to_thread(jwt.decode, token, key, algorithms=algorithms, **kwargs)  # type: ignore[no-any-return]
+        return jwt.encode(payload, key, algorithm=algorithm)
+    return await asyncio.to_thread(jwt.encode, payload, key, algorithm)
 
 
 class TokenType(str, Enum):
@@ -197,15 +189,10 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     then checking blacklist using JTI (JWT ID). This ensures blacklist check happens
     atomically relative to the token content.
     """
-    try:
-        payload = await _jwt_decode(
-            token,
-            _get_parsed_verification_key(),
-            algorithms=[settings.ALGORITHM],
-            audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            issuer=getattr(settings, "JWT_ISSUER", "fastapi-saas"),
-        )
-    except JWTError:
+    from src.app.core.security.jwt_utils import decode_verified_token
+
+    payload = await decode_verified_token(token)
+    if payload is None:
         return None
 
     username_or_email: str | None = payload.get("sub")
@@ -322,15 +309,11 @@ async def blacklist_tokens(
     for token, payload in tokens_and_payloads:
         if not token:
             continue
+        from src.app.core.security.jwt_utils import decode_verified_token
+
         try:
             if not payload:
-                payload = await _jwt_decode(
-                    token,
-                    _get_parsed_verification_key(),
-                    algorithms=[settings.ALGORITHM],
-                    audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-                    issuer=getattr(settings, "JWT_ISSUER", "fastapi-saas"),
-                )
+                payload = await decode_verified_token(token)
             if payload is None:
                 continue
             exp_timestamp = payload.get("exp")
@@ -390,12 +373,9 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
     """Blacklist a single token after validating its signature."""
     try:
         if not payload:
-            payload = await _jwt_decode(
-                token,
-                _get_parsed_verification_key(),
-                algorithms=[settings.ALGORITHM],
-                audience=getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            )
+            from src.app.core.security.jwt_utils import decode_verified_token
+
+            payload = await decode_verified_token(token)
         if payload is None:
             return
         exp_timestamp = payload.get("exp")

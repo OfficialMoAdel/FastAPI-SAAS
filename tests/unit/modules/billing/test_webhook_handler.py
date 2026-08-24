@@ -108,14 +108,17 @@ class AsyncContextManagerMock:
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
-@patch("asyncio.to_thread")
+@patch(
+    "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+    new_callable=AsyncMock,
+)
 async def test_handle_checkout_session_completed(
-    mock_to_thread, mock_crud, mock_tenant_context, mock_stripe_event, mock_db
+    mock_retrieve, mock_crud, mock_tenant_context, mock_stripe_event, mock_db
 ):  # noqa: E501
     mock_tenant_context.return_value = AsyncContextManagerMock(mock_db)
 
-    # Mock stripe.Subscription.retrieve
-    mock_to_thread.return_value = {
+    # Mock subscription retrieval via PaymentGateway seam
+    mock_retrieve.return_value = {
         "status": "active",
         "current_period_start": 1600000000,
         "current_period_end": 1602592000,

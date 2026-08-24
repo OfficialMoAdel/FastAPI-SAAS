@@ -24,6 +24,8 @@ import hashlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
+from redis.exceptions import NoScriptError
+
 from src.app.core.logger import get_logger
 from src.app.core.utils.r1_error_handling import LuaScriptError
 
@@ -110,7 +112,6 @@ class LuaScriptManager:
             local ttl = redis.call('TTL', KEYS[1])
             return {value, ttl}
         """,
-
         # Distributed lock release - compare-and-delete (ownership token)
         "lock_release_if_owned": """
             -- KEYS[1]: lock key
@@ -121,7 +122,6 @@ class LuaScriptManager:
             end
             return 0
         """,
-
         "session_evict_oldest": """
             -- KEYS[1]: session order zset key
             -- KEYS[2]: session hash key
@@ -135,6 +135,169 @@ class LuaScriptManager:
                 table.insert(evicted, session_id)
             end
             return evicted
+        """,
+        # Fixed-window rate limit: atomic INCR with window-aligned TTL
+        # (migrated from utils/rate_limit.RATE_LIMIT_LUA_SCRIPT)
+        "rate_limit_fixed_window": """
+            -- KEYS[1]: rate limit counter key
+            -- ARGV[1]: window period in seconds
+            -- Returns: current count after increment
+            local current = redis.call('INCR', KEYS[1])
+            if current == 1 then
+                local now = redis.call('TIME')[1]
+                local period = tonumber(ARGV[1])
+                local ttl = period - (now % period)
+                redis.call('EXPIRE', KEYS[1], ttl)
+            end
+            return current
+        """,
+        # GCRA rate limit: atomic TAT update (migrated from gcra_rate_limit)
+        "rate_limit_gcra": """
+            -- KEYS[1]: GCRA TAT key
+            -- ARGV[1]: now_ms, ARGV[2]: emission_interval_ms,
+            -- ARGV[3]: limit, ARGV[4]: period_ms
+            -- Returns: [is_allowed(0/1), remaining, retry_after_ms, reset_at_ms]
+            local key = KEYS[1]
+            local now_ms = tonumber(ARGV[1])
+            local emission_interval_ms = tonumber(ARGV[2])
+            local limit = tonumber(ARGV[3])
+            local period_ms = tonumber(ARGV[4])
+
+            local burst_tolerance_ms = period_ms
+            local tat_ms = tonumber(redis.call('GET', key)) or now_ms
+            local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
+            local allow_at_ms = new_tat_ms - burst_tolerance_ms
+
+            if allow_at_ms > now_ms then
+                local retry_after_ms = allow_at_ms - now_ms
+                return {0, 0, retry_after_ms, new_tat_ms}
+            else
+                redis.call('SET', key, new_tat_ms)
+                redis.call('PEXPIRE', key, math.ceil(period_ms + emission_interval_ms))
+                local remaining = 0
+                if emission_interval_ms > 0 then
+                    remaining = math.floor((now_ms + burst_tolerance_ms - new_tat_ms) / emission_interval_ms)
+                end
+                remaining = math.max(0, math.min(remaining, limit - 1))
+                return {1, remaining, 0, new_tat_ms}
+            end
+        """,
+        # Token blacklist check: atomic 4-op sequence
+        # (migrated from token_blacklist_cache.BLACKLIST_CHECK_LUA_SCRIPT)
+        "token_blacklist_check": """
+            -- KEYS[1]: negative cache key, KEYS[2]: blacklist zset key
+            -- ARGV[1]: member (jti:{jti} or token), ARGV[2]: now, ARGV[3]: neg-cache TTL
+            if redis.call('EXISTS', KEYS[1]) == 1 then
+                return 0
+            end
+            local score = redis.call('ZSCORE', KEYS[2], ARGV[1])
+            if not score then
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return 0
+            end
+            if tonumber(score) < tonumber(ARGV[2]) then
+                redis.call('ZREM', KEYS[2], ARGV[1])
+                redis.call('SETEX', KEYS[1], ARGV[3], '1')
+                return 0
+            end
+            return 1
+        """,
+        # Session registration + max-session eviction
+        # (migrated from session_manager register_session inline script)
+        "session_register_with_eviction": """
+            -- KEYS[1]: order zset, KEYS[2]: session hash
+            -- ARGV[1]: max_sessions, ARGV[2]: session_id, ARGV[3]: session_data,
+            -- ARGV[4]: timestamp, ARGV[5]: ttl, ARGV[6]: max_batch
+            local zset_key = KEYS[1]
+            local hash_key = KEYS[2]
+            local max_sessions = tonumber(ARGV[1])
+            local session_id = ARGV[2]
+            local session_data = ARGV[3]
+            local timestamp = ARGV[4]
+            local ttl = tonumber(ARGV[5])
+            local max_batch = tonumber(ARGV[6])
+
+            if redis.call('HEXISTS', hash_key, session_id) == 1 or redis.call('ZSCORE', zset_key, session_id) then
+                return {"already_exists"}
+            end
+
+            local current_count = redis.call('ZCARD', zset_key)
+            if current_count == 0 then
+                current_count = redis.call('HLEN', hash_key)
+            end
+
+            local evicted_data = {}
+            local final_count = current_count + 1
+
+            if current_count >= max_sessions then
+                local sessions_to_remove = current_count - max_sessions + 1
+                if sessions_to_remove > max_batch then
+                    sessions_to_remove = max_batch
+                end
+                local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
+                for i, sid in ipairs(session_ids) do
+                    local data = redis.call('HGET', hash_key, sid)
+                    if data then
+                        table.insert(evicted_data, data)
+                    end
+                    redis.call('HDEL', hash_key, sid)
+                    redis.call('ZREM', zset_key, sid)
+                end
+                final_count = final_count - #session_ids
+            end
+
+            redis.call('ZADD', zset_key, timestamp, session_id)
+            redis.call('HSET', hash_key, session_id, session_data)
+            redis.call('EXPIRE', zset_key, ttl)
+            redis.call('EXPIRE', hash_key, ttl)
+
+            local result = {"success", tostring(final_count)}
+            for _, d in ipairs(evicted_data) do
+                table.insert(result, d)
+            end
+            return result
+        """,
+        # AI sliding-window rate limit: INCR + TTL + conditional EXPIRE
+        # (migrated from ai/rate_limiter._RATE_LIMIT_SCRIPT)
+        "ai_rate_limit_check": """
+            -- KEYS[1]: bucket key, ARGV[1]: window seconds
+            -- Returns: [count, ttl]
+            local count = redis.call('INCR', KEYS[1])
+            local ttl = redis.call('TTL', KEYS[1])
+            if ttl < 0 then
+                redis.call('EXPIRE', KEYS[1], ARGV[1])
+                ttl = tonumber(ARGV[1])
+            end
+            return {count, ttl}
+        """,
+        # MFA lockout: atomic check + increment
+        # (migrated from mfa/service._MFA_CHECK_LUA)
+        "mfa_lockout_check": """
+            -- KEYS[1]: attempts key, ARGV[1]: max_attempts, ARGV[2]: lockout_duration
+            -- Returns: -1 if locked out, otherwise new attempt count
+            local key = KEYS[1]
+            local max_attempts = tonumber(ARGV[1])
+            local lockout_duration = tonumber(ARGV[2])
+            local current = redis.call('GET', key)
+            if current and tonumber(current) >= max_attempts then
+                local ttl = redis.call('TTL', key)
+                if ttl > 0 then
+                    return -1
+                end
+            end
+            local new_count = redis.call('INCR', key)
+            redis.call('EXPIRE', key, lockout_duration)
+            return new_count
+        """,
+        # Atomic GETDEL (folded from utils/redis_utils._GETDEL_LUA)
+        "get_delete": """
+            -- KEYS[1]: key
+            -- Returns: value before deletion, or nil
+            local val = redis.call('GET', KEYS[1])
+            if val then
+                redis.call('DEL', KEYS[1])
+            end
+            return val
         """,
     }
 
@@ -196,14 +359,20 @@ class LuaScriptManager:
 
         for name, script in self._scripts.items():
             try:
-                # SCRIPT LOAD returns the SHA1 hash
+                # SCRIPT LOAD returns the server's SHA1 hash
                 loaded_sha = await redis.script_load(script.source)
 
-                # Verify SHA1 matches
+                # Verify SHA1 matches. A mismatch usually means the mock/test
+                # double returned a fake SHA — never overwrite the local hash,
+                # because execute() sends `script.source` verbatim in its EVAL
+                # fallback and Redis computes the same digest locally.
                 if loaded_sha != script.sha1:
-                    logger.warning("Script SHA1 mismatch", name=name, expected=script.sha1[:8], got=loaded_sha[:8])
-                    # Update to server's SHA1
-                    script.sha1 = loaded_sha
+                    logger.warning(
+                        "Script SHA1 mismatch; keeping locally computed SHA",
+                        name=name,
+                        expected=script.sha1[:8],
+                        got=str(loaded_sha)[:8],
+                    )
 
                 script.loaded = True
                 results[name] = True
@@ -258,10 +427,15 @@ class LuaScriptManager:
             return result
 
         except Exception as e:
-            error_str = str(e).upper()
+            # redis-py strips the "NOSCRIPT" error code prefix, raising
+            # NoScriptError("No matching script. Please use EVAL.") — so match
+            # both the exception type and the message text (covers mocks).
+            is_noscript = (
+                isinstance(e, NoScriptError) or "NOSCRIPT" in str(e).upper() or "NO MATCHING SCRIPT" in str(e).upper()
+            )
 
             # Handle NOSCRIPT error - script not in Redis cache
-            if "NOSCRIPT" in error_str:
+            if is_noscript:
                 logger.debug("Script '' not cached, falling back to EVAL", script_name=script_name)
                 try:
                     result = await redis.eval(  # type: ignore[misc]

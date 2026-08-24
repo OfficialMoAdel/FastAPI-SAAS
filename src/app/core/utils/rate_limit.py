@@ -6,30 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
 from src.app.core.utils import cache
+from src.app.core.utils.lua_manager import get_lua_manager
 from src.app.core.utils.path_utils import sanitize_path
 
 logger = get_logger(__name__)
 
-# Lua script for atomic rate limit check
-# Returns the current count after increment
-# Sets expiry only on first increment (when count is 1). The TTL is aligned to
-# the window boundary (period - (now % period)) so the counter does not persist
-# past the start of the next window (which would worsen boundary bursts).
-RATE_LIMIT_LUA_SCRIPT = """
-local current = redis.call('INCR', KEYS[1])
-if current == 1 then
-    local now = redis.call('TIME')[1]
-    local period = tonumber(ARGV[1])
-    local ttl = period - (now % period)
-    redis.call('EXPIRE', KEYS[1], ttl)
-end
-return current
-"""
-
 
 class RateLimiter:
     _instance: Optional["RateLimiter"] = None
-    _rate_limit_script_sha: str | None = None
 
     def __new__(cls) -> "RateLimiter":
         if cls._instance is None:
@@ -42,12 +26,6 @@ class RateLimiter:
             logger.error("Redis client is not initialized.")
             raise Exception("Redis client is not initialized.")
         return cache.client
-
-    async def _get_script_sha(self, client: Redis) -> str:
-        """Get or create the Lua script SHA for atomic rate limiting."""
-        if self._rate_limit_script_sha is None:
-            self._rate_limit_script_sha = await client.script_load(RATE_LIMIT_LUA_SCRIPT)
-        return self._rate_limit_script_sha
 
     async def check_rate_limit(self, key: str, limit: int, period: int) -> tuple[bool, int]:
         """
@@ -70,15 +48,13 @@ class RateLimiter:
 
         try:
             client = self.get_client()
-            # Use atomic Lua script to prevent race conditions
-            script_sha = await self._get_script_sha(client)
-            try:
-                current_count = await client.evalsha(script_sha, 1, redis_key, str(period))  # type: ignore
-            except Exception:
-                # Script may have been flushed, reload it
-                self._rate_limit_script_sha = None
-                script_sha = await self._get_script_sha(client)
-                current_count = await client.evalsha(script_sha, 1, redis_key, str(period))  # type: ignore
+            # Atomic Lua script via the shared manager (EVALSHA + NOSCRIPT fallback)
+            current_count = await get_lua_manager().execute(
+                client,
+                "rate_limit_fixed_window",
+                keys=[redis_key],
+                args=[str(period)],
+            )
 
             if current_count > limit:
                 return True, current_count
@@ -140,7 +116,7 @@ class RateLimiter:
         tenant_id = tenant.tenant_id if tenant else None
 
         if tenant_id:
-            key = f"t:{tenant_id}:{user_id}:{sanitized_path}"
+            key = f"tenant:{tenant_id}:{user_id}:{sanitized_path}"
         else:
             key = f"{user_id}:{sanitized_path}"
 
@@ -149,12 +125,8 @@ class RateLimiter:
 
     @classmethod
     def reset(cls) -> None:
-        """Reset the singleton instance and script cache.
-
-        Used for test isolation to prevent state leakage between tests.
-        """
+        """Reset the singleton instance (test isolation)."""
         cls._instance = None
-        cls._rate_limit_script_sha = None
         logger.debug("RateLimiter singleton reset")
 
 

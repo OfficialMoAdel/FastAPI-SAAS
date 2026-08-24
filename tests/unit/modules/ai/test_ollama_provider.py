@@ -576,11 +576,13 @@ async def test_close_when_client_none(provider):
 
 
 def test_initialization_with_defaults():
-    """Test provider initialization with default values."""
+    """Test provider initialization with default values (timeout from settings)."""
+    from src.app.core.config import settings
+
     provider = OllamaProvider()
 
     assert provider.base_url == "http://localhost:11434"
-    assert provider.timeout == 60.0
+    assert provider.timeout == settings.OLLAMA_TIMEOUT
     assert provider._client is None
 
 

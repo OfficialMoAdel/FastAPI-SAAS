@@ -313,7 +313,7 @@ class TestAISettingsService:
 
 
 class TestChatCompletionService:
-    """Test chat completion service with Ollama integration."""
+    """Test chat completion service via the AIProvider seam."""
 
     @pytest.fixture
     def mock_db(self):
@@ -329,17 +329,16 @@ class TestChatCompletionService:
 
     @pytest.fixture
     def mock_ollama_client(self):
-        """Create a mock Ollama client."""
-        client = MagicMock()
-        client.chat = AsyncMock(
-            return_value={
-                "message": "Hello! How can I help you?",
-                "model": "gemma3",
-                "token_count": 25,
-                "finish_reason": "stop",
-            }
-        )
-        return client
+        """Create a mock AIProvider (single dialect)."""
+        provider = MagicMock(spec=["provider_name", "generate_text", "generate_text_stream", "close"])
+        provider.provider_name = "ollama"
+        response = MagicMock()
+        response.content = "Hello! How can I help you?"
+        response.model = "gemma3"
+        response.finish_reason = "stop"
+        response.token_usage = None
+        provider.generate_text = AsyncMock(return_value=response)
+        return provider
 
     @pytest.mark.asyncio
     async def test_complete_calls_ollama_with_history(self, mock_db, mock_ollama_client, mock_tenant_context):
@@ -376,9 +375,9 @@ class TestChatCompletionService:
                         request = ChatCompletionRequest(message="Hello")
                         result = await service.complete(session_id=1, user_id=1, request=request)
 
-                        # Verify Ollama was called
-                        mock_ollama_client.chat.assert_called_once()
-                        call_args = mock_ollama_client.chat.call_args
+                        # Verify the provider seam was called
+                        mock_ollama_client.generate_text.assert_called_once()
+                        call_args = mock_ollama_client.generate_text.call_args
 
                         # Check messages include history + new message
                         messages = call_args.kwargs["messages"]
@@ -485,21 +484,24 @@ class TestChatCompletionService:
                         )
                         await service.complete(session_id=1, user_id=1, request=request)
 
-                        # Verify Ollama was called with overrides
-                        call_args = mock_ollama_client.chat.call_args
+                        # Verify the provider was called with overrides
+                        call_args = mock_ollama_client.generate_text.call_args
                         assert call_args.kwargs["model"] == "llama3"
                         assert call_args.kwargs["temperature"] == 0.5
                         assert call_args.kwargs["max_tokens"] == 1000
 
     @pytest.mark.asyncio
-    async def test_complete_raises_on_ollama_error(self, mock_db, mock_tenant_context):
-        """Test that Ollama errors are wrapped in ChatCompletionError."""
-        from src.app.modules.ai.ollama_client import OllamaError
+    async def test_complete_raises_on_provider_error(self, mock_db, mock_tenant_context):
+        """Test that provider errors are wrapped in ChatCompletionError."""
+        from src.app.modules.ai.providers import AIProviderError
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionError, ChatCompletionService
 
-        mock_ollama = MagicMock()
-        mock_ollama.chat = AsyncMock(side_effect=OllamaError("Connection refused", "connection_error"))
+        mock_provider = MagicMock(spec=["provider_name", "generate_text", "close"])
+        mock_provider.provider_name = "ollama"
+        mock_provider.generate_text = AsyncMock(
+            side_effect=AIProviderError("Connection refused", error_code="connection_error", provider="ollama")
+        )
 
         with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
@@ -524,7 +526,7 @@ class TestChatCompletionService:
                             }
                         )
 
-                        service = ChatCompletionService(mock_db, mock_ollama)
+                        service = ChatCompletionService(mock_db, mock_provider)
                         request = ChatCompletionRequest(message="Hello")
 
                         with pytest.raises(ChatCompletionError) as exc_info:

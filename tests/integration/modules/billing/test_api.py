@@ -118,7 +118,7 @@ class TestSubscriptionPlanAPI:
     async def test_create_plan_as_superuser(self, async_client, superuser_token_headers) -> None:
         """Superuser should be able to create plans."""
         with patch(
-            "src.app.modules.billing.service.SubscriptionPlanService.create_plan",
+            "src.app.modules.billing.subscription_service.SubscriptionPlanService.create_plan",
             new_callable=AsyncMock,
             return_value={
                 "id": 1,
@@ -165,7 +165,7 @@ class TestUserSubscriptionAPI:
     async def test_create_subscription(self, async_client, regular_user_token_headers) -> None:
         """Create a new subscription."""
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.create_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.create_subscription",
             new_callable=AsyncMock,
             return_value={
                 "id": 1,
@@ -184,7 +184,7 @@ class TestUserSubscriptionAPI:
     async def test_cancel_subscription(self, async_client, regular_user_token_headers) -> None:
         """Cancel an existing subscription."""
         with patch(
-            "src.app.modules.billing.service.UserSubscriptionService.cancel_subscription",
+            "src.app.modules.billing.subscription_service.UserSubscriptionService.cancel_subscription",
             new_callable=AsyncMock,
             return_value={"id": 1, "status": "canceled"},
         ):

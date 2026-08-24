@@ -6,8 +6,10 @@ checkout flow, and billing records tracking.
 Components are imported lazily to avoid circular imports.
 Direct imports:
     from src.app.modules.billing.models import StripeSettings, SubscriptionPlan
-    from src.app.modules.billing.service import billing_service
     from src.app.modules.billing.router import router as billing_router
+    from src.app.modules.billing.service import StripeSettingsService, ProductService
+    from src.app.modules.billing.subscription_service import SubscriptionPlanService
+    from src.app.modules.billing.checkout_service import CheckoutService
 """
 
 __all__ = [

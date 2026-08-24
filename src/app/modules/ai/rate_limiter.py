@@ -9,9 +9,10 @@ Optimized with Lua script for atomic single-call rate limit checks.
 """
 
 from redis.asyncio import Redis
-from redis.exceptions import NoScriptError, ResponseError
+from redis.exceptions import ResponseError
 
 from src.app.core.logger import get_logger
+from src.app.core.utils.r1_error_handling import LuaScriptError
 
 logger = get_logger(__name__)
 
@@ -40,19 +41,6 @@ class AIRateLimiter:
         key_prefix: Redis key prefix (default: "ai:rate_limit")
     """
 
-    # Lua script for atomic rate limit check (INCR + TTL + conditional EXPIRE)
-    # Returns [count, ttl] - eliminates race condition between INCR and TTL
-    _RATE_LIMIT_SCRIPT = """
-    local count = redis.call('INCR', KEYS[1])
-    local ttl = redis.call('TTL', KEYS[1])
-    if ttl < 0 then
-        redis.call('EXPIRE', KEYS[1], ARGV[1])
-        ttl = tonumber(ARGV[1])
-    end
-    return {count, ttl}
-    """
-
-    _script_sha: str | None = None
 
     def __init__(
         self,
@@ -70,14 +58,8 @@ class AIRateLimiter:
         """Generate Redis key for user's rate limit bucket."""
         return f"{self.key_prefix}:{user_id}"
 
-    async def _get_script_sha(self) -> str:
-        """Get or load the Lua script SHA for EVALSHA."""
-        if AIRateLimiter._script_sha is None:
-            AIRateLimiter._script_sha = await self.redis.script_load(self._RATE_LIMIT_SCRIPT)
-        return AIRateLimiter._script_sha
-
     async def _execute_rate_limit_script(self, key: str, window: int) -> tuple[int, int]:
-        """Execute rate limit Lua script atomically.
+        """Execute rate limit Lua script atomically via the shared LuaScriptManager.
 
         Args:
             key: Redis key for rate limit bucket
@@ -86,18 +68,19 @@ class AIRateLimiter:
         Returns:
             Tuple of (count, ttl)
         """
-        sha = await self._get_script_sha()
-        try:
-            result = await self.redis.evalsha(sha, 1, key, str(window))  # type: ignore[misc]
-            # Handle both real Redis (returns list) and FakeRedis (may return int)
-            if isinstance(result, list | tuple) and len(result) >= 2:
-                return (int(result[0]), int(result[1]))
-            # FakeRedis doesn't execute Lua properly - fallback
-            raise ResponseError("FakeRedis Lua fallback")
-        except NoScriptError:
-            # Script was flushed from Redis, reload and retry
-            AIRateLimiter._script_sha = None
-            return await self._execute_rate_limit_script(key, window)
+        from src.app.core.utils.lua_manager import get_lua_manager
+
+        result = await get_lua_manager().execute(
+            self.redis,
+            "ai_rate_limit_check",
+            keys=[key],
+            args=[str(window)],
+        )
+        # Handle both real Redis (returns list) and FakeRedis (may return int)
+        if isinstance(result, list | tuple) and len(result) >= 2:
+            return (int(result[0]), int(result[1]))
+        # FakeRedis doesn't execute Lua properly - fallback
+        raise ResponseError("FakeRedis Lua fallback")
 
     async def check_rate_limit(self, user_id: int) -> tuple[bool, int, int]:
         """Check if request is within rate limit.
@@ -119,7 +102,7 @@ class AIRateLimiter:
         try:
             # Atomic single-call rate limit check
             current_count, ttl = await self._execute_rate_limit_script(key, self.window_seconds)
-        except ResponseError as e:
+        except (ResponseError, LuaScriptError) as e:
             # Fallback to original multi-call approach on script failure
             logger.warning("Lua script failed, using fallback", error=e)
             current_count, ttl = await self._fallback_check(key)

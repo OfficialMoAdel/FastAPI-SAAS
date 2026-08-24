@@ -18,13 +18,10 @@ if TYPE_CHECKING:
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
-from src.app.core.security import (
-    create_access_token,
-    create_refresh_token,
-)
 from src.app.core.security.tokens import get_magic_link_manager
 from src.app.core.utils.cache import async_get_redis
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
+from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.magic_link.exceptions import (
     InvalidMagicLinkError,
     MagicLinkUserInactiveError,
@@ -362,7 +359,10 @@ class MagicLinkService:
             )
 
     async def _create_auth_tokens(self, user: dict) -> dict[str, Any]:
-        """Create access and refresh tokens for user with tier info for rate limiting.
+        """Create access and refresh tokens and register the session.
+
+        Delegates to the shared TokenIssuer seam; the "Magic Link Login"
+        device label applies because this flow has no HTTP request context.
 
         Args:
             user: User dict with tier eager-loaded.
@@ -370,46 +370,15 @@ class MagicLinkService:
         Returns:
             Dict with access_token, refresh_token, token_type, expires_in.
         """
-        # Include tier info in JWT claims for Zero-DB rate limiting
-        tier = user.get("tier")
-        tier_name = tier.get("name") if tier else None
-
-        # Consistent with standard login, we need to include token_version and tenant_id
-        token_data = {
-            "sub": user.get("username") or user.get("email"),
-            "tier_id": user.get("tier_id"),
-            "tier_name": tier_name,
-            "tenant_id": str(user["tenant_id"]) if user.get("tenant_id") else None,
-            "token_version": user.get("token_version", 0),
-        }
-
-        # Create tokens
-        access_token = await create_access_token(data=token_data)
-        refresh_token = await create_refresh_token(data=token_data)
-
-        try:
-            import json
-
-            from src.app.core.security.jwt_utils import extract_jti_unverified
-            from src.app.core.security.session_manager import session_manager as global_session_manager
-
-            session_id = extract_jti_unverified(access_token) or access_token[:32]
-
-            device_info_str = json.dumps({"user_agent": "Magic Link Login", "ip": "Unknown"})
-
-            await global_session_manager.register_session(
-                user_id=user["id"],
-                session_id=session_id,
-                device_info=device_info_str,
-            )
-        except Exception as e:
-            logger.warning("session_registration_failed", error=str(e))
-
+        issued = await TokenIssuer.issue_session(
+            user,
+            channel="magic_link",
+        )
         return {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
+            "access_token": issued.access_token,
+            "refresh_token": issued.refresh_token,
             "token_type": "bearer",
-            "expires_in": settings.ACCESS_TOKEN_EXPIRE_MINUTES * 60,
+            "expires_in": issued.expires_in,
         }
 
 

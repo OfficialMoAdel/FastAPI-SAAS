@@ -8,14 +8,20 @@ from typing import Any, cast
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import src.app.modules.billing.service as _svc
 from src.app.core.logger import get_logger
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import (
     ModelNotFoundError,
     StripeError,
     TenantContextError,
 )
 from src.app.modules._base.service import BaseService
+from src.app.modules.billing.common import _require_active_tenant
+from src.app.modules.billing.crud import (
+    crud_billing_records,
+    crud_subscription_plans,
+    crud_user_subscriptions,
+)
 from src.app.modules.billing.models import (
     BillingRecord,
     SubscriptionPlan,
@@ -63,14 +69,14 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
-        tenant = _svc._require_active_tenant()
+        tenant = _require_active_tenant()
 
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id
         create_obj = SubscriptionPlanCreateInternal(**plan_data)
         return cast(
             dict[str, Any],
-            await _svc.crud_subscription_plans.create(
+            await crud_subscription_plans.create(
                 db=self.db,
                 object=create_obj,
                 schema_to_select=SubscriptionPlanRead,
@@ -79,11 +85,11 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def get_plan(self, plan_id: int) -> dict[str, Any]:
         """Get a subscription plan by ID."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        plan = await _svc.crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
@@ -99,7 +105,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         # T063: Sort by sort_order
         return cast(
             dict[str, Any],
-            await _svc.crud_subscription_plans.get_multi(
+            await crud_subscription_plans.get_multi(
                 db=self.db,
                 offset=offset,
                 limit=limit,
@@ -115,7 +121,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
         P2-3: Uses session refresh instead of second DB roundtrip.
         """
         # Fetch ORM object directly for in-place update
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
@@ -137,15 +143,15 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def delete_plan(self, plan_id: int) -> dict[str, str]:
         """Soft delete a subscription plan."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        plan = await _svc.crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
+        plan = await crud_subscription_plans.get(db=self.db, id=plan_id, tenant_id=tenant.id)
         if plan is None:
             raise ModelNotFoundError("SubscriptionPlan", plan_id)
 
-        await _svc.crud_subscription_plans.update(
+        await crud_subscription_plans.update(
             db=self.db,
             object={"is_active": False, "updated_at": datetime.now(UTC)},
             id=plan_id,
@@ -161,7 +167,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def create_subscription(self, user_id: int, data: UserSubscriptionCreate) -> dict[str, Any]:
         """Create a user subscription."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -172,7 +178,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         create_obj = UserSubscriptionCreateInternal(**sub_data)
         result = cast(
             dict[str, Any],
-            await _svc.crud_user_subscriptions.create(
+            await crud_user_subscriptions.create(
                 db=self.db,
                 object=create_obj,
                 schema_to_select=UserSubscriptionRead,
@@ -183,11 +189,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
     async def get_subscription(self, subscription_id: int) -> dict[str, Any]:
         """Get a subscription by ID."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        subscription = await _svc.crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
@@ -196,13 +202,13 @@ class UserSubscriptionService(BaseService[UserSubscription]):
     async def get_user_subscriptions(self, user_id: int) -> dict[str, Any]:
         """Get all subscriptions for a user."""
         filters: dict[str, Any] = {"user_id": user_id}
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant:
             filters["tenant_id"] = tenant.id
 
         return cast(
             dict[str, Any],
-            await _svc.crud_user_subscriptions.get_multi(
+            await crud_user_subscriptions.get_multi(
                 db=self.db,
                 schema_to_select=UserSubscriptionRead,
                 **filters,
@@ -213,11 +219,11 @@ class UserSubscriptionService(BaseService[UserSubscription]):
         self, subscription_id: int, data: UserSubscriptionUpdate, user_id: int | None = None
     ) -> dict[str, Any]:
         """Update a subscription."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        subscription = await _svc.crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
@@ -234,18 +240,41 @@ class UserSubscriptionService(BaseService[UserSubscription]):
 
         update_data = data.model_dump(exclude_unset=True)
         update_data["updated_at"] = datetime.now(UTC)
-        await _svc.crud_user_subscriptions.update(db=self.db, object=update_data, id=subscription_id)
-        result = await _svc.crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        await crud_user_subscriptions.update(db=self.db, object=update_data, id=subscription_id)
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
+
+    async def cancel_subscription_for_user(
+        self, subscription_id: int, user_id: int
+    ) -> dict[str, Any]:
+        """Cancel a subscription at period end, enforcing user ownership.
+
+        Ownership/tenant-isolation check lives here (not in the router) so
+        every caller gets it by construction.
+
+        Raises:
+            ForbiddenException: If the subscription is not owned by the user.
+        """
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+
+        subscription = await self.get_subscription(subscription_id)
+        sub_user_id = (
+            subscription.get("user_id")
+            if isinstance(subscription, dict)
+            else getattr(subscription, "user_id", None)
+        )
+        if sub_user_id != user_id:
+            raise ForbiddenException("Not authorized to cancel this subscription")
+        return await self.cancel_subscription(subscription_id, user_id=user_id)
 
     async def cancel_subscription(self, subscription_id: int, user_id: int | None = None) -> dict[str, Any]:
         """Cancel a subscription at period end."""
         logger.info("Cancelling subscription", subscription_id=subscription_id)
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
-        subscription = await _svc.crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
+        subscription = await crud_user_subscriptions.get(db=self.db, id=subscription_id, tenant_id=tenant.id)
         if subscription is None:
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
@@ -261,7 +290,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
             raise ModelNotFoundError("UserSubscription", subscription_id)
 
         # T109: Update DB first but do not commit yet
-        await _svc.crud_user_subscriptions.update(
+        await crud_user_subscriptions.update(
             db=self.db,
             object={
                 "cancel_at_period_end": True,
@@ -303,7 +332,7 @@ class UserSubscriptionService(BaseService[UserSubscription]):
                 raise StripeError(f"Failed to cancel subscription in Stripe: {str(e)}") from e
 
         await self.db.commit()
-        result = await _svc.crud_user_subscriptions.get(db=self.db, id=subscription_id)
+        result = await crud_user_subscriptions.get(db=self.db, id=subscription_id)
         return dict(result) if result else {}
 
 
@@ -315,7 +344,7 @@ class BillingRecordService(BaseService[BillingRecord]):
 
     async def create_record(self, data: BillingRecordCreate) -> dict[str, Any]:
         """Create a billing record."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -324,26 +353,45 @@ class BillingRecordService(BaseService[BillingRecord]):
         create_obj = BillingRecordCreateInternal(**record_data)
         return cast(
             dict[str, Any],
-            await _svc.crud_billing_records.create(db=self.db, object=create_obj, schema_to_select=BillingRecordRead),
+            await crud_billing_records.create(db=self.db, object=create_obj, schema_to_select=BillingRecordRead),
         )
 
     async def get_record(self, record_id: int) -> dict[str, Any]:
         """Get a billing record by ID."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("BillingRecord", record_id)
 
-        record = await _svc.crud_billing_records.get(db=self.db, id=record_id, tenant_id=tenant.id)
+        record = await crud_billing_records.get(db=self.db, id=record_id, tenant_id=tenant.id)
         if record is None:
             raise ModelNotFoundError("BillingRecord", record_id)
 
+        return cast(dict[str, Any], record)
+
+    async def get_record_for_user(self, record_id: int, user_id: int) -> dict[str, Any]:
+        """Get a billing record, enforcing user ownership.
+
+        Ownership check lives here (not in the router) so every caller gets
+        it by construction.
+
+        Raises:
+            ForbiddenException: If the record is not owned by the user.
+        """
+        from src.app.core.exceptions.http_exceptions import ForbiddenException
+
+        record = await self.get_record(record_id)
+        record_user_id = (
+            record.get("user_id") if isinstance(record, dict) else getattr(record, "user_id", None)
+        )
+        if record_user_id != user_id:
+            raise ForbiddenException("Not authorized to view this record")
         return cast(dict[str, Any], record)
 
     async def get_user_records(
         self, user_id: int, page: int = 1, limit: int = 20, status: str | None = None
     ) -> dict[str, Any]:
         """Get paginated billing records for a user."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise TenantContextError("Tenant context required")
         offset = (page - 1) * limit
@@ -355,7 +403,7 @@ class BillingRecordService(BaseService[BillingRecord]):
 
         return cast(
             dict[str, Any],
-            await _svc.crud_billing_records.get_multi(
+            await crud_billing_records.get_multi(
                 db=self.db,
                 offset=offset,
                 limit=limit,

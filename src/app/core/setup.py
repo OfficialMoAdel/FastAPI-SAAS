@@ -50,40 +50,35 @@ async def create_tables() -> None:
 
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
-    """Initialize Redis cache pool and client."""
-    # P2-2: Use shared connection pool from factory
-    if cache.pool is None:
-        cache.pool = await get_redis_pool()
-
-    # Cache client needs string decoding
-    # Note: The shared pool is raw (bytes), but client overrides decoding
-    # SECURITY FIX: Prevent redundant re-instantiation to avoid connection leaks
-    if cache.client is None:
-        cache.client = redis.Redis(connection_pool=cache.pool, decode_responses=True)
+    """Initialize Redis cache pool and client via the Redis provider."""
+    # Cache client needs string decoding; the shared pool is raw (bytes),
+    # but the client overrides decoding.
+    if cache.client is None or cache.pool is None:
+        pool = await get_redis_pool()
+        cache.pool = pool
+        cache.client = redis.Redis(connection_pool=pool, decode_responses=True)
 
 
 async def close_redis_cache_pool() -> None:
-    """Close Redis cache client."""
-    if cache.client is not None:
+    """Close the shared Redis cache client and clear its global slots."""
+    import src.app.core.utils.cache as _cache
+
+    if _cache.client is not None:
         # Use aclose() for proper async cleanup if available (redis-py 5.0+)
-        if hasattr(cache.client, "aclose"):
-            await cache.client.aclose()
+        if hasattr(_cache.client, "aclose"):
+            await _cache.client.aclose()
         else:
-            await cache.client.close()
-        cache.client = None
-    cache.pool = None
+            await _cache.client.close()
+        _cache.client = None
+    _cache.pool = None
 
 
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
-    """Initialize ARQ queue pool."""
-    # P2-2: Reuse the shared connection pool for ARQ
-    pool = await get_redis_pool()
-
-    # Create ArqRedis using the same pool
+    """Initialize ARQ queue pool (reuses the shared connection pool)."""
     # ARQ uses default decoding (bytes) which matches the pool
-    # SECURITY FIX: Prevent redundant re-instantiation
     if queue.pool is None:
+        pool = await get_redis_pool()
         queue.pool = ArqRedis(connection_pool=pool)
 
 
@@ -203,12 +198,6 @@ def lifespan_factory(
             except ImportError:
                 pass
 
-            try:
-                from src.app.modules.ai.ollama_client import close_ollama_client
-
-                await close_ollama_client()
-            except ImportError:
-                pass
 
     return lifespan
 

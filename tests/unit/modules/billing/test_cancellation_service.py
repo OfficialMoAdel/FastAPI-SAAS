@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from src.app.modules._base.exceptions import ModelNotFoundError
-from src.app.modules.billing.service import UserSubscriptionService
+from src.app.modules.billing.subscription_service import UserSubscriptionService
 
 
 @pytest.fixture
@@ -61,7 +61,9 @@ class TestCancellationService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -78,7 +80,7 @@ class TestCancellationService:
                     "src.app.modules.billing.crud.crud_user_subscriptions.update",
                     new_callable=AsyncMock,
                 ):
-                    with patch("src.app.modules.billing.service.settings") as mock_settings:
+                    with patch("src.app.modules.billing.gateway.settings") as mock_settings:
                         mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
                         with patch("stripe.Subscription.modify"):
                             result = await service.cancel_subscription(subscription_id=1)
@@ -117,7 +119,9 @@ class TestCancellationService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -134,7 +138,7 @@ class TestCancellationService:
                     "src.app.modules.billing.crud.crud_user_subscriptions.update",
                     new_callable=AsyncMock,
                 ):
-                    with patch("src.app.modules.billing.service.settings") as mock_settings:
+                    with patch("src.app.modules.billing.gateway.settings") as mock_settings:
                         mock_settings.STRIPE_SECRET_KEY = "sk_test_123"
                         with patch("stripe.Subscription.modify"):
                             # Should still update (idempotent operation)
@@ -157,7 +161,9 @@ class TestCancellationService:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -197,7 +203,9 @@ class TestCancellationWithStripe:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -242,7 +250,9 @@ class TestCancellationAccessControl:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -286,7 +296,9 @@ class TestSubscriptionStatusAfterCancellation:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,
@@ -321,7 +333,9 @@ class TestSubscriptionStatusAfterCancellation:
         }
 
         with (
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_tenant),
             patch("src.app.modules.billing.service.get_current_tenant", return_value=mock_tenant),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_tenant),
             patch(
                 "src.app.modules.billing.crud.crud_user_subscriptions.get",
                 new_callable=AsyncMock,

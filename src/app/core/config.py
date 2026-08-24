@@ -101,8 +101,9 @@ class CryptSettings(BaseSettings):
     # RS256 asymmetric keys (optional, required if ALGORITHM=RS256)
     JWT_PRIVATE_KEY: SecretStr | None = None  # PEM-encoded private key
     JWT_PUBLIC_KEY: str | None = None  # PEM-encoded public key
-    # SECURITY FIX: Made JWT audience configurable instead of hardcoded
+    # SECURITY FIX: Made JWT audience/issuer configurable instead of hardcoded
     JWT_AUDIENCE: str = Field(default="fastapi-saas-api", description="JWT token audience claim")
+    JWT_ISSUER: str = Field(default="fastapi-saas", description="JWT token issuer claim")
 
     @model_validator(mode="after")
     def validate_secrets(self) -> "CryptSettings":

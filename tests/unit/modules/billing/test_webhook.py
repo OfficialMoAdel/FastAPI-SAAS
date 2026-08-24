@@ -111,9 +111,12 @@ async def test_handle_webhook_event_checkout_completed():
         patch(
             "src.app.modules.billing.webhook.crud_user_subscriptions.exists", new_callable=AsyncMock, return_value=False
         ) as mock_exists,
-        patch("asyncio.to_thread", new_callable=AsyncMock) as mock_to_thread,
+        patch(
+            "src.app.modules.billing.gateway.StripeGateway.retrieve_subscription",
+            new_callable=AsyncMock,
+            return_value=mock_stripe_sub,
+        ),
     ):  # noqa: E501
-        mock_to_thread.return_value = mock_stripe_sub
 
         # Mock tenant db session
         mock_db = AsyncMock()
@@ -307,7 +310,11 @@ async def test_handle_webhook_event_subscription_deleted():
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("src.app.modules.billing.webhook.crud_user_subscriptions.update", new_callable=AsyncMock) as mock_update,
-        patch("src.app.modules.users.crud.crud_users.update", new_callable=AsyncMock),
+        patch(
+            "src.app.modules.users.service.UserService.downgrade_to_free_tier",
+            new_callable=AsyncMock,
+            return_value=1,
+        ) as mock_downgrade,
         patch("src.app.modules.billing.webhook._db_idempotency_check", new_callable=AsyncMock, return_value=None),
     ):  # noqa: E501
         # Mock bypass db
@@ -332,6 +339,7 @@ async def test_handle_webhook_event_subscription_deleted():
         # Verify status set to canceled
         args, kwargs = mock_update.call_args
         assert kwargs["object"].status == "canceled"
+        mock_downgrade.assert_awaited_once_with(user_id)
         mock_tenant_db.commit.assert_called_once()
 
 

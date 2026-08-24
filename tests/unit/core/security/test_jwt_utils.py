@@ -46,6 +46,7 @@ def valid_token_payload() -> dict[str, Any]:
         "exp": now + 3600,
         "iat": now,
         "aud": JWT_AUDIENCE,
+        "iss": "fastapi-saas",
         "type": "access",
     }
 

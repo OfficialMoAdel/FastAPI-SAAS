@@ -9,14 +9,17 @@ from urllib.parse import urlparse
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-import src.app.modules.billing.service as _svc
+from src.app.core.config import settings
 from src.app.core.logger import get_logger
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import (
     ModelNotFoundError,
     StripeError,
     ValidationError,
 )
 from src.app.modules.billing.schemas import CheckoutCreate, CheckoutSession
+from src.app.modules.billing.service import StripeSettingsService
+from src.app.modules.billing.subscription_service import SubscriptionPlanService
 
 logger = get_logger(__name__)
 
@@ -29,7 +32,7 @@ class CheckoutService:
 
     async def create_session(self, user_id: int, user_email: str, data: CheckoutCreate) -> CheckoutSession:
         """Create a Stripe Checkout session."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -42,7 +45,7 @@ class CheckoutService:
             raise StripeError("Stripe API key not configured", status_code=500)
 
         # Get settings to find Customer ID
-        settings_service = _svc.StripeSettingsService(self.db)
+        settings_service = StripeSettingsService(self.db)
         stripe_settings = await settings_service.get_settings()
 
         customer_id = None
@@ -50,9 +53,8 @@ class CheckoutService:
             customer_id = stripe_settings.get("stripe_customer_id")
 
         # Get Plan
-        plan_service = _svc.SubscriptionPlanService(self.db)
+        plan_service = SubscriptionPlanService(self.db)
         plan = await plan_service.get_plan(data.plan_id)
-
         # Get Price ID based on interval
         price_id = (
             plan["stripe_price_id_monthly"] if data.billing_interval == "monthly" else plan["stripe_price_id_yearly"]
@@ -102,7 +104,7 @@ class CheckoutService:
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
-        tenant = _svc.get_current_tenant()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -111,7 +113,7 @@ class CheckoutService:
             # Allow relative URLs or URLs matching FRONTEND_URL
             is_relative = return_url.startswith("/") and not return_url.startswith("//")
 
-            frontend_url = _svc.settings.FRONTEND_URL.rstrip("/") if _svc.settings.FRONTEND_URL else ""
+            frontend_url = settings.FRONTEND_URL.rstrip("/") if settings.FRONTEND_URL else ""
             is_allowed_origin = False
 
             if frontend_url:
@@ -142,7 +144,7 @@ class CheckoutService:
             raise StripeError("Stripe API key not configured", status_code=500)
 
         # Get Customer ID
-        settings_service = _svc.StripeSettingsService(self.db)
+        settings_service = StripeSettingsService(self.db)
         stripe_settings = await settings_service.get_settings()
 
         if not stripe_settings or not stripe_settings.get("stripe_customer_id"):

@@ -3,6 +3,9 @@
 Tests the Lua script implementation that reduces 4 Redis roundtrips to 1.
 Verifies atomic operations and proper fallback behavior.
 
+Script loading/reload is owned by LuaScriptManager; these tests verify the
+call-site contract (EVALSHA args, fallback, fail modes).
+
 NOTE: Bloom filter tests were removed (R2-HYBRID CRIT-1) because the bloom filter
 optimization was removed due to security vulnerability in multi-worker deployments.
 """
@@ -13,7 +16,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from src.app.core.security.token_blacklist_cache import (
-    BLACKLIST_CHECK_LUA_SCRIPT,
     BLACKLIST_KEY,
     NEGATIVE_CACHE_KEY,
     NEGATIVE_CACHE_TTL,
@@ -21,6 +23,9 @@ from src.app.core.security.token_blacklist_cache import (
     _is_token_blacklisted_fallback,
     is_token_blacklisted,
 )
+from src.app.core.utils.lua_manager import get_lua_manager
+
+_REGISTERED_SHA = get_lua_manager().get_script("token_blacklist_check").sha1
 
 
 @pytest.fixture
@@ -40,52 +45,14 @@ class TestLuaScriptLoading:
     """Test Lua script loading and caching."""
 
     @pytest.mark.asyncio
-    async def test_lua_script_syntax_valid(self, mock_redis):
-        """Verify Lua script loads without syntax errors."""
-        # Arrange
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            with patch("src.app.core.security.token_blacklist_cache._script_sha", None):
-                # Act
-                sha = await _ensure_script_loaded()
-
-                # Assert
-                assert sha == "test_sha_123"
-                mock_redis.script_load.assert_called_once_with(BLACKLIST_CHECK_LUA_SCRIPT)
+    async def test_lua_script_registered_with_known_sha(self):
+        """Verify the script is registered in LuaScriptManager with a stable SHA."""
+        assert await _ensure_script_loaded() == _REGISTERED_SHA
 
     @pytest.mark.asyncio
-    async def test_script_sha_cached_after_first_load(self, mock_redis):
-        """Verify script SHA is cached and not reloaded."""
-        # Arrange
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            with patch("src.app.core.security.token_blacklist_cache._script_sha", "cached_sha"):
-                # Act
-                sha = await _ensure_script_loaded()
-
-                # Assert
-                assert sha == "cached_sha"
-                mock_redis.script_load.assert_not_called()
-
-    @pytest.mark.asyncio
-    async def test_script_reload_on_noscript_error(self, mock_redis):
-        """Verify script reloads when Redis returns NOSCRIPT error."""
-        # Arrange
-        token = "test_token_123"
-        mock_redis.evalsha.side_effect = [
-            Exception("NOSCRIPT No matching script"),
-            0,  # Success after reload
-        ]
-
-        with patch("src.app.core.utils.cache.client", mock_redis):
-            with patch("src.app.core.security.token_blacklist_cache._script_sha", "old_sha"):
-                # Act
-                result = await is_token_blacklisted(token)
-
-                # Assert
-                assert result is False
-                # Should have called script_load to reload
-                mock_redis.script_load.assert_called_once()
-                # Should have called evalsha twice (fail, then success)
-                assert mock_redis.evalsha.call_count == 2
+    async def test_script_sha_cached_after_first_load(self):
+        """Verify the SHA is deterministic (no Redis roundtrip needed)."""
+        assert await _ensure_script_loaded() == _REGISTERED_SHA
 
 
 class TestLuaScriptBehavior:
@@ -137,7 +104,7 @@ class TestLuaScriptBehavior:
 
                 # Assert
                 call_args = mock_redis.evalsha.call_args
-                assert call_args[0][0] == "test_sha"  # Script SHA
+                assert call_args[0][0] == _REGISTERED_SHA  # Script SHA (from LuaScriptManager)
                 assert call_args[0][1] == 2  # Number of keys
                 # KEYS[1]: negative cache key
                 assert call_args[0][2].startswith(NEGATIVE_CACHE_KEY)
@@ -174,29 +141,21 @@ class TestSingleRoundtrip:
                 mock_redis.set.assert_not_called()
                 mock_redis.zrem.assert_not_called()
 
-
-class TestFallbackBehavior:
-    """Test fallback to old implementation when Lua script fails."""
-
     @pytest.mark.asyncio
-    async def test_fallback_when_script_load_fails(self, mock_redis):
-        """Verify fallback to old implementation if script loading fails."""
-        # Arrange
+    async def test_fallback_when_ensure_script_loaded_returns_none(self, mock_redis):
+        """Verify fallback when _ensure_script_loaded returns None (Redis unavailable)."""
         token = "test_token_123"
-        mock_redis.script_load.side_effect = Exception("Script load failed")
-        mock_redis.exists.return_value = False
-        mock_redis.zscore.return_value = None
 
         with patch("src.app.core.utils.cache.client", mock_redis):
-            with patch("src.app.core.security.token_blacklist_cache._script_sha", None):
+            with patch(
+                "src.app.core.security.token_blacklist_cache._ensure_script_loaded",
+                new=AsyncMock(return_value=None),
+            ):
                 # Act
                 result = await is_token_blacklisted(token)
 
-                # Assert
+                # Assert - fell back to the non-atomic implementation
                 assert result is False
-                # Should have tried to load script
-                mock_redis.script_load.assert_called_once()
-                # Should have fallen back to old implementation
                 mock_redis.exists.assert_called_once()
                 mock_redis.zscore.assert_called_once()
 
@@ -252,15 +211,13 @@ class TestRedisUnavailable:
             assert result is True  # Fail closed
 
     @pytest.mark.asyncio
-    async def test_script_load_returns_none_when_redis_unavailable(self):
-        """Verify script loading returns None when Redis unavailable."""
-        # Arrange
-        with patch("src.app.core.utils.cache.client", None):
-            # Act
-            sha = await _ensure_script_loaded()
+    async def test_script_sha_available_without_redis(self):
+        """Verify the registered script's SHA needs no Redis (derived from source)."""
+        # Act — no cache.client patching: Redis may be entirely unavailable.
+        sha = await _ensure_script_loaded()
 
-            # Assert
-            assert sha is None
+        # Assert
+        assert sha == _REGISTERED_SHA
 
 
 class TestNegativeCachePopulation:

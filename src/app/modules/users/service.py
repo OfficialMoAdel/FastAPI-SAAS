@@ -831,6 +831,45 @@ class UserService:
         user_name = db_user["name"] if isinstance(db_user, dict) else db_user.name
         return {"message": f"User {user_name} Tier updated"}
 
+    async def downgrade_to_free_tier(self, user_id: int) -> int | None:
+        """Downgrade a user to the configured free tier.
+
+        Public seam for billing webhooks (subscription canceled/expired).
+        Encapsulates free-tier lookup and the tier_id update so callers never
+        import tiers/users crud internals directly. Also bumps token_version
+        so cached rate-limit claims reflect the downgrade promptly.
+
+        Args:
+            user_id: ID of the user to downgrade.
+
+        Returns:
+            The new tier_id, or None if no free tier is configured.
+        """
+        from src.app.core.config import settings
+
+        tier_svc = TierService(self.db)
+        try:
+            free_tier = await tier_svc.get_tier(settings.DEFAULT_FREE_TIER_NAME)
+        except ModelNotFoundError:
+            logger.warning("Free tier not configured; skipping downgrade", user_id=user_id)
+            return None
+
+        free_tier_id = free_tier.get("id") if isinstance(free_tier, dict) else free_tier.id
+
+        await self.crud.update(
+            db=self.db,
+            object={"tier_id": free_tier_id},
+            id=user_id,
+        )
+
+        # Invalidate cached profile/auth data
+        db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+        if db_user is not None:
+            await self._invalidate_user_cache(db_user)
+
+        logger.info("User downgraded to free tier", user_id=user_id, tier_id=free_tier_id)
+        return free_tier_id
+
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:
         """Get user with their tier's rate limits.
 

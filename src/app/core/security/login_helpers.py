@@ -39,7 +39,8 @@ async def register_login_session(
     user_id: int,
     access_token: str,
     request: Request | None = None,
-    verify: bool = True
+    verify: bool = True,
+    device_label: str | None = None,
 ) -> None:
     """Register session in Redis with device info. Fail-safe (logs on error).
 
@@ -48,6 +49,8 @@ async def register_login_session(
         access_token: The issued access token.
         request: Optional FastAPI request object for client IP and User-Agent.
         verify: If True, uses verified jwt decoding. If False, extracts unverified.
+        device_label: Fallback User-Agent label when no request is available
+            (e.g. "Magic Link Login"). Defaults to the generic fallback.
     """
     try:
         if verify:
@@ -63,8 +66,14 @@ async def register_login_session(
 
         client_ip = get_client_ip(request) if request else "Unknown"
 
+        user_agent = (
+            request.headers.get("user-agent", "Unknown")
+            if request
+            else (device_label or "Unknown")
+        )
+
         device_info_data = {
-            "user_agent": request.headers.get("user-agent", "Unknown") if request else "Unknown",
+            "user_agent": user_agent,
             "ip": client_ip,
         }
         device_info_str = json.dumps(device_info_data)

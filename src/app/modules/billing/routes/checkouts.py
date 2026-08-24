@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.dependencies import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
+from src.app.modules.billing.checkout_service import get_checkout_service
 from src.app.modules.billing.schemas import (
     CheckoutCreate,
     UserSubscriptionRead,
@@ -19,10 +20,7 @@ from src.app.modules.billing.schemas import (
 from src.app.modules.billing.schemas import (
     CheckoutSession as CheckoutSessionSchema,
 )
-from src.app.modules.billing.service import (
-    get_checkout_service,
-    get_user_subscription_service,
-)
+from src.app.modules.billing.subscription_service import get_user_subscription_service
 
 router = APIRouter(prefix="/checkouts", tags=["checkouts"])
 logger = get_logger(__name__)

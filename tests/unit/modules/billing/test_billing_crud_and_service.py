@@ -23,7 +23,7 @@ from src.app.modules.billing.schemas import (
     SubscriptionPlanRead,
     SubscriptionPlanUpdate,
 )
-from src.app.modules.billing.service import SubscriptionPlanService
+from src.app.modules.billing.subscription_service import SubscriptionPlanService
 from src.app.modules.tenants.models import Tenant
 
 
@@ -33,7 +33,12 @@ def mock_tenant_context(tenant):
     from src.app.core.tenancy.context import TenantContext
 
     mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
-    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx):
+    with (
+        patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx),
+        patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_ctx),
+        patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=mock_ctx),
+    ):
         yield
 
 
@@ -318,7 +323,10 @@ async def test_get_plans_sorted(db_session, tenant):
         features=[],
     )
 
-    with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
+    with (
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=tenant),
+        ):
         await service.create_plan(plan1_in)
         await service.create_plan(plan2_in)
         await service.create_plan(plan3_in)
@@ -347,7 +355,10 @@ async def test_create_update_delete_plan(db_session, tenant):
         name="Lifecycle Plan", price_monthly_cents=500, price_yearly_cents=5000, currency="usd", is_active=True
     )
 
-    with patch("src.app.modules.billing.service.get_current_tenant", return_value=tenant):
+    with (
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=tenant),
+        ):
         plan = await service.create_plan(plan_in)
         # FastCRUD v0.20.0 returns dict when schema_to_select is provided
         plan_id = plan["id"]

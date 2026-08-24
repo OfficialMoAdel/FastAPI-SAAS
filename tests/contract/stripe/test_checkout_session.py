@@ -14,8 +14,8 @@ import pytest
 import stripe
 
 from src.app.core.config import settings
+from src.app.modules.billing.checkout_service import CheckoutService
 from src.app.modules.billing.schemas import CheckoutCreate, CheckoutSession
-from src.app.modules.billing.service import CheckoutService
 
 
 class TestCheckoutSessionContract:

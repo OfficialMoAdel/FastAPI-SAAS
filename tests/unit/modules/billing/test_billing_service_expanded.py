@@ -3,6 +3,7 @@ from uuid import uuid4
 
 import pytest
 
+from src.app.modules.billing.checkout_service import CheckoutService
 from src.app.modules.billing.schemas import (
     CheckoutCreate,
     PricingCreate,
@@ -10,12 +11,11 @@ from src.app.modules.billing.schemas import (
     SubscriptionPlanCreate,
 )
 from src.app.modules.billing.service import (
-    CheckoutService,
     PricingService,
     ProductService,
     StripeSettingsService,
-    SubscriptionPlanService,
 )
+from src.app.modules.billing.subscription_service import SubscriptionPlanService
 
 
 @pytest.fixture
@@ -33,6 +33,7 @@ def mock_tenant():
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_stripe_settings")
 async def test_stripe_settings_service_get(mock_crud, mock_get_tenant, mock_db, mock_tenant):
     mock_get_tenant.return_value = mock_tenant
@@ -45,10 +46,14 @@ async def test_stripe_settings_service_get(mock_crud, mock_get_tenant, mock_db, 
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
-@patch("src.app.modules.billing.service.crud_subscription_plans")
-async def test_subscription_plan_service_create(mock_crud, mock_get_tenant, mock_db, mock_tenant):
-    mock_get_tenant.return_value = mock_tenant
+@patch("src.app.core.tenancy.context.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.crud_subscription_plans")
+async def test_subscription_plan_service_create(
+    mock_crud, mock_get_tenant_sub, mock_get_tenant_common, mock_db, mock_tenant
+):
+    mock_get_tenant_sub.return_value = mock_tenant
+    mock_get_tenant_common.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "name": "Pro"})
 
     service = SubscriptionPlanService(mock_db)
@@ -67,9 +72,15 @@ async def test_subscription_plan_service_create(mock_crud, mock_get_tenant, mock
 
 @pytest.mark.asyncio
 @patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.modules.billing.subscription_service.get_current_tenant")
+@patch("src.app.core.tenancy.context.get_current_tenant")
 @patch("src.app.modules.billing.service.crud_products")
-async def test_product_service_create(mock_crud, mock_get_tenant, mock_db, mock_tenant):
-    mock_get_tenant.return_value = mock_tenant
+async def test_product_service_create(
+    mock_crud, mock_get_tenant_sub, mock_get_tenant_tenancy, mock_get_tenant_svc, mock_db, mock_tenant
+):
+    mock_get_tenant_tenancy.return_value = mock_tenant
+    mock_get_tenant_sub.return_value = mock_tenant
+    mock_get_tenant_svc.return_value = mock_tenant
     mock_crud.create = AsyncMock(return_value={"id": 1, "name": "Test Product"})
 
     service = ProductService(mock_db)
@@ -96,9 +107,10 @@ async def test_pricing_service_create(mock_crud_products, mock_crud_pricing, moc
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.service.get_current_tenant")
+@patch("src.app.modules.billing.checkout_service.get_current_tenant")
+@patch("src.app.modules.billing.gateway.StripeGateway.get_api_key", new_callable=AsyncMock)
 @patch("src.app.modules.billing.service.StripeSettingsService.get_settings")
-@patch("src.app.modules.billing.service.SubscriptionPlanService.get_plan")
+@patch("src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan")
 @patch("src.app.modules.billing.service.settings")
 @patch("asyncio.to_thread")
 @patch("stripe.Account.retrieve")
@@ -108,19 +120,23 @@ async def test_checkout_service_create_session(
     mock_settings,
     mock_get_plan,
     mock_get_settings,
-    mock_get_tenant,
+    mock_get_api_key,
+    mock_get_tenant_co,
     mock_db,
     mock_tenant,
 ):
-    mock_get_tenant.return_value = mock_tenant
-
+    mock_get_api_key.return_value = "sk_test_123"
+    # Mock settings.STRIPE_SECRET_KEY
+    mock_secret = MagicMock()
+    mock_secret.get_secret_value.return_value = "sk_test_123"
+    mock_settings.STRIPE_SECRET_KEY = mock_secret
+    mock_get_api_key.return_value = "sk_test_123"
     # Mock settings.STRIPE_SECRET_KEY
     mock_secret = MagicMock()
     mock_secret.get_secret_value.return_value = "sk_test_123"
     mock_settings.STRIPE_SECRET_KEY = mock_secret
 
     # Needs a real API key to bypass Stripe API validation internally perhaps? No, to_thread is mocked.
-    mock_get_settings.return_value = {"stripe_customer_id": "cus_123"}
     mock_get_plan.return_value = {
         "stripe_price_id_monthly": "price_monthly",
         "stripe_price_id_yearly": "price_yearly",

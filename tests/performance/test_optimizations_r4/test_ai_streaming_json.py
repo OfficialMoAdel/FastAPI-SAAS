@@ -54,18 +54,18 @@ class TestP15AIStreamingOrjsonImplementation:
 
     def test_ollama_client_imports_json_loads(self) -> None:
         """Ollama client should import json_loads from json_utils."""
-        from src.app.modules.ai import ollama_client
+        from src.app.modules.ai import ollama_provider
 
-        source = inspect.getsource(ollama_client)
+        source = inspect.getsource(ollama_provider)
 
         # Should import json_loads from json_utils
         assert "from src.app.core.json_utils import json_loads" in source
 
     def test_ollama_client_uses_json_loads(self) -> None:
         """Ollama streaming should use json_loads (orjson) not stdlib json."""
-        from src.app.modules.ai.ollama_client import OllamaClient
+        from src.app.modules.ai.ollama_provider import OllamaProvider
 
-        source = inspect.getsource(OllamaClient.chat_stream)
+        source = inspect.getsource(OllamaProvider.generate_text_stream)
 
         # Should use json_loads
         assert "json_loads(" in source

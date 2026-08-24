@@ -733,9 +733,11 @@ async def test_get_stored_challenge():
 
     mock_redis = AsyncMock()
     # Mock the Lua script returning a JSON string
-    mock_redis.eval = AsyncMock(return_value='{"challenge": "test", "device_type": "Test"}')
+    mock_execute = AsyncMock(return_value='{"challenge": "test", "device_type": "Test"}')
 
-    result = await service._get_stored_challenge(mock_redis, registration_id=1)
+    with patch("src.app.modules.passkey.service.get_lua_manager") as mock_mgr:
+        mock_mgr.return_value.execute = mock_execute
+        result = await service._get_stored_challenge(mock_redis, registration_id=1)
 
     assert result is not None
     assert "challenge" in result
@@ -749,9 +751,10 @@ async def test_get_stored_challenge_not_found():
     service = PasskeyService()
 
     mock_redis = AsyncMock()
-    mock_redis.eval = AsyncMock(return_value=None)
 
-    result = await service._get_stored_challenge(mock_redis, registration_id=1)
+    with patch("src.app.modules.passkey.service.get_lua_manager") as mock_mgr:
+        mock_mgr.return_value.execute = AsyncMock(return_value=None)
+        result = await service._get_stored_challenge(mock_redis, registration_id=1)
 
     assert result is None
 
@@ -794,9 +797,10 @@ async def test_get_stored_auth_challenge():
     service = PasskeyService()
 
     mock_redis = AsyncMock()
-    mock_redis.eval = AsyncMock(return_value="dGVzdA==")  # base64 encoded "test"
 
-    result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
+    with patch("src.app.modules.passkey.service.get_lua_manager") as mock_mgr:
+        mock_mgr.return_value.execute = AsyncMock(return_value="dGVzdA==")  # base64 "test"
+        result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
 
     assert result is not None
 
@@ -809,9 +813,10 @@ async def test_get_stored_auth_challenge_not_found():
     service = PasskeyService()
 
     mock_redis = AsyncMock()
-    mock_redis.eval = AsyncMock(return_value=None)
 
-    result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
+    with patch("src.app.modules.passkey.service.get_lua_manager") as mock_mgr:
+        mock_mgr.return_value.execute = AsyncMock(return_value=None)
+        result = await service._get_stored_auth_challenge(mock_redis, challenge_id="challenge-123")
 
     assert result is None
 

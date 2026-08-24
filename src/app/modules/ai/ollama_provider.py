@@ -6,8 +6,9 @@ Implements the AIProvider interface for Ollama's local models.
 from collections.abc import AsyncGenerator
 from typing import Any
 
-from httpx import AsyncClient, HTTPStatusError, RequestError
+from httpx import AsyncClient, HTTPStatusError, Limits, RequestError
 
+from src.app.core.json_utils import json_loads
 from src.app.core.logger import get_logger
 from src.app.modules.ai.providers import (
     AIProvider,
@@ -29,16 +30,18 @@ class OllamaProvider(AIProvider):
     def __init__(
         self,
         base_url: str = "http://localhost:11434",
-        timeout: float = 60.0,
+        timeout: float | None = None,
     ):
         """Initialize Ollama provider.
 
         Args:
             base_url: Ollama API base URL (default: http://localhost:11434)
-            timeout: Request timeout in seconds
+            timeout: Request timeout in seconds (default: settings.OLLAMA_TIMEOUT)
         """
+        from src.app.core.config import settings
+
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else settings.OLLAMA_TIMEOUT
         self._client: AsyncClient | None = None
 
     @property
@@ -46,11 +49,23 @@ class OllamaProvider(AIProvider):
         return "ollama"
 
     def _get_client(self) -> AsyncClient:
-        """Get or create HTTP client."""
-        if self._client is None:
+        """Get or create HTTP client with tuned connection pool.
+
+        Pool limits (OLLAMA_MAX_CONNECTIONS / OLLAMA_MAX_KEEPALIVE /
+        OLLAMA_KEEPALIVE_EXPIRY) prevent unbounded connection growth under
+        concurrent chat/stream load.
+        """
+        if self._client is None or self._client.is_closed:
+            from src.app.core.config import settings
+
             self._client = AsyncClient(
                 base_url=self.base_url,
                 timeout=self.timeout,
+                limits=Limits(
+                    max_connections=settings.OLLAMA_MAX_CONNECTIONS,
+                    max_keepalive_connections=settings.OLLAMA_MAX_KEEPALIVE,
+                    keepalive_expiry=settings.OLLAMA_KEEPALIVE_EXPIRY,
+                ),
             )
         return self._client
 
@@ -195,9 +210,7 @@ class OllamaProvider(AIProvider):
                     if not line.strip():
                         continue
                     try:
-                        import json
-
-                        data = json.loads(line)
+                        data = json_loads(line)
                         message = data.get("message", {})
                         content = message.get("content", "")
                         if content:
@@ -205,7 +218,8 @@ class OllamaProvider(AIProvider):
 
                         if data.get("done", False):
                             break
-                    except json.JSONDecodeError:
+                    except ValueError:
+                        # orjson.JSONDecodeError subclasses ValueError
                         continue
         except HTTPStatusError as e:
             logger.error("Ollama streaming error", error=e)

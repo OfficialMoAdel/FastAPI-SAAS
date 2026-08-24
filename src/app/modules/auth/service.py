@@ -274,26 +274,18 @@ class AuthService:
         Returns:
             dict with access_token and token_type.
         """
-        # Include tier info in JWT claims for Zero-DB rate limiting
-        # SECURITY FIX: Include token_version for session invalidation on password change
-        # SECURITY FIX: Include tenant_id for tenant context validation
-        token_data = TokenIssuer.build_token_data(subject=user["username"], user=user)
-
-        # Generate both tokens in parallel using asyncio.gather for better performance
-        access_token, refresh_token = await TokenIssuer.create_token_pair(token_data)
-
-        # Cookie security settings based on environment
-        from src.app.core.security.login_helpers import register_login_session, set_refresh_cookie
-
-        set_refresh_cookie(response, refresh_token)
+        issued = await TokenIssuer.issue_session(
+            user,
+            channel="password",
+            request=request,
+            response=response,
+            subject=user["username"],
+        )
 
         # Audit log success
         await self._publish_login_audit(request, username, True, tenant_id=user["tenant_id"], user_id=user["id"])
 
-        # Register session for tracking using the singleton session_manager
-        await register_login_session(user_id=user["id"], access_token=access_token, request=request, verify=True)
-
-        return {"access_token": access_token, "token_type": "bearer"}
+        return {"access_token": issued.access_token, "token_type": "bearer"}
 
     async def refresh_access_token(
         self, refresh_token: str | None, response: Response, db: AsyncSession, request: Request | None = None
