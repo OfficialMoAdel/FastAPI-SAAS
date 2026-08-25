@@ -13,6 +13,7 @@ Three operation modes:
 Whitelist bypass: IPs in whitelist skip attack detection entirely.
 """
 
+import asyncio
 import re
 import unicodedata
 from enum import Enum
@@ -128,6 +129,9 @@ _ZERO_WIDTH_RE = re.compile(
 
 
 class AttackDetectionMiddleware(BaseHTTPMiddleware):
+
+    # P1: bodies larger than this are scanned in the executor (bytes).
+    _BODY_OFFLOAD_THRESHOLD = 16 * 1024
     """Middleware to detect and handle malicious attack patterns.
 
     Execution order (in relation to other middleware):
@@ -174,7 +178,16 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         2. Zero-width character stripping — removes invisible chars that split tokens
 
         Falls back to raw bytes if decoding fails (binary payloads).
+
+        P1 FIX: pure-ASCII content cannot be altered by NFKC normalization or
+        zero-width stripping, so skip the decode/normalize/re-encode cycle
+        entirely. ``bytes.isascii()`` is a C-speed scan and the vast majority
+        of real headers/paths are ASCII — this removes most of the per-request
+        sanitization CPU without weakening detection.
         """
+        if content.isascii():
+            return content
+
         try:
             text = content.decode("utf-8")
         except (UnicodeDecodeError, ValueError):
@@ -293,8 +306,21 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
                         request = Request(request.scope, receive=receive)
 
-                        # Sanitize then scan — NFKC + zero-width stripping
-                        self._check_for_patterns(self._sanitize_input(body_to_scan), "request_body", detected_attacks)
+                        # Sanitize then scan — NFKC + zero-width stripping.
+                        # P1 FIX: bodies above _BODY_OFFLOAD_THRESHOLD are
+                        # sanitized+scanned in the thread pool so a large
+                        # multipart/JSON payload cannot stall the event loop
+                        # for every concurrent request.
+                        sanitized_body = self._sanitize_input(body_to_scan)
+                        if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
+                            await asyncio.get_running_loop().run_in_executor(
+                                None,
+                                lambda: self._check_for_patterns(
+                                    sanitized_body, "request_body", detected_attacks
+                                ),
+                            )
+                        else:
+                            self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
                 except BodyScanError:
                     raise
                 except Exception as e:
@@ -433,8 +459,16 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
 
         if self._mode not in ("log", "block", "ban"):
-            logger.error("Invalid ATTACK_DETECTION_MODE '%s', falling back to 'log'", self._mode)
-            self._mode = "log"
+            # S-7 FIX: an invalid mode previously degraded SILENTLY to
+            # log-only — a posture downgrade attackers could rely on. Fail
+            # closed instead: 'block' keeps the service available while
+            # refusing known-malicious payloads, and every worker logs the
+            # misconfig loudly at startup.
+            logger.error(
+                "Invalid ATTACK_DETECTION_MODE '%s' — failing CLOSED to 'block'. Fix: one of log|block|ban.",
+                self._mode,
+            )
+            self._mode = "block"
 
         # Skip if attack detection is disabled
         if not self._enabled:

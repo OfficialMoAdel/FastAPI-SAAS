@@ -52,13 +52,31 @@ class TestGCRARateLimiter:
 
     @pytest.mark.asyncio
     async def test_check_rate_limit_no_redis(self):
-        """Should allow all requests when Redis unavailable."""
+        """R9: no-Redis honors settings.rate_limit.RATE_LIMIT_FAIL_OPEN.
+
+        Default is fail-CLOSED (consistent with test_check_rate_limit_redis_error
+        and the fixed-window limiter), not the old unconditional fail-open.
+        """
         limiter = GCRARateLimiter(redis_client=None)
 
         result = await limiter.check_rate_limit("user:123", limit=10, period=60)
 
+        assert result.is_limited is True  # Fail closed by default
+        assert result.remaining == 0
+
+    @pytest.mark.asyncio
+    async def test_check_rate_limit_no_redis_fail_open(self):
+        """Operators may opt into fail-open via RATE_LIMIT_FAIL_OPEN."""
+        from unittest.mock import patch
+
+        limiter = GCRARateLimiter(redis_client=None)
+
+        with patch("src.app.core.config.settings.rate_limit") as mock_rl:
+            mock_rl.RATE_LIMIT_FAIL_OPEN = True
+            result = await limiter.check_rate_limit("user:123", limit=10, period=60)
+
         assert result.is_limited is False
-        assert result.remaining == 10  # Full limit
+        assert result.remaining == 10
 
     @pytest.mark.asyncio
     async def test_check_rate_limit_redis_error(self, mock_redis):

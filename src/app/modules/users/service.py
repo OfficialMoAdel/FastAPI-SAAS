@@ -134,6 +134,7 @@ class UserService:
             schema_to_select=UserRead,
         )
         from src.app.core.pagination import build_paginated_response
+
         return build_paginated_response(
             items=result["data"],
             total=result["total_count"],
@@ -605,11 +606,10 @@ class UserService:
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
+
             user_id_val = db_user["id"] if isinstance(db_user, dict) else db_user.id
             await self.db.execute(
-                sa_update(User).where(User.id == user_id_val).values(
-                    token_version=User.token_version + 1
-                )
+                sa_update(User).where(User.id == user_id_val).values(token_version=User.token_version + 1)
             )
 
         await self.db.commit()
@@ -618,6 +618,20 @@ class UserService:
         await self._invalidate_user_cache(db_user, bump_token_version=bump_token_version)
 
         return {"message": "User updated"}
+
+    async def update_password_hash(self, user_id: int, hashed_password: str) -> None:
+        """Persist a new password hash and invalidate cached auth data.
+
+        Used by transparent rehash-on-login (A7): the plaintext password is
+        unchanged, so token_version is NOT bumped and existing sessions stay
+        valid. Only the stored hash (cost factor) is upgraded.
+        """
+        await self.crud.update(db=self.db, object={"hashed_password": hashed_password}, id=user_id, commit=False)
+        await self.db.commit()
+
+        db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
+        if db_user is not None:
+            await self._invalidate_user_cache(db_user)
 
     async def delete(
         self,

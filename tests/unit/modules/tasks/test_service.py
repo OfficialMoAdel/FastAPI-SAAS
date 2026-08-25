@@ -69,8 +69,12 @@ class TestTaskServiceCreate:
             assert "Queue is not available" in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_create_task_enqueue_fails(self):
-        """Test task creation when enqueue returns None."""
+    async def test_create_task_enqueue_returns_existing_job_id(self):
+        """B7: enqueue_job returning None means the deterministic job id
+        already exists — an idempotent re-create, not a failure. The service
+        must return the SAME id instead of raising ValueError (old 500)."""
+        import hashlib
+
         from src.app.modules.tasks.service import task_service
 
         mock_pool = AsyncMock()
@@ -79,10 +83,11 @@ class TestTaskServiceCreate:
         with patch("src.app.modules.tasks.service.queue") as mock_queue:
             mock_queue.pool = mock_pool
 
-            with pytest.raises(ValueError) as exc_info:
-                await task_service.create_task("test message")
+            result = await task_service.create_task("test message")
 
-            assert "Failed to create task" in str(exc_info.value)
+        # Service hashes f"{tenant_id}:{message}"; tenant_id=None renders as "None"
+        expected_id = f"sample_task:{hashlib.sha256(b'None:test message').hexdigest()}"
+        assert result == {"id": expected_id}
 
 
 class TestTaskServiceGet:

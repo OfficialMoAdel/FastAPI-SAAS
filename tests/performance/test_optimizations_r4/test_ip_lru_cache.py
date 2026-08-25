@@ -31,26 +31,51 @@ def clear_cache():
     _is_ip_in_trusted_networks.cache_clear()
 
 
+@pytest.fixture
+def rfc1918_networks(monkeypatch: pytest.MonkeyPatch) -> None:
+    """S-3: production trusts NO network by default (loopback-only proxies).
+
+    These tests exercise cache semantics against RFC1918 ranges, so restore
+    the classic trusted-network set explicitly. The LRU cache is cleared by
+    the autouse fixture so every call re-reads the patched global.
+    """
+    import ipaddress
+
+    monkeypatch.setattr(
+        "src.app.core.utils.ip_utils.TRUSTED_PROXY_NETWORKS",
+        (
+            ipaddress.ip_network("10.0.0.0/8"),
+            ipaddress.ip_network("172.16.0.0/12"),
+            ipaddress.ip_network("192.168.0.0/16"),
+        ),
+    )
+
+
 class TestP03IPLRUCache:
     """P0-3: IP Address LRU Cache optimization tests."""
 
-    def test_private_10_network_is_trusted(self) -> None:
+    def test_private_10_network_is_trusted(self, rfc1918_networks) -> None:
         """10.x.x.x addresses should be in trusted networks."""
         assert _is_ip_in_trusted_networks("10.0.0.1") is True
         assert _is_ip_in_trusted_networks("10.255.255.255") is True
         assert _is_ip_in_trusted_networks("10.1.2.3") is True
 
-    def test_private_172_network_is_trusted(self) -> None:
+    def test_private_172_network_is_trusted(self, rfc1918_networks) -> None:
         """172.16.x.x - 172.31.x.x addresses should be in trusted networks."""
         assert _is_ip_in_trusted_networks("172.16.0.1") is True
         assert _is_ip_in_trusted_networks("172.31.255.255") is True
         assert _is_ip_in_trusted_networks("172.20.10.5") is True
 
-    def test_private_192_network_is_trusted(self) -> None:
+    def test_private_192_network_is_trusted(self, rfc1918_networks) -> None:
         """192.168.x.x addresses should be in trusted networks."""
         assert _is_ip_in_trusted_networks("192.168.0.1") is True
         assert _is_ip_in_trusted_networks("192.168.255.255") is True
         assert _is_ip_in_trusted_networks("192.168.1.100") is True
+
+    def test_default_config_trusts_nothing(self) -> None:
+        """S-3 fail-closed default: no network-level trust without operator opt-in."""
+        assert _is_ip_in_trusted_networks("10.0.0.1") is False
+        assert _is_ip_in_trusted_networks("192.168.1.100") is False
 
     def test_public_ip_not_trusted(self) -> None:
         """Public IP addresses should not be in trusted networks."""
@@ -65,7 +90,7 @@ class TestP03IPLRUCache:
         assert _is_ip_in_trusted_networks("256.256.256.256") is False
         assert _is_ip_in_trusted_networks("abc.def.ghi.jkl") is False
 
-    def test_cache_hit_returns_same_result(self) -> None:
+    def test_cache_hit_returns_same_result(self, rfc1918_networks) -> None:
         """Cached value should match fresh computation."""
         # First call - cache miss
         result1 = _is_ip_in_trusted_networks("10.0.0.1")
@@ -80,7 +105,7 @@ class TestP03IPLRUCache:
         assert info.hits >= 1
         assert info.misses >= 1
 
-    def test_cache_stats_tracking(self) -> None:
+    def test_cache_stats_tracking(self, rfc1918_networks) -> None:
         """Cache should track hits and misses correctly."""
         # Clear and verify empty
         _is_ip_in_trusted_networks.cache_clear()
@@ -106,7 +131,7 @@ class TestP03IPLRUCache:
         assert info.hits == 1
         assert info.misses == 2
 
-    def test_different_ips_cached_separately(self) -> None:
+    def test_different_ips_cached_separately(self, rfc1918_networks) -> None:
         """Different IPs should have separate cache entries."""
         result1 = _is_ip_in_trusted_networks("10.0.0.1")  # trusted
         result2 = _is_ip_in_trusted_networks("8.8.8.8")  # not trusted
@@ -136,12 +161,14 @@ class TestP03TrustedProxyConfiguration:
         """TRUSTED_PROXY_NETWORKS should be a tuple (hashable for lru_cache)."""
         assert isinstance(TRUSTED_PROXY_NETWORKS, tuple)
 
-    def test_trusted_proxy_networks_contains_private_ranges(self) -> None:
-        """TRUSTED_PROXY_NETWORKS should contain RFC1918 private ranges."""
-        network_strs = [str(n) for n in TRUSTED_PROXY_NETWORKS]
-        assert "10.0.0.0/8" in network_strs
-        assert "172.16.0.0/12" in network_strs
-        assert "192.168.0.0/16" in network_strs
+    def test_trusted_proxy_networks_default_fail_closed(self) -> None:
+        """S-3 FIX: the default trusts NOTHING at the network level.
+
+        The old default silently trusted RFC1918, letting any host on the
+        internal network spoof X-Forwarded-For. Operators must now opt in
+        via SecuritySettings.TRUSTED_PROXY_NETWORKS.
+        """
+        assert TRUSTED_PROXY_NETWORKS == ()
 
 
 class TestP03CachePerformance:

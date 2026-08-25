@@ -12,6 +12,7 @@ from src.app.modules.webhooks.models import WebhookDelivery, WebhookDeliveryStat
 
 logger = get_logger(__name__)
 
+
 async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
     """ARQ periodic job: find PENDING deliveries past their next_retry_at and re-enqueue."""
     recovered = 0
@@ -25,10 +26,22 @@ async def recover_stuck_deliveries(ctx: dict[str, Any]) -> int:
 
     async with get_db_context() as db:
         async with bypass_rls(db, reason="Webhook recovery job"):
-            stmt = select(WebhookDelivery).where(
-                WebhookDelivery.status == WebhookDeliveryStatus.PENDING,
-                WebhookDelivery.next_retry_at < cutoff_time,
-            ).limit(settings.webhooks.WEBHOOK_RECOVERY_BATCH_SIZE).with_for_update(skip_locked=True)
+            # W5 FIX: initial PENDING deliveries are inserted with a NULL
+            # next_retry_at (trigger sets none), so the old
+            # "next_retry_at < cutoff" predicate never selected them and a
+            # lost enqueue was unrecoverable. Fall back to created_at when
+            # next_retry_at is NULL.
+            from sqlalchemy import func
+
+            stmt = (
+                select(WebhookDelivery)
+                .where(
+                    WebhookDelivery.status == WebhookDeliveryStatus.PENDING,
+                    func.coalesce(WebhookDelivery.next_retry_at, WebhookDelivery.created_at) < cutoff_time,
+                )
+                .limit(settings.webhooks.WEBHOOK_RECOVERY_BATCH_SIZE)
+                .with_for_update(skip_locked=True)
+            )
 
             result = await db.execute(stmt)
             deliveries = result.scalars().all()

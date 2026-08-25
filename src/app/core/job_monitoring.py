@@ -34,38 +34,29 @@ class JobMonitoringService:
 
         key = f"{JOB_PREFIX}{job_id}"
 
-        # arq stores job data as a hash
-        # Fields typically include: function, args, kwargs, job_try, enqueue_time,
-        # start_time, finish_time, result, status
-        # However, arq actually serializes the job definition.
-        # But for monitoring, we often rely on what we store or what arq stores.
-        # Let's assume standard arq behavior + our custom stats tracking.
+        # K5 FIX: arq stores the job definition as a serialized STRING blob
+        # (psetex in events/bus.py and inside arq itself), not a hash. The old
+        # hgetall here raised WRONGTYPE -> 500. Read the string and parse JSON.
+        from src.app.core.json_utils import json_loads
 
-        # Check standard ARQ job result if available
-        # Note: ARQ stores results with a specific key pattern or in the job object itself if using Result backend.
-        # Here we query what's in Redis.
-
-        data = await cache.client.hgetall(key)  # type: ignore
-        if not data:
+        blob = await cache.client.get(key)  # type: ignore
+        if not blob:
             return {"status": "not_found", "job_id": job_id}
 
-        # Parse byte data to strings/types
-        parsed_data = {}
-        for k, v in data.items():
-            k_str = k.decode("utf-8") if isinstance(k, bytes) else k
-            v_val = v.decode("utf-8") if isinstance(v, bytes) else v
-            parsed_data[k_str] = v_val
+        try:
+            parsed_data: dict[str, Any] = json_loads(blob)  # type: ignore[arg-type]
+            if not isinstance(parsed_data, dict):
+                return {"status": "unknown", "job_id": job_id, "raw": str(blob)[:500]}
+        except Exception:
+            logger.warning("Failed to deserialize arq job payload", job_id=job_id)
+            return {"status": "unknown", "job_id": job_id, "raw": str(blob)[:500]}
 
-        # Calculate duration if applicable
-        start_ts = float(parsed_data.get("start_time", 0) or 0)
-        finish_ts = float(parsed_data.get("finish_time", 0) or 0)
-        duration = None
-        if start_ts and finish_ts:
-            duration = finish_ts - start_ts
-        elif start_ts:
-            duration = time.time() - start_ts  # Running duration
+        parsed_data["status"] = "queued"
 
-        parsed_data["duration_seconds"] = duration
+        # arq stores enqueue_time as unix MILLISECONDS; expose it readably.
+        enqueue_ms = parsed_data.get("enqueue_time")
+        if isinstance(enqueue_ms, int | float) and enqueue_ms > 0:
+            parsed_data["enqueued_at"] = datetime.fromtimestamp(enqueue_ms / 1000, tz=UTC).isoformat()
 
         return parsed_data
 

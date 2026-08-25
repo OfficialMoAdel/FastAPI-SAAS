@@ -34,13 +34,16 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
 
         tenant = get_tenant_context()
 
-        # Build WHERE clause based on lookup type - case-insensitive
+        # Build WHERE clause based on lookup type - case-insensitive.
+        # P6: compare against the pre-lowered parameter (not func.lower(param))
+        # so the planner can use the functional indexes
+        # idx_users_tenant_lower_email / idx_users_lower_username (migration 13).
         if id is not None:
             lookup_clause = User.id == id
         elif username:
-            lookup_clause = func.lower(User.username) == func.lower(username)
+            lookup_clause = func.lower(User.username) == username.lower()
         else:
-            lookup_clause = func.lower(User.email) == func.lower(email)
+            lookup_clause = func.lower(User.email) == email.lower()
 
         # Build base statement
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))

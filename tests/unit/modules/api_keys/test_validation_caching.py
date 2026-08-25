@@ -51,7 +51,16 @@ class TestAPIKeyValidationCaching:
             cached_json = (
                 '{"user_id": 1, "tenant_id": 1, "scopes": ["read", "write"], "key_id": 42, "expires_at": null}'
             )
-            mock_redis.get = AsyncMock(return_value=cached_json)
+
+            # T8: the second redis.get probes tenant liveness (different cache
+            # key). Return an active-tenant payload so the cache-hit path
+            # short-circuits without touching the DB.
+            async def _redis_get(key):
+                if "tenant" in str(key):
+                    return '{"is_active": true}'
+                return cached_json
+
+            mock_redis.get = AsyncMock(side_effect=_redis_get)
 
             result = await api_key_service.validate_api_key("test_api_key_12345")
 
@@ -122,7 +131,13 @@ class TestAPIKeyValidationCaching:
         )
 
         with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
-            mock_redis.get = AsyncMock(return_value=cached_data)
+
+            async def _redis_get(key):
+                if "tenant" in str(key):
+                    return '{"is_active": true}'
+                return cached_data
+
+            mock_redis.get = AsyncMock(side_effect=_redis_get)
 
             result = await api_key_service.validate_api_key("test_api_key_12345")
 

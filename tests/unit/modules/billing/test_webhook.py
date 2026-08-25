@@ -108,6 +108,11 @@ async def test_handle_webhook_event_checkout_completed():
     with (
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
         patch(
+            "src.app.modules.billing.crud.crud_subscription_plans.get",
+            new_callable=AsyncMock,
+            return_value={"id": 456, "tenant_id": tenant_id},
+        ),
+        patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
         ),
         patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock) as _mark,
@@ -160,6 +165,12 @@ async def test_handle_webhook_event_invoice_payment_succeeded():
     with (
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False),
+        patch(
+            "src.app.modules.billing.crud.crud_subscription_plans.get",
+            new_callable=AsyncMock,
+            return_value={"id": 456, "tenant_id": tenant_id},
+        ),
+
         patch(
             "src.app.modules.billing.webhook._try_acquire_event_lock", new_callable=AsyncMock, return_value=True
         ),
@@ -412,14 +423,22 @@ async def test_handle_webhook_event_charge_refunded():
         # Mock bypass db
         mock_bypass_db = AsyncMock()
         mock_bypass_ctx.return_value.__aenter__.return_value = mock_bypass_db
+
         mock_result = MagicMock()
         mock_subscription = MagicMock(tenant_id=tenant_id, user_id=user_id, id=100)
         mock_result.scalar_one_or_none.return_value = mock_subscription
-        mock_bypass_db.execute.return_value = mock_result
+        # B9: handler executes twice — subscription lookup, then the refund
+        # SUM. Return the subscription first, sum=0 second so 500 is recorded.
+        mock_sum_result = MagicMock()
+        mock_sum_result.scalar_one.return_value = 0
+        mock_sum_result.scalar_one_or_none.return_value = None
+        mock_result.scalar_one.return_value = 0
+        mock_bypass_db.execute = AsyncMock(return_value=mock_result)
 
-        # Mock tenant db
+        # Mock tenant db — also serves the B9 refund-SUM query.
         mock_tenant_db = AsyncMock()
         mock_tenant_ctx.return_value.__aenter__.return_value = mock_tenant_db
+        mock_tenant_db.execute = AsyncMock(return_value=mock_sum_result)
 
         result = await handle_webhook_event(event)
 

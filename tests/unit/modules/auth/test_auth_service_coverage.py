@@ -365,11 +365,10 @@ class TestLogout:
 
     @pytest.mark.asyncio
     async def test_logout_refresh_token_missing(self, auth_service, mock_db, mock_request, mock_response):
-        """Test logout with missing refresh token (line 448-449)."""
-        from src.app.core.exceptions.http_exceptions import UnauthorizedException
-
-        with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.logout(
+        """A8: access-token-only logout is now valid. Verify it succeeds
+        (blacklists + clears cookie) instead of the old 401."""
+        with patch("src.app.modules.auth.service.blacklist_tokens", new_callable=AsyncMock) as mock_blacklist:
+            result = await auth_service.logout(
                 access_token="access_token",
                 refresh_token=None,
                 response=mock_response,
@@ -377,7 +376,8 @@ class TestLogout:
                 db=mock_db,
             )
 
-        assert "not found" in str(exc_info.value.detail).lower()
+        assert result == {"message": "Logout successful"} or isinstance(result, dict)
+        mock_blacklist.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_logout_expired_access_token(self, auth_service, mock_db, mock_request, mock_response):

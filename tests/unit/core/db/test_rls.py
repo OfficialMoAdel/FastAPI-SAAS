@@ -91,11 +91,17 @@ async def test_rls_context_exception(mock_session, mock_connection):
 
 @pytest.mark.asyncio
 async def test_bypass_rls(mock_session, mock_connection):
-    async with bypass_rls(mock_session, reason="test", user_id="user-123") as ctx:
-        assert ctx == mock_session
-        assert mock_connection.execute.call_count == 2  # set bypass and audit log
+    # T2 FIX: the audit INSERT now runs on a dedicated connection via the
+    # _write_bypass_audit helper, so only set_config set/clear hit the session
+    # connection.
+    with patch("src.app.core.db.rls._write_bypass_audit", new_callable=AsyncMock) as mock_audit:
+        async with bypass_rls(mock_session, reason="test", user_id="user-123") as ctx:
+            assert ctx == mock_session
+            assert mock_connection.execute.call_count == 1  # set bypass
 
-    assert mock_connection.execute.call_count == 3  # reset
+        assert mock_connection.execute.call_count == 2  # set + clear
+
+        mock_audit.assert_awaited_once_with("user-123", "test")
 
 
 @pytest.mark.asyncio
@@ -107,25 +113,62 @@ async def test_bypass_rls_no_reason(mock_session):
 
 @pytest.mark.asyncio
 async def test_bypass_rls_exception(mock_session, mock_connection):
-    with pytest.raises(ValueError):
+    with (
+        patch("src.app.core.db.rls._write_bypass_audit", new_callable=AsyncMock) as mock_audit,
+        pytest.raises(ValueError),
+    ):
         async with bypass_rls(mock_session, reason="test"):
             raise ValueError("Test error")
 
-    assert mock_connection.execute.call_count == 3  # Set, audit log, then clear
+    mock_audit.assert_awaited_once()
+    assert mock_connection.execute.call_count == 2  # Set, then clear in finally
 
 
 @pytest.mark.asyncio
 async def test_bypass_rls_audit_error(mock_session, mock_connection):
-    # Make the second execute (audit log) raise an error
-    mock_connection.execute.side_effect = [None, Exception("Audit log failed"), None]
-
-    # Audit log failure is FATAL — bypass_rls MUST raise RuntimeError
-    with pytest.raises(RuntimeError, match="RLS bypass aborted due to audit log failure"):
+    # Audit log failure is FATAL — bypass_rls MUST raise RuntimeError.
+    with (
+        patch(
+            "src.app.core.db.rls._write_bypass_audit",
+            new_callable=AsyncMock,
+            side_effect=Exception("Audit log failed"),
+        ),
+        pytest.raises(RuntimeError, match="RLS bypass aborted due to audit log failure"),
+    ):
         async with bypass_rls(mock_session, reason="test"):
             pass
 
-    # Verify set_config (bypass) was still applied and cleared
-    assert mock_connection.execute.call_count == 3  # set_config, audit, reset
+    # Verify set_config (bypass) was still applied and cleared on the session
+    # connection even though the audit write aborted the bypass.
+    assert mock_connection.execute.call_count == 2  # set_config set + reset
+
+
+@pytest.mark.asyncio
+async def test_write_bypass_audit_coerces_user_id():
+    """Digit user_ids are stored as ints; non-digit ids move into `reason`."""
+    from src.app.core.db.rls import _write_bypass_audit
+
+    audit_conn = AsyncMock()
+    audit_cm = MagicMock()
+    audit_cm.__aenter__ = AsyncMock(return_value=audit_conn)
+    audit_cm.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("src.app.core.db.database.async_engine") as mock_engine:
+        mock_engine.connect.return_value = audit_cm
+
+        await _write_bypass_audit("42", "numeric actor")
+        params = audit_conn.execute.call_args[0][1]
+        assert params["user_id"] == 42
+        assert params["reason"] == "numeric actor"
+
+        await _write_bypass_audit("user-123", "string actor")
+        params = audit_conn.execute.call_args[0][1]
+        assert params["user_id"] is None
+        assert "actor=user-123" in params["reason"]
+
+        await _write_bypass_audit(None, "anonymous")
+        params = audit_conn.execute.call_args[0][1]
+        assert params["user_id"] is None
 
 
 @pytest.mark.asyncio

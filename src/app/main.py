@@ -152,6 +152,7 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         # Warm application caches
         logger.info("Loading security runtime config...")
         from src.app.core.utils.config_store import get_runtime_config
+
         config = await get_runtime_config()
         if config:
             if "IP_WHITELIST_ENABLED" in config:
@@ -196,9 +197,11 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         # Shutdown bcrypt executor
         try:
             from src.app.core.security import _bcrypt_executor
+
             if _bcrypt_executor is not None:
                 _bcrypt_executor.shutdown(wait=True)
                 import src.app.core.security
+
                 src.app.core.security._bcrypt_executor = None
                 logger.info("Bcrypt thread pool shutdown successfully")
         except Exception as e:
@@ -234,10 +237,14 @@ app = create_application(
 from src.app.middleware.gzip_filter import GZipFilterMiddleware
 
 app.add_middleware(RequestIDMiddleware)  # Innermost - must be first for accurate tracing
+# R4 FIX: AttackDetection is now registered BEFORE RateLimitMiddleware, so in
+# LIFO execution order it runs AFTER rate limiting. Previously the expensive
+# body-buffering scan ran first on every request, including ones a cheap
+# 429 would have rejected immediately.
+app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal
 app.add_middleware(RateLimitMiddleware)  # User/tier-based rate limiting
 app.add_middleware(TenantMiddleware)  # Tenant context for multi-tenant features
 app.add_middleware(SecurityHeadersMiddleware)  # XSS prevention headers
-app.add_middleware(AttackDetectionMiddleware)  # Detect SQLi, XSS, path traversal (runs BEFORE BodyLimit in LIFO)
 app.add_middleware(
     RequestBodyLimitMiddleware, max_body_size=settings.MAX_BODY_SIZE
 )  # Configurable limit (runs AFTER AttackDetection in LIFO)
@@ -268,20 +275,22 @@ def custom_openapi():
 
     components = openapi_schema.setdefault("components", {})
     security_schemes = components.setdefault("securitySchemes", {})
-    security_schemes.update({
-        "bearerAuth": {
-            "type": "http",
-            "scheme": "bearer",
-            "bearerFormat": "JWT",
-            "description": "Enter JWT token obtained from /api/v1/auth/login",
-        },
-        "ApiKeyAuth": {
-            "type": "apiKey",
-            "in": "header",
-            "name": "X-API-Key",
-            "description": "Enter API Key",
-        },
-    })
+    security_schemes.update(
+        {
+            "bearerAuth": {
+                "type": "http",
+                "scheme": "bearer",
+                "bearerFormat": "JWT",
+                "description": "Enter JWT token obtained from /api/v1/auth/login",
+            },
+            "ApiKeyAuth": {
+                "type": "apiKey",
+                "in": "header",
+                "name": "X-API-Key",
+                "description": "Enter API Key",
+            },
+        }
+    )
 
     # Identify paths that explicitly depend on authentication
     protected_paths = set()

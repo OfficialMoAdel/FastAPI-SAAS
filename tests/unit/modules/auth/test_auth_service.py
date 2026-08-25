@@ -360,13 +360,14 @@ class TestAuthServiceLogout:
 
     @pytest.mark.asyncio
     async def test_logout_without_refresh_token_raises_error(self, auth_service, mock_db, mock_response, mock_request):
-        """Test that logout without refresh token raises UnauthorizedException."""
+        """A8: logout now accepts access-token-only clients. Only a call with
+        NO tokens at all raises UnauthorizedException."""
         from src.app.core.exceptions.http_exceptions import UnauthorizedException
 
         with pytest.raises(UnauthorizedException) as exc_info:
-            await auth_service.logout("access_token", None, mock_response, mock_request, mock_db)
+            await auth_service.logout(None, None, mock_response, mock_request, mock_db)
 
-        assert "Refresh token not found" in str(exc_info.value.detail)
+        assert "No token provided" in str(exc_info.value.detail)
 
     @pytest.mark.asyncio
     async def test_logout_success_blacklists_tokens(self, auth_service, mock_db, mock_response, mock_request):

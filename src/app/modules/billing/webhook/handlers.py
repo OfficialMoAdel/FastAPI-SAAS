@@ -87,6 +87,24 @@ async def handle_checkout_session_completed(event: stripe.Event) -> None:
                     interval = price["recurring"]["interval"]
             billing_interval: Literal["monthly", "yearly"] = "yearly" if interval == "year" else "monthly"
 
+            # B6 residual FIX: validate the plan actually belongs to this
+            # tenant before minting the subscription. Previously metadata
+            # plan_id was trusted blindly — a forged checkout could attach
+            # another tenant's plan id and mint arbitrary subscriptions.
+            from src.app.modules.billing.crud import crud_subscription_plans as _plan_crud
+
+            async with _pkg.job_bypass_context("Checkout plan ownership check") as plan_db:
+                plan_row = await _plan_crud.get(plan_db, id=plan_id, _allow_unscoped=True)
+            if not plan_row or plan_row.get("tenant_id") != tenant_id:
+                _pkg.logger.error(
+                    "Checkout plan/tenant ownership mismatch — rejecting subscription creation",
+                    session_id=session["id"],
+                    plan_id=plan_id,
+                    claimed_tenant_id=str(tenant_id),
+                    plan_tenant_id=str(plan_row.get("tenant_id")) if plan_row else None,
+                )
+                raise ValueError(f"Plan {plan_id} is not available to tenant {tenant_id}")
+
             # Create user subscription with tenant_id in the object
             subscription_data = UserSubscriptionCreateInternal(
                 tenant_id=tenant_id,
@@ -638,22 +656,40 @@ async def handle_charge_refunded(event: stripe.Event) -> None:
         refunds = charge.get("refunds", {}).get("data", [])
 
         if not refunds:
-            # Fallback if refunds array is missing
-            refund_amount = charge.get("amount_refunded", 0)
-            # Build a dedup filter that never matches a NULL payment_intent
-            # (a None value would otherwise match unrelated records whose
-            # stripe_payment_intent_id is also NULL). Prefer the payment
-            # intent, falling back to the invoice id when it is absent.
-            dedup_filter: dict[str, Any] = {
-                "status": "refunded",
-                "amount_cents": -refund_amount,
-            }
+            # B9 FIX: charge.amount_refunded is CUMULATIVE across all refunds
+            # of the charge. Using it verbatim per charge.refunded event
+            # double-counted sequential partial refunds. Record only the
+            # delta vs refund amounts already persisted for this charge.
+            from sqlalchemy import func as _func
+
+            from src.app.modules.billing.models import BillingRecord
+
+            if stripe_payment_intent_id is None and stripe_invoice_id is None:
+                # Cannot scope the delta to this charge - skip rather than risk
+                # attributing another charge's refunds here.
+                _pkg.logger.warning("Refund event lacks scoping identifiers, skipping", val=charge["id"])
+                return
+
+            scope_filters = [BillingRecord.status == "refunded"]
             if stripe_payment_intent_id is not None:
-                dedup_filter["stripe_payment_intent_id"] = stripe_payment_intent_id
-            elif stripe_invoice_id is not None:
-                dedup_filter["stripe_invoice_id"] = stripe_invoice_id
-            if await _pkg.crud_billing_records.exists(db=db, **dedup_filter):
-                _pkg.logger.info("Refund billing record already exists, skipping duplicate insert")
+                scope_filters.append(BillingRecord.stripe_payment_intent_id == stripe_payment_intent_id)
+            else:
+                scope_filters.append(BillingRecord.stripe_invoice_id == stripe_invoice_id)
+
+            recorded_result = await db.execute(
+                select(_func.coalesce(_func.sum(BillingRecord.amount_cents), 0)).where(*scope_filters)
+            )
+            # Stored refund amounts are negative.
+            already_refunded_cents = -int(recorded_result.scalar_one() or 0)
+
+            refund_amount = int(charge.get("amount_refunded", 0) or 0) - already_refunded_cents
+            if refund_amount <= 0:
+                _pkg.logger.info(
+                    "Refund delta non-positive, skipping duplicate insert",
+                    val=charge["id"],
+                    cumulative=int(charge.get("amount_refunded", 0) or 0),
+                    already_recorded=already_refunded_cents,
+                )
                 return
 
             billing_record = BillingRecordCreateInternal(

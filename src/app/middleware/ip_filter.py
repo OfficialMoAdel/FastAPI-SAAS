@@ -4,7 +4,6 @@ This middleware checks incoming requests against IP whitelist and blacklist
 stored in Redis. Whitelisted IPs bypass restrictions, blacklisted IPs are blocked.
 """
 
-
 from fastapi import Request, status
 from starlette.types import ASGIApp
 
@@ -91,6 +90,11 @@ class IPFilterMiddleware:
 
         # Skip exempt paths
         if self._is_exempt_path(path):
+            # R7 FIX: downstream middleware expects these state attributes on
+            # every request; the bare early-return previously set neither,
+            # causing fallback warnings and repeated client-IP parsing.
+            request.state.client_ip = get_client_ip(request)
+            request.state.ip_whitelisted = True
             return await self.app(scope, receive, send)
 
         client_ip = get_client_ip(request)

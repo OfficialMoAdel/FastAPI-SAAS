@@ -81,8 +81,10 @@ class TestWebhookServiceEndpoints:
         """Test creating a new webhook endpoint."""
         tenant_id = "tenant-uuid"
 
-        with patch("src.app.modules.webhooks.service.encrypt_data", return_value="encrypted"), \
-             patch("src.app.modules.webhooks.utils.validate_url_ssrf"):
+        with (
+            patch("src.app.modules.webhooks.service.encrypt_data", return_value="encrypted"),
+            patch("src.app.modules.webhooks.utils.validate_url_ssrf"),
+        ):
             result = await webhook_service.create_endpoint(
                 tenant_id=tenant_id, url="https://test.com", event_type="user.created"
             )
@@ -241,23 +243,28 @@ class TestWebhookServiceDelivery:
     async def test_deliver_webhook_circuit_open(
         self, webhook_service, mock_db, mock_webhook_delivery, mock_webhook_endpoint
     ):
-        """Test delivery skipped when circuit breaker is open."""
+        """W4: circuit-open skip is NOT a delivery attempt — the retry budget
+        stays intact and the delivery is merely deferred until recovery."""
         self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
         # Also mock db.get for the re-fetch after HTTP call
         mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
+        mock_webhook_delivery.next_retry_at = None
 
         # Mock circuit breaker to be open
         with patch("src.app.core.utils.circuit_breaker.webhook_circuit") as mock_circuit:
             type(mock_circuit).is_closed = PropertyMock(return_value=False)
             mock_circuit.recovery_timeout = 60
-            mock_circuit._last_failure_time = 0
+            mock_circuit._last_failure_time = 0  # stale/absent timestamp -> clamped to 0s
 
             result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
             # Should return delivery without making request
             assert result == mock_webhook_delivery
-            webhook_service._handle_delivery_failure.assert_called_once()
+            # W4: attempt budget must NOT be consumed by open-circuit skips
+            webhook_service._handle_delivery_failure.assert_not_called()
+            # Delivery deferred until breaker recovery (clamped >= now)
+            assert mock_webhook_delivery.next_retry_at is not None
 
     @pytest.mark.asyncio
     async def test_deliver_webhook_ssrf_error(
@@ -272,8 +279,9 @@ class TestWebhookServiceDelivery:
         # W2: signing now happens before the SSRF check, and it decrypts the
         # endpoint secret — mock that so the fake ciphertext doesn't blow up
         # before we reach the SSRF error under test.
-        with self._patch_signing(), patch(
-            "src.app.modules.webhooks.service.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")
+        with (
+            self._patch_signing(),
+            patch("src.app.modules.webhooks.service.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")),
         ):
             result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 

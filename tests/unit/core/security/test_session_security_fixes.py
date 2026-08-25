@@ -9,6 +9,7 @@ A1: blacklist tri-state — None (Redis down) triggers DB fallback in deps/auth
     tri-state; circuit-breaker open honors TOKEN_CACHE_FAILURE_MODE.
 """
 
+import asyncio
 import base64
 import json
 from datetime import UTC, datetime, timedelta
@@ -73,6 +74,7 @@ class TestSessionClaimLifecycle:
     async def test_rotation_without_carried_claims_mints_fresh(self):
         """Sanity: brand-new pair (no carried claims) gets fresh values."""
         _, first = await TokenIssuer.create_token_pair({"sub": "u", "token_version": 0})
+        await asyncio.sleep(0.001)  # ensure wall clock advances between mints
         _, second = await TokenIssuer.create_token_pair({"sub": "u", "token_version": 0})
         assert claims(first)["sid"] != claims(second)["sid"]
         assert claims(first)["absolute_exp"] != claims(second)["absolute_exp"]
@@ -146,6 +148,7 @@ class TestFreshMintSanity:
     async def test_rotation_without_carried_claims_mints_fresh_sid(self):
         """Sanity: brand-new pair (no carried claims) gets a fresh sid."""
         _, first = await TokenIssuer.create_token_pair({"sub": "u", "token_version": 0})
+        await asyncio.sleep(0.001)
         _, second = await TokenIssuer.create_token_pair({"sub": "u", "token_version": 0})
         assert claims(first)["sid"] != claims(second)["sid"]
         # Fresh mint stamps absolute_exp at now + MAX_SESSION_DURATION_DAYS.

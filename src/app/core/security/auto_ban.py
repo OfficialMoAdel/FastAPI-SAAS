@@ -112,11 +112,15 @@ async def reset_violations(client_ip: str) -> bool:
         return False
 
 
-async def get_ban_info(client_ip: str) -> BanInfo:
+async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
     """Get ban information for an IP.
 
     Args:
         client_ip: Client IP address
+        include_count: P2 FIX — the per-request hot path only needs ban
+            status; skip the count/TTL reads when False (1 Redis command
+            instead of 3). ``ban_ip`` passes True because escalation needs
+            the previous-ban count.
 
     Returns:
         BanInfo with ban status and details
@@ -128,24 +132,27 @@ async def get_ban_info(client_ip: str) -> BanInfo:
     count_key = BAN_COUNT_KEY_PREFIX.format(ip=client_ip)
 
     try:
-        # Concurrent reads: GET ban_key, TTL ban_key, GET count_key
-        ban_data, ttl, ban_count_str = await asyncio.gather(
-            redis_client.get(ban_key),
+        ban_data = await redis_client.get(ban_key)
+
+        if not ban_data and not include_count:
+            return BanInfo(is_banned=False)
+
+        ttl, ban_count_str = await asyncio.gather(
             redis_client.ttl(ban_key),
             redis_client.get(count_key),
         )
+        expires_at = time.time() + ttl if (ban_data and ttl > 0) else None
+        ban_count = int(ban_count_str) if ban_count_str else 0
 
         if ban_data:
-            expires_at = time.time() + ttl if ttl > 0 else None
-            ban_count = int(ban_count_str) if ban_count_str else 1
             return BanInfo(
                 is_banned=True,
                 reason=ban_data.decode() if isinstance(ban_data, bytes) else ban_data,
                 expires_at=expires_at,
-                ban_count=ban_count,
+                # A live ban implies at least one prior offense even if the
+                # count key expired first.
+                ban_count=max(ban_count, 1),
             )
-
-        ban_count = int(ban_count_str) if ban_count_str else 0
         return BanInfo(is_banned=False, ban_count=ban_count)
 
     except Exception as e:
@@ -176,8 +183,8 @@ async def ban_ip(
         logger.debug("Auto-ban disabled - skipping ban for %s", client_ip)
         return False
 
-    # Get ban info for escalation
-    ban_info = await get_ban_info(client_ip)
+    # Get ban info for escalation — needs the previous-ban COUNT.
+    ban_info = await get_ban_info(client_ip, include_count=True)
 
     # Calculate duration with escalation if enabled
     base_duration = duration or settings.AUTO_BAN_DURATION

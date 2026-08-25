@@ -1233,6 +1233,29 @@ class FakeRedis:
                 count += 1
         return count
 
+    # ---- set operations (P4: pattern-index invalidation) ----
+    def _sets(self):
+        if not hasattr(self, "_set_store"):
+            self._set_store = {}
+        return self._set_store
+
+    async def sadd(self, key, *values):
+        s = self._sets().setdefault(key, set())
+        s.update(values)
+        return len(s)
+
+    async def smembers(self, key):
+        return set(self._sets().get(key, set()))
+
+    async def srem(self, key, *values):
+        s = self._sets().get(key, set())
+        removed = sum(1 for v in values if v in s)
+        s.difference_update(values)
+        return removed
+
+    async def expire(self, key, seconds):  # sets have no TTL in this fake
+        return True
+
     def _get_key(self, key):
         if isinstance(key, bytes):
             return key.decode("utf-8")
@@ -1357,9 +1380,6 @@ class FakeRedis:
         """Set key with expiration (seconds ignored in mock)."""
         self.store[key] = value
         return True
-
-    async def expire(self, key, seconds):
-        return bool(key in self.store)
 
     async def ttl(self, key):
         return 60 if key in self.store else -2

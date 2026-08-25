@@ -60,12 +60,21 @@ class TestMFARateLimitingFunction:
             assert str(MFA_VERIFY_PERIOD) in str(exc_info.value)
 
     @pytest.mark.asyncio
-    async def test_check_mfa_rate_limit_uses_client_ip(self, mock_redis):
-        """Test that rate limit uses client IP when no identifier provided."""
+    async def test_check_mfa_rate_limit_uses_client_ip(self, mock_redis, monkeypatch):
+        """Test that rate limit uses the client IP when no identifier provided.
+
+        S-3: only trusted proxies may supply X-Forwarded-For. Make the direct
+        peer (192.168.1.1) a trusted proxy so the header is honored; with
+        XFF "10.0.0.1, 10.0.0.2" the rightmost untrusted hop (10.0.0.2) is
+        the client IP.
+        """
         from fastapi import Request
 
+        from src.app.core.utils import ip_utils
         from src.app.core.utils.rate_limit import rate_limiter
         from src.app.modules.mfa.router import check_mfa_rate_limit
+
+        monkeypatch.setattr(ip_utils, "TRUSTED_PROXY_IPS", {"192.168.1.1"})
 
         # Mock request object with X-Forwarded-For header
         request = Mock(spec=Request)
@@ -76,10 +85,10 @@ class TestMFARateLimitingFunction:
         with patch.object(rate_limiter, "check_rate_limit", new_callable=AsyncMock) as mock_rate_check:
             mock_rate_check.return_value = (False, 1)
 
-            # Should use first IP from X-Forwarded-For
+            # Should use rightmost untrusted IP from X-Forwarded-For
             await check_mfa_rate_limit(request)
 
-            mock_rate_check.assert_called_once_with("mfa_verify:10.0.0.1", limit=5, period=60)
+            mock_rate_check.assert_called_once_with("mfa_verify:10.0.0.2", limit=5, period=60)
 
     @pytest.mark.asyncio
     async def test_check_mfa_rate_limit_uses_client_host(self, mock_redis):

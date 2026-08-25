@@ -5,6 +5,7 @@ during request processing. Policies are loaded on app startup
 and can be refreshed when tiers are updated.
 """
 
+import asyncio
 from typing import Any
 
 from cachetools import TTLCache
@@ -19,10 +20,55 @@ logger = get_logger(__name__)
 # Module-level L1 cache (256 entries, 5-minute TTL)
 _tier_policy_l1: TTLCache[int, list[dict[str, Any]] | None] = TTLCache(maxsize=256, ttl=300)
 
+# INFO-R11 FIX: cross-worker L1 invalidation. Tier policy updates publish on
+# this channel so every process drops its in-memory entry immediately instead
+# of serving stale policies for up to 300s.
+_POLICY_INVALIDATION_CHANNEL = "rate_limit_policy:invalidate"
+_policy_invalidation_task: asyncio.Task | None = None
+
+
+def _start_policy_invalidation_listener() -> None:
+    """Start (once per event loop) a subscriber applying L1 invalidations."""
+    global _policy_invalidation_task
+    if redis_client is None:
+        return
+    if _policy_invalidation_task is not None and not _policy_invalidation_task.done():
+        return
+
+    async def _listen() -> None:
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(_POLICY_INVALIDATION_CHANNEL)
+            async for msg in pubsub.listen():
+                if not isinstance(msg, dict) or msg.get("type") != "message":
+                    continue
+                data = msg.get("data")
+                if isinstance(data, bytes):
+                    data = data.decode("utf-8", errors="ignore")
+                if data == "*":
+                    _tier_policy_l1.clear()
+                elif data and str(data).isdigit():
+                    _tier_policy_l1.pop(int(data), None)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Policy L1 invalidation listener exited", error=str(e))
+
+    _policy_invalidation_task = asyncio.create_task(_listen())
+
+
+async def _publish_policy_invalidation(tier_id: int) -> None:
+    if redis_client is None:
+        return
+    try:
+        await redis_client.publish(_POLICY_INVALIDATION_CHANNEL, str(tier_id))
+    except Exception as e:  # noqa: BLE001 - never break mutations on pubsub errors
+        logger.warning("Failed to publish policy invalidation", error=str(e))
+
+
 # Redis key patterns
 POLICY_KEY_PREFIX = "rate_limit:policy:tier:"
 POLICY_INDEX_KEY = "rate_limit:policies:all"
-
 
 
 async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
@@ -35,6 +81,7 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
         List of policy dicts, or None if not cached
     """
     # L1: In-memory check first (avoids Redis RT)
+    _start_policy_invalidation_listener()
     if tier_id in _tier_policy_l1:
         return _tier_policy_l1[tier_id]
 
@@ -72,12 +119,12 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
         return 0
 
     try:
-        # Use pipeline for batch cache warming - reduces N roundtrips to 1
-        ttl = getattr(settings, "RATE_LIMIT_POLICY_TTL", 3600)
+        # INFO-R11 FIX: use the now-declared typed setting (was a phantom knob).
+        ttl = settings.rate_limit.RATE_LIMIT_POLICY_TTL
         async with redis_client.pipeline() as pipe:
             for tier_id, policies in tier_policies.items():
                 key = f"{POLICY_KEY_PREFIX}{tier_id}"
-                pipe.setex(key, ttl, json_dumps(policies, as_str=True))  # Configurable TTL
+                pipe.setex(key, ttl, json_dumps(policies, as_str=True))
             await pipe.execute()
 
         count = len(tier_policies)
@@ -106,6 +153,8 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
     try:
         key = f"{POLICY_KEY_PREFIX}{tier_id}"
         await redis_client.delete(key)
+        # INFO-R11 FIX: fan out so other workers drop their L1 entry too.
+        await _publish_policy_invalidation(tier_id)
         return True
     except Exception as e:
         logger.warning("Failed to invalidate tier policy", error=e)

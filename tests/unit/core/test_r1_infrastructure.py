@@ -115,7 +115,8 @@ class TestLuaScriptManager:
         assert "idempotency_check" in names
         assert "xfetch_get_with_ttl" in names
         assert "dlq_bounded_push" in names
-        assert "session_evict_oldest" in names
+        # session_evict_oldest removed (dead code — zero callers; real
+        # eviction happens inside session_register_with_eviction)
 
     def test_get_stats(self) -> None:
         """Test statistics retrieval."""

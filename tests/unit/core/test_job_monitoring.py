@@ -29,6 +29,14 @@ class MockRedis:
             for k, v in self.hashes[key_str].items()
         }
 
+    async def get(self, key: str | bytes) -> bytes | None:
+        """K5: get_job_status reads the arq job definition STRING blob."""
+        key_str = self._get_key(key)
+        value = self.data.get(key_str)
+        if value is None:
+            return None
+        return value.encode("utf-8") if isinstance(value, str) else value
+
     async def scan(self, cursor: int, match: str = None, count: int = None):
         # Simple scan implementation
         keys = []
@@ -164,44 +172,57 @@ def service(mock_redis_client):
 
 @pytest.mark.asyncio
 async def test_get_job_status_found(service, mock_redis_client):
+    # K5: arq stores the job definition as a JSON STRING blob; the service
+    # reports it as "queued" and exposes enqueue_time (unix ms) as enqueued_at.
+    import json
+
     job_id = "test-job-1"
     key = f"arq:job:{job_id}"
-
-    # Setup mock data
-    mock_redis_client.hashes[key] = {
-        "status": "complete",
-        "start_time": "1000.0",
-        "finish_time": "1005.0",
-        "result": "success",
-    }
+    enqueue_ms = 1756000000000
+    mock_redis_client.data[key] = json.dumps(
+        {"job_id": job_id, "function": "my_func", "args": ["x"], "enqueue_time": enqueue_ms}
+    )
 
     status = await service.get_job_status(job_id)
 
-    assert status["status"] == "complete"
-    assert status["duration_seconds"] == 5.0
-    assert status["result"] == "success"
+    assert status["status"] == "queued"
+    assert status["job_id"] == job_id
+    assert status["function"] == "my_func"
+    assert "enqueued_at" in status
+    assert status["enqueued_at"].startswith("2025")
 
 
 @pytest.mark.asyncio
 async def test_get_job_status_running(service, mock_redis_client):
+    import json
+
     job_id = "test-job-running"
     key = f"arq:job:{job_id}"
-
-    # Setup mock data (no finish_time)
-    start_time = time.time() - 10
-    mock_redis_client.hashes[key] = {"status": "in_progress", "start_time": str(start_time)}
+    mock_redis_client.data[key] = json.dumps(
+        {"job_id": job_id, "function": "my_func", "enqueue_time": int(time.time() * 1000)}
+    )
 
     status = await service.get_job_status(job_id)
 
-    assert status["status"] == "in_progress"
-    # duration should be approx 10s
-    assert 9.0 < status["duration_seconds"] < 11.0
+    assert status["status"] == "queued"
+    assert "enqueued_at" in status
 
 
 @pytest.mark.asyncio
 async def test_get_job_status_not_found(service):
     status = await service.get_job_status("non-existent")
     assert status["status"] == "not_found"
+
+
+@pytest.mark.asyncio
+async def test_get_job_status_malformed_blob(service, mock_redis_client):
+    """K5: an unparseable blob degrades to status=unknown with raw excerpt."""
+    mock_redis_client.data["arq:job:bad"] = b"\x80\x04not-json"
+
+    status = await service.get_job_status("bad")
+
+    assert status["status"] == "unknown"
+    assert "raw" in status
 
 
 @pytest.mark.asyncio

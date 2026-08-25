@@ -147,13 +147,19 @@ def __getattr__(name: str) -> Any:
 
 
 async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
-    """Get database session with RLS context and proper cleanup.
+    """Get a database session with proper cleanup.
 
-    Yields a database session with RLS context automatically set for the current tenant.
+    T6 FIX (docstring honesty): this dependency does NOT itself set RLS
+    context variables. Tenant/user RLS vars are applied by TenantMiddleware
+    and by the restore_rls_context pool-checkout listener using the tenant
+    ContextVar; ``app.current_user_id`` is currently never populated, so
+    user-scoped RLS policies are inert. Do not rely on this dependency for
+    per-user row filtering - use application-layer filters.
+
     Ensures proper rollback on exceptions and session cleanup to prevent connection pool exhaustion.
 
     Yields:
-        AsyncSession: Database session with RLS context set
+        AsyncSession: Database session
 
     Example:
         >>> async def get_user(db: AsyncSession = Depends(async_get_db)):
@@ -182,13 +188,16 @@ async def async_get_db() -> AsyncGenerator[AsyncSession, None]:
 
 @asynccontextmanager
 async def get_db_context() -> AsyncGenerator[AsyncSession, None]:
-    """Get database session with RLS context for manual context manager usage.
+    """Get a database session for manual context manager usage.
+
+    T6 FIX (docstring honesty): like :func:`async_get_db`, this does NOT set
+    RLS context itself; see that function's docstring.
 
     Use this when you need to use `async with` syntax outside of FastAPI dependency injection.
     For FastAPI route handlers, use async_get_db with Depends() instead.
 
     Yields:
-        AsyncSession: Database session with RLS context set
+        AsyncSession: Database session
 
     Example:
         >>> async with get_db_context() as db:

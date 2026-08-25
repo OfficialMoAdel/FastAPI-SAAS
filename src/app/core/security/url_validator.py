@@ -80,20 +80,24 @@ def is_ip_blocked(ip: str) -> bool:
         return True
 
 
-async def validate_webhook_url(url: str) -> str:
+async def validate_webhook_url(url: str, allow_internal: bool = False) -> str | None:
     """Validate a URL is safe for outbound webhook requests and return its safe resolved IP address.
 
     Performs the following checks:
-    1. URL must use HTTPS scheme
-    2. Hostname must not be a blocked hostname
-    3. Resolved IP must not be in blocked ranges
+    1. URL must use HTTPS scheme (ALWAYS enforced, even when ``allow_internal`` is True)
+    2. Hostname must not be a blocked hostname (skipped when ``allow_internal`` is True)
+    3. Resolved IP must not be in blocked ranges (skipped when ``allow_internal`` is True)
 
     Args:
         url: The URL to validate
+        allow_internal: When True, skip private-IP/hostname checks for internal
+            webhook delivery (e.g., self-hosted consumers). The HTTPS scheme
+            check is never skipped.
 
     Returns
     -------
-        str: The safe resolved IP address to use for connection
+        str | None: The safe resolved IP address to use for connection,
+        or None when internal URLs are allowed and no pinning was performed.
 
     Raises
     ------
@@ -101,13 +105,23 @@ async def validate_webhook_url(url: str) -> str:
     """
     parsed = urlparse(url)
 
-    # Scheme validation
+    # Scheme validation — always enforced regardless of allow_internal,
+    # so the internal-URLs kill switch can never disable it entirely.
     if parsed.scheme.lower() != "https":
         raise SSRFProtectionError(f"URL must use HTTPS scheme, got: {parsed.scheme}")
 
     hostname = parsed.hostname
     if not hostname:
         raise SSRFProtectionError("URL must have a valid hostname")
+
+    # When explicitly allowed, skip only the private-network checks.
+    if allow_internal:
+        logger.debug(
+            "ssrf_internal_allowed",
+            url=url,
+            hostname=hostname,
+        )
+        return None
 
     # Check blocked hostnames
     hostname_lower = hostname.lower()

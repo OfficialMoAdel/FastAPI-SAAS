@@ -18,12 +18,12 @@ Performance Optimization (R2-HYBRID MED-1):
 import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
-from typing import cast
+from typing import Any, cast
 
 from cachetools import TTLCache
-from fastapi import Request, Response, status
+from fastapi import Request, status
 from sqlalchemy import select
-from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
+from starlette.middleware.base import BaseHTTPMiddleware
 
 from src.app.core.config import settings
 from src.app.core.db.database import local_session
@@ -40,6 +40,57 @@ _L1_TENANT_CACHE: TTLCache[str, dict | None] = TTLCache(maxsize=1000, ttl=60.0)
 
 # Cache stampede protection - track lock waiters to prevent memory leaks
 _TENANT_LOCKS: dict[str, dict] = {}
+
+# T9 FIX: cross-worker L1 invalidation channel. Suspending/deleting a tenant
+# publishes here so every web process drops its in-process TTLCache entry
+# immediately instead of serving stale is_active=True for up to ttl seconds.
+_L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
+_l1_invalidation_task: asyncio.Task | None = None
+
+
+def invalidate_tenant_l1(slug: str | None = None) -> None:
+    """Drop one (or all) entries from this process's L1 tenant cache."""
+    if slug is None:
+        _L1_TENANT_CACHE.clear()
+    else:
+        _L1_TENANT_CACHE.pop(slug, None)
+
+
+async def _publish_tenant_l1_invalidation(slug: str | None) -> None:
+    """Publish an L1 invalidation so other workers drop their cached entry."""
+    if redis_client is None:
+        return
+    try:
+        await redis_client.publish(_L1_INVALIDATION_CHANNEL, slug or "*")
+    except Exception as e:  # noqa: BLE001 - invalidation must never break requests
+        logger.warning("Failed to publish tenant L1 invalidation: %s", e)
+
+
+def _start_l1_invalidation_listener() -> None:
+    """Start (once per event loop) a background subscriber applying invalidations."""
+    global _l1_invalidation_task
+    if redis_client is None:
+        return
+    if _l1_invalidation_task is not None and not _l1_invalidation_task.done():
+        return
+
+    async def _listen() -> None:
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(_L1_INVALIDATION_CHANNEL)
+            async for msg in pubsub.listen():
+                if not isinstance(msg, dict) or msg.get("type") != "message":
+                    continue
+                slug = msg.get("data")
+                if isinstance(slug, bytes):
+                    slug = slug.decode("utf-8", errors="ignore")
+                invalidate_tenant_l1(None if slug == "*" else slug)
+        except asyncio.CancelledError:
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Tenant L1 invalidation listener exited: %s", e)
+
+    _l1_invalidation_task = asyncio.create_task(_listen())
 
 
 @asynccontextmanager
@@ -87,18 +138,32 @@ def is_path_exempt(path: str) -> bool:
 
 
 class TenantMiddleware(BaseHTTPMiddleware):
-    """Middleware to validate X-Tenant-ID header and set tenant context."""
+    """Middleware to validate X-Tenant-ID header and set tenant context.
 
-    async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
-        """Process the request and validate tenant header."""
+    P8: implements the NATIVE ASGI protocol (__call__ with scope/receive/send)
+    instead of Starlette's BaseHTTPMiddleware dispatch bridge — eliminating
+    the anyio task-group and memory-stream hop that copies every response
+    byte through an extra queue. Subclassing is retained only so isinstance
+    checks and test mocks keep working; BaseHTTPMiddleware.__call__ is fully
+    overridden.
+    """
+
+    async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        request = Request(scope, receive=receive)
         path = request.url.path
 
+        # --- Exempt paths / OPTIONS: no tenant required -------------------
         if is_path_exempt(path) or request.method == "OPTIONS":
             set_current_tenant(NO_TENANT)
             try:
-                return await call_next(request)
+                await self.app(scope, receive, send)
             finally:
                 clear_tenant_context()
+            return
 
         # PERFORMANCE: Check for missing header BEFORE acquiring a DB connection.
         tenant_slug = request.headers.get(TENANT_HEADER)
@@ -106,49 +171,51 @@ class TenantMiddleware(BaseHTTPMiddleware):
             logger.warning("Tenant resolution failed: missing_header | path=%s", path)
             from src.app.core.errors import ErrorCode, create_error_response
 
-            return create_error_response(
+            response = create_error_response(
                 code=ErrorCode.VALIDATION_ERROR,
                 message=f"Missing required header: {TENANT_HEADER}",
                 status_code=status.HTTP_400_BAD_REQUEST,
             )
+            await response(scope, receive, send)
+            return
 
         # Normalize slug to ensure case-insensitive lookup
         tenant_slug = tenant_slug.strip().lower()
 
-        # R1-UNIFIED: Unified Optimized Path
-        # We do NOT hold a connection for the entire request.
-        # Connections acquired during request processing will have RLS re-applied
-        # via the 'after_begin' event listener in src/app/core/db/database.py
+        # R1-UNIFIED: connections are NOT held for the whole request; RLS
+        # variables are re-applied by the pool checkout listener.
+        _start_l1_invalidation_listener()
         tenant = await self._get_tenant_by_slug(tenant_slug)
 
         if tenant is None:
             logger.warning("Tenant resolution failed: invalid_slug | slug=%s", tenant_slug)
             from src.app.core.errors import ErrorCode, create_error_response
 
-            return create_error_response(
+            response = create_error_response(
                 code=ErrorCode.FORBIDDEN,
                 message="Access denied",
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            await response(scope, receive, send)
+            return
 
-        if not tenant.is_active:
+        if not getattr(tenant, "is_active", True):
             logger.warning("Tenant resolution failed: inactive_tenant | slug=%s", tenant_slug)
             from src.app.core.errors import ErrorCode, create_error_response
 
-            return create_error_response(
+            response = create_error_response(
                 code=ErrorCode.FORBIDDEN,
                 message="Tenant inactive. Contact support.",
                 status_code=status.HTTP_403_FORBIDDEN,
             )
+            await response(scope, receive, send)
+            return
 
-
-        # Set application-level tenant context (stored in ContextVar)
-        # Downstream DB sessions will automatically use this for RLS variables.
+        # Set application-level tenant context (ContextVar); downstream DB
+        # sessions automatically pick this up for RLS variables.
         set_current_tenant(tenant)
-
         try:
-            response = await call_next(request)
-            return response
+            await self.app(scope, receive, send)
         finally:
             # Always clear context to prevent leakage between requests
             try:
@@ -159,6 +226,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching and DB fallback."""
         import re
+
         if len(slug) > 64 or not re.match(r"^[a-z0-9\-]+$", slug):
             return None
 

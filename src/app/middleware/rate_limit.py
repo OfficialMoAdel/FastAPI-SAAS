@@ -98,6 +98,7 @@ class RateLimitMiddleware:
         # R5-5: Skip middleware rate limiting for refresh endpoint as it has a strict dependency-level rate limit
         # H5 FIX: normalize path (strip slash/query/case) so /api/v1/auth/refresh/?foo=1 not missed
         from urllib.parse import urlparse as _urlparse
+
         _parsed = _urlparse(str(request.url))
         _norm_path = _parsed.path.rstrip("/").lower() or "/"
         if _norm_path in ("/api/v1/auth/refresh", "/api/v1/account/refresh"):
@@ -120,8 +121,11 @@ class RateLimitMiddleware:
                 async def whitelisted_send(message: Message) -> None:
                     if message["type"] == "http.response.start":
                         headers = MutableHeaders(scope=message)
-                        headers["X-RateLimit-Limit"] = "unlimited"
-                        headers["X-RateLimit-Remaining"] = "unlimited"
+                        # R8 FIX: strict int() clients choke on "unlimited";
+                        # emit a large numeric sentinel instead. The dedicated
+                        # X-RateLimit-Whitelisted header still marks the bypass.
+                        headers["X-RateLimit-Limit"] = "999999"
+                        headers["X-RateLimit-Remaining"] = "999999"
                         headers["X-RateLimit-Whitelisted"] = "true"
                     await send(message)
 

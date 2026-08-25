@@ -26,6 +26,7 @@ from src.app.core.security.password import (
     _bcrypt_executor,
     _get_bcrypt_executor,
     get_password_hash,
+    needs_rehash,
     verify_password,
 )
 from src.app.core.security.token_blacklist_cache import (
@@ -54,6 +55,7 @@ __all__ = [
     "get_mfa_pending_token_manager",
     "get_password_hash",
     "is_token_blacklisted",
+    "needs_rehash",
     "oauth2_scheme",
     "verify_password",
     "verify_token",

@@ -68,7 +68,6 @@ class TenantAwareCRUD(
         >>> users = await crud.get_multi(db)
     """
 
-
     def inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         """Inject tenant_id from context.
 
@@ -82,6 +81,11 @@ class TenantAwareCRUD(
         received a 200. Truthiness now rejects both None and the sentinel.
         """
         tenant = get_tenant_context()
+        # B6-LEAK FIX: consume the escape hatch UNCONDITIONALLY. Previously it
+        # was only popped in the no-context branch, so when tenant context WAS
+        # present the flag stayed in kwargs and reached FastCRUD, whose column
+        # introspection rejected it (ValueError: Invalid column '_allow_unscoped').
+        allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
         if tenant:
             tenant_id = tenant.id
             if isinstance(tenant_id, str):
@@ -89,10 +93,12 @@ class TenantAwareCRUD(
                     tenant_id = uuid.UUID(tenant_id)
                 except (ValueError, TypeError) as e:
                     from src.app.core.logger import get_logger
+
                     get_logger(__name__).error("invalid_tenant_uuid_in_context", tenant_id=tenant_id, exc_info=e)
                     raise ValueError(f"Invalid tenant UUID in context: {tenant_id}") from e
             if "tenant_id" in kwargs and kwargs["tenant_id"] != tenant_id:
                 from src.app.core.logger import get_logger
+
                 get_logger(__name__).warning(
                     "tenant_id_override_blocked",
                     requested=str(kwargs["tenant_id"]),
@@ -102,12 +108,12 @@ class TenantAwareCRUD(
         else:
             from src.app.core.exceptions.http_exceptions import TenantContextError
             from src.app.core.logger import get_logger
+
             _m = getattr(self, "model", None)
             _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
 
-            # B1/T10: pop unconditionally so caller-supplied tenant_id kwargs
-            # cannot smuggle through the unscoped branch.
-            allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
+            # B1/T10: caller-supplied tenant_id kwargs cannot smuggle through
+            # the unscoped branch.
             if "tenant_id" in kwargs:
                 get_logger(__name__).warning(
                     "tenant_id_kwarg_ignored_without_context",

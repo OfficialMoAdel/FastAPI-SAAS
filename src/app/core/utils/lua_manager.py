@@ -122,32 +122,23 @@ class LuaScriptManager:
             end
             return 0
         """,
-        "session_evict_oldest": """
-            -- KEYS[1]: session order zset key
-            -- KEYS[2]: session hash key
-            -- ARGV[1]: count to evict
-            -- Returns: list of evicted session IDs
-            local evicted = {}
-            local to_evict = redis.call('ZPOPMIN', KEYS[1], tonumber(ARGV[1]))
-            for i = 1, #to_evict, 2 do
-                local session_id = to_evict[i]
-                redis.call('HDEL', KEYS[2], session_id)
-                table.insert(evicted, session_id)
-            end
-            return evicted
-        """,
         # Fixed-window rate limit: atomic INCR with window-aligned TTL
         # (migrated from utils/rate_limit.RATE_LIMIT_LUA_SCRIPT)
         "rate_limit_fixed_window": """
-            -- KEYS[1]: rate limit counter key
+            -- KEYS[1]: rate limit counter key PREFIX
             -- ARGV[1]: window period in seconds
             -- Returns: current count after increment
-            local current = redis.call('INCR', KEYS[1])
+            -- R5 FIX: the window boundary is derived from the Redis clock
+            -- (redis TIME) instead of the app clock, so app/Redis clock skew
+            -- can no longer create a window key whose TTL belongs to a
+            -- different window.
+            local period = tonumber(ARGV[1])
+            local now = redis.call('TIME')[1]
+            local window_start = now - (now % period)
+            local key = KEYS[1] .. ':' .. tostring(window_start)
+            local current = redis.call('INCR', key)
             if current == 1 then
-                local now = redis.call('TIME')[1]
-                local period = tonumber(ARGV[1])
-                local ttl = period - (now % period)
-                redis.call('EXPIRE', KEYS[1], ttl)
+                redis.call('EXPIRE', key, period - (now % period))
             end
             return current
         """,
@@ -155,15 +146,15 @@ class LuaScriptManager:
         "rate_limit_gcra": """
             -- KEYS[1]: GCRA TAT key
             -- ARGV[1]: now_ms, ARGV[2]: emission_interval_ms,
-            -- ARGV[3]: limit, ARGV[4]: period_ms
+            -- ARGV[3]: limit, ARGV[4]: burst_tolerance_ms, ARGV[5]: period_ms
             -- Returns: [is_allowed(0/1), remaining, retry_after_ms, reset_at_ms]
             local key = KEYS[1]
             local now_ms = tonumber(ARGV[1])
             local emission_interval_ms = tonumber(ARGV[2])
             local limit = tonumber(ARGV[3])
-            local period_ms = tonumber(ARGV[4])
+            local period_ms = tonumber(ARGV[5])
 
-            local burst_tolerance_ms = period_ms
+            local burst_tolerance_ms = tonumber(ARGV[4])
             local tat_ms = tonumber(redis.call('GET', key)) or now_ms
             local new_tat_ms = math.max(now_ms, tat_ms) + emission_interval_ms
             local allow_at_ms = new_tat_ms - burst_tolerance_ms
@@ -218,6 +209,11 @@ class LuaScriptManager:
             local max_batch = tonumber(ARGV[6])
 
             if redis.call('HEXISTS', hash_key, session_id) == 1 or redis.call('ZSCORE', zset_key, session_id) then
+                -- A9 FIX: re-registration of an existing session must still
+                -- refresh the key TTLs; returning early without EXPIRE let
+                -- actively-used session keys lapse.
+                redis.call('EXPIRE', zset_key, ttl)
+                redis.call('EXPIRE', hash_key, ttl)
                 return {"already_exists"}
             end
 
@@ -229,12 +225,18 @@ class LuaScriptManager:
             local evicted_data = {}
             local final_count = current_count + 1
 
-            if current_count >= max_sessions then
+            -- A9 FIX: eviction was previously capped at a single max_batch
+            -- slice per call, so an over-cap registry remained over cap after
+            -- every registration. Evict repeatedly in bounded batches until
+            -- there is room for the new session; each iteration removes at
+            -- least one entry or breaks, so the loop always terminates.
+            while current_count >= max_sessions do
                 local sessions_to_remove = current_count - max_sessions + 1
                 if sessions_to_remove > max_batch then
                     sessions_to_remove = max_batch
                 end
                 local session_ids = redis.call('ZRANGE', zset_key, 0, sessions_to_remove - 1)
+                if #session_ids == 0 then break end
                 for i, sid in ipairs(session_ids) do
                     local data = redis.call('HGET', hash_key, sid)
                     if data then
@@ -243,7 +245,8 @@ class LuaScriptManager:
                     redis.call('HDEL', hash_key, sid)
                     redis.call('ZREM', zset_key, sid)
                 end
-                final_count = final_count - #session_ids
+                current_count = current_count - #session_ids
+                final_count = current_count + 1
             end
 
             redis.call('ZADD', zset_key, timestamp, session_id)

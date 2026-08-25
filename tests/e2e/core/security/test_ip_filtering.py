@@ -259,9 +259,14 @@ class TestProxyHeadersE2E:
     """E2E tests for proxy header handling."""
 
     async def test_x_forwarded_for_respected(self, async_client: AsyncClient, override_settings):
-        """Test that X-Forwarded-For header is used for IP detection."""
+        """Test that X-Forwarded-For header is used for IP detection.
+
+        S-3: the test client connects over loopback (a trusted proxy), so the
+        XFF chain is honored — but the client IP is the RIGHTMOST UNTRUSTED
+        hop ("192.168.1.1"), not the attacker-controlled leftmost entry.
+        """
         with override_settings(IP_BLACKLIST_ENABLED=True):
-            await ip_filter_service.add_to_blacklist(ip_address="10.0.0.50", reason="Proxy header test")
+            await ip_filter_service.add_to_blacklist(ip_address="192.168.1.1", reason="Proxy header test")
 
             try:
                 # Execute: Request with X-Forwarded-For showing blacklisted IP
@@ -269,10 +274,10 @@ class TestProxyHeadersE2E:
                     "/openapi.json", headers={"X-Forwarded-For": "10.0.0.50, 192.168.1.1", "X-Real-IP": "192.168.1.2"}
                 )
 
-                # Verify: First IP in X-Forwarded-For is checked
+                # Verify: Rightmost untrusted XFF entry is checked
                 assert response.status_code == 403
             finally:
-                await ip_filter_service.remove_from_blacklist("10.0.0.50")
+                await ip_filter_service.remove_from_blacklist("192.168.1.1")
 
     async def test_x_real_ip_fallback(self, async_client: AsyncClient, override_settings):
         """Test that X-Real-IP is used when X-Forwarded-For is absent."""

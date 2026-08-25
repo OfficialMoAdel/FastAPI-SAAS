@@ -6,7 +6,7 @@ import pytest
 
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.tiers import service as tiers_service
-from src.app.modules.tiers.service import TierService, get_tier_service, warm_tiers
+from src.app.modules.tiers.service import TierService, get_tier_service
 
 
 def _make_service():
@@ -131,59 +131,8 @@ async def test_get_tier_service_factory():
     assert isinstance(result, TierService)
 
 
-async def test_warm_tiers_with_redis():
-    session = MagicMock()
-    redis = AsyncMock()
-    with (
-        patch.object(tiers_service, "crud_tiers") as crud,
-        patch("src.app.core.cache.redis.redis_client", redis),
-        patch("src.app.core.json_utils.json_dumps", return_value="{}"),
-    ):
-        crud.get_multi = AsyncMock(return_value={"data": [{"name": "pro"}, {"name": "free"}]})
-        count = await warm_tiers(session)
-    assert count == 2
-    assert redis.setex.await_count == 2
-
-
-async def test_warm_tiers_no_redis():
-    session = MagicMock()
-    with (
-        patch.object(tiers_service, "crud_tiers") as crud,
-        patch("src.app.core.cache.redis.redis_client", None),
-    ):
-        crud.get_multi = AsyncMock(return_value={"data": [{"name": "pro"}]})
-        count = await warm_tiers(session)
-    assert count == 0
-
-
-async def test_warm_tiers_exception_returns_zero():
-    session = MagicMock()
-    redis = AsyncMock()
-    redis.setex = AsyncMock(side_effect=RuntimeError("boom"))
-    with (
-        patch.object(tiers_service, "crud_tiers") as crud,
-    ):
-        crud.get_multi = AsyncMock(return_value={"data": [{"name": "pro"}]})
-        with (
-            patch("src.app.core.cache.redis.redis_client", redis),
-            patch("src.app.core.json_utils.json_dumps", return_value="{}"),
-        ):
-            count = await warm_tiers(session)
-    assert count == 0
-
-
-async def test_warm_tiers_non_dict_data():
-    session = MagicMock()
-    redis = AsyncMock()
-    with (
-        patch.object(tiers_service, "crud_tiers") as crud,
-        patch("src.app.core.cache.redis.redis_client", redis),
-        patch("src.app.core.json_utils.json_dumps", return_value="{}"),
-    ):
-        crud.get_multi = AsyncMock(return_value="not-a-dict")
-        count = await warm_tiers(session)
-    assert count == 0
-    redis.setex.assert_not_awaited()
+# B12: the warm_tiers cache warmer was removed - it wrote `tier:{name}` keys
+# that no code path ever read and nothing invalidated them on mutation.
 
 
 async def test_tier_service_factory_returns_instance():

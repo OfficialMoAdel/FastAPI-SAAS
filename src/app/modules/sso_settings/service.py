@@ -10,6 +10,10 @@ from src.app.core.logger import get_logger
 from src.app.core.utils.cache import client as redis_client
 
 logger = get_logger(__name__)
+
+# sso-cache FIX: single source of truth for the provider-settings cache TTL,
+# used by both the startup warmer and the read write-through path.
+_SSO_SETTINGS_CACHE_TTL = 300
 from src.app.core.exceptions.http_exceptions import (
     DuplicateValueException,
     NotFoundException,
@@ -76,10 +80,15 @@ class SSOSettingsService:
         return SSOSettingsRead.model_validate(db_obj)
 
     async def get_settings_by_provider(self, db: AsyncSession, provider: str) -> SSOSettingsRead:
-        """Get public settings for a provider (no secrets)."""
-        # Check Redis cache first (populated by warm_sso_settings on startup)
+        """Get public settings for a provider (no secrets).
+
+        sso-cache FIX: a cache miss previously fell through to the DB and
+        returned without repopulating, so reads depended entirely on the
+        startup warmer's 300s entries. Reads now write through with the same
+        TTL, keeping the cache warm and bounded after invalidations.
+        """
+        cache_key = f"sso_settings:{provider}"
         if redis_client is not None:
-            cache_key = f"sso_settings:{provider}"
             try:
                 cached = await redis_client.get(cache_key)
                 if cached is not None:
@@ -93,7 +102,40 @@ class SSOSettingsService:
         settings = await crud_sso_settings.get(db=db, provider=provider)
         if not settings:
             raise NotFoundException(f"Settings for provider '{provider}' not found")
-        return SSOSettingsRead.model_validate(settings)
+
+        result = SSOSettingsRead.model_validate(settings)
+
+        # Write-through so subsequent reads hit the cache (same shape/TTL as warmer).
+        if redis_client is not None:
+            try:
+                from src.app.core.json_utils import json_dumps
+
+                await redis_client.setex(
+                    cache_key,
+                    _SSO_SETTINGS_CACHE_TTL,
+                    json_dumps(
+                        {
+                            "id": str(settings.id) if hasattr(settings, "id") else settings["id"],
+                            "provider": (settings.provider if hasattr(settings, "provider") else settings["provider"]),
+                            "is_enabled": bool(
+                                settings.is_enabled if hasattr(settings, "is_enabled") else settings["is_enabled"]
+                            ),
+                            "additional_config": (
+                                (
+                                    settings.additional_config
+                                    if hasattr(settings, "additional_config")
+                                    else settings.get("additional_config")
+                                )
+                                or {}
+                            ),
+                        },
+                        as_str=True,
+                    ),
+                )
+            except Exception as e:
+                logger.warning("SSO settings cache write-through failed", provider=provider, error=str(e))
+
+        return result
 
     async def get_decrypted_settings(self, db: AsyncSession, provider: str) -> dict[str, Any]:
         """Get settings with decrypted secrets (Internal Use Only).
@@ -266,7 +308,7 @@ async def warm_sso_settings(session: AsyncSession) -> int:
                     "is_enabled": setting.is_enabled,
                     "additional_config": setting.additional_config or {},
                 }
-                await redis_client.setex(cache_key, 300, json_dumps(setting_data, as_str=True))
+                await redis_client.setex(cache_key, _SSO_SETTINGS_CACHE_TTL, json_dumps(setting_data, as_str=True))
                 cached_count += 1
 
             logger.info("Warmed cache for SSO settings", cached_count=cached_count)

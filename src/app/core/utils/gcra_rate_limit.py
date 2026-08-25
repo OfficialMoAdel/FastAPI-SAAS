@@ -35,7 +35,6 @@ class GCRARateLimitResult(NamedTuple):
     reset_at: float  # Unix timestamp when limit resets
 
 
-
 class GCRARateLimiter:
     """GCRA-based rate limiter using Redis.
 
@@ -69,6 +68,11 @@ class GCRARateLimiter:
 
         from src.app.core.utils.lua_manager import get_lua_manager
 
+        # R2 FIX: burst tolerance must derive from the SAME (rounded) emission
+        # interval the script uses, not from raw period_ms - otherwise capacity
+        # drifts by limit * rounding_error in either direction.
+        burst_tolerance_ms = int(emission_interval_ms) * int(limit)
+
         result = await get_lua_manager().execute(
             self._redis,
             "rate_limit_gcra",
@@ -77,6 +81,7 @@ class GCRARateLimiter:
                 str(float(now_ms)),
                 str(float(emission_interval_ms)),
                 str(int(limit)),
+                str(float(burst_tolerance_ms)),
                 str(float(period_ms)),
             ],
         )
@@ -102,10 +107,15 @@ class GCRARateLimiter:
             GCRARateLimitResult with is_limited, remaining, retry_after, reset_at
         """
         if not self._redis:
-            # No Redis = no rate limiting
+            # R9 FIX: honor the operator-configured failure mode instead of an
+            # unconditional fail-open that diverged from fixed-window's
+            # fail-closed default.
+            from src.app.core.config import settings
+
+            fail_open = getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
             return GCRARateLimitResult(
-                is_limited=False,
-                remaining=limit,
+                is_limited=not fail_open,
+                remaining=limit if fail_open else 0,
                 retry_after=0.0,
                 reset_at=0.0,
             )
@@ -149,7 +159,9 @@ class GCRARateLimiter:
             # Use configured fail-open behavior
             from src.app.core.config import settings
 
-            fail_open = getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
+            # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; reading
+            # it off the root settings object silently ignores operators.
+            fail_open = getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
             is_limited = not fail_open
 
             return GCRARateLimitResult(

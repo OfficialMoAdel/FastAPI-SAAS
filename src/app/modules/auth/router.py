@@ -118,7 +118,12 @@ async def refresh_access_token(
     return await auth_service.refresh_access_token(refresh_token, response, db, request)
 
 
-@router.post("/logout", response_model=LogoutResponse, responses={401: {"description": "Unauthorized"}})
+@router.post(
+    "/logout",
+    response_model=LogoutResponse,
+    responses={401: {"description": "Unauthorized"}},
+    dependencies=[Depends(check_auth_rate_limit)],
+)
 async def logout(
     response: Response,
     request: Request,

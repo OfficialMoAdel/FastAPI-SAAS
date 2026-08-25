@@ -250,8 +250,7 @@ class EventBus:
             if not handlers:
                 if not self._registration_complete:
                     _pkg.logger.error(
-                        "Event published before handler registration completed; "
-                        "event may be silently dropped",
+                        "Event published before handler registration completed; event may be silently dropped",
                         event_name=event_name,
                     )
                 _pkg.logger.debug("Event published no handlers", event_name=event_name)
@@ -415,8 +414,11 @@ class EventBus:
             handler: Callable[..., Coroutine[Any, Any, None]],
         ) -> tuple[bool, Callable[..., Coroutine[Any, Any, None]], Exception | None]:
             """Enqueue a single handler, returning (success, handler, error)."""
-            # Check circuit breaker before attempting Redis enqueue
-            if not _pkg.arq_circuit.is_closed:
+            # K9 FIX: gate on single-flight semantics, not is_closed. During
+            # virtual HALF_OPEN is_closed was True for everyone, letting all
+            # concurrent publishes flood the recovering queue; now exactly one
+            # probe enqueue passes and everyone else uses the sync fallback.
+            if not await _pkg.arq_circuit.allow_single_flight():
                 _pkg.logger.warning(
                     "ARQ circuit breaker open - falling back to sync execution",
                     event_name=event_name,
@@ -596,17 +598,15 @@ class EventBus:
         if not self._arq_queue:
             raise RuntimeError("ARQ queue not configured")
 
-        # Check circuit breaker once for the batch
-        if not _pkg.arq_circuit.is_closed:
+        # Check circuit breaker once for the batch (K9 FIX: single-flight gate)
+        if not await _pkg.arq_circuit.allow_single_flight():
             _pkg.logger.warning("ARQ circuit breaker open during batch enqueue", event_name=event_name)
             # Fallback to sync execution for all handlers
             await self._publish_sync(event_name, data, handlers, priority=priority)
             return
 
         queue_name = "default" if priority == EventPriority.NORMAL else "low_priority"
-        queue_prefix = (
-            _pkg.default_queue_name if queue_name == "default" else f"{_pkg.default_queue_name}_{queue_name}"
-        )
+        queue_prefix = _pkg.default_queue_name if queue_name == "default" else f"{_pkg.default_queue_name}_{queue_name}"
 
         try:
             # Prepare all jobs
@@ -839,19 +839,28 @@ class EventBus:
                         meta = data.get("_event_meta") or {}
                         tenant = meta.get("tenant") or {}
                         tenant_id = tenant.get("id")
+                    # W9 FIX: internal publish metadata (sequence, event ids,
+                    # tenant record info) must never be forwarded as part of
+                    # the externally signed webhook payload.
+                    external_payload = {k: v for k, v in data.items() if k != "_event_meta"}
                     if tenant_id:
-                        await handle_webhook_trigger_event({
-                            "tenant_id": str(tenant_id),
-                            "event_type": event_type,
-                            "payload": data
-                        })
+                        await handle_webhook_trigger_event(
+                            {"tenant_id": str(tenant_id), "event_type": event_type, "payload": external_payload}
+                        )
+
                 return adapter
 
             business_events = [
-                "user.created", "user.deleted", "user.updated",
-                "api_key.created", "api_key.deleted",
-                "sso.login", "auth.mfa.enabled", "auth.mfa.disabled",
-                "auth.login", "auth.logout"
+                "user.created",
+                "user.deleted",
+                "user.updated",
+                "api_key.created",
+                "api_key.deleted",
+                "sso.login",
+                "auth.mfa.enabled",
+                "auth.mfa.disabled",
+                "auth.login",
+                "auth.logout",
             ]
             for evt in business_events:
                 self.register_handler(evt, make_webhook_adapter(evt))

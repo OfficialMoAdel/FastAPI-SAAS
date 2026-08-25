@@ -18,6 +18,8 @@ from src.app.core.security import (
     blacklist_token,
     blacklist_tokens,
     get_mfa_pending_token_manager,
+    get_password_hash,
+    needs_rehash,
     verify_password,
     verify_token,
 )
@@ -49,7 +51,6 @@ class AuthService:
     # Precomputed dummy bcrypt hash for timing attack prevention.
     # Used when user doesn't exist to ensure constant-time authentication.
     _DUMMY_BCRYPT_HASH = "$2b$12$DOUePotH1f1kDX4WZ21DzuRgFk7C8xFhasEURTDHCx1KnvQstFIvi"  # noqa: S105
-
 
     async def authenticate_user(self, username_or_email: str, password: str, db: AsyncSession) -> dict[str, Any] | None:
         """Authenticate user by checking database and password.
@@ -87,6 +88,15 @@ class AuthService:
         # Only return user data if both user exists AND password is valid
         if not db_user or not password_valid:
             return None
+
+        # A7 FIX: transparently upgrade legacy-cost hashes on successful login.
+        # If BCRYPT_ROUNDS was raised since the hash was created, re-hash now
+        # so the stored cost converges to the configured value over time.
+        if needs_rehash(hash_to_verify):
+            try:
+                await user_service.update_password_hash(db_user["id"], await get_password_hash(password))
+            except Exception as e:  # noqa: BLE001 - rehash is best-effort; never block login
+                logger.warning("rehash_on_login_failed", user_id=db_user.get("id"), error=str(e))
 
         return cast(dict[str, Any], db_user)
 
@@ -358,9 +368,7 @@ class AuthService:
                 raise UnauthorizedException("Token refresh already in progress.")
         try:
             # A2/A3: rotate with carried session claims instead of minting fresh ones
-            new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(
-                token_data, old_refresh_payload
-            )
+            new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(token_data, old_refresh_payload)
 
             # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
             # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
@@ -425,11 +433,15 @@ class AuthService:
         Raises
         ------
         UnauthorizedException
-            If refresh token is missing or invalid
+            If neither access nor refresh token is provided, or a token is invalid
         """
         try:
-            if not refresh_token:
-                raise UnauthorizedException("Refresh token not found.")
+            # A8 FIX: previously a missing refresh cookie raised 401, so
+            # access-token-only clients (no cookies) could never log out.
+            # Require at least one token; blacklist whatever is provided —
+            # blacklist_tokens() already skips None entries.
+            if not access_token and not refresh_token:
+                raise UnauthorizedException("No token provided.")
 
             # Try to get user info from token before blacklisting to log who logged out
             user_data = None
@@ -507,7 +519,6 @@ class AuthService:
         except JWTError as e:
             logger.error("logout_jwt_error", error=str(e))
             raise UnauthorizedException("Invalid token.")
-
 
     # ------------------------------------------------------------------
     # Password lifecycle — delegated to PasswordLifecycleService

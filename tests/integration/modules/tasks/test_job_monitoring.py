@@ -26,17 +26,24 @@ async def test_job_metrics_endpoint(async_client: AsyncClient, superuser_token_h
 
 @pytest.mark.asyncio
 async def test_job_status_endpoint(async_client: AsyncClient, superuser_token_headers, mock_redis):
+    import json
+    import time
+
     monitor = get_job_monitor()
     await monitor.record_job_start("job2", "test_func_2")
 
-    # We should manually set the job data in Redis to simulate ARQ
-    await mock_redis.hset("arq:job:job2", mapping={"status": "in_progress", "start_time": "1000.0"})
+    # K5: the status endpoint reads the arq job definition STRING blob
+    # (JSON with enqueue_time in unix ms), not a hash.
+    await mock_redis.set(
+        "arq:job:job2",
+        json.dumps({"job_id": "job2", "function": "test_func_2", "enqueue_time": int(time.time() * 1000)}),
+    )
 
-    # Try again
     response = await async_client.get("/api/v1/admin/jobs/status/job2", headers=superuser_token_headers)
     assert response.status_code == 200
     data = response.json()
-    assert data["status"] == "in_progress"
+    assert data["status"] == "queued"
+    assert data["job_id"] == "job2"
 
 
 @pytest.mark.asyncio

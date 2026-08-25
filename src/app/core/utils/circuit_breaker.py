@@ -196,6 +196,24 @@ class CircuitBreaker:
         self._probe_in_progress = True
         return True
 
+    async def allow_single_flight(self) -> bool:
+        """Gate for enqueue-style callers during HALF_OPEN recovery.
+
+        K9 FIX: ``is_closed`` returns True during virtual HALF_OPEN, so every
+        concurrent caller passed the gate simultaneously and flooded the
+        recovering dependency with enqueues. This method instead allows all
+        calls when CLOSED, rejects all when OPEN, and admits exactly ONE
+        caller in HALF_OPEN (it claims the probe slot; ``record_success`` /
+        ``record_failure`` release it).
+        """
+        async with self._get_lock():
+            state = self.state
+            if state == CircuitState.CLOSED:
+                return True
+            if state == CircuitState.OPEN:
+                return False
+            return self.try_acquire_probe()
+
     def release_probe(self) -> None:
         """Release probe slot (idempotent)."""
         self._probe_in_progress = False

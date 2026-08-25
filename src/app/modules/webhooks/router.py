@@ -34,7 +34,6 @@ router = APIRouter(prefix="/webhooks", tags=["webhooks"])
 _WEBHOOK_TEST_RATE_LIMIT_PATH = "/api/v1/webhooks/{endpoint_id}/test"
 
 
-
 @router.get(
     "",
     response_model=WebhookEndpointList,
@@ -95,7 +94,10 @@ async def create_webhook_endpoint(
         tenant_id=current_tenant.id,
         url=str(request.url),
         event_type=request.event_type,
-        signing_secret=request.secret,
+        secret=request.secret,
+        # W7 FIX: the router previously mapped request.secret onto this
+        # parameter, silently ignoring the dedicated signing_secret field.
+        signing_secret=request.signing_secret,
     )
 
     # Map the transient plaintext secrets onto the specific creation response model
@@ -234,6 +236,7 @@ async def delete_webhook_endpoint(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Webhook endpoint not found")
 
     await service.delete_endpoint(endpoint)
+
 
 @router.get(
     "/deliveries/{delivery_id}",

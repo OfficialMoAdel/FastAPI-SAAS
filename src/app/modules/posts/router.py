@@ -44,6 +44,9 @@ async def write_post(
     resource_id_name="username",
     expiration=60,
     user_scoped=True,
+    # P4: register every cached list page under this pattern so PATCH/DELETE
+    # can invalidate via the O(1) pattern-index instead of SCAN.
+    invalidation_patterns=["user_posts:{username}:*"],
 )
 async def read_posts(
     request: Request,

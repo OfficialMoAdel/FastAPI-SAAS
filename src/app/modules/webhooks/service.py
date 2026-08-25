@@ -37,14 +37,25 @@ logger = get_logger(__name__)
 import fnmatch as _fnmatch
 import re as _re
 
+# W10 FIX: the cache is keyed by tenant-supplied patterns, so it must be
+# bounded — an unbounded dict lets tenants grow worker memory indefinitely
+# with unique patterns. Simple FIFO eviction at a generous cap.
 _FN_REGEX_CACHE: dict[str, _re.Pattern] = {}
+_FN_REGEX_CACHE_MAX = 1024
+
 
 def _glob_match(text: str, pattern: str) -> bool:
     pat = _FN_REGEX_CACHE.get(pattern)
     if pat is None:
         pat = _re.compile(_fnmatch.translate(pattern))
+        if len(_FN_REGEX_CACHE) >= _FN_REGEX_CACHE_MAX:
+            # Evict oldest entries (insertion order) down to half capacity
+            # to amortize the eviction cost.
+            for old_key in list(_FN_REGEX_CACHE.keys())[: _FN_REGEX_CACHE_MAX // 2]:
+                del _FN_REGEX_CACHE[old_key]
         _FN_REGEX_CACHE[pattern] = pat
     return bool(pat.match(text))
+
 
 # Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
 RETRY_DELAY_1_MINUTE = 60
@@ -52,13 +63,15 @@ RETRY_DELAY_5_MINUTES = 300
 RETRY_DELAY_15_MINUTES = 900
 RETRY_DELAY_30_MINUTES = 1800
 RETRY_DELAY_1_HOUR = 3600
-WEBHOOK_RETRY_DELAYS = [
-    RETRY_DELAY_1_MINUTE,
-    RETRY_DELAY_5_MINUTES,
-    RETRY_DELAY_15_MINUTES,
-    RETRY_DELAY_30_MINUTES,
-    RETRY_DELAY_1_HOUR,
-]
+
+# INFO-W-config FIX: schedule now comes from settings.webhooks.WEBHOOK_RETRY_DELAYS
+# (previously this module-level list was hardcoded and the config field was dead).
+from src.app.core.config import settings as _settings  # noqa: E402
+
+WEBHOOK_RETRY_DELAYS: list[int] = list(
+    getattr(_settings.webhooks, "WEBHOOK_RETRY_DELAYS", None)
+    or [RETRY_DELAY_1_MINUTE, RETRY_DELAY_5_MINUTES, RETRY_DELAY_15_MINUTES, RETRY_DELAY_30_MINUTES, RETRY_DELAY_1_HOUR]
+)
 
 
 class WebhookService:
@@ -72,6 +85,7 @@ class WebhookService:
         tenant_id: UUID,
         url: str,
         event_type: str,
+        secret: str | None = None,
         signing_secret: str | None = None,
         is_active: bool = True,
     ) -> WebhookEndpoint:
@@ -81,10 +95,12 @@ class WebhookService:
         # SECURITY FIX: Validate SSRF at create time to prevent persisting bad URLs
         await validate_url_ssrf(url)
 
-        # Generate a random secret for the endpoint (deprecated/auto-generated)
+        # W7 FIX: honor a caller-provided secret; previously this method had
+        # no `secret` parameter, so the router's request.secret was silently
+        # discarded and a random one was always generated.
         import secrets as secrets_module
 
-        actual_secret = secrets_module.token_urlsafe(32)
+        actual_secret = secret if secret else secrets_module.token_urlsafe(32)
         encrypted_secret = encrypt_data(actual_secret)
 
         # Generate signing_secret if not provided (64 chars = 256 bits)
@@ -154,9 +170,7 @@ class WebhookService:
         result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
-    async def update_endpoint(
-        self, endpoint: WebhookEndpoint, update_data: dict[str, Any]
-    ) -> WebhookEndpoint:
+    async def update_endpoint(self, endpoint: WebhookEndpoint, update_data: dict[str, Any]) -> WebhookEndpoint:
         """Update a webhook endpoint."""
         from src.app.core.security.encryption import encrypt_data
         from src.app.modules.webhooks.utils import validate_url_ssrf
@@ -543,18 +557,35 @@ class WebhookService:
             import time
 
             current_time = time.time()
+            # Clamp at 0: a breaker opened without a recorded _last_failure_time
+            # (or clock adjustments) otherwise yields a hugely negative window,
+            # scheduling next_retry_at in the past.
+            recovery_time = max(
+                0.0, webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time)
+            )
             logger.warning(
                 "Circuit breaker open for webhooks, skipping delivery %s | recovery_in=%.1fs",
                 delivery_id,
-                webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time),
+                recovery_time,
             )
-            # Mark for retry later when circuit recovers
-            delivery.attempt_count += 1
-            recovery_time = webhook_circuit.recovery_timeout - (current_time - webhook_circuit._last_failure_time)
+            # W4 FIX: a circuit-open skip is NOT a delivery attempt. Previously
+            # attempt_count was incremented here, so ~6 consecutive open ticks
+            # exhausted WEBHOOK_RETRY_DELAYS and pushed the delivery to
+            # permanent FAILED with zero HTTP attempts ever made. Now we only
+            # defer until the breaker recovers, keeping the retry budget intact.
+            recovery_delay = max(1, int(recovery_time))
+            delivery.next_retry_at = datetime.now(UTC) + timedelta(seconds=recovery_delay)
             delivery.response_body = f"Circuit breaker open. Skipped. Recovery in {recovery_time:.1f}s"
-            await self._handle_delivery_failure(delivery)
             await self.db.commit()
             await self.db.refresh(delivery)
+            try:
+                from src.app.core.utils.background_task import create_safe_task
+
+                create_safe_task(
+                    self._enqueue_delivery(delivery_id, defer_by=recovery_delay, tenant_id=delivery.tenant_id)
+                )
+            except RuntimeError:
+                logger.warning("webhook_circuit_skip_reenqueue_failed", delivery_id=str(delivery_id))
             if _lock_held and _redis is not None:
                 try:
                     await _redis.delete(_lock_key)
@@ -611,14 +642,17 @@ class WebhookService:
             "X-Webhook-Timestamp": str(send_timestamp),
         }
 
-        # Validate URL for SSRF protection before making request
+        # Validate URL for SSRF protection before making request.
+        # W8 FIX: the HTTPS scheme check is always enforced; the
+        # WEBHOOK_ALLOW_INTERNAL_URLS kill switch only relaxes the
+        # private-IP/hostname checks, it no longer disables validation.
         try:
             from src.app.core.config import settings
 
-            if not settings.app.WEBHOOK_ALLOW_INTERNAL_URLS:
-                validated_ip = await validate_webhook_url(endpoint.url)  # noqa: E501 - pinned IP, use extensions to prevent DNS rebinding
-            else:
-                validated_ip = None
+            validated_ip = await validate_webhook_url(
+                endpoint.url,
+                allow_internal=settings.app.WEBHOOK_ALLOW_INTERNAL_URLS,
+            )  # noqa: E501 - pinned IP, use extensions to prevent DNS rebinding
         except SSRFProtectionError as e:
             logger.error(
                 "webhook_ssrf_blocked",
@@ -977,6 +1011,12 @@ async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
     event_type = data.get("event_type")
     payload = data.get("payload")
 
+    # W9 FIX: defense-in-depth — internal event metadata must never reach
+    # the externally signed webhook payload, even if a publisher embeds it
+    # inside the inner payload directly.
+    if isinstance(payload, dict) and "_event_meta" in payload:
+        payload = {k: v for k, v in payload.items() if k != "_event_meta"}
+
     if not all([tenant_id_str, event_type]) or payload is None:
         logger.warning(
             "webhook_trigger_event_missing_data",
@@ -1000,3 +1040,6 @@ async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
             event_type=event_type,
             error=str(e),
         )
+        # W6 FIX: swallow-and-return defeated the event bus's arq Retry/DLQ
+        # routing - transient DB failures killed the event permanently.
+        raise

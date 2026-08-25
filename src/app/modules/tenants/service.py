@@ -105,7 +105,13 @@ class TenantService(BaseService[Tenant]):
             logger.debug("Failed to cache tenant dict", error=str(e))
 
     async def _invalidate_tenant_cache(self, tenant_id: UUID, slug: str | None = None) -> None:
-        """Invalidate tenant cache in Redis."""
+        """Invalidate tenant cache in Redis and every worker's L1 cache.
+
+        T9 FIX: the Redis deletes above only clear the shared L2 cache; each
+        process keeps an in-memory TTLCache that previously served stale
+        is_active=True for up to 60s. Publishing on the middleware's
+        invalidation channel drops those L1 entries immediately.
+        """
         if not redis_client:
             return
 
@@ -115,6 +121,15 @@ class TenantService(BaseService[Tenant]):
                 await redis_client.delete(_get_slug_cache_key(slug))
         except Exception as e:
             logger.debug("Failed to invalidate tenant cache", error=str(e))
+
+        try:
+            from src.app.middleware.tenant import _publish_tenant_l1_invalidation, invalidate_tenant_l1
+
+            # Local process first (publish may not be echoed to self), then fan out.
+            invalidate_tenant_l1(slug)
+            await _publish_tenant_l1_invalidation(slug)
+        except Exception as e:
+            logger.debug("Failed to propagate tenant L1 invalidation", error=str(e))
 
     async def _get_cached_tenant(self, tenant_id: UUID) -> dict[str, Any] | None:
         """Get tenant from cache if available."""

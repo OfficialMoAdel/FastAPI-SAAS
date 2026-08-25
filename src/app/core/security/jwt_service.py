@@ -1,4 +1,3 @@
-
 from __future__ import annotations
 
 import asyncio
@@ -133,9 +132,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     if "sid" not in to_encode:
         to_encode["sid"] = str(uuid4())
     if "absolute_exp" not in to_encode:
-        to_encode["absolute_exp"] = (
-            datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)
-        ).timestamp()
+        to_encode["absolute_exp"] = (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp()
     if "iat" not in to_encode:
         to_encode["iat"] = datetime.now(UTC).timestamp()
     to_encode.update(
@@ -233,6 +230,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     if token_version is not None:
         tenant_id = payload.get("tenant_id")
         from src.app.core.utils.cache import build_tenant_key
+
         cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
 
         from src.app.core.utils.cache import client as redis_client
@@ -375,8 +373,14 @@ async def blacklist_tokens(
             _r = db.rollback()
             if inspect.isawaitable(_r):
                 await _r
-            _jwt_logger.warning("Failed to commit blacklisted tokens to DB", error=str(e))
-            return
+            # A4 FIX: previously this early-returned BEFORE the Redis write,
+            # leaving the token blacklisted NOWHERE while the user believed
+            # they were logged out. Fall through so the cache blacklist (the
+            # hot-path check) still records it.
+            _jwt_logger.error(
+                "Failed to commit blacklisted tokens to DB; still blacklisting in cache",
+                error=str(e),
+            )
 
     if tokens_for_cache:
         await add_tokens_to_blacklist(tokens_for_cache)
@@ -402,8 +406,7 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                     tenant_id = await _resolve_tenant_id_for_token(payload, db)
                     if not tenant_id:
                         _jwt_logger.warning(
-                            "Could not determine tenant_id for token blacklisting, "
-                            "using Redis fallback"
+                            "Could not determine tenant_id for token blacklisting, using Redis fallback"
                         )
                         # Fail-closed: still blacklist in Redis even without tenant_id
                         if jti:

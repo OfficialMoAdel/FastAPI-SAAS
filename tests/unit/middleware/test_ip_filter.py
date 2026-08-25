@@ -91,6 +91,25 @@ def middleware():
     return IPFilterMiddleware(app)
 
 
+import ipaddress
+
+import src.app.core.utils.ip_utils as _ip_utils
+
+
+@pytest.fixture(autouse=True)
+def _opt_into_rfc1918_trust(monkeypatch):
+    """S-3: production trusts nothing network-level by default; these tests
+    exercise private-proxy chains, so opt in explicitly and clear the LRU."""
+    monkeypatch.setattr(
+        _ip_utils,
+        "TRUSTED_PROXY_NETWORKS",
+        tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16")),
+    )
+    _ip_utils._is_ip_in_trusted_networks.cache_clear()
+    yield
+    _ip_utils._is_ip_in_trusted_networks.cache_clear()
+
+
 class TestIPExtraction:
     """Test client IP extraction with various header scenarios."""
 

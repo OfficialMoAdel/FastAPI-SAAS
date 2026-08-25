@@ -4,7 +4,10 @@ from typing import Any
 
 from arq.jobs import Job as ArqJob
 
+from src.app.core.logger import get_logger
 from src.app.core.utils import queue
+
+logger = get_logger(__name__)
 
 
 class QueueUnavailableError(Exception):
@@ -17,24 +20,9 @@ class TaskService:
     async def create_task(self, message: str, tenant_id: str | None = None) -> dict[str, str]:
         """Create a new background task.
 
-        Parameters
-        ----------
-        message : str
-            The message or data to be processed by the task
-        tenant_id : str | None
-            The tenant ID associated with the task for isolation
-
-        Returns
-        -------
-        dict[str, str]
-            Dictionary containing the task ID
-
-        Raises
-        ------
-        QueueUnavailableError
-            If queue is not available
-        ValueError
-            If task creation fails
+        Idempotent per (tenant_id, message): re-submitting an identical
+        request while the previous job still exists returns the SAME job id
+        instead of failing (B7 FIX - previously raised ValueError -> HTTP 500).
         """
         if queue.pool is None:
             raise QueueUnavailableError("Queue is not available")
@@ -51,7 +39,10 @@ class TaskService:
             _job_id=deterministic_job_id,
         )
         if job is None:
-            raise ValueError("Failed to create task")
+            # B7 FIX: arq returns None when a job with this id already exists
+            # and has not expired. That is an idempotent re-create, not a
+            # failure - surface the existing deterministic id instead of a 500.
+            return {"id": deterministic_job_id}
 
         return {"id": job.job_id}
 
@@ -103,8 +94,14 @@ class TaskService:
                 res_info = await job.result_info()
                 if res_info and res_info.result is not None:
                     result_str = str(res_info.result)
-            except Exception:
-                pass
+            except Exception as e:
+                # B13 FIX: silent pass produced result:null with zero
+                # telemetry; log so deserialization failures are observable.
+                logger.warning(
+                    "task_result_deserialization_failed",
+                    task_id=task_id,
+                    error=str(e),
+                )
         elif status == "failed":
             result_str = "Task failed"
 

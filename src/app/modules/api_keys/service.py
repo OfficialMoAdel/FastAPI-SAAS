@@ -218,7 +218,15 @@ class APIKeyService(BaseService[APIKey]):
         """
         from sqlalchemy import select
 
-        key_stmt = select(APIKey).where(APIKey.id == key_id)
+        # T7 FIX: fetch inside the tenant/user scope so a foreign key id is
+        # indistinguishable from a missing one. The previous unscoped lookup +
+        # post-hoc ownership check returned 403 for existing foreign keys,
+        # giving callers an existence oracle over other tenants' key ids.
+        key_stmt = select(APIKey).where(
+            APIKey.id == key_id,
+            APIKey.tenant_id == tenant_id,
+            APIKey.user_id == user_id,
+        )
         key_result = await self.db.execute(key_stmt)
         key = key_result.scalar_one_or_none()
         if inspect.isawaitable(key):
@@ -226,9 +234,6 @@ class APIKeyService(BaseService[APIKey]):
 
         if key is None:
             raise ModelNotFoundError("APIKey", key_id)
-
-        if key.tenant_id != tenant_id or key.user_id != user_id:
-            raise ForbiddenException("You don't have permission to revoke this key")
 
         api_key_hashed = key.hashed_key
         api_key_name = key.name
@@ -279,6 +284,29 @@ class APIKeyService(BaseService[APIKey]):
         # S7 FIX: Use full hash instead of truncating to 16 chars
         return f"{API_KEY_CACHE_PREFIX}:{api_key_hash}"
 
+    async def _get_cached_tenant_active(self, tenant_id: Any) -> bool | None:
+        """Probe the shared L2 tenant cache for liveness (T8).
+
+        Returns True when the cached tenant is active, False when it is
+        suspended/deleted, and None when no cache entry exists (or probing
+        fails) so the caller falls back to the authoritative DB check.
+        """
+        if redis_client is None or not tenant_id:
+            return None
+        try:
+            from src.app.modules.tenants.service import _get_cache_key
+
+            raw = await redis_client.get(_get_cache_key(tenant_id))
+            if raw is None:
+                return None
+            data = json_loads(raw)
+            if not isinstance(data, dict) or "is_active" not in data:
+                return None
+            return bool(data["is_active"])
+        except Exception as e:  # noqa: BLE001 - probe must never break validation
+            logger.debug("tenant_liveness_probe_failed", error=str(e))
+            return None
+
     async def validate_api_key(
         self,
         api_key: str,
@@ -319,12 +347,23 @@ class APIKeyService(BaseService[APIKey]):
                     valid_from = datetime.fromisoformat(result["valid_from"])
                     if valid_from > datetime.now(UTC):
                         return None
-                return {
-                    "user_id": result["user_id"],
-                    "tenant_id": result["tenant_id"],
-                    "scopes": result["scopes"],
-                    "key_id": result["key_id"],
-                }
+                # T8 FIX: cached key entries previously outlived tenant/key
+                # suspension because nothing evicted them. Probe the shared L2
+                # tenant cache: False => suspended (reject); missing => the
+                # tenant entry was invalidated, so distrust the key cache and
+                # take the authoritative DB path below.
+                tenant_state = await self._get_cached_tenant_active(result["tenant_id"])
+                if tenant_state is False:
+                    return None
+                if tenant_state is None:
+                    pass  # fall through to DB validation
+                else:
+                    return {
+                        "user_id": result["user_id"],
+                        "tenant_id": result["tenant_id"],
+                        "scopes": result["scopes"],
+                        "key_id": result["key_id"],
+                    }
 
         # Cache miss - query database
         result = await self._validate_from_db(hashed)
@@ -400,6 +439,7 @@ class APIKeyService(BaseService[APIKey]):
         # which could flush unrelated pending changes from other parts of the request.
         try:
             from src.app.modules.api_keys.crud import crud_api_keys
+
             await crud_api_keys.update(
                 db=self.db,
                 id=key.id,
@@ -581,4 +621,3 @@ def get_api_key_service(db: AsyncSession) -> APIKeyService:
         Service instance with database session
     """
     return APIKeyService(db)
-

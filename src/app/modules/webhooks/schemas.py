@@ -48,6 +48,14 @@ class WebhookEndpointUpdate(BaseUpdate):
     secret: str | None = Field(None, description="New secret (regenerates signature)")
     signing_secret: str | None = Field(None, description="New signing secret")
 
+    @field_validator("url")
+    @classmethod
+    def validate_https_url(cls, v: HttpUrl | None) -> HttpUrl | None:
+        """Ensure updated webhook URLs use HTTPS (W8: validator was missing here)."""
+        if v is not None and str(v).startswith("http://"):
+            raise ValueError("Webhook URLs must use HTTPS for security")
+        return v
+
 
 class WebhookEndpointRead(BaseReadUUID):
     """Schema for webhook endpoint response."""

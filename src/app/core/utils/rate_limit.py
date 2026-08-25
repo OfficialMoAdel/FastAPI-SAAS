@@ -1,4 +1,3 @@
-from datetime import UTC, datetime
 from typing import Optional
 
 from redis.asyncio import Redis
@@ -41,10 +40,11 @@ class RateLimiter:
             Tuple (is_limited, current_count)
         """
         # client = self.get_client()  <-- Moved inside try block
-        current_timestamp = int(datetime.now(UTC).timestamp())
-        window_start = current_timestamp - (current_timestamp % period)
-
-        redis_key = f"ratelimit:{key}:{window_start}"
+        # R5 FIX: the fixed-window boundary is computed inside the Lua script
+        # from the Redis clock. Deriving window_start here from the app clock
+        # let app/Redis clock skew create keys whose TTL belonged to a
+        # different window.
+        redis_key = f"ratelimit:{key}"
 
         try:
             client = self.get_client()
@@ -90,7 +90,13 @@ class RateLimiter:
             if gcra:
                 try:
                     result = await gcra.check_rate_limit(key, limit, period)
-                    return result.is_limited, result.remaining, int(result.retry_after)
+                    # R6 FIX: round UP so sub-second retry windows are not
+                    # truncated to 0 (0 triggered the bogus fixed-window
+                    # formula upstream, reporting e.g. 400ms as a full period).
+                    import math
+
+                    retry_after = int(math.ceil(result.retry_after)) if result.is_limited else 0
+                    return result.is_limited, result.remaining, retry_after
                 except Exception as e:
                     logger.warning("GCRA rate limit check failed: %s", e)
                     # Fallback to fixed window handled below
@@ -102,7 +108,9 @@ class RateLimiter:
             return is_limited, remaining, 0
         except Exception as fallback_e:
             logger.error("Rate limit check failed: %s", fallback_e)
-            is_limited = not getattr(settings, "RATE_LIMIT_FAIL_OPEN", False)
+            # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; the old
+            # getattr on the root settings object silently ignored operators.
+            is_limited = not getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
             remaining = 0 if is_limited else limit
             return is_limited, remaining, 0
 

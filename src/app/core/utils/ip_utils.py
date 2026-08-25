@@ -18,11 +18,15 @@ try:
         ipaddress.ip_network(n) for n in (settings.TRUSTED_PROXY_NETWORKS or [])
     )
 except ValueError:
-    TRUSTED_PROXY_NETWORKS = (
-        ipaddress.ip_network("10.0.0.0/8"),
-        ipaddress.ip_network("172.16.0.0/12"),
-        ipaddress.ip_network("192.168.0.0/16"),
-    )
+    # S-3: on unparseable operator input, trust NOTHING network-level rather
+    # than silently falling back to all-RFC1918 (XFF spoofing surface).
+    try:
+        from src.app.core.logger import get_logger
+
+        get_logger(__name__).error("TRUSTED_PROXY_NETWORKS parse failed; treating as empty (fail-closed)")
+    except Exception:  # noqa: BLE001 - import-time safety
+        pass
+    TRUSTED_PROXY_NETWORKS = ()
 
 
 @lru_cache(maxsize=2048)

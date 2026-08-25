@@ -367,7 +367,15 @@ def cache(  # noqa: C901
                         try:
                             route = request.scope.get("route")  # type: ignore[attr-defined]
                             response_model = getattr(route, "response_model", None) if route else None
-                            if response_model is not None:
+
+                            # P5 FAST PATH: no response_model => nothing to
+                            # filter; return cached bytes verbatim (zero-copy).
+                            # This is the common case for raw dict endpoints and
+                            # saves parse+validate+dump (~0.5-2ms) per hit.
+                            if response_model is None:
+                                return Response(content=cached_data, media_type="application/json")
+
+
                                 import json as _json
                                 raw = _json.loads(cached_data) if isinstance(cached_data, str | bytes) else cached_data
                                 if hasattr(response_model, "model_validate"):
@@ -468,10 +476,16 @@ def cache(  # noqa: C901
                         if _user_id is not None:
                             formatted_pattern = f"user:{_user_id}:{formatted_pattern}"
                         scoped_pattern = _state.build_tenant_key(formatted_pattern, _tenant_id)
-                        # SCAN-based deletion: the O(1) index is not populated for
-                        # these keys, so fall back to pattern matching. The pattern
-                        # is tenant/user scoped to avoid wiping other tenants' data.
-                        await _delete_keys_by_pattern(scoped_pattern)
+
+                        # P4 FIX: prefer the O(1) pattern-index (populated when
+                        # cached GETs declare matching `invalidation_patterns`).
+                        # Fall back to SCAN only when the index is empty — e.g.
+                        # keys written before this registration existed.
+                        from src.app.core.utils.cache.patterns import invalidate_by_pattern as _invalidate_by_pattern
+
+                        deleted = await _invalidate_by_pattern(scoped_pattern)
+                        if not deleted:
+                            await _delete_keys_by_pattern(scoped_pattern)
 
             return result
 

@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyResponse
 from src.app.modules.api_keys.service import APIKeyService
@@ -81,14 +80,19 @@ async def test_revoke_api_key_not_found() -> None:
 
 
 async def test_revoke_api_key_forbidden() -> None:
+    """T7: a key owned by another tenant is indistinguishable from missing.
+
+    The scoped lookup returns no row, so revocation raises ModelNotFound
+    (404) instead of the old ForbiddenException (403) — removing the
+    existence oracle over other tenants' key ids.
+    """
     service, db = _make_service()
-    key = _make_key_record()
-    key.tenant_id = "22222222-2222-2222-2222-222222222222"
-    result = MagicMock()
-    result.scalar_one_or_none.return_value = key
-    db.execute.return_value = result
+    # Scoped query filters by tenant/user: mock yields NO row.
+    empty = MagicMock()
+    empty.scalar_one_or_none.return_value = None
+    db.execute.return_value = empty
     tenant = "11111111-1111-1111-1111-111111111111"
-    with pytest.raises(ForbiddenException):
+    with pytest.raises(ModelNotFoundError):
         await service.revoke_api_key(key_id=1, user_id=1, tenant_id=tenant)
 
 
@@ -109,7 +113,14 @@ async def test_revoke_api_key_success() -> None:
 async def test_validate_api_key_cache_hit() -> None:
     service, db = _make_service()
     fake_redis = AsyncMock()
-    fake_redis.get.return_value = '{"user_id": 1, "tenant_id": "t", "scopes": ["read"], "key_id": 1}'
+
+    async def _redis_get(key):
+        # T8: second get probes tenant liveness — report active.
+        if "tenant" in str(key):
+            return '{"is_active": true}'
+        return '{"user_id": 1, "tenant_id": "t", "scopes": ["read"], "key_id": 1}'
+
+    fake_redis.get.side_effect = _redis_get
     with patch("src.app.modules.api_keys.service.redis_client", fake_redis):
         result = await service.validate_api_key("rawkey")
     assert result is not None

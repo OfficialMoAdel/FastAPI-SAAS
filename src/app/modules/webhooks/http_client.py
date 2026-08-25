@@ -10,7 +10,6 @@ Performance Benefits:
 - Centralized timeout and retry configuration
 """
 
-
 import httpx
 
 from src.app.core.logger import get_logger
@@ -22,9 +21,12 @@ _webhook_http_client: httpx.AsyncClient | None = None
 
 # Webhook-specific timeout configuration
 # Longer timeout for webhook delivery (external endpoints may be slow)
+# INFO-W-config FIX: values now come from settings.webhooks (were hardcoded).
+from src.app.core.config import settings as _webhook_settings
+
 WEBHOOK_TIMEOUT = httpx.Timeout(
-    timeout=30.0,  # 30s total timeout
-    connect=10.0,  # 10s connection timeout
+    timeout=float(_webhook_settings.webhooks.WEBHOOK_HTTP_TIMEOUT_SECONDS),
+    connect=float(_webhook_settings.webhooks.WEBHOOK_HTTP_CONNECT_TIMEOUT_SECONDS),
 )
 
 # Connection pool limits for webhook delivery
@@ -112,5 +114,3 @@ async def close_webhook_http_client() -> None:
             await _webhook_http_client.aclose()
         _webhook_http_client = None
         logger.debug("Closed shared webhook HTTP client")
-
-

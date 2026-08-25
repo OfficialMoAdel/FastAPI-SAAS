@@ -110,6 +110,10 @@ class AsyncContextManagerMock:
 
 
 @pytest.mark.asyncio
+@patch(
+    "src.app.modules.billing.crud.crud_subscription_plans.get",
+    new_callable=AsyncMock,
+)
 @patch("src.app.modules.billing.webhook.job_tenant_context")
 @patch("src.app.modules.billing.webhook.crud_user_subscriptions")
 @patch(
@@ -117,9 +121,14 @@ class AsyncContextManagerMock:
     new_callable=AsyncMock,
 )
 async def test_handle_checkout_session_completed(
-    mock_retrieve, mock_crud, mock_tenant_context, mock_stripe_event, mock_db
+    mock_retrieve, mock_crud, mock_tenant_context, mock_plan_get, mock_stripe_event, mock_db
 ):  # noqa: E501
-    mock_tenant_context.return_value = AsyncContextManagerMock(mock_db)
+    # B6: the handler validates plan/tenant ownership before minting; the
+    # fixture's metadata tenant must match the mocked plan row.
+    from uuid import UUID as _UUID
+
+    event_tenant_id = _UUID(mock_stripe_event["data"]["object"]["metadata"]["tenant_id"])
+    mock_plan_get.return_value = {"id": 2, "tenant_id": event_tenant_id}
 
     # Mock subscription retrieval via PaymentGateway seam
     mock_retrieve.return_value = {

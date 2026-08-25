@@ -134,10 +134,32 @@ class CryptSettings(BaseSettings):
 
     @model_validator(mode="after")
     def validate_production_secrets(self) -> "CryptSettings":
-        """Validate encryption keys are set to prevent runtime failures."""
-        import os
+        """Validate encryption keys are set to prevent runtime failures.
 
-        env = os.environ.get("ENVIRONMENT", "local").lower()
+        S-1 FIX: ENVIRONMENT may be supplied via ``.env`` (loaded by
+        pydantic-settings), in which case it never reaches ``os.environ`` —
+        the old lookup silently defaulted to "local" and skipped this check,
+        letting production boot with ENCRYPTION_KEY=None. Consult the process
+        environment first, then the dotenv file(s) Settings loads.
+        """
+        import os
+        from pathlib import Path
+
+        env_value: str | None = os.environ.get("ENVIRONMENT")
+        if env_value is None:
+            src_dir_env = Path(__file__).resolve().parents[1] / ".env"
+            repo_env = Path(".env")
+            for candidate in (src_dir_env, repo_env):
+                if candidate.is_file():
+                    for line in candidate.read_text(encoding="utf-8", errors="ignore").splitlines():
+                        line = line.strip()
+                        if line.startswith("ENVIRONMENT="):
+                            env_value = line.split("=", 1)[1].strip().strip("'\"")
+                            break
+                if env_value is not None:
+                    break
+
+        env = (env_value or "local").lower()
         if env in ("production", "staging"):
             # ENCRYPTION_KEY and ENCRYPTION_SALT should be validated in production/staging
             if not self.ENCRYPTION_KEY or not self.ENCRYPTION_SALT:
@@ -211,7 +233,9 @@ class ArqSettings(BaseSettings):
     ARQ_MAX_JOBS: int = Field(default=10, ge=1, le=100, description="Max concurrent jobs per worker")
     ARQ_JOB_TIMEOUT: int = Field(default=300, ge=10, le=3600, description="Default job timeout (seconds)")
     ARQ_KEEP_RESULT: int = Field(default=3600, ge=0, le=86400, description="Keep job results (seconds)")
-    ARQ_MAX_TRIES: int = Field(default=3, ge=0, le=10, description="Default max job retries")
+    # K10 FIX: arq fails every job when max_tries=0 (job_try starts at 1 > 0),
+    # so 0 is not a legal value.
+    ARQ_MAX_TRIES: int = Field(default=3, ge=1, le=10, description="Default max job tries (>=1)")
     ARQ_QUEUE_MAX_SIZE: int = Field(default=10000, ge=100, le=100000, description="Max queue size per priority")
 
     @field_validator("ARQ_MAX_JOBS", mode="after")
@@ -328,8 +352,7 @@ class AuthSettings(BaseSettings):
     # SECURITY FIX (M-1): When True, MFA completion is rejected if client IP
     # differs from the IP used during the login phase.
     MFA_ENFORCE_IP_BINDING: bool = Field(
-        default=False,
-        description="Reject MFA completion if client IP changed since login (prevents stolen MFA tokens)"
+        default=False, description="Reject MFA completion if client IP changed since login (prevents stolen MFA tokens)"
     )
     # Token blacklist cache failure mode - fail_closed by default for security
     # "fail_open": Return None when Redis unavailable (allow auth to continue)
@@ -372,7 +395,6 @@ class ClientSideCacheSettings(BaseSettings):
 
 class SecuritySettings(BaseSettings):
     """Security and performance optimization settings."""
-
 
     # IP Filtering Configuration
     # Enable/disable IP whitelist checking. When enabled, only IPs in the whitelist are allowed.
@@ -441,14 +463,21 @@ class SecuritySettings(BaseSettings):
         description="List of user-agent substrings to block as bad bots",
     )
 
-    # Trusted proxies for rate limiting and IP processing
+    # S-3 FIX: default trusts ONLY loopback. The previous default trusted all
+    # RFC1918 ranges, so any host on the internal network could spoof
+    # X-Forwarded-For and corrupt rate-limit/ban/audit IP identity. Operators
+    # behind an internal LB must explicitly set their LB's CIDRs here.
     TRUSTED_PROXY_IPS: list[str] | None = Field(
         default=["127.0.0.1", "::1"],
-        description="List of trusted proxy IP addresses",
+        description="List of trusted proxy IP addresses (loopback by default)",
     )
     TRUSTED_PROXY_NETWORKS: list[str] | None = Field(
-        default=["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"],
-        description="List of trusted proxy network CIDRs",
+        default=None,
+        description=(
+            "Trusted proxy network CIDRs. Default None = no network-level "
+            "trust (loopback IPs above still apply). Set to your load "
+            "balancer's CIDRs explicitly, e.g. ['10.0.0.0/8']."
+        ),
     )
 
 
@@ -504,6 +533,10 @@ class DefaultRateLimitSettings(BaseSettings):
     # Rate limiting algorithm: "fixed_window" or "gcra"
     # GCRA provides smoother limiting without boundary burst issues
     RATE_LIMIT_ALGORITHM: str = "gcra"
+    # INFO-R11 FIX: previously a phantom knob (read via getattr default 3600
+    # but defined nowhere). Declared so operators can tune the Redis TTL for
+    # tier rate-limit policy cache entries.
+    RATE_LIMIT_POLICY_TTL: int = Field(default=3600, ge=60, le=86400)
 
 
 class CRUDAdminSettings(BaseSettings):
@@ -540,9 +573,14 @@ class EmailSettings(BaseSettings):
 
 
 class WebhookSettings(BaseSettings):
-    WEBHOOK_MAX_RETRIES: int = 3
-    WEBHOOK_RETRY_DELAY_SECONDS: int = 300
-    WEBHOOK_TIMEOUT_SECONDS: int = 10
+    # INFO-W-config FIX: these fields are now consumed by
+    # modules/webhooks/service.py (retry schedule) and
+    # modules/webhooks/http_client.py (HTTP timeouts). Previously the
+    # MAX_RETRIES/RETRY_DELAY/TIMEOUT trio was dead config - hardcoded
+    # values were used instead, silently ignoring operator overrides.
+    WEBHOOK_RETRY_DELAYS: list[int] = Field(default=[60, 300, 900, 1800, 3600])
+    WEBHOOK_HTTP_TIMEOUT_SECONDS: float = 30.0
+    WEBHOOK_HTTP_CONNECT_TIMEOUT_SECONDS: float = 10.0
     WEBHOOK_SIGNATURE_HEADER: str = "X-Webhook-Signature"
     WEBHOOK_SIGNATURE_ALGORITHM: str = "sha256"
     WEBHOOK_RECOVERY_BATCH_SIZE: int = 100

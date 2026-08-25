@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import status
 from pydantic import SecretStr
-from sqlalchemy import select
+from sqlalchemy import delete, select
 
-from src.app.modules.billing.models import BillingRecord, UserSubscription
+from src.app.modules.billing.models import BillingRecord, SubscriptionPlan, UserSubscription
 from tests.conftest import patch_setting
 
 
@@ -42,6 +42,19 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
     """
     # Create a user to associate with the subscription
     user = await create_test_user(email="webhook_test@example.com")
+
+    # B6 ownership check: the handler validates plan_id belongs to the tenant
+    # before minting the subscription. Seed plan id=1 owned by the test tenant.
+    await db_session.execute(delete(SubscriptionPlan).where(SubscriptionPlan.id == 1))
+    plan = SubscriptionPlan(
+        tenant_id=tenant.id,
+        name="Webhook Test Plan",
+        price_monthly_cents=1000,
+        price_yearly_cents=10000,
+    )
+    plan.id = 1  # init=False autoincrement PK; assign explicitly to match metadata plan_id
+    db_session.add(plan)
+    await db_session.commit()
 
     import uuid
 
@@ -93,6 +106,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
     # router.py imports verify_webhook_signature, so we must patch it there
     with (
         patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify,
+        patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub),
         patch("src.app.core.db.tenant_crud.get_tenant_context") as mock_get_tenant,
@@ -107,8 +121,10 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
         mock_verify.return_value = event_payload
 
         # Setup context manager mocks to return the test session
+        # (both the B6 plan-ownership bypass ctx and the tenant ctx)
         mock_ctx_instance = AsyncMock()
         mock_ctx_instance.__aenter__.return_value = db_session
+        mock_bypass_ctx.return_value = mock_ctx_instance
         mock_tenant_ctx.return_value = mock_ctx_instance
 
         # Simulate Webhook Request

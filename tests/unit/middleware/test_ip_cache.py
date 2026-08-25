@@ -2,21 +2,29 @@
 
 from __future__ import annotations
 
+import ipaddress
+
 import pytest
 
+import src.app.core.utils.ip_utils as ip_utils
 from src.app.core.utils.ip_utils import (
     TRUSTED_PROXY_IPS,
     TRUSTED_PROXY_NETWORKS,
     _is_ip_in_trusted_networks,
 )
 
+# S-3: production default trusts nothing network-level. Tests that exercise
+# private-range trust opt in explicitly here.
+RFC1918 = tuple(ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"))
+
 
 @pytest.fixture(autouse=True)
-def clear_cache():
-    """Clear the LRU cache before each test."""
-    _is_ip_in_trusted_networks.cache_clear()
+def clear_cache(monkeypatch):
+    """Opt tests into RFC1918 trust and clear the LRU cache per test."""
+    monkeypatch.setattr(ip_utils, "TRUSTED_PROXY_NETWORKS", RFC1918)
+    ip_utils._is_ip_in_trusted_networks.cache_clear()
     yield
-    _is_ip_in_trusted_networks.cache_clear()
+    ip_utils._is_ip_in_trusted_networks.cache_clear()
 
 
 class TestIsIpInTrustedNetworks:
@@ -137,12 +145,13 @@ class TestTrustedProxyConfiguration:
         """TRUSTED_PROXY_NETWORKS should be a tuple (hashable for lru_cache)."""
         assert isinstance(TRUSTED_PROXY_NETWORKS, tuple)
 
-    def test_trusted_proxy_networks_contains_private_ranges(self) -> None:
-        """TRUSTED_PROXY_NETWORKS should contain RFC1918 private ranges."""
-        network_strs = [str(n) for n in TRUSTED_PROXY_NETWORKS]
-        assert "10.0.0.0/8" in network_strs
-        assert "172.16.0.0/12" in network_strs
-        assert "192.168.0.0/16" in network_strs
+    def test_trusted_proxy_networks_fail_closed_by_default(self) -> None:
+        """S-3: TRUSTED_PROXY_NETWORKS defaults to EMPTY — no implicit
+        RFC1918 trust; operators opt in explicitly. (The autouse fixture in
+        this module opts tests into RFC1918, so read the raw setting.)"""
+        from src.app.core.config import settings
+
+        assert not settings.TRUSTED_PROXY_NETWORKS
 
 
 class TestCachePerformance:

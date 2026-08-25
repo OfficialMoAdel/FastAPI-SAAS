@@ -58,7 +58,10 @@ class WorkerSettings:
     )
     on_startup = startup
     on_shutdown = shutdown
-    handle_signals = False
+    # K6 FIX: False disabled graceful shutdown - SIGTERM killed workers mid-job,
+    # losing popped jobs until key expiry. arq's signal handling defers in-flight
+    # jobs and exits cleanly.
+    handle_signals = True
 
     # Cron jobs for periodic tasks (with job-specific timeouts where needed)
     cron_jobs = [

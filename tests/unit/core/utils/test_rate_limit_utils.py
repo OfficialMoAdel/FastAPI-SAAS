@@ -32,7 +32,7 @@ class TestRateLimiter:
         mock_redis.evalsha.assert_called_once()
         call_args = mock_redis.evalsha.call_args
         assert call_args[0][1] == 1  # numkeys
-        assert "ratelimit:test_key:" in call_args[0][2]
+        assert "ratelimit:test_key" in call_args[0][2]
 
         mock_redis.incr.assert_not_called()
         mock_redis.expire.assert_not_called()
