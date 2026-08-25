@@ -1,11 +1,11 @@
 """SSO router - HTTP handlers for OAuth2 authentication endpoints."""
 
-from typing import Annotated
+from typing import Annotated, Any
 
 import httpx
 import orjson
 from fastapi import APIRouter, Depends, Form, HTTPException, Query, Request, Response, status
-from fastapi.responses import RedirectResponse
+from fastapi.responses import ORJSONResponse, RedirectResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_user
@@ -21,18 +21,72 @@ from src.app.modules.sso.service import SSOService, get_sso_service
 router = APIRouter(prefix="/account/sso", tags=["sso"])
 
 
+def _get_state_cookie_kwargs(provider: str | None = None) -> dict:
+    """Cookie kwargs for the sso_state login-CSRF cookie.
+
+    M1: Apple uses response_mode=form_post — the browser POSTs cross-site back
+    to us. SameSite=Lax cookies are not sent on cross-site POSTs (Firefox/Safari
+    enforce this strictly), so the Apple flow must use SameSite=None; Secure.
+    Other providers use GET redirects and keep the stricter Lax default.
+    """
+    if provider == SSOProvider.APPLE.value:
+        return {
+            "httponly": True,
+            "secure": True,
+            "samesite": "none",
+        }
+    return {
+        "httponly": True,
+        "secure": settings.SESSION_SECURE_COOKIES,
+        "samesite": "lax",
+    }
+
+
 def _get_clear_cookie_str() -> str:
     secure_flag = "Secure; " if settings.SESSION_SECURE_COOKIES else ""
     return f'sso_state=""; Max-Age=0; Path=/; HttpOnly; {secure_flag}SameSite=Lax'
+
+
+def _access_only_response(tokens: AuthTokenResponse | dict[str, Any]) -> Response:
+    """M4: never expose the refresh token in the JSON body.
+
+    Mirrors passkey/magic_link flows: the refresh token travels in an HttpOnly
+    cookie set via set_refresh_cookie; the body carries only the access token.
+    Returns a raw Response so the stripped field cannot be re-serialized.
+    """
+    from src.app.core.security.login_helpers import set_refresh_cookie
+
+    if isinstance(tokens, AuthTokenResponse):
+        body: dict[str, Any] = {
+            "access_token": tokens.access_token,
+            "token_type": tokens.token_type,
+            "expires_in": tokens.expires_in,
+        }
+        refresh_token: Any = tokens.refresh_token
+    else:
+        body = {k: v for k, v in tokens.items() if k != "refresh_token"}
+        refresh_token = tokens.get("refresh_token")
+
+    json_response = ORJSONResponse(content=body)
+    if isinstance(refresh_token, str) and refresh_token:
+        set_refresh_cookie(json_response, refresh_token)
+    # Clear the login-CSRF state cookie on the same response we hand back.
+    json_response.delete_cookie("sso_state")
+    return json_response
 
 
 def _validate_redirect_uri(uri: str | None) -> None:
     """Validate redirect URI to prevent open redirects."""
     if not uri:
         return
+    # M6: WHATWG URL parsing treats '\' as '/', so '/\evil.com' would be a
+    # protocol-relative redirect to evil.com. Reject any backslash outright.
+    if "\\" in uri:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect URI.",
+        )
     # Allow relative paths or URLs matching the frontend domain
-    if uri.startswith("/") and not uri.startswith("//"):
-        return
     if uri == settings.FRONTEND_URL or uri.startswith(settings.FRONTEND_URL + "/"):
         return
 
@@ -80,9 +134,7 @@ async def initiate_sso(
         "sso_state",
         state,
         max_age=600,  # 10 minutes to match Redis TTL
-        httponly=True,
-        secure=settings.SESSION_SECURE_COOKIES,
-        samesite="lax",
+        **_get_state_cookie_kwargs(provider.value),  # M1: SameSite=None for Apple form_post
     )
     return response
 
@@ -110,8 +162,12 @@ async def handle_callback(
     state: Annotated[str, Query],
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
-) -> AuthTokenResponse | dict[str, str]:
-    """Handle OAuth callback and return authentication tokens."""
+) -> Response:
+    """Handle OAuth callback and return authentication tokens.
+
+    M4: returns a JSON Response containing only the access token; the refresh
+    token is delivered via HttpOnly cookie (set inside _access_only_response).
+    """
     # Login CSRF Protection Constraint
     import hmac
 
@@ -121,7 +177,6 @@ async def handle_callback(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="State mismatch or missing session cookie (Login CSRF detection)",
         )
-
     try:
         tokens = await sso_service.process_callback(
             provider=provider,
@@ -130,23 +185,24 @@ async def handle_callback(
             request=request,
             db=db,
         )
-        return tokens
+        return _access_only_response(tokens)  # M4
     except HTTPException as e:
-        e.headers = e.headers or {}
-        e.headers["Set-Cookie"] = _get_clear_cookie_str()
+        headers: dict[str, str] = dict(e.headers or {})
+        headers["Set-Cookie"] = _get_clear_cookie_str()
+        e.headers = headers
         raise e
-    except httpx.TimeoutException as e:
+    except httpx.TimeoutException:
         headers = {"Set-Cookie": _get_clear_cookie_str()}
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Provider timeout: {str(e)}",
+            detail="Provider timeout.",
             headers=headers,
         )
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPStatusError:
         headers = {"Set-Cookie": _get_clear_cookie_str()}
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Provider error: {e.response.status_code}",
+            detail="Provider returned an error response.",
             headers=headers,
         )
     finally:
@@ -163,8 +219,11 @@ async def handle_post_callback(
     db: Annotated[AsyncSession, Depends(async_get_db)],
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
     user: Annotated[str | None, Form()] = None,
-) -> AuthTokenResponse | dict[str, str]:
+) -> Response:
     """Handle OAuth POST callback (for Apple Sign-In which uses response_mode=form_post).
+
+    M4: returns a JSON Response containing only the access token; the refresh
+    token is delivered via HttpOnly cookie (set inside _access_only_response).
 
     Apple sends the callback as a POST request with form data instead of GET query params.
     The `user` field contains JSON with name info on first authorization only.
@@ -196,21 +255,22 @@ async def handle_post_callback(
             db=db,
             user_data=user_data,
         )
-        return tokens
+        return _access_only_response(tokens)  # M4
     except HTTPException as e:
-        e.headers = e.headers or {}
-        e.headers["Set-Cookie"] = _get_clear_cookie_str()
+        headers: dict[str, str] = dict(e.headers or {})
+        headers["Set-Cookie"] = _get_clear_cookie_str()
+        e.headers = headers
         raise e
-    except httpx.TimeoutException as e:
+    except httpx.TimeoutException:
         raise HTTPException(
             status_code=status.HTTP_504_GATEWAY_TIMEOUT,
-            detail=f"Provider timeout: {str(e)}",
+            detail="Provider timeout.",
             headers={"Set-Cookie": _get_clear_cookie_str()},
         )
-    except httpx.HTTPStatusError as e:
+    except httpx.HTTPStatusError:
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=f"Provider error: {e.response.status_code}",
+            detail="Provider returned an error response.",
             headers={"Set-Cookie": _get_clear_cookie_str()},
         )
     finally:

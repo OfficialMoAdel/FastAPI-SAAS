@@ -127,7 +127,6 @@ class TestMicrosoftProvider:
             "mail": "test@example.com",
             "userPrincipalName": "test@example.com",
             "givenName": "Test",
-            "emailVerified": True,
         }
 
         with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
@@ -135,9 +134,46 @@ class TestMicrosoftProvider:
 
         assert user_info.provider_user_id == "12345678-1234-1234-1234-123456789012"
         assert user_info.email == "test@example.com"
-        assert user_info.email_verified is True
+        # M10: no id_token -> email_verified defaults to False (fail closed)
+        assert user_info.email_verified is False
         assert user_info.name == "Test User"
         assert user_info.picture is None
+
+    @pytest.mark.asyncio
+    async def test_microsoft_get_user_info_email_verified_from_id_token(self):
+        """M10: email_verified follows the id_token `email_verified` claim."""
+        import base64
+        import json
+
+        from src.app.modules.sso.providers.microsoft import MicrosoftProvider
+
+        provider = MicrosoftProvider(
+            client_id="test-client-id",
+            client_secret="test-client-secret",
+            redirect_uri="http://localhost/callback",
+        )
+        mock_user_data = {"id": "abc", "mail": "test@example.com"}
+
+        def _id_token(claims: dict) -> str:
+            def _b64(obj: dict) -> str:
+                return base64.urlsafe_b64encode(json.dumps(obj).encode()).decode().rstrip("=")
+
+            return f"{_b64({'alg': 'RS256', 'typ': 'JWT'})}.{_b64(claims)}.sig"
+
+        with patch.object(provider, "_http_get", new_callable=AsyncMock, return_value=mock_user_data):
+            verified = await provider.get_user_info(
+                "tok", id_token=_id_token({"email_verified": True})
+            )
+            explicit_false = await provider.get_user_info(
+                "tok", id_token=_id_token({"email_verified": False})
+            )
+            omitted = await provider.get_user_info(
+                "tok", id_token=_id_token({"email": "x@y.z"})
+            )
+
+        assert verified.email_verified is True   # M10: explicit true only
+        assert explicit_false.email_verified is False  # M10: explicit false fails closed
+        assert omitted.email_verified is False  # M10: omitted claim defaults False
 
     @pytest.mark.asyncio
     async def test_microsoft_get_user_info_uses_userprincipalname_fallback(self):

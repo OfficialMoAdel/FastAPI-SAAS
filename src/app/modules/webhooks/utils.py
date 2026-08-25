@@ -65,12 +65,16 @@ def verify_webhook_signature(
             secret=your_signing_secret,
         )
     """
-    # Check timestamp freshness (replay protection)
+    # W2/S-4: prefer the signed-timestamp scheme `t=<unix>,v1=<hmac>` where
+    # the HMAC covers b"<t>.<payload>" — this binds the timestamp into the
+    # signature so it cannot be stripped/replayed separately. The legacy
+    # bare `sha256=<hex over payload>` format is still accepted for old
+    # consumers, but its replay protection relies solely on the header
+    # timestamp freshness check below.
     if abs(time.time() - timestamp) > tolerance:
         return False
 
-    # Recreate expected signature
-    # Parse and re-serialize to ensure consistent ordering
+    # Recreate canonical payload bytes (same normalization as the sender)
     try:
         payload_dict = json.loads(payload)
         payload_bytes = json.dumps(payload_dict, sort_keys=True).encode("utf-8")
@@ -78,21 +82,41 @@ def verify_webhook_signature(
         # If payload is not valid JSON, use raw bytes
         payload_bytes = payload
 
-    expected = hmac.new(
-        secret.encode("utf-8"),
-        payload_bytes,
-        hashlib.sha256,
-    ).hexdigest()
+    def _hmac_hex(data: bytes) -> str:
+        return hmac.new(secret.encode("utf-8"), data, hashlib.sha256).hexdigest()
 
-    # Extract signature from header (format: sha256={sig} or list of those)
-    signatures = [s.strip() for s in signature.split(",")]
+    # Collect (format, digest) candidates from the comma-separated header
+    candidates: list[tuple[str, str]] = []
+    signed_ts: int | None = None
+    for part in signature.split(","):
+        part = part.strip()
+        if part.startswith("sha256="):
+            candidates.append(("legacy", part[7:]))
+        elif part and "=" not in part:
+            # Bare hex digest (no prefix) — accepted by the previous verifier.
+            candidates.append(("bare", part))
+        elif part.startswith("v1="):
+            candidates.append(("signed", part[3:]))
+        elif part.startswith("t="):
+            try:
+                signed_ts = int(part[2:])
+            except ValueError:
+                pass
 
-    for sig in signatures:
-        actual_signature = sig
-        if sig.startswith("sha256="):
-            actual_signature = sig[7:]
-        # Timing-safe comparison
-        if hmac.compare_digest(actual_signature, expected):
+    # Scheme 1 (preferred): timestamp-bound signature
+    signed_digests = [d for fmt, d in candidates if fmt == "signed"]
+    if signed_digests and signed_ts is not None:
+        if abs(time.time() - signed_ts) > tolerance:
+            return False
+        expected_signed = _hmac_hex(f"{signed_ts}.".encode() + payload_bytes)
+        for digest in signed_digests:
+            if hmac.compare_digest(digest, expected_signed):
+                return True
+
+    # Scheme 2 (legacy fallback): payload-only signature
+    expected_legacy = _hmac_hex(payload_bytes)
+    for fmt, digest in candidates:
+        if fmt in ("legacy", "bare") and hmac.compare_digest(digest, expected_legacy):
             return True
 
     return False

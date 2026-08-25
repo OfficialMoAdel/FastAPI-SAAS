@@ -174,6 +174,27 @@ def extract_jti_unverified(token: str) -> str | None:
     return None
 
 
+def extract_claim_unverified(token: str, claim: str) -> str | None:
+    """Fast base64 payload extraction of a single claim, unverified.
+
+    A3: used to read the stable ``sid`` session claim for session registration
+    without a full signature verification round-trip.
+    """
+    try:
+        parts = token.split(".")
+        if len(parts) == 3:
+            payload_b64 = parts[1]
+            payload_b64 += "=" * (-len(payload_b64) % 4)
+            payload = json_loads(base64.urlsafe_b64decode(payload_b64))
+            value = payload.get(claim)
+            return str(value) if value else None
+    except (ValueError, TypeError) as e:
+        logger.debug("Failed to extract unverified %s: %s", claim, e)
+    except Exception as e:
+        logger.warning("Unexpected error extracting unverified %s: %s", claim, e)
+    return None
+
+
 def extract_token_from_header(authorization: str | None) -> str | None:
     """Extract Bearer token from Authorization header.
 

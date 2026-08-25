@@ -259,8 +259,10 @@ class RateLimitMiddleware:
             jti = cached_payload.get("jti") if cached_payload else None
             is_blacklisted = await is_token_blacklisted(token, jti=jti)
 
-            # Store in state so `auth.py` (deps) can reuse the result (R5-3)
-            request.state.is_token_blacklisted = is_blacklisted is True
+            # Store tri-state in state so `auth.py` (deps) can reuse the result (R5-3):
+            # True = blacklisted, False = verified clean, None = unknown (Redis down).
+            # A1: deps must run its DB fallback on None; never collapse it to False.
+            request.state.is_token_blacklisted = is_blacklisted
 
             if is_blacklisted is not False:
                 logger.info(

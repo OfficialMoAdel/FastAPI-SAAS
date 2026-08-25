@@ -197,7 +197,7 @@ async def readiness_probe() -> dict[str, str]:
         return {"status": "not_ready", "reason": "health_check_failed"}
 
 
-@router.get("/metrics", response_class=PlainTextResponse)
+@router.get("/metrics", response_class=PlainTextResponse, dependencies=[Depends(get_current_superuser)])
 async def metrics_export() -> str:
     """Prometheus metrics export endpoint.
 

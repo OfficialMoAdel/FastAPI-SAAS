@@ -86,7 +86,12 @@ async def _create_auth_context(
 
 
 async def _is_token_blacklisted_with_fallback(token: str, jti: str | None, db: AsyncSession) -> bool:
-    """Check if token is blacklisted, falling back to DB if Redis fails."""
+    """Check if token is blacklisted, falling back to DB if Redis fails.
+
+    A1: returns a definite boolean. When the Redis probe returns None (unknown),
+    the DB is authoritative; if the DB lookup itself errors, crud raises and the
+    request 500s rather than silently accepting a possibly-revoked token.
+    """
     from src.app.core.db.crud_token_blacklist import crud_token_blacklist
     from src.app.core.security.token_blacklist_cache import is_token_blacklisted
 
@@ -131,10 +136,14 @@ async def get_auth_context(
 
     if cached_payload:
         jti = cached_payload.get("jti")
-        if getattr(request.state, "is_token_blacklisted", False) or (
-            not hasattr(request.state, "is_token_blacklisted")
-            and await _is_token_blacklisted_with_fallback(token, jti, db)
-        ):
+        # A1: request.state.is_token_blacklisted is tri-state (True/False/None).
+        # Only a DEFINITE True/False from the middleware's Redis probe
+        # short-circuits; None (Redis down) or an absent attribute runs the
+        # DB fallback so revoked tokens are still caught during outages.
+        cached_blacklist = getattr(request.state, "is_token_blacklisted", None)
+        if cached_blacklist is False:
+            pass  # Verified clean by the middleware probe; skip redundant checks.
+        elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(token, jti, db):
             raise UnauthorizedException("Token has been revoked.")
 
         token_type = cached_payload.get("token_type")
@@ -173,13 +182,19 @@ async def get_auth_context(
         raise UnauthorizedException("Session expired. Please log in again.")
 
     # Check session validity (revocation)
-    jti = cached_payload.get("jti") if cached_payload else getattr(token_data, "jti", None)
-    if jti:
+    # A3: sessions are registered under the stable sid claim; fall back to jti
+    # for tokens minted before sid existed (verify_token already applies the
+    # same fallback, so token_data.sid is always populated).
+    if cached_payload:
+        session_id = cached_payload.get("sid") or cached_payload.get("jti")
+    else:
+        session_id = getattr(token_data, "sid", None)
+    if session_id:
         from src.app.core.security.session_manager import session_manager
 
         session_valid = await session_manager.is_session_valid(
             user_id=user["id"],
-            session_id=jti,
+            session_id=session_id,
         )
         if not session_valid:
             raise UnauthorizedException("Session has been revoked.")
@@ -274,27 +289,6 @@ async def get_user_by_api_key(
     return None
 
 
-async def _handle_auth_mocks(
-    request: Request, db: AsyncSession, current_tenant: Any
-) -> tuple[bool, AuthContext | None]:
-    """Helper to handle test mocks and dependency overrides."""
-    if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        for dep in (get_current_user, get_optional_user):
-            if dep in request.app.dependency_overrides:
-                override_func = request.app.dependency_overrides[dep]
-                import inspect
-
-                if inspect.iscoroutinefunction(override_func):
-                    user_obj = await override_func()
-                else:
-                    user_obj = override_func()
-                if user_obj is None:
-                    return True, None
-                return True, await _create_auth_context(user_obj, None, current_tenant, db)
-
-    return False, None
-
-
 async def _verify_optional_bearer_token(
     token_value: str,
     db: AsyncSession,
@@ -371,10 +365,6 @@ async def get_optional_auth_context(
             api_key_user = None
 
     current_tenant = get_tenant_context()
-
-    is_mock, mock_context = await _handle_auth_mocks(request, db, current_tenant)
-    if is_mock:
-        return mock_context
 
     has_api_key = "X-API-Key" in request.headers if request is not None else False
     if has_api_key:

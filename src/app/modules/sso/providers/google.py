@@ -46,8 +46,11 @@ class GoogleProvider(BaseOAuthProvider):
             headers={"Accept": "application/json"},
         )
 
-    async def get_user_info(self, access_token: str) -> Any:
-        """Get user info from Google."""
+    async def get_user_info(self, access_token: str, id_token: str | None = None) -> Any:
+        """Get user info from Google.
+
+        ``id_token`` accepted for base-class signature parity; not used by this provider.
+        """
         data = await self._http_get(
             self.userinfo_endpoint,
             headers={"Authorization": f"Bearer {access_token}"},

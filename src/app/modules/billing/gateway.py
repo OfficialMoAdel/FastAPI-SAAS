@@ -71,7 +71,12 @@ class StripeGateway:
         if tenant_id is not None and self.db is not None:
             from src.app.core.security.encryption import CredentialEncryption
 
-            record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id)
+            # B1/H4: the gateway legitimately resolves keys by explicit
+            # tenant_id WITHOUT a request context (background jobs, checkout
+            # flows). TenantAwareCRUD requires an explicit grant for
+            # context-free queries — this is that grant, still scoped to a
+            # single tenant_id equality filter (never an unscoped scan).
+            record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant_id, _allow_unscoped=True)
             if record and record.get("encrypted_secret_key"):
                 api_key = CredentialEncryption().decrypt_column(record["encrypted_secret_key"])
         if not api_key:

@@ -193,6 +193,11 @@ class TestWebhookServiceTrigger:
 class TestWebhookServiceDelivery:
     """Tests for webhook delivery logic."""
 
+    def _patch_signing(self):
+        """W2: signing now happens at send time and decrypts the endpoint
+        secret; tests store fake ciphertext, so decryption must be mocked."""
+        return patch("src.app.modules.webhooks.service.decrypt_data", return_value="decrypted_secret")
+
     def _setup_execute_mock(self, mock_db, delivery, endpoint=None):
         """Helper to set up db.execute mock for selectinload pattern.
 
@@ -264,7 +269,12 @@ class TestWebhookServiceDelivery:
 
         self._setup_execute_mock(mock_db, mock_webhook_delivery, mock_webhook_endpoint)
 
-        with patch("src.app.modules.webhooks.service.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")):
+        # W2: signing now happens before the SSRF check, and it decrypts the
+        # endpoint secret — mock that so the fake ciphertext doesn't blow up
+        # before we reach the SSRF error under test.
+        with self._patch_signing(), patch(
+            "src.app.modules.webhooks.service.validate_webhook_url", side_effect=SSRFProtectionError("Blocked")
+        ):
             result = await webhook_service.deliver_webhook(mock_webhook_delivery.id)
 
             assert result.status == WebhookDeliveryStatus.FAILED
@@ -282,7 +292,7 @@ class TestWebhookServiceDelivery:
         mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
 
-        with patch("src.app.modules.webhooks.service.validate_webhook_url"):
+        with self._patch_signing(), patch("src.app.modules.webhooks.service.validate_webhook_url"):
             with patch("src.app.modules.webhooks.service.get_webhook_http_client") as mock_client_fn:
                 mock_client = AsyncMock()
                 mock_client.post.side_effect = CircuitBreakerOpen("Circuit open", 60)
@@ -304,7 +314,7 @@ class TestWebhookServiceDelivery:
         mock_db.get.return_value = mock_webhook_delivery
         webhook_service._handle_delivery_failure = AsyncMock()
 
-        with patch("src.app.modules.webhooks.service.validate_webhook_url"):
+        with self._patch_signing(), patch("src.app.modules.webhooks.service.validate_webhook_url"):
             with patch("src.app.modules.webhooks.service.get_webhook_http_client") as mock_client_fn:
                 mock_client = AsyncMock()
                 mock_client.post.side_effect = Exception("Network error")
@@ -332,7 +342,7 @@ class TestWebhookServiceDelivery:
         mock_db.get.return_value = mock_webhook_delivery
 
         # Mock validation
-        with patch("src.app.modules.webhooks.service.validate_webhook_url"):
+        with self._patch_signing(), patch("src.app.modules.webhooks.service.validate_webhook_url"):
             # Mock HTTP client (service uses get_webhook_http_client, not context manager)
             mock_response = MagicMock()
             mock_response.status_code = 200
@@ -365,7 +375,7 @@ class TestWebhookServiceDelivery:
         mock_db.get.return_value = mock_webhook_delivery
         webhook_service._enqueue_delivery = AsyncMock()
 
-        with patch("src.app.modules.webhooks.service.validate_webhook_url"):
+        with self._patch_signing(), patch("src.app.modules.webhooks.service.validate_webhook_url"):
             mock_response = MagicMock()
             mock_response.status_code = 500
             mock_response.text = "Internal Server Error"
@@ -397,7 +407,7 @@ class TestWebhookServiceDelivery:
         # Mock db.get for re-fetch after HTTP call
         mock_db.get.return_value = mock_webhook_delivery
 
-        with patch("src.app.modules.webhooks.service.validate_webhook_url"):
+        with self._patch_signing(), patch("src.app.modules.webhooks.service.validate_webhook_url"):
             mock_response = MagicMock()
             mock_response.status_code = 500
             mock_response.text = "Internal Server Error"

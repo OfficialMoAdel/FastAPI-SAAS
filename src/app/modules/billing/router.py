@@ -59,14 +59,17 @@ logger = get_logger(__name__)
 @router.post("/webhook", response_model=WebhookResponse, status_code=status.HTTP_200_OK)
 async def stripe_webhook(
     request: Request,
-    tenant_id: UUID | None = Query(None, description="Optional tenant ID for per-tenant webhook secrets"),
     db: AsyncSession = Depends(async_get_db),
 ) -> Any:
     """
     Handle Stripe webhooks.
 
-    Verifies signature and dispatches event handling.
-    This endpoint is global for the platform but supports per-tenant secrets.
+    H1 FIX: the signature is ALWAYS verified against the global platform
+    secret first. The tenant identity is derived from the *verified* event
+    payload afterwards — never from a query param or unverified body metadata.
+    The previous flow let an attacker influence which HMAC secret validated
+    the delivery by passing ?tenant_id=... or embedding tenant_id in the raw
+    body, enabling forged events for any known tenant UUID.
     """
     payload = await request.body()
     sig_header = request.headers.get("Stripe-Signature")
@@ -77,35 +80,9 @@ async def stripe_webhook(
             detail="Missing Stripe-Signature header",
         )
 
-    # Try to extract tenant_id from payload if not in query params
-    if not tenant_id:
-        import json
-        try:
-            event_data = json.loads(payload)
-            obj = event_data.get("data", {}).get("object", {})
-
-            # Check common locations for tenant_id
-            metadata_tenant = obj.get("metadata", {}).get("tenant_id")
-            if metadata_tenant:
-                tenant_id = UUID(metadata_tenant)
-            else:
-                client_ref = obj.get("client_reference_id")
-                if client_ref:
-                    tenant_id = UUID(client_ref)
-        except (ValueError, AttributeError, json.JSONDecodeError):
-            pass
-
-    # Resolve webhook secret
-    webhook_secret = None
-    if tenant_id:
-        from src.app.modules.billing.service import StripeSettingsService
-        settings_service = StripeSettingsService(db)
-        webhook_secret = await settings_service.get_webhook_secret(tenant_id)
-
-    # Fall back to global secret
-    if not webhook_secret:
-        webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
-
+    webhook_secret = (
+        settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
+    )
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
         raise HTTPException(
@@ -113,18 +90,36 @@ async def stripe_webhook(
             detail="Webhook secret not configured",
         )
 
-    # Verify signature
-    # Note: verification was originally synchronous (CPU-bound)
+    # Verify signature against the GLOBAL secret (executor: CPU-bound).
     import asyncio
 
     event = await asyncio.get_running_loop().run_in_executor(
         None, verify_webhook_signature, payload, sig_header, webhook_secret
     )
 
+    # Tenant is now authoritative: extracted from the VERIFIED event object.
+    _derive_and_attach_tenant(event)
+
     # Handle event directly so that exceptions propagate and Stripe can retry
     await handle_webhook_event(event)
 
     return {"status": "success"}
+
+
+def _derive_and_attach_tenant(event: Any) -> None:
+    """B6: attach the tenant id parsed from the verified event's metadata.
+
+    Only used as an advisory hint for logging; handlers resolve the
+    authoritative tenant from the DB record matched on the verified
+    stripe_subscription_id / invoice / charge id.
+    """
+    obj = event.get("data", {}).get("object", {}) if isinstance(event, dict) else {}
+    metadata_tenant = obj.get("metadata", {}).get("tenant_id") or obj.get("client_reference_id")
+    if metadata_tenant:
+        try:
+            event["derived_tenant_id"] = str(UUID(str(metadata_tenant)))
+        except (ValueError, AttributeError):
+            pass
 
 
 # =============================================================================

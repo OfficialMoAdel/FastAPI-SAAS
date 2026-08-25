@@ -14,6 +14,7 @@ class Permission(str, Enum):
     ROLES_ASSIGN = "roles:assign"
 
     # Feature Flags Management
+    FEATURE_FLAGS_READ = "feature_flags:read"
     FEATURE_FLAGS_MANAGE = "feature_flags:manage"
 
     # Notification Management

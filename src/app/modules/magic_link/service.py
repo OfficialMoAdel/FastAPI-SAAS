@@ -219,10 +219,28 @@ class MagicLinkService:
         if not email:
             raise InvalidMagicLinkError("Invalid token data")
 
-        # Get user by email
-        user = await self._get_user_by_email(email)
-        if user is None:
-            raise InvalidMagicLinkError("User not found")
+        # M8: prefer the user_id bound at link creation; email-only lookup is
+        # only a fallback for legacy unbound links. Prevents an email change
+        # between send and verify from resolving a different account.
+        extra_data = consumed_data.get("extra_data") or {}
+        bound_user_id = extra_data.get("user_id")
+        if bound_user_id is not None:
+            user = await crud_users.get_user_with_tier_eager(db=self.db, id=int(bound_user_id))
+            if user is None:
+                raise InvalidMagicLinkError("User not found")
+            # Tenant isolation: get_user_with_tier_eager already filters by the
+            # request's tenant context; an empty result above means cross-tenant.
+            if str(user.get("email", "")).lower() != str(email).lower():
+                logger.warning(
+                    "Magic link email mismatch for bound user",
+                    extra={"operation": "verify_magic_link", "user_id": bound_user_id},
+                )
+                raise InvalidMagicLinkError("User not found")
+        else:
+            # Legacy unbound link: resolve by email only
+            user = await self._get_user_by_email(email)
+            if user is None:
+                raise InvalidMagicLinkError("User not found")
 
         # Check if user is active
         if user.get("is_deleted", False) or not user.get("is_active", False):

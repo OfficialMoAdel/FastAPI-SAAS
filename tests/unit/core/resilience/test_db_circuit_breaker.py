@@ -118,7 +118,10 @@ async def test_transaction_retry(mock_db_session, reset_circuit):
 
     assert results == ["Success"]
     assert op.call_count == 2
-    assert db_circuit._failure_count == 1
+    # W3: the final successful attempt resets _failure_count — a success
+    # proves the dependency is healthy, so stale failures must not accumulate
+    # toward the threshold across the breaker's lifetime.
+    assert db_circuit._failure_count == 0
 
 
 @pytest.mark.asyncio

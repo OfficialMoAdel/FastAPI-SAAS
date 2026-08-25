@@ -21,7 +21,6 @@ Usage:
 
 from __future__ import annotations
 
-import inspect
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, Generic, TypeVar, cast
@@ -175,22 +174,9 @@ class BaseService(Generic[T]):
                 from src.app.core.db.tenant_crud import TenantAwareCRUD
 
                 if isinstance(self.crud, TenantAwareCRUD):
-                    _maybe = self.crud.inject_tenant_filter(kwargs)
-                    if inspect.isawaitable(_maybe) or hasattr(_maybe, "__await__"):
-                        kwargs = await _maybe  # type: ignore[no-redef]
-                    else:
-                        kwargs = _maybe
-                    if not isinstance(kwargs, dict):
-                        kwargs = {}
-                elif hasattr(self.crud, "inject_tenant_filter"):
-                    _maybe = self.crud.inject_tenant_filter(kwargs)  # type: ignore[operator]
-                    if inspect.isawaitable(_maybe) or hasattr(_maybe, "__await__"):
-                        _maybe = await _maybe  # type: ignore[no-redef]
-                    if isinstance(_maybe, dict):
-                        kwargs = _maybe
-                    elif _maybe is not None and not isinstance(_maybe, dict):
-                        # Mock returned non-dict (e.g. MagicMock) -> treat as no filter
-                        pass
+                    # H4: deterministic contract — inject_tenant_filter returns a
+                    # dict (or raises); anything else is a programming error.
+                    kwargs = self.crud.inject_tenant_filter(kwargs)
 
                 # M3: hasattr silently dropped typos (was if hasattr)
                 for key, value in kwargs.items():

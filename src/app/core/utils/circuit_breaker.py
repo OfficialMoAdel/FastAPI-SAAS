@@ -102,12 +102,6 @@ class CircuitBreaker:
             # cycle can allow a new probe if the circuit opens again later.
             self._probe_in_progress = False
 
-            # BUG FIX: The HALF_OPEN state is VIRTUAL — it is computed by the `state`
-            # property (when _state==OPEN and recovery_timeout has elapsed), but
-            # `_state` itself is still OPEN during the probe window. The old check
-            # `self._state == CircuitState.HALF_OPEN` could never be True during a
-            # real probe, so successful probes never closed the circuit (it stayed
-            # visually HALF_OPEN forever). Use `self.state` (the property) instead.
             if self.state == CircuitState.HALF_OPEN:
                 self._success_count += 1
                 if self._success_count >= self.success_threshold:
@@ -118,8 +112,18 @@ class CircuitBreaker:
                         self.success_threshold,
                     )
                     # Record state transition for monitoring
+                    from src.app.core.config import settings
+                    from src.app.core.monitoring.r1_unified_metrics import record_circuit_breaker_transition
+
                     if settings.CIRCUIT_BREAKER_USE_DOUBLE_CHECK:
                         record_circuit_breaker_transition("closed")
+            elif self.state == CircuitState.CLOSED and self._failure_count:
+                # W3 FIX: a success in CLOSED proves the dependency is healthy.
+                # Without resetting _failure_count here, failures accumulate
+                # over the breaker's LIFETIME (across tenants/endpoints sharing
+                # this instance) until failure_threshold trips it despite the
+                # dependency currently being healthy.
+                self._failure_count = 0
 
     async def record_failure(self, error: Exception | None = None) -> None:
         """Record failed call, potentially opening circuit."""

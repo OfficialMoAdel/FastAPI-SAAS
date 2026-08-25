@@ -76,10 +76,26 @@ async def close_redis_cache_pool() -> None:
 # -------------- queue --------------
 async def create_redis_queue_pool() -> None:
     """Initialize ARQ queue pool (reuses the shared connection pool)."""
-    # ARQ uses default decoding (bytes) which matches the pool
+    # ARQ uses default decoding (bytes) which matches the pool.
+    # K1 FIX: explicitly use the same JSON (de)serializers as the worker
+    # (core/worker/settings.py). Without job_serializer, arq defaults to
+    # pickle.dumps while the worker decodes with json_loads -> every
+    # web-enqueued job failed with SerializationError before running.
+    from src.app.core.json_utils import json_dumps, json_loads
+
+    def _serialize(obj: dict) -> bytes:
+        return json_dumps(obj)  # type: ignore[return-value]  # orjson returns bytes when as_str=False
+
+    def _deserialize(data: bytes | str | memoryview) -> Any:
+        return json_loads(data)
+
     if queue.pool is None:
         pool = await get_redis_pool()
-        queue.pool = ArqRedis(connection_pool=pool)
+        queue.pool = ArqRedis(
+            connection_pool=pool,
+            job_serializer=_serialize,
+            job_deserializer=_deserialize,
+        )
 
 
 async def close_redis_queue_pool() -> None:
@@ -110,13 +126,17 @@ def lifespan_factory(
 
         await set_threadpool_tokens()
 
+        # S1 FIX: initialize flags BEFORE the try block. If a fallible create
+        # call below raises, the finally block references these names; assigning
+        # them inside the try let an early failure raise NameError and mask the
+        # original startup exception.
+        redis_cache_enabled = getattr(settings, "REDIS_CACHE_ENABLED", False)
+        redis_queue_enabled = getattr(settings, "REDIS_QUEUE_ENABLED", False)
+
         try:
-            # R1-UNIFIED: Support both composition (Settings) and legacy mixins
-            redis_cache_enabled = getattr(settings, "REDIS_CACHE_ENABLED", False)
             if redis_cache_enabled:
                 await create_redis_cache_pool()
 
-            redis_queue_enabled = getattr(settings, "REDIS_QUEUE_ENABLED", False)
             if redis_queue_enabled:
                 await create_redis_queue_pool()
 
@@ -129,6 +149,7 @@ def lifespan_factory(
 
             async def _warm_caches_background() -> None:
                 from src.app.core.logger import get_logger
+
                 logger = get_logger(__name__)
                 try:
                     if cache.client:
@@ -148,6 +169,7 @@ def lifespan_factory(
 
             # Fire and forget with safe error handling and hard reference
             from src.app.core.utils.background_task import create_safe_task
+
             create_safe_task(_warm_caches_background(), name="cache_warming_startup")
 
             initialization_complete.set()
@@ -197,7 +219,6 @@ def lifespan_factory(
                 await AIProviderFactory.shutdown_all()
             except ImportError:
                 pass
-
 
     return lifespan
 

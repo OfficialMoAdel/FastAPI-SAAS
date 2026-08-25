@@ -1,4 +1,5 @@
 import asyncio
+from typing import Any
 from uuid import UUID
 
 from arq.worker import Worker
@@ -135,9 +136,91 @@ async def cleanup_expired_tokens_task(ctx: dict) -> str:
         logger.error("Failed to cleanup expired tokens", error=str(e))
         raise
 
+
+@monitor_job("cleanup_leaked_webhook_lock")
+async def cleanup_leaked_webhook_lock(ctx: Worker, event_id: str) -> str:
+    """B8: release a webhook idempotency lock whose release path failed.
+
+    ``_release_webhook_event_lock`` enqueues this when BOTH the Redis delete
+    and the DB unlock fail. Previously this function was enqueued but never
+    defined or registered, so the orphaned WebhookEvent row permanently lost
+    the event (every retry rejected as already_processed).
+
+    Retries the same dual release; raises so arq/monitoring record the failure.
+    """
+    from src.app.modules.billing.webhook.idempotency import _release_webhook_event_lock
+
+    await _release_webhook_event_lock(event_id)
+    logger.info("Leaked webhook lock cleaned up", event_id=event_id)
+    return f"Released lock for {event_id}"
+
+
 async def startup(ctx: Worker) -> None:
+    """Initialize the worker-process runtime.
+
+    K2 FIX: the web lifespan performs this wiring (main.py), but the worker
+    process runs its own interpreter and previously started with:
+      - cache.client = None  -> flush_audit_logs_task returned 0 forever,
+        cleanup_expired_tokens_task was a no-op
+      - event_bus with no handlers / no ARQ queue -> publishes inside jobs
+        (e.g. RLS-bypass audit events) were silently dropped
+      - session_manager without a Redis client
+    """
+    from src.app.core.config import settings
+    from src.app.core.redis_provider import get_redis_pool, set_clients
+
+    if settings.REDIS_CACHE_ENABLED or settings.REDIS_QUEUE_ENABLED:
+        pool = await get_redis_pool()
+        # decode_responses=True matches the web-side cache client contract.
+        import redis.asyncio as aioredis
+
+        redis_client = aioredis.Redis(connection_pool=pool, decode_responses=True)
+        await set_clients(redis_client=redis_client, redis_pool=pool)
+
+        # Event bus: handlers + Redis client (DLQ persistence) + ARQ queue so
+        # NORMAL/LOW events published inside jobs are queued, not dropped.
+        from src.app.core.events import event_bus
+
+        event_bus.set_redis_client(redis_client)
+        if settings.ARQ_ENABLED:
+            from arq.connections import ArqRedis
+
+            from src.app.core.json_utils import json_dumps, json_loads
+
+            def _serialize(obj: dict) -> bytes:
+                return json_dumps(obj)  # type: ignore[return-value]  # orjson returns bytes when as_str=False
+
+            def _deserialize(data: bytes | str | memoryview) -> Any:
+                return json_loads(data)
+
+            arq_pool = ArqRedis(
+                connection_pool=pool,
+                job_serializer=_serialize,
+                job_deserializer=_deserialize,
+            )
+            event_bus.set_arq_queue(arq_pool)
+
+        event_bus.register_all_handlers()
+
+        # Session manager needs the shared client for Lua-based registry ops.
+        from src.app.core.security.session_manager import session_manager
+
+        session_manager.set_redis_client(redis_client)
+
     logger.info("Worker Started")
 
 
 async def shutdown(ctx: Worker) -> None:
+    """Tear down the worker runtime in reverse order."""
+    from src.app.core.events import reset_event_bus
+    from src.app.core.redis_provider import shutdown as shutdown_clients
+
+    try:
+        reset_event_bus()
+    except Exception as e:  # noqa: BLE001 - teardown must not mask exit
+        logger.warning("Worker event-bus reset failed", error=str(e))
+    try:
+        await shutdown_clients()
+    except Exception as e:  # noqa: BLE001 - teardown must not mask exit
+        logger.warning("Worker redis shutdown failed", error=str(e))
     logger.info("Worker end")

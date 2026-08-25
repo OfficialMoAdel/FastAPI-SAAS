@@ -52,8 +52,13 @@ class MicrosoftProvider(BaseOAuthProvider):
         )
         return response_data
 
-    async def get_user_info(self, access_token: str) -> Any:
-        """Get user info from Microsoft Graph API."""
+    async def get_user_info(self, access_token: str, id_token: str | None = None) -> Any:
+        """Get user info from Microsoft Graph API.
+
+        M10: accepts the OIDC id_token so `email_verified` can be read from
+        its claims. Microsoft may omit that claim — default False (fail
+        closed) unless explicitly true.
+        """
         data = await self._http_get(
             self.userinfo_endpoint,
             headers={
@@ -62,19 +67,25 @@ class MicrosoftProvider(BaseOAuthProvider):
             },
         )
 
+        email_verified = False
+        if id_token:
+            try:
+                import jwt
+
+                claims = jwt.decode(id_token, options={"verify_signature": False})
+                email_verified = claims.get("email_verified") is True
+            except Exception:
+                email_verified = False
+
         # Normalize to internal structure
         class UserInfo:
-            def __init__(self, data):
+            def __init__(self, data, email_verified):
                 # Microsoft uses id (UUID) instead of id (numeric)
                 self.provider_user_id = str(data.get("id"))
                 self.email = data.get("mail") or data.get("userPrincipalName")
-                # Microsoft Graph /v1.0/me does NOT return an emailVerified field,
-                # so relying on it always yields False and breaks new-user signup
-                # (requires_verified_email() is True for Microsoft). The user has
-                # already authenticated with Microsoft, so treat the email as verified.
-                self.email_verified = True
+                self.email_verified = email_verified
                 self.name = data.get("displayName") or data.get("givenName", "")
                 # Photo requires additional API call, keeping it None for now
                 self.picture = None
 
-        return UserInfo(data)
+        return UserInfo(data, email_verified)

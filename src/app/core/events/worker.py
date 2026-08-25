@@ -141,7 +141,14 @@ async def process_event_handler(
                 max_attempts=_pkg.EventBus.MAX_RETRIES,
                 error=str(e),
             )
-            raise  # Re-raise for ARQ retry logic
+            # K3 FIX: arq only re-runs jobs that raise arq.worker.Retry (or
+            # CancelledError/RetryJob). A bare raise of a plain exception sets
+            # result=e, finish=True and DELETES the job -> zero retries. Raise
+            # Retry with the configured backoff so the job re-runs.
+            delays = _pkg.EventBus.RETRY_DELAYS
+            from arq.worker import Retry
+
+            raise Retry(defer=delays[min(job_try - 1, len(delays) - 1)]) from e
         finally:
             # SECURITY FIX: Always clear context to prevent leakage between jobs in the same worker
             from src.app.core.tenancy.context import clear_tenant_context

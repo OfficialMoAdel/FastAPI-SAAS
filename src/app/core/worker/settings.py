@@ -7,6 +7,7 @@ from src.app.core.events import process_event_handler
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.worker.functions import (
     cleanup_expired_tokens_task,
+    cleanup_leaked_webhook_lock,
     deliver_webhook_task,
     flush_audit_logs_task,
     migrate_sessions_task,
@@ -44,6 +45,7 @@ class WorkerSettings:
         process_event_handler,  # FIXED: Was missing - handles async event bus events
         send_email_task,  # FIXED: Was missing - handles email notifications
         send_magic_link_email_task,
+        cleanup_leaked_webhook_lock,  # B8: was enqueued but never defined/registered
     ]
     # Consume both the default queue and the low-priority event queue.
     # Without this, EventPriority.LOW events enqueued to

@@ -74,9 +74,15 @@ class TenantAwareCRUD(
 
         SECURITY FIX (M-4): Always override explicit tenant_id to prevent
         callers from bypassing tenant isolation.
+
+        B1 FIX: the NO_TENANT sentinel (set by TenantMiddleware on exempt
+        paths such as /api/v1/billing/webhook) is falsy but not None. The old
+        `tenant is not None` check let it through and scoped queries to
+        UUID(int=0), silently matching 0 rows for reads/updates while Stripe
+        received a 200. Truthiness now rejects both None and the sentinel.
         """
         tenant = get_tenant_context()
-        if tenant is not None:
+        if tenant:
             tenant_id = tenant.id
             if isinstance(tenant_id, str):
                 try:
@@ -94,17 +100,24 @@ class TenantAwareCRUD(
                 )
             return {"tenant_id": tenant_id, **{k: v for k, v in kwargs.items() if k != "tenant_id"}}
         else:
-            if "tenant_id" in kwargs:
-                return kwargs
             from src.app.core.exceptions.http_exceptions import TenantContextError
             from src.app.core.logger import get_logger
             _m = getattr(self, "model", None)
             _mn = getattr(_m, "__name__", type(self).__name__) if _m else type(self).__name__
-            get_logger(__name__).error("tenant_context_missing_rejected", model=_mn)
-            # Allow explicitly unscoped system queries via allow_unscoped flag
-            if kwargs.pop("_allow_unscoped", False) is True:
+
+            # B1/T10: pop unconditionally so caller-supplied tenant_id kwargs
+            # cannot smuggle through the unscoped branch.
+            allow_unscoped = kwargs.pop("_allow_unscoped", False) is True
+            if "tenant_id" in kwargs:
+                get_logger(__name__).warning(
+                    "tenant_id_kwarg_ignored_without_context",
+                    model=_mn,
+                    requested=str(kwargs.pop("tenant_id")),
+                )
+            if allow_unscoped:
                 get_logger(__name__).warning("tenant_context_missing_allowed_via_flag", model=_mn)
                 return kwargs
+            get_logger(__name__).error("tenant_context_missing_rejected", model=_mn)
             raise TenantContextError(f"Tenant-scoped query on {_mn} without active tenant context")
 
     def _inject_tenant_filter(self, kwargs: dict[str, Any]) -> dict[str, Any]:
@@ -249,7 +262,7 @@ class TenantAwareCRUD(
             object = {k: v for k, v in object.items() if k != "tenant_id"}
         elif isinstance(object, BaseModel) and hasattr(object, "tenant_id"):
             tenant = get_tenant_context()
-            if tenant is not None:
+            if tenant:  # B1: truthiness rejects NO_TENANT sentinel too
                 try:
                     object.tenant_id = tenant.id  # type: ignore[attr-defined]
                 except Exception:

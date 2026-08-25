@@ -11,6 +11,7 @@ import asyncio
 from dataclasses import dataclass
 from datetime import timedelta
 from typing import Any
+from uuid import uuid4
 
 from fastapi import Request, Response
 
@@ -72,10 +73,45 @@ class TokenIssuer:
         tuple[str, str]
             ``(access_token, refresh_token)``
         """
+        # A3: mint ONE stable sid per session up front so access and refresh
+        # tokens share it (each creator only fills it in when absent).
+        token_data.setdefault("sid", str(uuid4()))
         access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
         return await asyncio.gather(
             create_access_token(data=token_data, expires_delta=access_token_expires),
             create_refresh_token(data=token_data),
+        )
+
+    @staticmethod
+    async def rotate_token_pair(
+        token_data: dict[str, Any],
+        old_refresh_payload: dict[str, Any],
+    ) -> tuple[str, str]:
+        """Create a rotated access/refresh pair preserving the original session.
+
+        A2/A3: ``absolute_exp``, original ``iat`` and stable ``sid`` are copied
+        from the OLD refresh payload so rotation cannot extend the absolute
+        session window or fork the session identity. Only a brand-new login
+        mints fresh values (see :meth:`create_token_pair`).
+
+        Args:
+            token_data: Fresh claim payload (sub/tier/token_version/tenant_id).
+            old_refresh_payload: Decoded claims of the refresh token being rotated.
+
+        Returns
+        -------
+        tuple[str, str]
+            ``(access_token, refresh_token)``
+        """
+        carried = {
+            key: old_refresh_payload[key]
+            for key in ("sid", "absolute_exp", "iat")
+            if old_refresh_payload.get(key) is not None
+        }
+        access_token_expires = timedelta(minutes=settings.ACCESS_TOKEN_EXPIRE_MINUTES)
+        return await asyncio.gather(
+            create_access_token(data={**token_data, **carried}, expires_delta=access_token_expires),
+            create_refresh_token(data={**token_data, **carried}),
         )
 
     @staticmethod

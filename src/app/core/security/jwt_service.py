@@ -103,6 +103,11 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
             "token_version": token_version,
         }
     )
+    # A3: stable session id shared with the refresh token; copied from input data
+    # when present (rotation), minted fresh at login. Kept separate from jti so
+    # blacklist identity stays per-token while session identity stays per-login.
+    if "sid" not in to_encode:
+        to_encode["sid"] = str(uuid4())
 
     # Use _jwt_encode to inline symmetric algorithms or offload asymmetric algorithms
     encoded_jwt: str = await _jwt_encode(to_encode, _get_signing_key(), settings.ALGORITHM)
@@ -121,10 +126,18 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
     else:
         expire = datetime.now(UTC) + timedelta(days=settings.REFRESH_TOKEN_EXPIRE_DAYS)
 
-    # SECURITY FIX: Add JTI (JWT ID) for precise blacklist tracking
-    # SECURITY FIX: Add absolute_exp for maximum session lifetime enforcement
-    # SECURITY FIX: Include token_version for session invalidation on password change
+    # A2: honor caller-provided sid/absolute_exp/iat (rotation carries them
+    # forward); only mint fresh values for a brand-new session.
+    # A3: same rule for sid — copied verbatim through rotation.
     token_version = to_encode.pop("token_version", 0)
+    if "sid" not in to_encode:
+        to_encode["sid"] = str(uuid4())
+    if "absolute_exp" not in to_encode:
+        to_encode["absolute_exp"] = (
+            datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)
+        ).timestamp()
+    if "iat" not in to_encode:
+        to_encode["iat"] = datetime.now(UTC).timestamp()
     to_encode.update(
         {
             "exp": expire,
@@ -132,9 +145,7 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
             "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
             "iss": getattr(settings, "JWT_ISSUER", "fastapi-saas"),
             "jti": str(uuid4()),  # Unique token ID for blacklist
-            "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
-            "absolute_exp": (datetime.now(UTC) + timedelta(days=settings.MAX_SESSION_DURATION_DAYS)).timestamp(),
         }
     )
 
@@ -265,6 +276,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         tier_id=tier_id,
         absolute_exp=absolute_exp,
         token_version=token_version or 0,
+        sid=payload.get("sid") or jti,  # A3: fall back to jti for pre-sid tokens
+        iat=payload.get("iat"),  # A2: original login iat
     )
 
 

@@ -26,7 +26,11 @@ def _get_tenant_id(current_tenant: TenantContext) -> UUID:
     return current_tenant.id
 
 
-@router.get("", response_model=FeatureFlagsResponse)
+@router.get(
+    "",
+    response_model=FeatureFlagsResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_READ))],
+)
 async def list_feature_flags(
     service: FeatureFlagService = Depends(get_feature_flag_service),
     current_tenant: TenantContext = Depends(get_current_tenant),
@@ -42,7 +46,11 @@ async def list_feature_flags(
     return FeatureFlagsResponse(feature_flags=flags)
 
 
-@router.get("/{flag_name}", response_model=FeatureFlagCheckResponse)
+@router.get(
+    "/{flag_name}",
+    response_model=FeatureFlagCheckResponse,
+    dependencies=[Depends(requires_permission(Permission.FEATURE_FLAGS_READ))],
+)
 async def check_feature_flag(
     flag_name: str,
     service: FeatureFlagService = Depends(get_feature_flag_service),
@@ -88,8 +96,11 @@ async def update_feature_flag(
 
     try:
         await service.update_tenant_flag(tenant_id, flag_name, value)
-    except ModelNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Feature flag not found.",
+        )
 
     return FeatureFlagCheckResponse(
         flag_name=flag_name,
@@ -120,8 +131,11 @@ async def delete_feature_flag(
 
     try:
         await service.delete_tenant_flag(tenant_id, flag_name)
-    except ModelNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ModelNotFoundError:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Feature flag not found.",
+        )
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
@@ -145,8 +159,8 @@ async def bulk_update_flags(
 
     try:
         await service.bulk_update_tenant_flags(tenant_id, request.feature_flags)
-    except ModelNotFoundError as e:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
+    except ModelNotFoundError:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Feature flag not found.")
 
     # Return updated flags
     flags = await service.get_tenant_flags(tenant_id)

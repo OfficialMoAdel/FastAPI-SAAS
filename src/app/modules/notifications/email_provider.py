@@ -111,12 +111,17 @@ class SMTPProvider(EmailProvider):
             from_email = message.from_email or self.from_email or ""
             from_name = message.from_name or self.from_name or ""
 
-            msg["From"] = formataddr((from_name, from_email))
-            msg["To"] = message.to_email
-            msg["Subject"] = message.subject
+            # M11 (defense in depth): strip CR/LF from every header value to
+            # prevent SMTP header injection via user-influenced fields.
+            def _sanitize_header(value: str) -> str:
+                return value.replace("\r", "").replace("\n", "")
+
+            msg["From"] = formataddr((_sanitize_header(from_name), _sanitize_header(from_email)))
+            msg["To"] = _sanitize_header(message.to_email)
+            msg["Subject"] = _sanitize_header(message.subject)
 
             if message.reply_to:
-                msg["Reply-To"] = message.reply_to
+                msg["Reply-To"] = _sanitize_header(message.reply_to)
 
             # Attach plain text content FIRST — multipart/alternative parts are ordered
             # from least-preferred to most-preferred (RFC 2046 §5.1.4). The email client
@@ -139,7 +144,9 @@ class SMTPProvider(EmailProvider):
                     part = MIMEBase(attachment.content_type.split("/")[0], attachment.content_type.split("/")[1])
                     part.set_payload(attachment.content)
                     encoders.encode_base64(part)
-                    part.add_header("Content-Disposition", f"attachment; filename={attachment.filename}")
+                    # M11: filename is header-injected too — strip CR/LF
+                    safe_name = _sanitize_header(attachment.filename)
+                    part.add_header("Content-Disposition", f"attachment; filename={safe_name}")
                     msg.attach(part)
 
             # Send via async SMTP (non-blocking)

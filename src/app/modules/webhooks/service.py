@@ -562,18 +562,53 @@ class WebhookService:
                     pass
             return delivery
 
-        # CRIT-2 FIX: Serialize payload ONCE with sort_keys=True to match HMAC signature.
-        # Using content= instead of json= prevents httpx from re-serializing with
-        # different formatting, which would break HMAC verification on the receiver side.
+        # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
+        #
+        # Previously the signature was computed at trigger time over a
+        # pre-persistence dict while transmitted bytes were re-serialized after
+        # a JSONB round-trip - any value/type normalization silently broke
+        # consumer-side HMAC. The timestamp header came from delivery.created_at,
+        # so retries older than the 300s replay tolerance were always rejected.
+        #
+        # Now: one serialization of stored payload, signed with a fresh timestamp
+        # (Stripe-style `t=...,v1=...`), so sign/send share identical bytes and
+        # retries carry a valid stamp.
+        import time as _time
+
+        send_timestamp = int(_time.time())
         payload_bytes = json.dumps(delivery.payload, sort_keys=True).encode("utf-8")
+
+        def _sign_with_secret(secret: str) -> str:
+            signed = f"{send_timestamp}.".encode() + payload_bytes
+            digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
+            return f"t={send_timestamp},v1={digest}"
+
+        signature_header = _sign_with_secret(decrypt_data(endpoint.secret))
+        if (
+            endpoint.old_signing_secret
+            and endpoint.old_secret_expires_at
+            and isinstance(endpoint.old_secret_expires_at, datetime)
+        ):
+            expires_at = endpoint.old_secret_expires_at
+            if expires_at.tzinfo is None:
+                expires_at = expires_at.replace(tzinfo=UTC)
+            if expires_at > datetime.now(UTC):
+                try:
+                    signature_header += f",{_sign_with_secret(decrypt_data(endpoint.old_signing_secret))}"
+                except Exception as old_sig_err:
+                    logger.error(
+                        "webhook_old_signing_secret_decryption_failed",
+                        endpoint_id=str(endpoint.id),
+                        error=str(old_sig_err),
+                    )
 
         # Prepare request headers
         headers = {
             "Content-Type": "application/json",
-            "X-Webhook-Signature": delivery.signature,
+            "X-Webhook-Signature": signature_header,
             "X-Webhook-Event": delivery.event_type,
             "X-Webhook-ID": str(delivery.id),
-            "X-Webhook-Timestamp": str(int(delivery.created_at.replace(tzinfo=UTC).timestamp())),
+            "X-Webhook-Timestamp": str(send_timestamp),
         }
 
         # Validate URL for SSRF protection before making request

@@ -8,7 +8,12 @@ from fastapi import Request, Response
 from structlog import get_logger
 
 from src.app.core.config import EnvironmentOption, settings
-from src.app.core.security.jwt_utils import decode_jwt_token, extract_jti_unverified, validate_jwt_length
+from src.app.core.security.jwt_utils import (
+    decode_jwt_token,
+    extract_claim_unverified,
+    extract_jti_unverified,
+    validate_jwt_length,
+)
 from src.app.core.security.session_manager import session_manager as global_session_manager
 from src.app.core.utils.ip_utils import get_client_ip
 
@@ -47,9 +52,7 @@ async def register_login_session(
     Args:
         user_id: The ID of the user logging in.
         access_token: The issued access token.
-        request: Optional FastAPI request object for client IP and User-Agent.
         verify: If True, uses verified jwt decoding. If False, extracts unverified.
-        device_label: Fallback User-Agent label when no request is available
             (e.g. "Magic Link Login"). Defaults to the generic fallback.
     """
     try:
@@ -60,9 +63,14 @@ async def register_login_session(
                 decoded_token: dict[str, Any] = {}
             else:
                 decoded_token = await decode_jwt_token(access_token) or {}
-            session_id = decoded_token.get("jti", access_token[:32])
+            # A3: sessions are keyed by the stable sid claim (shared by the
+            # access and refresh tokens of one login); fall back to jti for
+            # tokens minted before sid existed.
+            session_id = decoded_token.get("sid") or decoded_token.get("jti", access_token[:32])
         else:
-            session_id = extract_jti_unverified(access_token) or access_token[:32]
+            session_id = extract_claim_unverified(access_token, "sid") or (
+                extract_jti_unverified(access_token) or access_token[:32]
+            )
 
         client_ip = get_client_ip(request) if request else "Unknown"
 

@@ -60,7 +60,9 @@ def _get_rp_id() -> str:
     from urllib.parse import urlparse
 
     parsed = urlparse(settings.FRONTEND_URL)
-    return parsed.netloc or "localhost"
+    # M9: rp_id must be a bare hostname — WebAuthn never includes a port in
+    # the RP ID, so netloc (which carries :port) breaks non-default ports.
+    return parsed.hostname or "localhost"
 
 
 RP_NAME = settings.APP_NAME
@@ -273,7 +275,7 @@ class PasskeyService:
         # 2. Generate authentication options
         options: PublicKeyCredentialRequestOptions = generate_authentication_options(
             rp_id=_get_rp_id(),
-            user_verification=UserVerificationRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,  # M3: 2FA semantics
             allow_credentials=allowed_credentials if allowed_credentials else None,
         )
 
@@ -678,8 +680,8 @@ class PasskeyService:
         # Decrypt the public key from database
         encryption = get_encryption()
         credential_public_key = encryption.decrypt_credential(db_credential.public_key)
-
-        # Verify the assertion
+        # M3: enforce UV=REQUIRED on the assertion to match the challenge;
+        # makes passkey login a true two-factor flow.
         return verify_authentication_response(
             credential=parsed_credential,
             expected_challenge=expected_challenge,
@@ -687,6 +689,7 @@ class PasskeyService:
             expected_rp_id=expected_rp_id,
             credential_public_key=credential_public_key,
             credential_current_sign_count=db_credential.counter,
+            require_user_verification=True,
         )
 
     async def _update_credential_counter(self, db: AsyncSession, credential: Any, new_counter: int) -> None:

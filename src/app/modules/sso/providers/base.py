@@ -108,6 +108,13 @@ class BaseOAuthProvider(ABC):
         pass
 
     @abstractmethod
-    async def get_user_info(self, access_token: str) -> dict[str, Any]:
-        """Retrieve user information using the access token."""
+    async def get_user_info(self, access_token: str, id_token: str | None = None) -> Any:
+        """Retrieve user information using the access token.
+
+        ``id_token`` is optional: OIDC-compliant providers (e.g. Microsoft)
+        may receive it so claims like ``email_verified`` can be read from its
+        payload. Providers that don't need it ignore the parameter.
+
+        Returns the provider's user-info object (shape varies by provider).
+        """
         pass

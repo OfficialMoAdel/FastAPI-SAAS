@@ -540,7 +540,22 @@ async def handle_invoice_payment_failed(event: stripe.Event) -> None:
             )
             return
 
-        # Update subscription to past_due
+        # B5 FIX: only move the subscription to past_due when its CURRENT
+        # status allows it. The old code set past_due unconditionally, which
+        # resurrected canceled/expired subscriptions (granting grace-period
+        # access to churned customers). The lifecycle state machine already
+        # models this — wire it in.
+        from src.app.modules.billing.lifecycle import is_valid_transition
+
+        if not is_valid_transition(db_subscription_locked.status, "past_due"):
+            _pkg.logger.info(
+                "Skipping past_due transition: current status does not permit it",
+                stripe_subscription_id=stripe_subscription_id,
+                current_status=str(db_subscription_locked.status),
+            )
+            await db.commit()  # persist the failed BillingRecord insert only
+            return
+
         update_data = UserSubscriptionUpdate(status="past_due")
         await _pkg.crud_user_subscriptions.update(
             db=db,

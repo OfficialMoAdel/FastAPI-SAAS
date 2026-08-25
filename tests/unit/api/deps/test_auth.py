@@ -17,7 +17,6 @@ from src.app.api.deps.auth import (
     AuthContext,
     AuthenticatedUser,
     _create_auth_context,
-    _handle_auth_mocks,
     _is_token_blacklisted_with_fallback,
     _verify_optional_bearer_token,
     get_auth_context,
@@ -470,49 +469,6 @@ async def test_get_user_by_api_key_inactive() -> None:
     assert result is None
 
 
-# ---------------------------------------------------------------------------
-# _handle_auth_mocks
-# ---------------------------------------------------------------------------
-
-
-async def test_handle_auth_mocks_none() -> None:
-    request = _make_request()
-    is_mock, ctx = await _handle_auth_mocks(request, _make_db(), None)
-    assert is_mock is False
-    assert ctx is None
-
-
-async def test_handle_auth_mocks_sync() -> None:
-    request = _make_request()
-    user_obj = {"id": 1, "email": "a@b.com"}
-    request.app.dependency_overrides[get_current_user] = lambda: user_obj
-    is_mock, ctx = await _handle_auth_mocks(request, _make_db(), None)
-    assert is_mock is True
-    assert ctx is not None
-    assert ctx.user.id == 1
-
-
-async def test_handle_auth_mocks_returns_none() -> None:
-    request = _make_request()
-    request.app.dependency_overrides[get_optional_user] = lambda: None
-    is_mock, ctx = await _handle_auth_mocks(request, _make_db(), None)
-    assert is_mock is True
-    assert ctx is None
-
-
-async def test_handle_auth_mocks_async() -> None:
-    request = _make_request()
-    user_obj = {"id": 9, "email": "a@b.com"}
-
-    async def _ovr() -> dict[str, Any]:
-        return user_obj
-
-    request.app.dependency_overrides[get_current_user] = _ovr
-    is_mock, ctx = await _handle_auth_mocks(request, _make_db(), None)
-    assert is_mock is True
-    assert ctx is not None
-    assert ctx.user.id == 9
-
 
 async def test_is_token_blacklisted_token_check() -> None:
     db = _make_db()
@@ -845,15 +801,6 @@ async def test_get_optional_non_bearer() -> None:
     request = _make_request(headers={"Authorization": "Basic abc"})
     result = await get_optional_auth_context(request, _make_db(), None)
     assert result is None
-
-
-async def test_get_optional_mock() -> None:
-    request = _make_request()
-    user_obj = {"id": 1, "email": "a@b.com"}
-    request.app.dependency_overrides[get_optional_user] = lambda: user_obj
-    ctx = await get_optional_auth_context(request, _make_db(), None)
-    assert ctx is not None
-    assert ctx.user.id == 1
 
 
 async def test_get_optional_api_key_invalid() -> None:

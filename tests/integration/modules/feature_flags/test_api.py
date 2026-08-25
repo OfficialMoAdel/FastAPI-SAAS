@@ -101,8 +101,12 @@ class TestFeatureFlagBulkAPI:
 class TestFeatureFlagTenantIsolation:
     """Tests for feature flag tenant isolation."""
 
-    def test_flags_isolated_between_tenants(self, client, db) -> None:
-        """Flag overrides from one tenant should not affect another."""
+    def test_flags_isolated_between_tenants(self, client, db, superuser_token_headers) -> None:
+        """Flag overrides from one tenant should not affect another.
+
+        C2: GET /features now requires FEATURE_FLAGS_READ permission, so the
+        request must carry auth headers alongside the tenant slug header.
+        """
         # Create two real tenants in DB
         from src.app.modules.tenants.models import Tenant
 
@@ -115,8 +119,8 @@ class TestFeatureFlagTenantIsolation:
         db.refresh(t1)
         db.refresh(t2)
 
-        headers_a = {"X-Tenant-ID": t1.slug}
-        headers_b = {"X-Tenant-ID": t2.slug}
+        headers_a = {"X-Tenant-ID": t1.slug, **superuser_token_headers}
+        headers_b = {"X-Tenant-ID": t2.slug, **superuser_token_headers}
 
         response_a = client.get("/api/v1/features", headers=headers_a)
         response_b = client.get("/api/v1/features", headers=headers_b)

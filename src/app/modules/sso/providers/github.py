@@ -47,8 +47,11 @@ class GitHubProvider(BaseOAuthProvider):
         )
         return response_data
 
-    async def get_user_info(self, access_token: str) -> Any:
-        """Get user info from GitHub."""
+    async def get_user_info(self, access_token: str, id_token: str | None = None) -> Any:
+        """Get user info from GitHub.
+
+        ``id_token`` accepted for base-class signature parity; not used by this provider.
+        """
         # GitHub returns user email only with user:email scope, and it's a separate endpoint
         # Get basic user info first
         data = await self._http_get(

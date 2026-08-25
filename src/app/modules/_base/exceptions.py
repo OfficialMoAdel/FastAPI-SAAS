@@ -118,11 +118,8 @@ class RateLimitExceededError(Exception):
         super().__init__(self.message)
 
 
-class TenantContextError(ForbiddenError):
-    """Raised when tenant context is missing or inactive."""
-
-    def __init__(self, message: str = "Tenant context required or inactive"):
-        super().__init__(message, reason="tenant_context_error")
+# H3: single source of truth lives in core/exceptions/http_exceptions.py
+from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: E402
 
 
 class ServiceUnavailableError(Exception):

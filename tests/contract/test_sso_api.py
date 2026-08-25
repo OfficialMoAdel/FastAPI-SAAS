@@ -166,7 +166,11 @@ class TestSSOCallbackEndpoint:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert "access_token" in data
-            assert "refresh_token" in data
+            # M4: refresh token travels in an HttpOnly cookie, never the body.
+            assert "refresh_token" not in data
+            set_cookie = response.headers.get("set-cookie", "")
+            assert "refresh_token=" in set_cookie
+            assert "httponly" in set_cookie.lower()
             assert data["token_type"] == "bearer"
 
 

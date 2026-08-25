@@ -204,7 +204,10 @@ async def test_setup_uses_shared_pool():
 
             # Verify setup uses the same pool instance
             mock_redis_cls.assert_called_with(connection_pool=mock_pool, decode_responses=True)
-            mock_arq_cls.assert_called_with(connection_pool=mock_pool)
+            # K1: web-side ArqRedis must carry JSON serializers matching the worker
+            arq_kwargs = mock_arq_cls.call_args.kwargs
+            assert arq_kwargs["connection_pool"] is mock_pool
+            assert "job_serializer" in arq_kwargs and "job_deserializer" in arq_kwargs
 
 
 @pytest.mark.uses_real_redis

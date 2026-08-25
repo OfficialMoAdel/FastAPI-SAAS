@@ -376,11 +376,13 @@ async def get_signing_secret(
     current_tenant: Tenant = Depends(get_current_tenant),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
-    """Get the signing secret for a webhook endpoint (admin only).
+    """Get signing-secret METADATA for a webhook endpoint (admin only).
 
-    This endpoint allows administrators to view the signing secret
-    for verification purposes. The secret should be stored securely
-    and never exposed to end users.
+    S-5 FIX: the plaintext secret is NO LONGER returned here. Storing an
+    encrypted-at-rest secret but serving it back over the API defeats the
+    encryption. The plaintext is shown exactly once — in the create/rotate
+    responses. This endpoint now returns a masked preview so admins can
+    confirm WHICH secret is configured, plus rotation guidance.
     """
     service = WebhookService(db)
     result = await service.get_signing_secret(
@@ -391,10 +393,17 @@ async def get_signing_secret(
     if not result["signing_secret"]:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No signing secret found for this endpoint")
 
+    secret_value = result["signing_secret"]
+    masked = f"{secret_value[:6]}…{secret_value[-4:]}" if len(secret_value) > 12 else "******"
+
     return SigningSecretViewResponse(
         webhook_endpoint_id=result["webhook_endpoint_id"],
-        signing_secret=result["signing_secret"],
+        signing_secret=masked,
         created_at=result["created_at"],
+        message=(
+            "Secret masked for security. The plaintext is shown once at creation "
+            "or rotation. If lost, rotate via POST /{endpoint_id}/signing-secret/rotate."
+        ),
     )
 
 

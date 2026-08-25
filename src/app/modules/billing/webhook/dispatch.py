@@ -45,6 +45,14 @@ async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
     event_id = event["id"]
     _pkg.logger.info("Received Stripe webhook event", event_type=event_type, event_id=event_id)
 
+    # B4: consult the DURABLE processed marker BEFORE the processing lock.
+    # The Redis SET NX lock is only a 300s in-flight guard; a Stripe
+    # redelivery arriving after that window must be rejected by the terminal
+    # marker instead of re-executing the handler.
+    if await _pkg._is_event_processed(event_id):
+        _pkg.logger.info("Event durably processed, skipping redelivery", event_id=event_id)
+        return {"status": "already_processed"}
+
     # IDEMPOTENCY CHECK: Atomically acquire processing lock
     # Uses SET NX for atomic check-and-mark, eliminating TOCTOU race
     if not await _pkg._try_acquire_event_lock(event_id):
@@ -62,8 +70,11 @@ async def handle_webhook_event(event: stripe.Event) -> dict[str, str]:
         # Late-bound through the package namespace (see EVENT_HANDLERS note).
         await getattr(_pkg, handler_name)(event)
 
-        # Lock was already acquired in _try_acquire_event_lock
-        # No need to mark again - atomic SET NX handles this
+        # B4: write the durable terminal marker (Redis 7d TTL + WebhookEvent row)
+        # so late Stripe redeliveries are rejected above.
+        from src.app.modules.billing.webhook.idempotency import mark_event_processed
+
+        await mark_event_processed(event_id)
 
     except Exception as e:
         _pkg.logger.error(

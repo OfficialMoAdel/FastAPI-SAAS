@@ -222,6 +222,12 @@ class SSOService:
                     # Apple provider has different signature, cast to access it
                     apple_provider = cast(AppleProvider, oauth_provider)
                     user_info = await apple_provider.get_user_info(id_token, user_data=user_data)
+                elif provider == SSOProvider.MICROSOFT:
+                    # M10: pass the id_token so email_verified can be gated on
+                    # the provider's claim instead of being hardcoded True.
+                    user_info = await oauth_provider.get_user_info(
+                        access_token, id_token=token_response.get("id_token")
+                    )
                 else:
                     user_info = await oauth_provider.get_user_info(access_token)
             except Exception as e:

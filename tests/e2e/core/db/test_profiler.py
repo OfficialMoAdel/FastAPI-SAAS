@@ -73,17 +73,19 @@ class TestQueryProfilerE2E:
 
         user_decoded = jwt.decode(access_token, options={"verify_signature": False})
         if getattr(session_manager, "_redis_client", None):
+            # A3: sessions register under the stable sid claim (jti fallback).
             await session_manager.register_session(
                 user_id=str(user.id),
-                session_id=user_decoded.get("jti"),
+                session_id=user_decoded.get("sid") or user_decoded.get("jti"),
                 device_info="test"
             )
 
         admin_decoded = jwt.decode(admin_token, options={"verify_signature": False})
         if getattr(session_manager, "_redis_client", None):
+            # A3: sessions register under the stable sid claim (jti fallback).
             await session_manager.register_session(
                 user_id=str(admin_user.id),
-                session_id=admin_decoded.get("jti"),
+                session_id=admin_decoded.get("sid") or admin_decoded.get("jti"),
                 device_info="test"
             )
 

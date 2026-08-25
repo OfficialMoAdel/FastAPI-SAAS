@@ -94,7 +94,9 @@ class TestGoogleSSOE2EFlow:
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert "access_token" in data
-            assert "refresh_token" in data
+            # M4: refresh_token moved to HttpOnly cookie, not JSON body
+            assert "refresh_token" not in data
+            assert response.cookies.get("refresh_token") == "new_user_refresh_token"
             assert data["token_type"] == "bearer"
 
     def test_existing_user_google_oauth_flow(self, client, mock_user, db, auth_headers):
@@ -114,11 +116,12 @@ class TestGoogleSSOE2EFlow:
                 headers=auth_headers,
                 cookies={"sso_state": "test_state"},
             )
-
             assert response.status_code == status.HTTP_200_OK
             data = response.json()
             assert "access_token" in data
-            assert "refresh_token" in data
+            # M4: refresh_token moved to HttpOnly cookie, not JSON body
+            assert "refresh_token" not in data
+            assert response.cookies.get("refresh_token") == "existing_user_refresh_token"
 
     def test_google_oauth_invalid_code(self, client, mock_user, auth_headers):
         """Test that invalid authorization codes are rejected."""

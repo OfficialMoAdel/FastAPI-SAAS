@@ -102,8 +102,11 @@ async def test_setup_uses_shared_pool():
             mock_redis_cls.assert_called_with(connection_pool=mock_pool, decode_responses=True)
 
             # Verify queue client creation
-            # queue.pool = ArqRedis(connection_pool=pool)
-            mock_arq_cls.assert_called_with(connection_pool=mock_pool)
+            # K1: queue.pool = ArqRedis(connection_pool=pool, job_serializer=..., job_deserializer=...)
+            call_kwargs = mock_arq_cls.call_args.kwargs
+            assert call_kwargs["connection_pool"] is mock_pool
+            assert "job_serializer" in call_kwargs, "web-side pool must serialize jobs with JSON (K1)"
+            assert "job_deserializer" in call_kwargs, "worker expects JSON-encoded job payloads"
 
             # Verify same pool used
             assert setup.cache.pool is mock_pool

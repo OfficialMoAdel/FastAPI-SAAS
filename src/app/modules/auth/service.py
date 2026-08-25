@@ -339,6 +339,14 @@ class AuthService:
         # SECURITY FIX: Include tenant_id for tenant isolation during token refresh
         token_data = TokenIssuer.build_token_data(subject=user_data.username_or_email, user=db_user or {})
 
+        # A2/A3: recover the OLD refresh payload so rotation can carry forward
+        # absolute_exp, original iat and the stable sid. The token string has
+        # already been signature-verified by verify_token() above; this decode
+        # is a local operation to surface claims TokenData does not expose.
+        from src.app.core.security.jwt_utils import decode_jwt_token
+
+        old_refresh_payload = await decode_jwt_token(refresh_token) or {}
+
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
         from src.app.core.utils.cache import client as redis_client
 
@@ -349,7 +357,10 @@ class AuthService:
             if not lock_acquired:
                 raise UnauthorizedException("Token refresh already in progress.")
         try:
-            new_access_token, new_refresh_token = await TokenIssuer.create_token_pair(token_data)
+            # A2/A3: rotate with carried session claims instead of minting fresh ones
+            new_access_token, new_refresh_token = await TokenIssuer.rotate_token_pair(
+                token_data, old_refresh_payload
+            )
 
             # Blacklist the used refresh token (Rotation) AFTER new tokens are successfully generated
             # We don't pass the payload here so that blacklist_token decodes it fully to get the 'exp' claim
@@ -361,13 +372,14 @@ class AuthService:
                 except Exception as e:
                     # Bounded by ex=30, but log for incident diagnosis
                     logger.debug("Failed to delete refresh lock key", lock_key=lock_key, error=str(e))
-
         # SECURITY FIX: Invalidate old session in SessionManager to prevent session proliferation
+        # A3: keyed by the stable sid claim — the refresh token's jti never
+        # matched the registered access-token jti, so the old call was a no-op.
         try:
             from src.app.core.security.session_manager import session_manager as global_session_manager
 
-            if user_data.jti:
-                await global_session_manager.invalidate_session(db_user["id"], user_data.jti)
+            if user_data.sid:
+                await global_session_manager.invalidate_session(db_user["id"], user_data.sid)
         except Exception as e:
             logger.warning("failed_to_invalidate_old_session_on_refresh", error=str(e))
 
@@ -442,10 +454,20 @@ class AuthService:
                         db_user = await user_service.get_user_auth_info(username=user_data.username_or_email)
 
                     if db_user and access_token:
-                        from src.app.core.security.jwt_utils import extract_jti_unverified
+                        from src.app.core.security.jwt_utils import (
+                            extract_claim_unverified,
+                            extract_jti_unverified,
+                        )
                         from src.app.core.security.session_manager import session_manager as global_session_manager
 
-                        session_id = extract_jti_unverified(access_token) or access_token[:32]
+                        # A3: sessions are registered under the stable sid
+                        # claim, not the per-token jti — invalidating by jti
+                        # never matched the registry and was a silent no-op.
+                        session_id = (
+                            extract_claim_unverified(access_token, "sid")
+                            or extract_jti_unverified(access_token)
+                            or access_token[:32]
+                        )
                         await global_session_manager.invalidate_session(db_user["id"], session_id)
                 except Exception as e:
                     logger.warning("failed_to_invalidate_session_on_logout", error=str(e))

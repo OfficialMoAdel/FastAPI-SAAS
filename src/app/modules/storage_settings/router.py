@@ -95,16 +95,16 @@ async def create_storage_settings(
         storage_settings = await service.create_settings(tenant.id, data)
         return service.to_read_schema(storage_settings)
 
-    except InvalidCredentialsError as e:
+    except InvalidCredentialsError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Storage provider credentials are invalid or could not be validated.",
         )
 
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Invalid storage settings payload.",
         )
 
 
@@ -144,16 +144,16 @@ async def update_storage_settings(
             detail="Storage settings not configured for this tenant",
         )
 
-    except InvalidCredentialsError as e:
+    except InvalidCredentialsError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Storage provider credentials are invalid or could not be validated.",
         )
 
-    except ValueError as e:
+    except ValueError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Invalid storage settings payload.",
         )
 
 

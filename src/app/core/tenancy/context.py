@@ -17,18 +17,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
-
-class TenantContextError(Exception):
-    """Raised when tenant context is missing or inactive.
-
-    Defined here (not in modules._base) so the tenancy seam stays
-    dependency-free: core must not import from modules.
-    """
-
-    def __init__(self, message: str = "Tenant context required or inactive"):
-        self.message = message
-        super().__init__(message)
-
+from src.app.core.exceptions.http_exceptions import TenantContextError  # noqa: F401  # H3: re-exported canonical class
 
 if TYPE_CHECKING:
     from src.app.modules.tenants.models import Tenant

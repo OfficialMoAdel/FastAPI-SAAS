@@ -23,6 +23,7 @@ class TestSystemRoleSeeding:
             "roles:read",
             "roles:manage",
             "roles:assign",
+            "feature_flags:read",
             "feature_flags:manage",
             "notifications:read",
             "notifications:manage",
@@ -58,7 +59,7 @@ class TestSystemRoleSeeding:
 
     def test_permission_enum_has_correct_count(self) -> None:
         """Verify the expected number of permissions."""
-        assert len(Permission) == 23, f"Expected 23 permissions, got {len(Permission)}"
+        assert len(Permission) == 24, f"Expected 24 permissions, got {len(Permission)}"
 
     def test_permission_slugs_follow_naming_convention(self) -> None:
         """Verify all permission slugs follow resource:action pattern."""
@@ -104,7 +105,7 @@ class TestSystemRoleSeeding:
         """
         # Admin gets ALL permissions per migration logic (line 125-126)
         admin_permissions = set(Permission)
-        assert len(admin_permissions) == 23
+        assert len(admin_permissions) == 24
 
     def test_member_role_should_have_read_permissions(self) -> None:
         """
@@ -119,6 +120,7 @@ class TestSystemRoleSeeding:
         expected_member = {
             Permission.USERS_READ,
             Permission.ROLES_READ,
+            Permission.FEATURE_FLAGS_READ,
             Permission.FILES_READ,
             Permission.AUDIT_LOGS_VIEW_ONLY,
             Permission.WEBHOOKS_READ,

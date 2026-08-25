@@ -98,22 +98,22 @@ async def upload_file(
             created_at=result.created_at,
         )
 
-    except StorageNotConfiguredError as e:
+    except StorageNotConfiguredError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="Storage not configured for this tenant.",
         )
 
-    except FileTypeNotAllowedError as e:
+    except FileTypeNotAllowedError:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=str(e),
+            detail="File type not allowed.",
         )
 
-    except QuotaExceededError as e:
+    except QuotaExceededError:
         raise HTTPException(
             status_code=status.HTTP_507_INSUFFICIENT_STORAGE,
-            detail=str(e),
+            detail="Storage quota exceeded.",
         )
 
 

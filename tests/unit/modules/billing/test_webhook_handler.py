@@ -68,18 +68,22 @@ async def test_handle_webhook_event_already_processed(mock_lock, mock_stripe_eve
 
 
 @pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock)
+@patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
 @patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=True)
 @patch("src.app.modules.billing.webhook.handle_checkout_session_completed")
-async def test_handle_webhook_event_routing(mock_handler, mock_lock, mock_stripe_event):
+async def test_handle_webhook_event_routing(mock_handler, mock_lock, _processed, _mark, mock_stripe_event):
     result = await handle_webhook_event(mock_stripe_event)
     assert result == {"status": "success"}
     mock_handler.assert_awaited_once_with(mock_stripe_event)
 
 
 @pytest.mark.asyncio
+@patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock)
+@patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
 @patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=True)
 @patch("src.app.modules.billing.webhook.redis_client")
-async def test_handle_webhook_event_error_releases_lock(mock_redis, mock_lock, mock_stripe_event):
+async def test_handle_webhook_event_error_releases_lock(mock_redis, mock_lock, _processed, _mark, mock_stripe_event):
     # Route to an unhandled event type which will fail if we patch routing or raise an error
     mock_stripe_event["type"] = "checkout.session.completed"
 

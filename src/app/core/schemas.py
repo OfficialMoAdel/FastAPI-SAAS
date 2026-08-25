@@ -75,10 +75,12 @@ class Token(BaseModel):
 
 class TokenData(BaseModel):
     username_or_email: str
-    jti: str | None = None  # Unique token identifier for session tracking
+    jti: str | None = None  # Unique token identifier for blacklist tracking
     tier_id: int | None = None  # For Zero-DB rate limiting
     absolute_exp: float | None = None  # Absolute session expiration timestamp
     token_version: int = 0
+    sid: str | None = None  # A3: stable session id shared by access+refresh tokens
+    iat: float | None = None  # A2: original login iat, preserved through rotation
 
 
 class TokenBlacklistBase(BaseModel):

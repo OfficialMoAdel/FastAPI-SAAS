@@ -99,12 +99,12 @@ def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
     """
     fail_closed = settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed"
     if not _circuit_breaker.can_attempt():
-        # Circuit is OPEN: fail OPEN regardless of TOKEN_CACHE_FAILURE_MODE.
-        # The breaker's purpose is to stop hammering a failing Redis and avoid a
-        # total auth outage; verify_token() has a DB fallback that still enforces
-        # blacklisting, so failing open here is safe. Returning fail_closed here
-        # would reject EVERY token for the recovery window (self-inflicted DoS).
-        return None, False
+        # A1: the breaker's job is to stop hammering a failing Redis — NOT to
+        # downgrade the configured failure mode. Under fail_closed, report
+        # unknown-as-blacklisted so callers (deps DB fallback, verify_token)
+        # still enforce revocation during the outage window instead of
+        # accepting revoked tokens. Fail-open mode keeps the old behavior.
+        return None, fail_closed
     return _get_redis_client(), fail_closed
 
 

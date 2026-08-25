@@ -345,7 +345,7 @@ async def test_get_signing_secret(mock_service_cls, mock_db, mock_tenant, mock_u
     mock_service.get_signing_secret = AsyncMock(
         return_value={
             "webhook_endpoint_id": endpoint_id,
-            "signing_secret": "my-secret",
+            "signing_secret": "whsec_a1b2c3d4e5f6g7h8i9j0",
             "created_at": datetime.now(UTC),
         }
     )
@@ -355,7 +355,10 @@ async def test_get_signing_secret(mock_service_cls, mock_db, mock_tenant, mock_u
         endpoint_id=endpoint_id, db=mock_db, current_tenant=mock_tenant, current_user=mock_user
     )
 
-    assert result.signing_secret == "my-secret"
+    # S-5: the endpoint masks the secret instead of returning plaintext.
+    assert result.signing_secret != "whsec_a1b2c3d4e5f6g7h8i9j0"
+    assert result.signing_secret.startswith("whsec_")
+    assert "…" in result.signing_secret
 
 
 @pytest.mark.asyncio
