@@ -303,7 +303,7 @@ async def complete_mfa_login(
             user_id=token_data.get("user_id")
         )
         # SECURITY FIX (M-1): Optionally reject IP mismatch to prevent stolen MFA tokens
-        if getattr(settings.auth, "MFA_ENFORCE_IP_BINDING", False):
+        if settings.auth.MFA_ENFORCE_IP_BINDING:
             raise UnauthorizedException(
                 "MFA verification rejected: IP address changed since login. Please try again."
             )

@@ -150,9 +150,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
     def __init__(self, app: ASGIApp) -> None:
         super().__init__(app)
         self._filter_service = IPFilterService()
-        self._mode = getattr(settings, "ATTACK_DETECTION_MODE", "log")
-        self._log_full_request = getattr(settings, "ATTACK_DETECTION_LOG_FULL_REQUEST", False)
-        self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
+        self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
+        self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
+        self._enabled = settings.attack_detection.ATTACK_DETECTION_ENABLED
 
     def _is_exempt_path(self, path: str) -> bool:
         """Check if path is exempt from attack detection.
@@ -261,8 +261,10 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
             # BUG FIX: Scan all content types to prevent bypass via multipart/form-data or other types
             skip_body = False
-            _raw_scan = getattr(settings, "ATTACK_DETECTION_MAX_SCAN_SIZE", 128 * 1024)
-            MAX_SCAN_SIZE = _raw_scan if isinstance(_raw_scan, int) else 128 * 1024
+            # NOTE: ATTACK_DETECTION_MAX_SCAN_SIZE has no Settings field
+            # (phantom knob). Keep the 128KB default here; adding a real field
+            # is tracked with the typed-settings sweep.
+            MAX_SCAN_SIZE = 128 * 1024
             content_length_str = request.headers.get("content-length")
             if content_length_str:
                 try:
@@ -454,9 +456,9 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
         # Refresh runtime-configurable flags each request so tests and
         # dynamic settings overrides are respected without app restart.
-        self._mode = getattr(settings, "ATTACK_DETECTION_MODE", "log")
-        self._log_full_request = getattr(settings, "ATTACK_DETECTION_LOG_FULL_REQUEST", False)
-        self._enabled = getattr(settings, "ATTACK_DETECTION_ENABLED", True)
+        self._mode = settings.attack_detection.ATTACK_DETECTION_MODE
+        self._log_full_request = settings.attack_detection.ATTACK_DETECTION_LOG_FULL_REQUEST
+        self._enabled = settings.attack_detection.ATTACK_DETECTION_ENABLED
 
         if self._mode not in ("log", "block", "ban"):
             # S-7 FIX: an invalid mode previously degraded SILENTLY to

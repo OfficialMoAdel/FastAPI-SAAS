@@ -10,7 +10,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.dependencies import get_current_tenant, get_current_user
@@ -23,7 +23,7 @@ from src.app.modules.audit_logs.schemas import (
     AuditLogResponse,
     ExportCountResponse,
 )
-from src.app.modules.audit_logs.service import AuditLogService
+from src.app.modules.audit_logs.service import EXPORT_MAX_RECORDS, AuditLogService, _AuditFilter, _compose_filters
 from src.app.modules.tenants.models import Tenant
 from src.app.modules.users.models import User
 
@@ -111,18 +111,15 @@ async def list_available_actions(
 
     Useful for filtering UI.
     """
-    query = select(AuditLog.action).where(AuditLog.tenant_id == current_tenant.id).distinct()
-    result = await db.execute(query)
-    actions = result.scalars().all()
-
-    return sorted(actions)
+    # A13: logic moved to service layer
+    service = AuditLogService(db)
+    return await service.list_actions(current_tenant.id)
 
 
 # ============================================================================
 # Export Endpoints (Phase 7)
 # ============================================================================
 
-EXPORT_MAX_RECORDS = 100_000
 
 
 @router.get(
@@ -145,21 +142,10 @@ async def get_export_count(
 
     Use this before export to check if date filtering is needed.
     """
-    query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
-
-    if action:
-        query = query.where(AuditLog.action == action)
-    if user_id:
-        query = query.where(AuditLog.user_id == user_id)
-    if entity_type:
-        query = query.where(AuditLog.entity_type == entity_type)
-    if start_date:
-        query = query.where(AuditLog.created_at >= start_date)
-    if end_date:
-        query = query.where(AuditLog.created_at <= end_date)
-
-    result = await db.execute(query)
-    count = result.scalar_one()
+    # A13: filter composition + counting moved to service layer
+    service = AuditLogService(db)
+    f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
+    count = await service.export_count(current_tenant.id, f)
 
     return ExportCountResponse(
         count=count,
@@ -200,24 +186,12 @@ async def export_audit_logs(
     Maximum 100,000 records per export. Use date filtering for larger datasets.
     Requires AUDIT_LOGS_DOWNLOAD permission.
     """
-    # Build query with filters
-    query = select(AuditLog).where(AuditLog.tenant_id == current_tenant.id)
+    # A13: filter composition + counting moved to service layer
+    service = AuditLogService(db)
+    f = _AuditFilter(action=action, user_id=user_id, entity_type=entity_type, start_date=start_date, end_date=end_date)
 
-    if action:
-        query = query.where(AuditLog.action == action)
-    if user_id:
-        query = query.where(AuditLog.user_id == user_id)
-    if entity_type:
-        query = query.where(AuditLog.entity_type == entity_type)
-    if start_date:
-        query = query.where(AuditLog.created_at >= start_date)
-    if end_date:
-        query = query.where(AuditLog.created_at <= end_date)
-
-    # Check count
-    count_query = select(func.count()).select_from(query.subquery())
-    count_result = await db.execute(count_query)
-    count = count_result.scalar_one()
+    stmt = _compose_filters(select(AuditLog), current_tenant.id, f)
+    count = await service.export_count(current_tenant.id, f)
 
     if count > EXPORT_MAX_RECORDS:
         raise HTTPException(
@@ -227,7 +201,7 @@ async def export_audit_logs(
         )
 
     # Order by created_at for consistent export
-    query = query.order_by(AuditLog.created_at.asc())
+    stmt = stmt.order_by(AuditLog.created_at.asc())
 
     # Log the export event
     audit_service = AuditLogService(db)
@@ -272,7 +246,7 @@ async def export_audit_logs(
         output.truncate(0)
 
         # Stream rows
-        stream_result = await db.stream(query)
+        stream_result = await db.stream(stmt)
         async for log in stream_result.scalars():
             writer.writerow(
                 [
@@ -293,7 +267,7 @@ async def export_audit_logs(
 
     async def generate_jsonl() -> AsyncGenerator[str, None]:
         """Generate JSONL content (one JSON object per line)."""
-        stream_result = await db.stream(query)
+        stream_result = await db.stream(stmt)
         async for log in stream_result.scalars():
             line = json_dumps(
                 {
@@ -315,7 +289,7 @@ async def export_audit_logs(
         """Generate JSON array content."""
         yield "[\n"
         first = True
-        stream_result = await db.stream(query)
+        stream_result = await db.stream(stmt)
         async for log in stream_result.scalars():
             if not first:
                 yield ",\n"

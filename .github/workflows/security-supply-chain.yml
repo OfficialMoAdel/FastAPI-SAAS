@@ -1,0 +1,67 @@
+name: Security Supply-Chain
+
+on:
+  push:
+    branches: [feature, main]
+  pull_request:
+  schedule:
+    - cron: "0 3 * * *" # nightly
+
+jobs:
+  gitleaks:
+    name: Secret scanning (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # full history for secret detection
+      - uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  pip-audit:
+    name: Dependency audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: pipx install uv
+      - name: Audit locked dependencies
+        run: |
+          uv export --project src --format requirements-txt --no-hashes -o requirements.txt
+          pipx install pip-audit
+          pip-audit -r requirements.txt --strict
+
+  import-linter:
+    name: Architecture contract (import-linter)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install uv + import-linter
+        run: |
+          pipx install uv
+          cd src && uv sync --dev
+          uv pip install import-linter
+      - name: Enforce layer contracts (core must not import modules)
+        working-directory: src
+        run: |
+          cat > .importlinter <<'EOF'
+          [importlinter]
+          root_packages = app
+
+          [importlinter:contract:layers]
+          name = Core must not depend on modules
+          type = layers
+          layers =
+              app.modules
+              app.api
+              app.middleware
+              app.core
+          EOF
+          uv run lint-imports --config .importlinter

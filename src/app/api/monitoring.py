@@ -13,11 +13,9 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
-from sqlalchemy import text
 
 from src.app.api.dependencies import get_current_superuser
 from src.app.core.config import settings
-from src.app.core.db.database import async_engine
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 
 router = APIRouter()
@@ -41,24 +39,27 @@ class ComponentHealth(BaseModel):
 
 
 async def check_database() -> dict[str, str | float | bool]:
-    """Check database connectivity."""
-    start_time = time.perf_counter()
-    try:
-        async with async_engine.connect() as conn:
-            await conn.execute(text("SELECT 1"))
-        latency = time.perf_counter() - start_time
-        return {
-            "status": "healthy",
-            "latency_ms": round(latency * 1000, 2),
-            "pool_size": settings.DB_POOL_SIZE,
-            "max_overflow": settings.DB_MAX_OVERFLOW,
-        }
-    except Exception as e:
-        return {
-            "status": "unhealthy",
-            "error": str(e),
-            "latency_ms": round((time.perf_counter() - start_time) * 1000, 2),
-        }
+    """Check database connectivity.
+
+    Consolidated: delegates the probe to core/health.check_database_health
+    (single source of truth with timeout + typed errors) and re-shapes the
+    result into this endpoint's richer contract (pool stats included).
+    """
+    from src.app.core.db.database import local_session
+    from src.app.core.health import check_database_health
+
+    async with local_session() as db:
+        result = await check_database_health(db)
+
+    payload: dict[str, str | float | bool] = {
+        "status": result.status,
+        "latency_ms": round(result.latency_ms, 2) if result.latency_ms is not None else 0,
+        "pool_size": settings.DB_POOL_SIZE,
+        "max_overflow": settings.DB_MAX_OVERFLOW,
+    }
+    if result.error:
+        payload["error"] = result.error
+    return payload
 
 
 async def check_redis() -> dict[str, str | float | bool]:

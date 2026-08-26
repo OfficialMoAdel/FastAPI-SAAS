@@ -3,12 +3,12 @@
 from collections.abc import Callable
 from datetime import UTC, datetime
 from functools import wraps
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, NamedTuple
 from uuid import UUID
 
 import orjson
 from redis.exceptions import RedisError
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 from structlog import get_logger
@@ -21,6 +21,35 @@ from src.app.modules.audit_logs.models import AuditLog
 
 if TYPE_CHECKING:
     pass
+
+
+# A13: export ceiling lives with the service that enforces it (was in router).
+EXPORT_MAX_RECORDS = 100_000
+
+
+class _AuditFilter(NamedTuple):
+    action: str | None
+    user_id: int | None
+    entity_type: str | None
+    start_date: datetime | None
+    end_date: datetime | None
+
+
+def _compose_filters(stmt, tenant_id, f: _AuditFilter):
+    """A13: single source of truth for audit-log list/export filters."""
+    stmt = stmt.where(AuditLog.tenant_id == tenant_id)
+    if f.action:
+        stmt = stmt.where(AuditLog.action == f.action)
+    if f.user_id:
+        stmt = stmt.where(AuditLog.user_id == f.user_id)
+    if f.entity_type:
+        stmt = stmt.where(AuditLog.entity_type == f.entity_type)
+    if f.start_date:
+        stmt = stmt.where(AuditLog.created_at >= f.start_date)
+    if f.end_date:
+        stmt = stmt.where(AuditLog.created_at <= f.end_date)
+    return stmt
+
 
 logger = get_logger(__name__)
 
@@ -40,6 +69,21 @@ class AuditLogService:
             db: Database session
         """
         self.db = db
+
+
+
+    async def list_actions(self, tenant_id) -> list[str]:
+        """A13: unique action types for a tenant (was inline in router)."""
+        result = await self.db.execute(
+            select(AuditLog.action).where(AuditLog.tenant_id == tenant_id).distinct()
+        )
+        return sorted(result.scalars().all())
+
+    async def export_count(self, tenant_id, f: _AuditFilter) -> int:
+        """A13: count of rows matching the export filter."""
+        stmt = _compose_filters(select(func.count()).select_from(AuditLog), tenant_id, f)
+        result = await self.db.execute(stmt)
+        return result.scalar_one()
 
     async def create_log(
         self,

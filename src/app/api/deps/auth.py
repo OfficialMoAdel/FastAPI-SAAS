@@ -119,17 +119,11 @@ async def get_auth_context(
         else:
             token = ""
 
-    if request is not None and hasattr(request, "app") and hasattr(request.app, "dependency_overrides"):
-        if get_current_user in request.app.dependency_overrides:
-            override_func = request.app.dependency_overrides[get_current_user]
-            import inspect
-
-            if inspect.iscoroutinefunction(override_func):
-                user_obj = await override_func()
-            else:
-                user_obj = override_func()
-            current_tenant = get_tenant_context()
-            return await _create_auth_context(user_obj, None, current_tenant, db, is_dependency_override=True)
+    # H4 residual FIX: the manual app.dependency_overrides inspection was
+    # removed — it re-implemented (per request, in production) what FastAPI
+    # already does natively at the DI layer. Tests that need a synthetic
+    # context override get_auth_context itself (conftest does exactly this);
+    # no production code path needs to know about test overrides.
 
     cached_payload = get_cached_jwt_payload(request) if request is not None else None
     token_data: Any

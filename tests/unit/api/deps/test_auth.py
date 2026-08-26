@@ -107,28 +107,6 @@ async def test_is_token_blacklisted_cache_none_db_miss() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def test_get_auth_context_dependency_override_sync() -> None:
-    request = _make_request()
-    user_obj = {"id": 1, "email": "a@b.com"}
-    request.app.dependency_overrides[get_current_user] = lambda: user_obj
-    with patch("src.app.api.deps.auth.get_tenant_context", return_value=None):
-        ctx = await get_auth_context(request, _make_db(), "tok")
-    assert ctx.user.id == 1
-    assert ctx.is_dependency_override is True
-
-
-async def test_get_auth_context_dependency_override_async() -> None:
-    request = _make_request()
-    user_obj = {"id": 1, "email": "a@b.com"}
-
-    async def _ov():
-        return user_obj
-
-    request.app.dependency_overrides[get_current_user] = _ov
-    with patch("src.app.api.deps.auth.get_tenant_context", return_value=None):
-        ctx = await get_auth_context(request, _make_db(), "tok")
-    assert ctx.user.id == 1
-
 
 async def test_get_auth_context_no_token_from_header() -> None:
     request = _make_request(headers={"Authorization": "Bearer abc"})

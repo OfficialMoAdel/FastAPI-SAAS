@@ -30,7 +30,7 @@ class PostService(BaseService[Post]):
     async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
         """Check if current user owns the resource."""
         if current_user_id != target_user_id:
-            raise ForbiddenException("You do not have permission to delete this post.")
+            raise ForbiddenException("You do not have permission to modify this post.")
 
     async def create_post(
         self,
@@ -182,8 +182,7 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        if created_by_user_id != get_user_attr(current_user, "id"):
-            raise ForbiddenException("You do not have permission to modify this post.")
+        await self._check_ownership(get_user_attr(current_user, "id"), created_by_user_id)
 
 
 
@@ -224,8 +223,7 @@ class PostService(BaseService[Post]):
         created_by_user_id = (
             db_post.get("created_by_user_id") if isinstance(db_post, dict) else db_post.created_by_user_id
         )
-        if created_by_user_id != get_user_attr(current_user, "id"):
-            raise ForbiddenException("You do not have permission to delete this post.")
+        await self._check_ownership(get_user_attr(current_user, "id"), created_by_user_id)
 
 
 

@@ -60,7 +60,7 @@ class QueryStats:
         self.query_counts[normalized[:200]] += 1
 
         # Track slow queries separately
-        threshold = getattr(settings, "QUERY_PROFILER_SLOW_THRESHOLD_MS", DEFAULT_SLOW_QUERY_THRESHOLD_MS)
+        threshold = settings.query_profiler.QUERY_PROFILER_SLOW_THRESHOLD_MS
         if duration_ms > threshold:
             self.slow_queries.append(query_info)
 
@@ -118,7 +118,7 @@ class QueryProfilerMiddleware:
     def _check_enabled(self) -> bool:
         if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
             return False
-        enabled = getattr(settings, "QUERY_PROFILER_ENABLED", None)
+        enabled = settings.query_profiler.QUERY_PROFILER_ENABLED
         if enabled is not None:
             return bool(enabled)
         return True
@@ -207,7 +207,7 @@ class QueryProfilerMiddleware:
             log_parts.append(f"db_time_pct={db_percent}%")
 
         # Detect N+1 issues
-        n_plus_1_threshold = getattr(settings, "QUERY_PROFILER_N_PLUS_1_THRESHOLD", DEFAULT_N_PLUS_1_THRESHOLD)
+        n_plus_1_threshold = settings.query_profiler.QUERY_PROFILER_N_PLUS_1_THRESHOLD
         n_plus_1_queries = [(query, count) for query, count in stats.query_counts.items() if count > n_plus_1_threshold]
 
         if n_plus_1_queries:

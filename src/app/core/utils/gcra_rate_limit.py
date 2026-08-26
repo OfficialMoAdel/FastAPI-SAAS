@@ -112,7 +112,7 @@ class GCRARateLimiter:
             # fail-closed default.
             from src.app.core.config import settings
 
-            fail_open = getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
+            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             return GCRARateLimitResult(
                 is_limited=not fail_open,
                 remaining=limit if fail_open else 0,
@@ -161,7 +161,7 @@ class GCRARateLimiter:
 
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; reading
             # it off the root settings object silently ignores operators.
-            fail_open = getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
+            fail_open = settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             is_limited = not fail_open
 
             return GCRARateLimitResult(

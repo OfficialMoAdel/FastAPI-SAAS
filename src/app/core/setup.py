@@ -130,8 +130,8 @@ def lifespan_factory(
         # call below raises, the finally block references these names; assigning
         # them inside the try let an early failure raise NameError and mask the
         # original startup exception.
-        redis_cache_enabled = getattr(settings, "REDIS_CACHE_ENABLED", False)
-        redis_queue_enabled = getattr(settings, "REDIS_QUEUE_ENABLED", False)
+        redis_cache_enabled = settings.redis_cache.REDIS_CACHE_ENABLED
+        redis_queue_enabled = settings.redis_queue.REDIS_QUEUE_ENABLED
 
         try:
             if redis_cache_enabled:
@@ -235,11 +235,11 @@ def create_application(
 
     # --- before creating application ---
     # R1-UNIFIED: Support both composition (Settings) and legacy mixins
-    app_name = getattr(settings, "APP_NAME", "FastAPI app")
-    app_description = getattr(settings, "APP_DESCRIPTION", None)
-    contact_name = getattr(settings, "CONTACT_NAME", None)
-    contact_email = getattr(settings, "CONTACT_EMAIL", None)
-    license_name = getattr(settings, "LICENSE_NAME", None)
+    app_name = settings.app.APP_NAME
+    app_description = settings.app.APP_DESCRIPTION
+    contact_name = settings.app.CONTACT_NAME
+    contact_email = settings.app.CONTACT_EMAIL
+    license_name = settings.app.LICENSE_NAME
 
     to_update = {
         "title": app_name,
@@ -250,7 +250,7 @@ def create_application(
     kwargs.update(to_update)
 
     # Environment-specific docs control
-    environment = getattr(settings, "ENVIRONMENT", EnvironmentOption.LOCAL)
+    environment = settings.env.ENVIRONMENT
     # If ENVIRONMENT is set, we might want to hide docs in production
     # but the legacy logic was checking for EnvironmentSettings instance.
     # We'll use a more direct check for production.
@@ -264,7 +264,7 @@ def create_application(
     application = FastAPI(lifespan=lifespan, **kwargs)
     application.include_router(router)
 
-    cors_origins = getattr(settings, "CORS_ORIGINS", None)
+    cors_origins = settings.cors.CORS_ORIGINS
     if cors_origins:
         allow_credentials = True
         if "*" in cors_origins:
@@ -274,7 +274,7 @@ def create_application(
             CORSMiddleware,
             allow_origins=cors_origins,
             allow_credentials=allow_credentials,
-            allow_methods=getattr(settings, "CORS_METHODS", ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]),
+            allow_methods=settings.cors.CORS_METHODS,
             allow_headers=getattr(
                 settings,
                 "CORS_HEADERS",

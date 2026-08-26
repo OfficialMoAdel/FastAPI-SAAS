@@ -169,10 +169,11 @@ async def test_list_available_actions(mock_db, mock_tenant, mock_user):
 
 
 @pytest.mark.asyncio
-async def test_get_export_count(mock_db, mock_tenant, mock_user):
-    mock_result = MagicMock()
-    mock_result.scalar_one.return_value = 50
-    mock_db.execute = AsyncMock(return_value=mock_result)
+@patch("src.app.modules.audit_logs.router.AuditLogService")
+async def test_get_export_count(mock_service_cls, mock_db, mock_tenant, mock_user):
+    mock_service = MagicMock()
+    mock_service.export_count = AsyncMock(return_value=50)
+    mock_service_cls.return_value = mock_service
 
     result = await get_export_count(
         action="user.login",
@@ -192,10 +193,10 @@ async def test_get_export_count(mock_db, mock_tenant, mock_user):
 @pytest.mark.asyncio
 @patch("src.app.modules.audit_logs.router.AuditLogService")
 async def test_export_audit_logs_too_many(mock_service_cls, mock_db, mock_tenant, mock_user):
-    mock_result = MagicMock()
+    mock_service = MagicMock()
     # EXPORT_MAX_RECORDS is 100_000, return more to trigger error
-    mock_result.scalar_one.return_value = 150000
-    mock_db.execute = AsyncMock(return_value=mock_result)
+    mock_service.export_count = AsyncMock(return_value=150000)
+    mock_service_cls.return_value = mock_service
 
     with pytest.raises(HTTPException) as exc:
         await export_audit_logs(
@@ -221,9 +222,8 @@ async def test_export_audit_logs_csv(mock_service_cls, mock_db, mock_tenant, moc
     mock_service.create_log = AsyncMock()
     mock_service_cls.return_value = mock_service
 
-    mock_result = MagicMock()
-    mock_result.scalar_one.return_value = 2
-    mock_db.execute = AsyncMock(return_value=mock_result)
+    # A13: count comes from service.export_count, not raw db.execute
+    mock_service.export_count = AsyncMock(return_value=2)
 
     # Mock stream
     mock_log = MagicMock()
@@ -278,9 +278,7 @@ async def test_export_audit_logs_json(mock_service_cls, mock_db, mock_tenant, mo
     mock_service.create_log = AsyncMock()
     mock_service_cls.return_value = mock_service
 
-    mock_result = MagicMock()
-    mock_result.scalar_one.return_value = 1
-    mock_db.execute = AsyncMock(return_value=mock_result)
+    mock_service.export_count = AsyncMock(return_value=1)
 
     mock_log = MagicMock()
     mock_log.id = uuid4()
@@ -322,9 +320,7 @@ async def test_export_audit_logs_jsonl(mock_service_cls, mock_db, mock_tenant, m
     mock_service.create_log = AsyncMock()
     mock_service_cls.return_value = mock_service
 
-    mock_result = MagicMock()
-    mock_result.scalar_one.return_value = 1
-    mock_db.execute = AsyncMock(return_value=mock_result)
+    mock_service.export_count = AsyncMock(return_value=1)
 
     mock_log = MagicMock()
     mock_log.id = uuid4()

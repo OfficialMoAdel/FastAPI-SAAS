@@ -24,9 +24,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 import xxhash
 from bitarray import bitarray
-from src.app.core.security.bloom_filter import BloomFilter
 
 from src.app.core.rbac.bitmask import PermissionBitmask
+from src.app.core.security.bloom_filter import BloomFilter
 
 logger = logging.getLogger(__name__)
 

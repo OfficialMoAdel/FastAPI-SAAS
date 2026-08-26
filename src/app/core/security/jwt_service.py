@@ -95,8 +95,8 @@ async def create_access_token(data: dict[str, Any], expires_delta: timedelta | N
         {
             "exp": expire,
             "token_type": TokenType.ACCESS,
-            "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            "iss": getattr(settings, "JWT_ISSUER", "fastapi-saas"),
+            "aud": settings.crypt.JWT_AUDIENCE,
+            "iss": settings.crypt.JWT_ISSUER,
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "iat": datetime.now(UTC).timestamp(),  # Issued at
             "token_version": token_version,
@@ -139,8 +139,8 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
         {
             "exp": expire,
             "token_type": TokenType.REFRESH,
-            "aud": getattr(settings, "JWT_AUDIENCE", "fastapi-saas-api"),
-            "iss": getattr(settings, "JWT_ISSUER", "fastapi-saas"),
+            "aud": settings.crypt.JWT_AUDIENCE,
+            "iss": settings.crypt.JWT_ISSUER,
             "jti": str(uuid4()),  # Unique token ID for blacklist
             "token_version": token_version,
         }

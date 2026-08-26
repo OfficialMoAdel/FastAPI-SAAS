@@ -148,11 +148,12 @@ async def test_dispatch_block_mode(middleware):
 async def test_dispatch_ban_mode(middleware):
     fake_filter = MagicMock()
     fake_filter.add_to_blacklist = AsyncMock()
-    fake_settings = MagicMock(
+    fake_attack = MagicMock(
         ATTACK_DETECTION_MODE="ban",
         ATTACK_DETECTION_ENABLED=True,
         ATTACK_DETECTION_LOG_FULL_REQUEST=False,
     )
+    fake_settings = MagicMock(attack_detection=fake_attack)
     with (
         patch("src.app.middleware.attack_detection.settings", fake_settings),
         patch("src.app.core.security.logging.log_security_event"),

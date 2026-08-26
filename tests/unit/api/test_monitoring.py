@@ -24,7 +24,17 @@ async def test_check_database_healthy() -> None:
     mock_engine = MagicMock()
     mock_engine.connect.return_value = mock_ctx
 
-    with patch("src.app.api.monitoring.async_engine", mock_engine):
+    # Consolidated probe: patch the core.health delegate instead of engine.
+    from src.app.core.health import HealthResult
+
+    with (
+        patch("src.app.core.db.database.local_session") as mock_session_factory,
+        patch("src.app.core.health.check_database_health") as mock_probe,
+    ):
+        mock_session = AsyncMock()
+        mock_session_factory.return_value.__aenter__.return_value = mock_session
+        mock_probe.return_value = HealthResult(status="healthy", latency_ms=1.2)
+
         res = await check_database()
         assert res["status"] == "healthy"
         assert "latency_ms" in res
@@ -38,7 +48,16 @@ async def test_check_database_unhealthy() -> None:
     mock_ctx.__aenter__.side_effect = Exception("DB down")
     mock_engine.connect.return_value = mock_ctx
 
-    with patch("src.app.api.monitoring.async_engine", mock_engine):
+    from src.app.core.health import HealthResult
+
+    with (
+        patch("src.app.core.db.database.local_session") as mock_session_factory,
+        patch("src.app.core.health.check_database_health") as mock_probe,
+    ):
+        mock_session = AsyncMock()
+        mock_session_factory.return_value.__aenter__.return_value = mock_session
+        mock_probe.return_value = HealthResult(status="unhealthy", error="DB down")
+
         res = await check_database()
         assert res["status"] == "unhealthy"
         assert "error" in res

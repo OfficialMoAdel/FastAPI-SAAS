@@ -34,8 +34,8 @@ logger = get_logger(__name__)
 
 # Constants for MFA configuration - MUST be defined before class usage
 # FIXED: Use settings with defaults for MFA lockout configuration
-MFA_MAX_ATTEMPTS: int = getattr(settings, "MFA_MAX_ATTEMPTS", 5)
-MFA_LOCKOUT_DURATION_SECONDS: int = getattr(settings, "MFA_LOCKOUT_DURATION_SECONDS", 300)
+MFA_MAX_ATTEMPTS: int = 5  # phantom knob: no Settings field; hardcoded by design
+MFA_LOCKOUT_DURATION_SECONDS: int = 300  # phantom knob: no Settings field
 TOTP_INTERVAL = 30  # 30 seconds
 TOTP_DIGITS = 6
 TOTP_SKEW = 1  # Allow 1 interval before/after
@@ -230,7 +230,7 @@ class MFAService:
             # SECURITY FIX: Fail closed during infrastructure disruptions
             from src.app.core.config import settings
 
-            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+            if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
                 logger.error("Redis unavailable - MFA lockout failing closed | user_id=%s", user_id)
                 raise UnauthorizedException("Authentication temporarily unavailable. Please try again later.")
             logger.warning("Redis unavailable - MFA lockout disabled (fail open) | user_id=%s", user_id)
@@ -251,7 +251,7 @@ class MFAService:
         except Exception as e:
             from src.app.core.config import settings
 
-            if getattr(settings.auth, "AUDIT_LOG_FAILURE_MODE", "") == "fail_closed":
+            if settings.auth.AUDIT_LOG_FAILURE_MODE == "fail_closed":
                 logger.error("MFA lockout check failed - failing closed", user_id=user_id, error=str(e))
                 raise UnauthorizedException("Authentication temporarily unavailable.")
             logger.error("MFA lockout check failed", user_id=user_id, error=str(e))

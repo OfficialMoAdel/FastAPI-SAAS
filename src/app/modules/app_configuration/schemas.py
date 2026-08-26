@@ -4,7 +4,7 @@ App Configuration Schemas
 Pydantic models for frontend application configuration responses.
 """
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ThemeConfig(BaseModel):
@@ -49,8 +49,8 @@ class AppConfigurationResponse(BaseModel):
     api: APIConfig = Field(default_factory=APIConfig, description="API configuration")
     maintenance_mode: bool = Field(default=False, description="Whether maintenance mode is active")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "app_name": "FastAPI SaaS",
                 "app_version": "1.0.0",
@@ -78,5 +78,6 @@ class AppConfigurationResponse(BaseModel):
                     "websocket_url": None,
                 },
                 "maintenance_mode": False,
-            }
-        }
+            },
+        },
+    )

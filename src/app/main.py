@@ -262,9 +262,9 @@ def custom_openapi():
     if app.openapi_schema:
         return app.openapi_schema
 
-    project_name = getattr(settings.app, "APP_NAME", "FastAPI SaaS")
-    version = getattr(settings, "APP_VERSION", "1.0.0")
-    description = getattr(settings, "API_DESCRIPTION", "FastAPI SaaS Boilerplate")
+    project_name = settings.app.APP_NAME
+    version = settings.app.APP_VERSION
+    description = settings.app.APP_DESCRIPTION
 
     openapi_schema = get_openapi(
         title=project_name,
@@ -292,26 +292,40 @@ def custom_openapi():
         }
     )
 
-    # Identify paths that explicitly depend on authentication
+    # Identify paths that explicitly depend on authentication.
+    # HARDENED: previously matched dependency __name__ against a string list,
+    # so any same-named local function (or a renamed auth dep) silently
+    # dropped OpenAPI protection. Now compare against the CANONICAL callables
+    # imported from their owning modules — identity, not name similarity.
     protected_paths = set()
     from fastapi.params import Security
+
+    from src.app.api.deps.auth import (
+        get_current_superuser,
+        get_current_user,
+        get_optional_user,
+        get_user_by_api_key,
+    )
+
+    _auth_callables = {
+        id(fn) for fn in (get_current_user, get_current_superuser, get_optional_user, get_user_by_api_key)
+    }
 
     for route in app.routes:
         if not hasattr(route, "dependencies"):
             continue
         for dep in getattr(route, "dependencies", []):
-            # Check if it's explicitly a Security dependency or relies on known auth functions
             is_auth_dep = isinstance(dep, Security)
             if not is_auth_dep and hasattr(dep, "dependency") and callable(dep.dependency):
-                dep_name = dep.dependency.__name__
-                if dep_name in (
-                    "get_current_user",
-                    "get_current_superuser",
-                    "get_current_active_user",
-                    "get_user_by_api_key",
-                    "get_optional_user",
-                ) or dep_name.startswith("RequirePermission"):
+                fn = dep.dependency
+                if id(fn) in _auth_callables:
                     is_auth_dep = True
+                else:
+                    qualname = f"{getattr(fn, '__module__', '')}.{getattr(fn, '__qualname__', '')}"
+                    # requires_permission() returns a closure; detect via its
+                    # fully-qualified name rather than display name prefixes.
+                    if qualname.startswith("src.app.core.rbac.dependencies.requires_permission"):
+                        is_auth_dep = True
 
             if is_auth_dep and hasattr(route, "path"):
                 protected_paths.add(route.path)

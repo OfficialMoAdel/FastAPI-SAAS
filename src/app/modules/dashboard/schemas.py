@@ -7,7 +7,7 @@ Pydantic models for dashboard metrics and analytics responses.
 from datetime import UTC, datetime
 from enum import Enum
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class TimeRange(str, Enum):
@@ -59,8 +59,8 @@ class DashboardMetricsResponse(BaseModel):
     activity: ActivityMetrics = Field(description="Activity metrics")
     generated_at: datetime = Field(default_factory=lambda: datetime.now(UTC), description="When metrics were generated")
 
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "time_range": "month",
                 "start_date": "2026-01-01T00:00:00Z",
@@ -84,5 +84,6 @@ class DashboardMetricsResponse(BaseModel):
                     "failed_authentications": 45,
                 },
                 "generated_at": "2026-01-24T12:00:00Z",
-            }
-        }
+            },
+        },
+    )

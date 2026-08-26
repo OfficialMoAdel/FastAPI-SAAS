@@ -65,7 +65,7 @@ class RateLimiter:
             from src.app.core.config import settings
             from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
-            if getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False):
+            if settings.rate_limit.RATE_LIMIT_FAIL_OPEN:
                 record_fail_open("rate_limit")
                 return False, 0  # Allow request (fail-open)
             else:
@@ -81,7 +81,7 @@ class RateLimiter:
         """
         from src.app.core.config import settings
 
-        use_gcra = getattr(settings.rate_limit, "RATE_LIMIT_ALGORITHM", "fixed_window").lower() == "gcra"
+        use_gcra = settings.rate_limit.RATE_LIMIT_ALGORITHM.lower() == "gcra"
 
         if use_gcra:
             from src.app.core.utils.gcra_rate_limit import get_gcra_rate_limiter
@@ -110,7 +110,7 @@ class RateLimiter:
             logger.error("Rate limit check failed: %s", fallback_e)
             # R1 FIX: RATE_LIMIT_FAIL_OPEN lives on settings.rate_limit; the old
             # getattr on the root settings object silently ignored operators.
-            is_limited = not getattr(settings.rate_limit, "RATE_LIMIT_FAIL_OPEN", False)
+            is_limited = not settings.rate_limit.RATE_LIMIT_FAIL_OPEN
             remaining = 0 if is_limited else limit
             return is_limited, remaining, 0
 

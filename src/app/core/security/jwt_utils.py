@@ -58,7 +58,7 @@ logger = get_logger(__name__)
 # Falling back to a generic default in production is a misconfiguration risk.
 _raw_audience = settings.JWT_AUDIENCE
 if not _raw_audience:
-    _env = getattr(settings, "ENVIRONMENT", "development")
+    _env = settings.env.ENVIRONMENT.value
     if str(_env).lower() in ("production", "staging"):
         raise RuntimeError(
             "JWT_AUDIENCE is not configured. "
@@ -259,7 +259,7 @@ async def decode_verified_token(
     """
     kwargs: dict[str, Any] = {"audience": JWT_AUDIENCE}
     if verify_issuer:
-        kwargs["issuer"] = getattr(settings, "JWT_ISSUER", "fastapi-saas")
+        kwargs["issuer"] = settings.crypt.JWT_ISSUER
 
     try:
         alg = _get_algorithm()
