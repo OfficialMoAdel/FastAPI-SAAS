@@ -516,6 +516,40 @@ async def premium_user(client: AsyncClient, ensure_test_tenant) -> dict[str, Any
     }
 
 
+async def _clear_auth_rate_limits():
+    """Clear per-IP auth rate-limit keys from Redis.
+
+    The auth rate limiter allows only 5 ops/minute per IP. E2E tests that
+    perform more auth operations than the budget (login bursts, multi-session
+    logout) trip HTTP 429 mid-body. Call this before a burst that would exceed
+    the per-minute budget.
+    """
+    redis = getattr(cache, "client", None)
+    if redis is None:
+        logger.warning("clear_auth_rate_limits: cache.client is None, skipping")
+        return
+    # Clear ALL rate-limit keys so the next burst starts from a clean budget.
+    # Auth limiter may use fixed-window (ratelimit:*) or GCRA (gcra:*) keys
+    # depending on the active RATE_LIMIT_ALGORITHM setting.
+    total = 0
+    for pattern in ("ratelimit:*", "gcra:*"):
+        keys = [k async for k in redis.scan_iter(match=pattern)]
+        if keys:
+            await redis.delete(*keys)
+            total += len(keys)
+    logger.info(f"clear_auth_rate_limits: cleared {total} rate-limit keys")
+
+
+@pytest.fixture
+def clear_auth_rate_limits():
+    """Return a helper to clear per-IP auth rate-limit keys mid-test.
+
+    Use this in tests that perform more than the 5-ops/minute auth budget
+    (multi-session login/logout bursts) to avoid HTTP 429 mid-body.
+    """
+    return _clear_auth_rate_limits
+
+
 @pytest.fixture(autouse=True)
 async def cleanup_redis():
     """Clean up Redis test data before and after each test.

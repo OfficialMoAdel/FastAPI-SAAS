@@ -40,10 +40,12 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         # idx_users_tenant_lower_email / idx_users_lower_username (migration 13).
         if id is not None:
             lookup_clause = User.id == id
-        elif username:
+        elif username is not None:
+            # Branch narrows username to str for mypy.
             lookup_clause = func.lower(User.username) == username.lower()
         else:
-            lookup_clause = func.lower(User.email) == email.lower()
+            email_val = email or ""
+            lookup_clause = func.lower(User.email) == email_val.lower()
 
         # Build base statement
         stmt = select(User).options(joinedload(User.tier)).where(lookup_clause, User.is_deleted.is_(False))

@@ -105,6 +105,7 @@ def upgrade() -> None:
         "password_reset_tokens",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("token", sa.String(length=255), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("used", sa.Boolean(), nullable=False, server_default=sa.text("false")),
@@ -113,15 +114,20 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("fk_password_reset_tokens_user_id"), ondelete="CASCADE"
         ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_password_reset_tokens_tenant_id"), ondelete="CASCADE"
+        ),
     )
     op.create_index("ix_password_reset_tokens_token", "password_reset_tokens", ["token"], unique=True)
     op.create_index("ix_password_reset_tokens_user_id", "password_reset_tokens", ["user_id"])
+    op.create_index(op.f("ix_password_reset_tokens_tenant_id"), "password_reset_tokens", ["tenant_id"])
 
     # ===== EMAIL_VERIFICATION_TOKENS =====
     op.create_table(
         "email_verification_tokens",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("token", sa.String(length=255), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -129,8 +135,12 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["user_id"], ["users.id"], name=op.f("fk_email_verification_tokens_user_id"), ondelete="CASCADE"
         ),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_email_verification_tokens_tenant_id"), ondelete="CASCADE"
+        ),
     )
     op.create_index("ix_email_verification_tokens_token", "email_verification_tokens", ["token"], unique=True)
+    op.create_index(op.f("ix_email_verification_tokens_tenant_id"), "email_verification_tokens", ["tenant_id"])
 
     # ===== SSO_SETTINGS (host-level, NO tenant_id) =====
     op.create_table(

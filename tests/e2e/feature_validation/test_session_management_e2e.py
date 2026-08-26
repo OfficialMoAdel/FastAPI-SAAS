@@ -137,7 +137,7 @@ async def test_session_full_lifecycle(authenticated_user: dict, client: AsyncCli
 
 
 @pytest.mark.asyncio
-async def test_session_count_accuracy(authenticated_user: dict, client: AsyncClient, log_step):
+async def test_session_count_accuracy(authenticated_user: dict, client: AsyncClient, log_step, clear_auth_rate_limits):
     """Test that session count is accurate with O(1) Redis Hash operations.
 
     Verifies that HLEN provides accurate count without O(N) iteration.
@@ -193,6 +193,8 @@ async def test_session_count_accuracy(authenticated_user: dict, client: AsyncCli
         assert redis_count == new_count, f"Redis count {redis_count} != API count {new_count}"
 
     # Step 5: Delete one session
+    # Clear auth rate-limit budget before the logout burst to avoid HTTP 429
+    await clear_auth_rate_limits()
     log_step("Deleting one session")
     logout_headers = {"Authorization": f"Bearer {tokens[1]}"}
     logout_cookies = {"refresh_token": refresh_tokens[0]} if refresh_tokens else {}

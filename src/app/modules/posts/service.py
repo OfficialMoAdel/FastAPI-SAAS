@@ -27,9 +27,17 @@ class PostService(BaseService[Post]):
         """
         super().__init__(Post, db)
 
-    async def _check_ownership(self, current_user_id: int, target_user_id: int) -> None:
-        """Check if current user owns the resource."""
-        if current_user_id != target_user_id:
+    async def _check_ownership(self, current_user_id: int, target_user_id: Any) -> None:
+        """Check if current user owns the resource.
+
+        ``target_user_id`` comes from ORM/dict rows (Any-typed); coerce to
+        int so a string/int mismatch can never bypass ownership.
+        """
+        try:
+            target = int(target_user_id)
+        except (TypeError, ValueError):
+            raise ForbiddenException("You do not have permission to modify this post.")
+        if current_user_id != target:
             raise ForbiddenException("You do not have permission to modify this post.")
 
     async def create_post(

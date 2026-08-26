@@ -83,7 +83,8 @@ class AuditLogService:
         """A13: count of rows matching the export filter."""
         stmt = _compose_filters(select(func.count()).select_from(AuditLog), tenant_id, f)
         result = await self.db.execute(stmt)
-        return result.scalar_one()
+        count: int = result.scalar_one()
+        return int(count)
 
     async def create_log(
         self,

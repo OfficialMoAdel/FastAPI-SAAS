@@ -30,6 +30,7 @@ TENANT_TABLES = [
     "stripe_settings",
     "subscription_plans",
     "products",
+    "pricing",
     "user_subscriptions",
     "billing_records",
     "roles",
@@ -40,6 +41,12 @@ TENANT_TABLES = [
     "notifications",
     "email_template_overrides",
     "ai_chat_sessions",
+    "ai_chat_messages",
+    "ai_settings",
+    "ai_token_usage",
+    "password_reset_tokens",
+    "email_verification_tokens",
+    "user_sso_connections",
     "users",
 ]
 
@@ -85,6 +92,8 @@ def upgrade() -> None:
     for table in TENANT_TABLES:
         # Enable RLS
         op.execute(f'ALTER TABLE "{table}" ENABLE ROW LEVEL SECURITY')
+        # Force RLS so even the table owner is subject to policies
+        op.execute(f'ALTER TABLE "{table}" FORCE ROW LEVEL SECURITY')
         op.execute(f"COMMENT ON TABLE \"{table}\" IS 'RLS enabled for tenant isolation'")
 
         # Create tenant isolation policy
@@ -175,6 +184,7 @@ def downgrade() -> None:
 
     # 1. Drop policies from all tables
     for table in TENANT_TABLES:
+        op.execute(f'ALTER TABLE "{table}" NO FORCE ROW LEVEL SECURITY')
         op.execute(f'DROP POLICY IF EXISTS tenant_isolation ON "{table}"')
         op.execute(f'DROP POLICY IF EXISTS bypass_rls ON "{table}"')
         op.execute(f'ALTER TABLE "{table}" DISABLE ROW LEVEL SECURITY')

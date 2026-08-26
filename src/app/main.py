@@ -263,7 +263,7 @@ def custom_openapi():
         return app.openapi_schema
 
     project_name = settings.app.APP_NAME
-    version = settings.app.APP_VERSION
+    version = settings.app.APP_VERSION or "1.0.0"
     description = settings.app.APP_DESCRIPTION
 
     openapi_schema = get_openapi(

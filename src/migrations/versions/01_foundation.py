@@ -77,6 +77,9 @@ def upgrade() -> None:
     op.create_index("ix_user_uuid", "users", ["uuid"], unique=True)
     op.create_index("idx_users_tenant_email", "users", ["tenant_id", "email"])
     op.create_index("idx_users_tenant_deleted", "users", ["tenant_id", "is_deleted"])
+    # Functional indexes for case-insensitive lookups (auth queries use lower(col) = param)
+    op.create_index("idx_users_tenant_lower_email", "users", ["tenant_id", sa.text("lower(email)")])
+    op.create_index("idx_users_lower_username", "users", [sa.text("lower(username)")])
     op.create_index("ix_user_is_active", "users", ["is_active"])
     op.create_index("ix_user_token_version", "users", ["token_version"])
 

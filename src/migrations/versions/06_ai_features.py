@@ -52,6 +52,7 @@ def upgrade() -> None:
         "ai_chat_messages",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("uuid", sa.UUID(), nullable=False, server_default=sa.text("gen_random_uuid()")),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("session_id", sa.Integer(), nullable=False),
         sa.Column("role", sa.String(length=20), nullable=False),
         sa.Column("content", sa.Text(), nullable=False),
@@ -60,11 +61,15 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_chat_messages")),
         sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_ai_chat_messages_tenant_id"), ondelete="CASCADE"
+        ),
+        sa.ForeignKeyConstraint(
             ["session_id"], ["ai_chat_sessions.id"], name=op.f("fk_ai_chat_messages_session_id"), ondelete="CASCADE"
         ),
         sa.CheckConstraint("role IN ('user', 'assistant', 'system')", name=op.f("ck_ai_chat_messages_role_valid")),
     )
     op.create_index("ix_ai_chat_messages_uuid", "ai_chat_messages", ["uuid"], unique=True)
+    op.create_index(op.f("ix_ai_chat_messages_tenant_id"), "ai_chat_messages", ["tenant_id"])
     op.create_index("idx_ai_chat_messages_session", "ai_chat_messages", ["session_id"])
     op.create_index("idx_ai_chat_messages_session_created", "ai_chat_messages", ["session_id", "created_at"])
 
@@ -73,6 +78,7 @@ def upgrade() -> None:
         "ai_settings",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("user_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("model", sa.String(length=100), nullable=False, server_default=sa.text("'gpt-4'")),
         sa.Column("temperature", sa.Float(), nullable=False, server_default=sa.text("0.7")),
         sa.Column("max_tokens", sa.Integer(), nullable=False, server_default=sa.text("4096")),
@@ -82,9 +88,13 @@ def upgrade() -> None:
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.PrimaryKeyConstraint("id", name=op.f("pk_ai_settings")),
         sa.ForeignKeyConstraint(["user_id"], ["users.id"], name=op.f("fk_ai_settings_user_id"), ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["tenant_id"], ["tenants.id"], name=op.f("fk_ai_settings_tenant_id"), ondelete="CASCADE"
+        ),
         sa.CheckConstraint("temperature >= 0.0 AND temperature <= 2.0", name=op.f("ck_ai_settings_temperature_valid")),
         sa.CheckConstraint("max_tokens >= 1 AND max_tokens <= 32000", name=op.f("ck_ai_settings_max_tokens_valid")),
     )
+    op.create_index(op.f("ix_ai_settings_tenant_id"), "ai_settings", ["tenant_id"])
     # ===== AI_TOKEN_USAGE =====
     op.create_table(
         "ai_token_usage",

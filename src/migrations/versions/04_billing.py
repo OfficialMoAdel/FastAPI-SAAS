@@ -28,7 +28,7 @@ def upgrade() -> None:
         sa.Column("stripe_customer_id", sa.String(length=255), nullable=True),
         sa.Column("stripe_account_id", sa.String(length=255), nullable=True),
         sa.Column("encrypted_secret_key", sa.Text(), nullable=True),
-        sa.Column("webhook_secret", sa.LargeBinary(), nullable=True),
+        sa.Column("encrypted_webhook_secret", sa.Text(), nullable=True),
         sa.Column("is_active", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -90,6 +90,7 @@ def upgrade() -> None:
         "pricing",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("product_id", sa.Integer(), nullable=False),
+        sa.Column("tenant_id", sa.UUID(), nullable=False),
         sa.Column("name", sa.String(length=100), nullable=False),
         sa.Column("amount_cents", sa.Integer(), nullable=False),
         sa.Column("interval", sa.String(length=20), nullable=False),
@@ -102,11 +103,13 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(
             ["product_id"], ["products.id"], name=op.f("fk_pricing_product_id"), ondelete="CASCADE"
         ),
+        sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_pricing_tenant_id"), ondelete="CASCADE"),
         sa.CheckConstraint("amount_cents >= 0", name=op.f("ck_pricing_amount_non_negative")),
         sa.CheckConstraint("interval IN ('monthly', 'yearly', 'one_time')", name=op.f("ck_pricing_interval_valid")),
     )
     op.create_index("idx_pricing_product", "pricing", ["product_id"])
     op.create_index("idx_pricing_active", "pricing", ["product_id", "is_active"])
+    op.create_index("idx_pricing_tenant", "pricing", ["tenant_id"])
 
     # ===== USER_SUBSCRIPTIONS =====
     op.create_table(
@@ -145,6 +148,14 @@ def upgrade() -> None:
     op.create_index("idx_user_subscriptions_tenant", "user_subscriptions", ["tenant_id"])
     op.create_index("idx_user_subscriptions_user", "user_subscriptions", ["user_id"])
     op.create_index("idx_subscription_tenant_user_status", "user_subscriptions", ["tenant_id", "user_id", "status"])
+    # Partial unique index: a Stripe subscription ID can only be attached to one row
+    op.create_index(
+        "uq_user_subscriptions_stripe_sub",
+        "user_subscriptions",
+        ["stripe_subscription_id"],
+        unique=True,
+        postgresql_where=sa.text("stripe_subscription_id IS NOT NULL"),
+    )
 
     # ===== BILLING_RECORDS =====
     op.create_table(
@@ -158,6 +169,7 @@ def upgrade() -> None:
         sa.Column("status", sa.String(length=50), nullable=False),
         sa.Column("stripe_payment_intent_id", sa.String(length=255), nullable=True),
         sa.Column("stripe_invoice_id", sa.String(length=255), nullable=True),
+        sa.Column("stripe_refund_id", sa.String(length=255), nullable=True),
         sa.Column("description", sa.Text(), nullable=True),
         sa.Column("metadata", postgresql.JSONB(astext_type=sa.Text()), nullable=True),
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
@@ -180,6 +192,21 @@ def upgrade() -> None:
     op.create_index("idx_billing_records_tenant", "billing_records", ["tenant_id"])
     op.create_index("idx_billing_records_user", "billing_records", ["user_id"])
     op.create_index("idx_billing_records_created", "billing_records", ["created_at"], postgresql_using="brin")
+    # Partial unique indexes: Stripe invoice/refund IDs can only be attached to one row
+    op.create_index(
+        "uq_billing_records_stripe_invoice",
+        "billing_records",
+        ["stripe_invoice_id"],
+        unique=True,
+        postgresql_where=sa.text("stripe_invoice_id IS NOT NULL"),
+    )
+    op.create_index(
+        "uq_billing_records_stripe_refund",
+        "billing_records",
+        ["stripe_refund_id"],
+        unique=True,
+        postgresql_where=sa.text("stripe_refund_id IS NOT NULL"),
+    )
 
     # ===== WEBHOOK_EVENTS =====
     op.create_table(

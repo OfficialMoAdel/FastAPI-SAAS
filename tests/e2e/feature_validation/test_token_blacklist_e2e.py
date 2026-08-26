@@ -146,11 +146,17 @@ async def test_blacklist_expiration(authenticated_user: dict, client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncClient, log_step):
+async def test_multiple_token_blacklist(
+    authenticated_user: dict, client: AsyncClient, log_step, clear_auth_rate_limits
+):
     """Test blacklisting multiple tokens for same user.
 
     Verifies that Lua script handles multiple tokens atomically.
     """
+    from unittest.mock import AsyncMock, patch
+
+    from src.app.core.utils import rate_limit as _rate_limit_module
+
     log_step("Starting multiple token blacklist E2E test", user=authenticated_user["email"])
 
     # Step 1: Create multiple sessions
@@ -175,13 +181,23 @@ async def test_multiple_token_blacklist(authenticated_user: dict, client: AsyncC
         log_step(f"Token {i + 1} valid")
 
     # Step 3: Blacklist all tokens
+    # The auth limiter allows 5 ops/minute per IP. This test needs 4 logins + 4 logouts
+    # within ~2s, which exceeds the budget. Redis key deletion alone is racy
+    # (fixed-window key includes Redis TIME-derived window suffix), so we bypass
+    # the limiter entirely for the logout burst. The remaining tests still
+    # validate rate limiting; this E2E focuses on token blacklist correctness.
     log_step("Blacklisting all tokens")
-    for i, token in enumerate(tokens):
-        headers = {"Authorization": f"Bearer {token}"}
-        logout_cookies = {"refresh_token": refresh_tokens[i]} if refresh_tokens[i] else {}
-        response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
-        assert response.status_code == 200
-        log_step(f"Token {i + 1} blacklisted")
+    # Keep a cleanup clear for middleware rate-limit keys, but bypass the auth check
+    await clear_auth_rate_limits()
+    with patch.object(
+        _rate_limit_module.rate_limiter, "check_rate_limit", new=AsyncMock(return_value=(False, 0))
+    ):
+        for i, token in enumerate(tokens):
+            headers = {"Authorization": f"Bearer {token}"}
+            logout_cookies = {"refresh_token": refresh_tokens[i]} if refresh_tokens[i] else {}
+            response = await client.post("/api/v1/account/logout", headers=headers, cookies=logout_cookies)
+            assert response.status_code == 200, f"Logout {i+1} failed: {response.status_code} {response.text}"
+            log_step(f"Token {i + 1} blacklisted")
 
     # Flush negative cache once after blacklisting all tokens
     await _flush_negative_cache()
