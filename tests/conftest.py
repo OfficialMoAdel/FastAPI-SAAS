@@ -1650,20 +1650,13 @@ def mock_redis(request):
 
     with (
         patch("src.app.core.setup.create_redis_cache_pool", new=AsyncMock()),
+        # Single seam: every Redis consumer reads cache.client at call time via
+        # redis_provider.get_redis(), so this one patch covers all of them.
         patch("src.app.core.utils.cache.client", new=fake_redis),
-        # Patch all top-level importers of redis_client to avoid NoneType errors
-        # patch("src.app.modules.security.service.redis_client", new=fake_redis), # REMOVED: Refactored to use cache.client  # noqa: E501
-        patch("src.app.modules.feature_flags.service.redis_client", new=fake_redis),
-        # patch("src.app.modules.mfa.router.redis_client", new=fake_redis),  # REMOVED: uses cache.client
-        patch("src.app.core.security.auto_ban.redis_client", new=fake_redis),
-        patch("src.app.core.security.rate_limit_cache.redis_client", new=fake_redis),
-        # REMOVED: token_blacklist_cache refactored to use cache.client dynamically
-        # patch("src.app.core.security.token_blacklist_cache.redis_client", new=fake_redis),
-        patch("src.app.modules.sso_settings.service.redis_client", new=fake_redis),
         patch("src.app.core.utils.rate_limit.RateLimiter.get_client", return_value=fake_redis),
         patch("src.app.core.utils.queue.pool", new=fake_redis),
-        patch("src.app.core.cache.manager.get_redis_pool", new=AsyncMock(return_value=fake_redis)),  # Add this
-        patch("src.app.core.cache.manager.close_redis_pool", new=AsyncMock()),  # Add this
+        patch("src.app.core.cache.manager.get_redis_pool", new=AsyncMock(return_value=fake_redis)),
+        patch("src.app.core.cache.manager.close_redis_pool", new=AsyncMock()),
     ):
         # Keep session manager bound to the same Redis backend used by this test
         session_manager.set_redis_client(fake_redis)

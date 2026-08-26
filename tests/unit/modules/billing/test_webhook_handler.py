@@ -34,7 +34,7 @@ def mock_stripe_event():
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_success(mock_redis):
     mock_redis.set = AsyncMock(return_value=True)
     result = await _try_acquire_event_lock("evt_123")
@@ -43,7 +43,7 @@ async def test_try_acquire_event_lock_success(mock_redis):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_already_processed(mock_redis):
     mock_redis.set = AsyncMock(return_value=None)  # None when NX=True and key exists
     result = await _try_acquire_event_lock("evt_123")
@@ -82,7 +82,7 @@ async def test_handle_webhook_event_routing(mock_handler, mock_lock, _processed,
 @patch("src.app.modules.billing.webhook.mark_event_processed", new_callable=AsyncMock)
 @patch("src.app.modules.billing.webhook._is_event_processed", new_callable=AsyncMock, return_value=False)
 @patch("src.app.modules.billing.webhook._try_acquire_event_lock", return_value=True)
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_handle_webhook_event_error_releases_lock(mock_redis, mock_lock, _processed, _mark, mock_stripe_event):
     # Route to an unhandled event type which will fail if we patch routing or raise an error
     mock_stripe_event["type"] = "checkout.session.completed"
@@ -203,7 +203,7 @@ async def test_handle_invoice_payment_succeeded(
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client", None)
+@patch("src.app.core.utils.cache.client", None)
 async def test_try_acquire_event_lock_redis_unavailable(mock_db):
     """Test fallback to DB idempotency check when Redis is unavailable (line 44)."""
     # When redis_client is None, should fall back to DB check
@@ -215,7 +215,7 @@ async def test_try_acquire_event_lock_redis_unavailable(mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_redis_error(mock_redis):
     """Test Redis error triggers fallback to DB idempotency check (lines 52-59)."""
     mock_redis.set = AsyncMock(side_effect=Exception("Redis connection failed"))
@@ -229,7 +229,7 @@ async def test_try_acquire_event_lock_redis_error(mock_redis):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_try_acquire_event_lock_redis_exception(mock_redis):
     """Test Redis exception logs error and falls back to DB (lines 52-59)."""
     mock_redis.set = AsyncMock(side_effect=Exception("Network error"))
@@ -312,7 +312,7 @@ async def test_db_idempotency_check_failure_fails_closed():
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.webhook.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_handle_webhook_event_error_releases_lock_missing_coverage(mock_redis):
     """Test that failed webhook processing releases the lock (lines 189-190)."""
     mock_redis.delete = AsyncMock()

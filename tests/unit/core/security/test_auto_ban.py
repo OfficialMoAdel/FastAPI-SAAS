@@ -62,7 +62,7 @@ class TestIncrementViolations:
         mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [1]
         mock_redis.expire = __import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock(return_value=True)
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await increment_violations(sample_ip)
 
         assert count == 1
@@ -76,7 +76,7 @@ class TestIncrementViolations:
         mock_redis.pipeline.return_value.__aenter__.return_value.execute.return_value = [5]
         mock_redis.expire = __import__('unittest.mock', fromlist=['AsyncMock']).AsyncMock(return_value=True)
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await increment_violations(sample_ip)
 
         assert count == 5
@@ -87,7 +87,7 @@ class TestIncrementViolations:
         """Test that the atomic EVAL (Lua INCR + conditional EXPIRE) path is preferred."""
         mock_redis.eval = AsyncMock(return_value=1)
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await increment_violations(sample_ip)
 
         assert count == 1
@@ -99,7 +99,7 @@ class TestIncrementViolations:
     @pytest.mark.asyncio
     async def test_increment_violations_redis_unavailable(self, sample_ip):
         """Test handling when Redis is unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             count = await increment_violations(sample_ip)
 
         assert count == 0
@@ -109,7 +109,7 @@ class TestIncrementViolations:
         """Test handling Redis errors gracefully."""
         mock_redis.pipeline.return_value.__aenter__.return_value.execute.side_effect = Exception("Redis error")
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await increment_violations(sample_ip)
 
         assert count == 0
@@ -123,7 +123,7 @@ class TestResetViolations:
         """Test successful violation reset."""
         mock_redis.delete.return_value = 1
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await reset_violations(sample_ip)
 
         assert result is True
@@ -132,7 +132,7 @@ class TestResetViolations:
     @pytest.mark.asyncio
     async def test_reset_violations_redis_unavailable(self, sample_ip):
         """Test reset when Redis unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             result = await reset_violations(sample_ip)
 
         assert result is False
@@ -146,7 +146,7 @@ class TestGetBanInfo:
         """Test getting info for non-banned IP."""
         mock_redis.get.return_value = None
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             info = await get_ban_info(sample_ip)
 
         assert info.is_banned is False
@@ -161,7 +161,7 @@ class TestGetBanInfo:
         ]
         mock_redis.ttl.return_value = 3600  # 1 hour remaining
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             info = await get_ban_info(sample_ip)
 
         assert info.is_banned is True
@@ -178,7 +178,7 @@ class TestGetBanInfo:
         ]
         mock_redis.ttl.return_value = 3600
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             info = await get_ban_info(sample_ip)
 
         assert info.is_banned is True
@@ -187,7 +187,7 @@ class TestGetBanInfo:
     @pytest.mark.asyncio
     async def test_get_ban_info_redis_unavailable(self, sample_ip):
         """Test ban info when Redis unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             info = await get_ban_info(sample_ip)
 
         assert info.is_banned is False
@@ -204,7 +204,7 @@ class TestBanIP:
         mock_redis.get.side_effect = [None, None]  # Not banned, no historical count
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True, "AUTO_BAN_DURATION", 3600, "AUTO_BAN_ESCALATION", False),
             patch("src.app.core.security.auto_ban.log_security_event"),
         ):
@@ -218,7 +218,7 @@ class TestBanIP:
     async def test_ban_ip_disabled(self, mock_redis, sample_ip):
         """Test ban when auto-ban is disabled."""
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", False),
         ):
             result = await ban_ip(sample_ip)
@@ -229,7 +229,7 @@ class TestBanIP:
     async def test_ban_ip_redis_unavailable(self, sample_ip):
         """Test ban when Redis unavailable."""
         with (
-            patch("src.app.core.security.auto_ban.redis_client", None),
+            patch("src.app.core.utils.cache.client", None),
             patch_setting("AUTO_BAN_ENABLED", True),
         ):
             result = await ban_ip(sample_ip)
@@ -245,7 +245,7 @@ class TestBanIP:
         mock_redis.get.side_effect = [None, b"2"]
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_DURATION", 3600),
             patch_setting("AUTO_BAN_ESCALATION", True),
@@ -263,7 +263,7 @@ class TestBanIP:
         mock_redis.get.side_effect = [None, None]  # Not banned, no historical count
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_ESCALATION", False),
         ):
@@ -280,7 +280,7 @@ class TestBanIP:
         mock_redis.get.side_effect = [None, b"5"]  # Not banned, 5 previous bans
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_DURATION", 3600),
             patch_setting("AUTO_BAN_ESCALATION", False),
@@ -302,7 +302,7 @@ class TestUnbanIP:
         mock_redis.delete.return_value = 1
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch("src.app.core.security.auto_ban.log_security_event"),
         ):
             result = await unban_ip(sample_ip)
@@ -315,7 +315,7 @@ class TestUnbanIP:
         """Test unban when IP wasn't banned."""
         mock_redis.delete.return_value = 0
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await unban_ip(sample_ip)
 
         assert result is True
@@ -323,7 +323,7 @@ class TestUnbanIP:
     @pytest.mark.asyncio
     async def test_unban_ip_redis_unavailable(self, sample_ip):
         """Test unban when Redis unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             result = await unban_ip(sample_ip)
 
         assert result is False
@@ -339,7 +339,7 @@ class TestIsIPBanned:
         mock_redis.get.side_effect = [b"Banned", b"1"]
         mock_redis.ttl.return_value = 1800
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await is_ip_banned(sample_ip)
 
         assert result is True
@@ -349,7 +349,7 @@ class TestIsIPBanned:
         """Test checking non-banned IP."""
         mock_redis.get.return_value = None  # Not banned
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await is_ip_banned(sample_ip)
 
         assert result is False
@@ -365,7 +365,7 @@ class TestCheckAndAutoBan:
         mock_pipeline.execute.return_value = [3]  # Below threshold of 5
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_THRESHOLD", 5),
         ):
@@ -381,7 +381,7 @@ class TestCheckAndAutoBan:
         mock_redis.get.return_value = None
 
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_THRESHOLD", 5),
             patch_setting("AUTO_BAN_DURATION", 3600),
@@ -422,7 +422,7 @@ class TestGetAllBannedIPs:
 
         mock_redis.ttl.return_value = 1800
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             banned = await get_all_banned_ips()
 
         assert len(banned) == 2
@@ -434,7 +434,7 @@ class TestGetAllBannedIPs:
         """Test getting banned IPs when none exist."""
         mock_redis.scan.return_value = (0, [])
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             banned = await get_all_banned_ips()
 
         assert banned == []
@@ -442,7 +442,7 @@ class TestGetAllBannedIPs:
     @pytest.mark.asyncio
     async def test_get_all_banned_ips_redis_unavailable(self):
         """Test when Redis unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             banned = await get_all_banned_ips()
 
         assert banned == []
@@ -456,7 +456,7 @@ class TestGetViolationStats:
         """Test getting stats for specific IP."""
         mock_redis.get.return_value = b"10"
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             stats = await get_violation_stats(sample_ip)
 
         assert stats["ip"] == sample_ip
@@ -470,7 +470,7 @@ class TestGetViolationStats:
         ]
         mock_redis.get.side_effect = [b"5", b"3"]
 
-        with patch("src.app.core.security.auto_ban.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             stats = await get_violation_stats()
 
         assert stats["total_ips"] == 2
@@ -479,7 +479,7 @@ class TestGetViolationStats:
     @pytest.mark.asyncio
     async def test_get_violation_stats_redis_unavailable(self):
         """Test stats when Redis unavailable."""
-        with patch("src.app.core.security.auto_ban.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             stats = await get_violation_stats()
 
         assert stats == {"total_ips": 0, "total_violations": 0}
@@ -514,7 +514,7 @@ class TestIntegrationScenarios:
     async def test_full_ban_workflow(self, mock_redis, sample_ip):
         """Test complete ban workflow from violation to ban."""
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting(
                 "AUTO_BAN_ENABLED",
                 True,
@@ -552,7 +552,7 @@ class TestIntegrationScenarios:
     async def test_escalating_bans(self, mock_redis, sample_ip):
         """Test that repeated bans escalate duration."""
         with (
-            patch("src.app.core.security.auto_ban.redis_client", mock_redis),
+            patch("src.app.core.utils.cache.client", mock_redis),
             patch_setting("AUTO_BAN_ENABLED", True),
             patch_setting("AUTO_BAN_DURATION", 3600),
             patch_setting("AUTO_BAN_ESCALATION", True),

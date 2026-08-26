@@ -7,7 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
 
@@ -88,6 +88,7 @@ class SSOSettingsService:
         TTL, keeping the cache warm and bounded after invalidations.
         """
         cache_key = f"sso_settings:{provider}"
+        redis_client = get_redis()
         if redis_client is not None:
             try:
                 cached = await redis_client.get(cache_key)
@@ -244,6 +245,7 @@ class SSOSettingsService:
     @staticmethod
     async def _invalidate_provider_cache(provider: str) -> None:
         """Delete the Redis cache entry for a single SSO provider."""
+        redis_client = get_redis()
         if redis_client is not None:
             try:
                 await redis_client.delete(f"sso_settings:{provider}")
@@ -298,6 +300,7 @@ async def warm_sso_settings(session: AsyncSession) -> int:
     settings = result.scalars().all()
 
     cached_count = 0
+    redis_client = get_redis()
     if redis_client:
         try:
             for setting in settings:

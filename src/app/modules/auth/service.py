@@ -358,7 +358,9 @@ class AuthService:
         old_refresh_payload = await decode_jwt_token(refresh_token) or {}
 
         # Create new tokens FIRST to ensure atomicity. If this fails, the user is not left locked out.
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         lock_key = None
         if redis_client and user_data.jti:

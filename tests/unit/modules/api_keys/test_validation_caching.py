@@ -47,7 +47,7 @@ class TestAPIKeyValidationCaching:
             "expires_at": None,
         }
 
-        with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
+        with patch("src.app.core.utils.cache.client") as mock_redis:
             cached_json = (
                 '{"user_id": 1, "tenant_id": 1, "scopes": ["read", "write"], "key_id": 42, "expires_at": null}'
             )
@@ -89,7 +89,7 @@ class TestAPIKeyValidationCaching:
         api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.app.modules.api_keys.service.redis_client") as mock_redis,
+            patch("src.app.core.utils.cache.client") as mock_redis,
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
             mock_redis.get = AsyncMock(return_value=None)  # Cache miss
@@ -112,7 +112,7 @@ class TestAPIKeyValidationCaching:
         expired_time = (datetime.now(UTC) - timedelta(hours=1)).isoformat()
         cached_data = f'{{"user_id": 1, "tenant_id": 1, "scopes": [], "key_id": 42, "expires_at": "{expired_time}"}}'
 
-        with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
+        with patch("src.app.core.utils.cache.client") as mock_redis:
             mock_redis.get = AsyncMock(return_value=cached_data)
             mock_redis.delete = AsyncMock()
 
@@ -130,7 +130,7 @@ class TestAPIKeyValidationCaching:
             f'{{"user_id": 1, "tenant_id": 1, "scopes": ["admin"], "key_id": 42, "expires_at": "{future_time}"}}'
         )
 
-        with patch("src.app.modules.api_keys.service.redis_client") as mock_redis:
+        with patch("src.app.core.utils.cache.client") as mock_redis:
 
             async def _redis_get(key):
                 if "tenant" in str(key):
@@ -186,7 +186,7 @@ class TestAPIKeyRevocationCacheInvalidation:
         api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.app.modules.api_keys.service.redis_client") as mock_redis,
+            patch("src.app.core.utils.cache.client") as mock_redis,
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
             mock_crud.update = AsyncMock()
@@ -216,7 +216,7 @@ class TestAPIKeyRevocationCacheInvalidation:
         api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
         with (
-            patch("src.app.modules.api_keys.service.redis_client", None),
+            patch("src.app.core.utils.cache.client", None),
             patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
         ):
             mock_crud.update = AsyncMock()

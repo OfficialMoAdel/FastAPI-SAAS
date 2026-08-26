@@ -136,7 +136,9 @@ class PasswordLifecycleService:
             logger.error("failed_to_invalidate_redis_sessions", user_id=user_id, error=str(e))
 
         try:
-            from src.app.core.utils.cache import client as redis_client
+            from src.app.core.redis_provider import get_redis
+
+            redis_client = get_redis()
 
             if redis_client:
                 username = user.get("username")

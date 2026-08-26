@@ -87,7 +87,7 @@ class TestL1CacheIntegration:
         mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called on L1 hit"))
 
         # Act - call internal method with mocked Redis
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await middleware._get_tenant_by_slug("cached-tenant")
 
         # Assert - got result from L1 cache (returns TenantContext)
@@ -108,7 +108,7 @@ class TestL1CacheIntegration:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(side_effect=AssertionError("Redis should not be called"))
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await middleware._get_tenant_by_slug("ghost-tenant")
 
         assert result is None
@@ -131,7 +131,7 @@ class TestL1CacheIntegration:
             return_value='{"id": "00000000-0000-0000-0000-000000000002", "slug": "redis-tenant", "is_active": true}'
         )
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await middleware._get_tenant_by_slug("redis-tenant")
 
         # Assert L1 is now populated

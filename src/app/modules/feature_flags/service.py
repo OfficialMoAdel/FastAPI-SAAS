@@ -15,7 +15,7 @@ from src.app.core.cache.warmer import warmer
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 from src.app.modules._base import BaseService, ModelNotFoundError
 from src.app.modules.feature_flags.crud import crud_feature_flag_overrides, crud_feature_flags
 from src.app.modules.feature_flags.models import FeatureFlag, FeatureFlagOverride
@@ -86,6 +86,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         """Get a feature flag by key, returns None if not found.
         First checks the global feature flag cache warmed by the application.
         """
+        redis_client = get_redis()
         if redis_client:
             try:
                 cache_key = f"feature_flag:{key}"
@@ -135,6 +136,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
             raise ModelNotFoundError("FeatureFlag", flag_id)
 
         flag_key = flag.key if not isinstance(flag, dict) else flag.get("key")
+        redis_client = get_redis()
         if redis_client and flag_key:
             try:
                 await redis_client.delete(f"feature_flag:{flag_key}")
@@ -153,6 +155,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         result = await self.crud.get(db=self.db, id=flag_id)
         if result:
             flag_key = result.key if not isinstance(result, dict) else result.get("key")
+            redis_client = get_redis()
             if redis_client and flag_key:
                 try:
                     await redis_client.delete(f"feature_flag:{flag_key}")
@@ -248,6 +251,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key("features", tenant_id)
+        redis_client = get_redis()
 
         # Fast path: serve from cache if present.
         if redis_client:
@@ -299,6 +303,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
+        redis_client = get_redis()
 
         # Fast path: serve from cache if present.
         if redis_client:
@@ -480,6 +485,7 @@ class FeatureFlagService(BaseService[FeatureFlag]):
 
     async def _invalidate_cache(self, tenant_id: UUID, feature_name: str | None = None) -> None:
         """Invalidate cache for tenant feature flags."""
+        redis_client = get_redis()
         if not redis_client:
             return
 
@@ -573,6 +579,7 @@ async def warm_feature_flags(session: AsyncSession) -> int:
     flags = result.scalars().all()
 
     cached_count = 0
+    redis_client = get_redis()
     if redis_client:
         try:
             for flag in flags:

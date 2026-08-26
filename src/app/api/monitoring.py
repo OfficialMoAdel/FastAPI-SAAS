@@ -66,7 +66,9 @@ async def check_redis() -> dict[str, str | float | bool]:
     """Check Redis connectivity."""
     start_time = time.perf_counter()
     try:
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         if redis_client is None:
             return {"status": "disabled", "message": "Redis not configured"}

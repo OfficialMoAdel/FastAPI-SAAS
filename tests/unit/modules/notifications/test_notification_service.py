@@ -43,7 +43,7 @@ def make_mock_user_prefs(enabled=True, disabled_types=[], quiet_enabled=False):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_get_template_content_cache_hit(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=b'["Subject", "<html></html>"]')
     t_id = uuid4()
@@ -56,7 +56,7 @@ async def test_get_template_content_cache_hit(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_get_template_content_override(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
     mock_redis.set = AsyncMock()
@@ -74,7 +74,7 @@ async def test_get_template_content_override(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 @patch("src.app.modules.notifications.service.jinja_env")
 async def test_get_template_content_fallback(mock_jinja, mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
@@ -258,7 +258,7 @@ async def test_template_override_crud(service, mock_db):
     assert res is False
 
     # Delete True
-    with patch("src.app.modules.notifications.service.redis_client") as rclient:
+    with patch("src.app.core.utils.cache.client") as rclient:
         rclient.delete = AsyncMock()
         mock_override = make_mock_override()
         mock_res = MagicMock()
@@ -273,7 +273,7 @@ async def test_template_override_crud(service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.notifications.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_create_template_override(mock_redis, service, mock_db):
     t_id = uuid4()
     mock_redis.delete = AsyncMock()

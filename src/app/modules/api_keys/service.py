@@ -13,7 +13,7 @@ from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.api_keys.crud import crud_api_keys
@@ -241,6 +241,7 @@ class APIKeyService(BaseService[APIKey]):
         api_key_is_active = key.is_active
 
         # Invalidate cache before revoking (using hashed_key from DB record)
+        redis_client = get_redis()
         if redis_client is not None and api_key_hashed:
             cache_key = self._get_cache_key(api_key_hashed)
             await redis_client.delete(cache_key)
@@ -291,6 +292,7 @@ class APIKeyService(BaseService[APIKey]):
         suspended/deleted, and None when no cache entry exists (or probing
         fails) so the caller falls back to the authoritative DB check.
         """
+        redis_client = get_redis()
         if redis_client is None or not tenant_id:
             return None
         try:
@@ -328,6 +330,7 @@ class APIKeyService(BaseService[APIKey]):
         """
         hashed = self._hash_key(api_key)
         cache_key = self._get_cache_key(hashed)
+        redis_client = get_redis()
 
         # Check cache first (O(1) lookup)
         if redis_client is not None:
@@ -564,6 +567,7 @@ class APIKeyService(BaseService[APIKey]):
         await self.db.refresh(new_key_record)
 
         old_key_hashed = api_key.hashed_key
+        redis_client = get_redis()
         if redis_client is not None and old_key_hashed:
             await redis_client.delete(self._get_cache_key(old_key_hashed))
 

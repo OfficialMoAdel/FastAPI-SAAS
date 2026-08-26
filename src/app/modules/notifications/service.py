@@ -15,7 +15,7 @@ from structlog import get_logger
 from src.app.core.config import settings
 from src.app.core.events import EventPriority, event_bus
 from src.app.core.json_utils import json_dumps, json_loads
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 from src.app.core.utils.r1_error_handling import with_retry
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.modules.notifications.email_provider import EmailMessage, SMTPProvider
@@ -61,6 +61,7 @@ class NotificationService:
         from src.app.core.utils.cache import build_tenant_key
 
         cache_key = build_tenant_key(f"email_template:{template_name}", tenant_id)
+        redis_client = get_redis()
         if redis_client:
             try:
                 cached = await redis_client.get(cache_key)
@@ -439,6 +440,7 @@ class NotificationService:
             await self.db.refresh(existing)
 
             # Invalidate cache
+            redis_client = get_redis()
             if redis_client:
                 from src.app.core.utils.cache import build_tenant_key
 
@@ -458,6 +460,7 @@ class NotificationService:
         await self.db.refresh(override)
 
         # Invalidate cache
+        redis_client = get_redis()
         if redis_client:
             from src.app.core.utils.cache import build_tenant_key
 
@@ -481,6 +484,7 @@ class NotificationService:
         await self.db.commit()
 
         # Invalidate cache
+        redis_client = get_redis()
         if redis_client:
             from src.app.core.utils.cache import build_tenant_key
 

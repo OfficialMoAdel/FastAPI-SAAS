@@ -15,8 +15,8 @@ from dataclasses import dataclass
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
+from src.app.core.redis_provider import get_redis
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
-from src.app.core.utils.cache import client as redis_client
 
 logger = get_logger(__name__)
 
@@ -57,6 +57,7 @@ async def increment_violations(client_ip: str) -> int:
     Returns:
         Current violation count
     """
+    redis_client = get_redis()
     if not redis_client:
         logger.warning("Redis unavailable - cannot track violations for %s", client_ip)
         return 0
@@ -99,6 +100,7 @@ async def reset_violations(client_ip: str) -> bool:
     Returns:
         True if successful
     """
+    redis_client = get_redis()
     if not redis_client:
         return False
 
@@ -125,6 +127,7 @@ async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
     Returns:
         BanInfo with ban status and details
     """
+    redis_client = get_redis()
     if not redis_client:
         return BanInfo(is_banned=False)
 
@@ -175,6 +178,7 @@ async def ban_ip(
     Returns:
         True if ban was successful
     """
+    redis_client = get_redis()
     if not redis_client:
         logger.warning("Redis unavailable - cannot ban IP %s", client_ip)
         return False
@@ -260,6 +264,7 @@ async def unban_ip(client_ip: str) -> bool:
     Returns:
         True if unban was successful (or IP wasn't banned)
     """
+    redis_client = get_redis()
     if not redis_client:
         return False
 
@@ -335,6 +340,7 @@ async def get_all_banned_ips() -> list[dict]:
     Returns:
         List of ban records with IP, reason, and TTL
     """
+    redis_client = get_redis()
     if not redis_client:
         return []
 
@@ -422,6 +428,7 @@ async def get_violation_stats(client_ip: str | None = None) -> dict:
     Returns:
         Dictionary with violation statistics
     """
+    redis_client = get_redis()
     if not redis_client:
         return {"total_ips": 0, "total_violations": 0}
 

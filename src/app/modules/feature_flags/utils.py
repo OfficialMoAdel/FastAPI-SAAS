@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 from src.app.modules._base import ModelNotFoundError
 from src.app.modules.tenants.models import Tenant
 
@@ -38,6 +38,7 @@ async def is_feature_enabled(db: AsyncSession, tenant_id: UUID, feature_name: st
     )
     from src.app.core.utils.cache import build_tenant_key
     cache_key = build_tenant_key(f"feature:{feature_name}", tenant_id)
+    redis_client = get_redis()
 
     # Try cache first
     if redis_client:
@@ -86,6 +87,7 @@ async def get_feature_flags(db: AsyncSession, tenant_id: UUID) -> dict[str, Any]
     )
     from src.app.core.utils.cache import build_tenant_key
     cache_key = build_tenant_key("features", tenant_id)
+    redis_client = get_redis()
 
     # Try cache first
     if redis_client:
@@ -159,6 +161,7 @@ async def update_feature_flag(db: AsyncSession, tenant_id: UUID, feature_name: s
     await db.commit()
     await db.refresh(tenant)
 
+    redis_client = get_redis()
     # Invalidate cache
     if redis_client:
         try:
@@ -216,6 +219,7 @@ async def bulk_update_feature_flags(db: AsyncSession, tenant_id: UUID, flags: di
     await db.commit()
     await db.refresh(tenant)
 
+    redis_client = get_redis()
     # Invalidate cache
     if redis_client:
         try:

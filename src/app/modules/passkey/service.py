@@ -367,9 +367,11 @@ class PasskeyService:
         mfa_enabled = await mfa_service.is_mfa_enabled(user["id"], db)
 
         if mfa_enabled:
+            from src.app.core.redis_provider import get_redis
             from src.app.core.security import get_mfa_pending_token_manager
             from src.app.core.security.tokens import TokenGenerator
-            from src.app.core.utils.cache import client as redis_client
+
+            redis_client = get_redis()
 
             if redis_client is None:
                 raise RuntimeError("Redis client is not initialized")

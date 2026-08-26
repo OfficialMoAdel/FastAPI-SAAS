@@ -29,8 +29,8 @@ from src.app.core.config import settings
 from src.app.core.db.database import local_session
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
+from src.app.core.redis_provider import get_redis
 from src.app.core.tenancy.context import NO_TENANT, TenantContext, clear_tenant_context, set_current_tenant
-from src.app.core.utils.cache import client as redis_client
 from src.app.modules.tenants.models import Tenant
 
 logger = get_logger(__name__)
@@ -58,6 +58,7 @@ def invalidate_tenant_l1(slug: str | None = None) -> None:
 
 async def _publish_tenant_l1_invalidation(slug: str | None) -> None:
     """Publish an L1 invalidation so other workers drop their cached entry."""
+    redis_client = get_redis()
     if redis_client is None:
         return
     try:
@@ -69,6 +70,7 @@ async def _publish_tenant_l1_invalidation(slug: str | None) -> None:
 def _start_l1_invalidation_listener() -> None:
     """Start (once per event loop) a background subscriber applying invalidations."""
     global _l1_invalidation_task
+    redis_client = get_redis()
     if redis_client is None:
         return
     if _l1_invalidation_task is not None and not _l1_invalidation_task.done():
@@ -251,6 +253,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
                 cache_key = f"tenant:slug:{slug}"
 
                 # L2: Redis cache
+                redis_client = get_redis()
                 if redis_client:
                     try:
                         # Check negative cache first (dedicated key avoids sentinel collision)

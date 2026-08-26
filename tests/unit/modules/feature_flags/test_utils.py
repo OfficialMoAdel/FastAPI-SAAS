@@ -18,7 +18,7 @@ async def test_is_feature_enabled_cache_hit_true():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=b"true")
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.is_feature_enabled(db=MagicMock(), tenant_id="t1", feature_name="beta")
         assert result is True
 
@@ -27,7 +27,7 @@ async def test_is_feature_enabled_cache_hit_false_bytes():
     redis = MagicMock()
     redis.get = AsyncMock(return_value=b"false")
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.is_feature_enabled(db=MagicMock(), tenant_id="t1", feature_name="beta")
         assert result is False
 
@@ -36,7 +36,7 @@ async def test_is_feature_enabled_cache_hit_str():
     redis = MagicMock()
     redis.get = AsyncMock(return_value="TRUE")
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.is_feature_enabled(db=MagicMock(), tenant_id="t1", feature_name="beta")
         assert result is True
 
@@ -49,7 +49,7 @@ async def test_is_feature_enabled_cache_miss_db_default():
     db = MagicMock()
     db.get = AsyncMock(return_value=None)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.is_feature_enabled(db=db, tenant_id="t1", feature_name="beta", default=True)
         assert result is True
         redis.setex.assert_awaited_once()
@@ -64,7 +64,7 @@ async def test_is_feature_enabled_cache_miss_db_flags():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         assert await ff_utils.is_feature_enabled(db, "t1", "gamma") is True
         assert await ff_utils.is_feature_enabled(db, "t1", "beta") is False
         assert await ff_utils.is_feature_enabled(db, "t1", "missing", default=True) is True
@@ -75,7 +75,7 @@ async def test_is_feature_enabled_no_redis():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         assert await ff_utils.is_feature_enabled(db, "t1", "beta") is True
 
 
@@ -88,7 +88,7 @@ async def test_is_feature_enabled_cache_get_exception():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         assert await ff_utils.is_feature_enabled(db, "t1", "beta") is True
 
 
@@ -96,7 +96,7 @@ async def test_get_feature_flags_cache_hit():
     redis = MagicMock()
     redis.get = AsyncMock(return_value='{"beta": true}')
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.get_feature_flags(db=MagicMock(), tenant_id="t1")
         assert result == {"beta": True}
 
@@ -110,7 +110,7 @@ async def test_get_feature_flags_cache_exception_falls_to_db():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         result = await ff_utils.get_feature_flags(db, "t1")
         assert result == {"a": 1}
         redis.setex.assert_awaited_once()
@@ -121,7 +121,7 @@ async def test_get_feature_flags_no_redis():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         assert await ff_utils.get_feature_flags(db, "t1") == {"a": 1}
 
 
@@ -136,7 +136,7 @@ async def test_update_feature_flag_success():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         result = await ff_utils.update_feature_flag(db, "t1", "beta", True)
@@ -148,7 +148,7 @@ async def test_update_feature_flag_not_found():
     db = MagicMock()
     db.get = AsyncMock(return_value=None)
 
-    with patch.object(ff_utils, "redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         with pytest.raises(ModelNotFoundError):
             await ff_utils.update_feature_flag(db, "t1", "beta", True)
 
@@ -164,7 +164,7 @@ async def test_bulk_update_feature_flags_success():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         result = await ff_utils.bulk_update_feature_flags(db, "t1", {"a": True, "b": False})
@@ -183,7 +183,7 @@ async def test_bulk_update_feature_flags_tenant_flags_none():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         result = await ff_utils.bulk_update_feature_flags(db, "t1", {"a": True})
@@ -195,7 +195,7 @@ async def test_bulk_update_feature_flags_not_found():
     db = MagicMock()
     db.get = AsyncMock(return_value=None)
 
-    with patch.object(ff_utils, "redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         with pytest.raises(ModelNotFoundError):
             await ff_utils.bulk_update_feature_flags(db, "t1", {"a": True})
 
@@ -209,7 +209,7 @@ async def test_is_feature_enabled_cache_setex_exception():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         assert await ff_utils.is_feature_enabled(db, "t1", "beta") is True
 
 
@@ -222,7 +222,7 @@ async def test_get_feature_flags_cache_setex_exception():
     db = MagicMock()
     db.get = AsyncMock(return_value=tenant)
 
-    with patch.object(ff_utils, "redis_client", redis):
+    with patch("src.app.core.utils.cache.client", redis):
         assert await ff_utils.get_feature_flags(db, "t1") == {"a": 1}
 
 
@@ -237,7 +237,7 @@ async def test_update_feature_flag_cache_delete_exception():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         result = await ff_utils.update_feature_flag(db, "t1", "beta", True)
@@ -255,7 +255,7 @@ async def test_bulk_update_feature_flags_empty_keys_no_delete():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         # Empty flags dict -> keys_to_delete empty -> delete(*[]) not awaited
@@ -276,7 +276,7 @@ async def test_bulk_update_feature_flags_cache_delete_exception():
     db.refresh = AsyncMock()
 
     with (
-        patch.object(ff_utils, "redis_client", redis),
+        patch("src.app.core.utils.cache.client", redis),
         patch("sqlalchemy.orm.attributes.flag_modified"),
     ):
         result = await ff_utils.bulk_update_feature_flags(db, "t1", {"a": True})

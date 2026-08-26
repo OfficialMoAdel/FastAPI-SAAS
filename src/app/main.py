@@ -101,7 +101,9 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.warning("Pool metrics setup failed", error=str(e))
 
         from src.app.core.events import event_bus
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         if redis_client:
             event_bus.set_redis_client(redis_client)

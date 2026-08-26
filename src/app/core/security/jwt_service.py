@@ -233,7 +233,9 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
 
         cache_key = build_tenant_key(f"user:{username_or_email}:token_version", tenant_id)
 
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         cached_version = None
         if redis_client:

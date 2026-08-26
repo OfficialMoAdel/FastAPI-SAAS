@@ -11,6 +11,7 @@ rather than risking duplicate side effects.
 
 from fastapi import HTTPException
 
+from src.app.core.redis_provider import get_redis
 from src.app.modules.billing import webhook as _pkg
 
 
@@ -21,7 +22,7 @@ async def _is_event_processed(event_id: str) -> bool:
     the 300s processing window are rejected by evidence that the event was
     fully handled — not just by a short-lived in-flight lock.
     """
-    redis_client = _pkg.redis_client
+    redis_client = get_redis()
     if redis_client:
         try:
             value = await redis_client.get(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")
@@ -61,7 +62,7 @@ async def _try_acquire_event_lock(event_id: str) -> bool:
     Returns:
         True if lock acquired (event NOT previously processed), False if already processed
     """
-    redis_client = _pkg.redis_client
+    redis_client = get_redis()
     if redis_client is None:
         # Redis not available — fall back to DB idempotency check
         return await _pkg._db_idempotency_check(event_id)
@@ -144,7 +145,7 @@ async def mark_event_processed(event_id: str) -> None:
     happened, so rejecting the delivery would only cause pointless Stripe
     retries; handlers are internally idempotent as a last resort.
     """
-    redis_client = _pkg.redis_client
+    redis_client = get_redis()
     if redis_client:
         try:
             seven_days = 7 * 24 * 3600
@@ -177,7 +178,7 @@ async def _release_webhook_event_lock(event_id: str) -> None:
     # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
     # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
     lock_released = False
-    redis_client = _pkg.redis_client
+    redis_client = get_redis()
     if redis_client:
         try:
             await redis_client.delete(f"{_pkg._WEBHOOK_EVENT_KEY_PREFIX}{event_id}")

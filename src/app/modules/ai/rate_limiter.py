@@ -179,9 +179,9 @@ def get_ai_rate_limiter(redis_client: Redis | None = None) -> AIRateLimiter:
     if _rate_limiter is None:
         if redis_client is None:
             # Import here to avoid circular imports
-            from src.app.core.utils.cache import client as cache_client
+            from src.app.core.redis_provider import get_redis
 
-            redis_client = cache_client
+            redis_client = get_redis()
 
         if redis_client is None:
             raise ValueError("Redis client is required for AIRateLimiter")

@@ -10,16 +10,17 @@ concern:
 
 Shared seam
 -----------
-Names that tests patch or ``core.setup`` mutates at runtime (``redis_client``,
-RLS job contexts, CRUD singletons, handlers) live in this package namespace.
+Names that tests patch or ``core.setup`` mutates at runtime (RLS job
+contexts, CRUD singletons, handlers) live in this package namespace.
 Submodules resolve them through the package object (``_pkg.<name>``), which
 preserves the exact late-binding lookup semantics of the original single
-module — ``mock.patch("...billing.webhook.<name>")`` keeps working.
+module — ``mock.patch("...billing.webhook.<name>")`` keeps working. The
+Redis client is read at call time through
+:func:`src.app.core.redis_provider.get_redis`.
 """
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
 from src.app.core.worker.rls_context import job_bypass_context, job_tenant_context
 from src.app.modules.billing.crud import crud_billing_records, crud_user_subscriptions
 

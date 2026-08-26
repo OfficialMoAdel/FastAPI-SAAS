@@ -92,7 +92,9 @@ async def get_cached_permissions_bitmask(
     Returns:
         Integer bitmask with bits set for each permission
     """
-    from src.app.core.utils.cache import client as redis_client
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
 
     cache_key = _get_bitmask_cache_key(user_id, tenant_id)
 
@@ -306,7 +308,9 @@ async def invalidate_user_permissions_cache(user_id: int, tenant_id: int | UUID)
     Clears both Set-based cache and bitmask cache for backward compatibility.
     Call this when user roles are modified.
     """
-    from src.app.core.utils.cache import client as redis_client
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
 
     if redis_client is None:
         return
@@ -334,7 +338,9 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
     if not user_ids:
         return
 
-    from src.app.core.utils.cache import client as redis_client
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
 
     if redis_client is None:
         return

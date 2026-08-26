@@ -29,7 +29,7 @@ class TestCacheWarmingUsesPipeline:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await warm_policy_cache(tier_policies)
 
             # Assert
@@ -51,7 +51,7 @@ class TestCacheWarmingUsesPipeline:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             await warm_policy_cache(tier_policies)
 
             # Assert - execute called once, not N times
@@ -62,7 +62,7 @@ class TestCacheWarmingUsesPipeline:
         """Verify empty policies dict returns 0 without calling Redis."""
         mock_redis = MagicMock()
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await warm_policy_cache({})
 
             # Assert
@@ -72,7 +72,7 @@ class TestCacheWarmingUsesPipeline:
     @pytest.mark.asyncio
     async def test_redis_unavailable_returns_zero(self):
         """Verify returns 0 when Redis is unavailable."""
-        with patch("src.app.core.security.rate_limit_cache.redis_client", None):
+        with patch("src.app.core.utils.cache.client", None):
             count = await warm_policy_cache({1: [{"limit": 100}]})
 
             # Assert
@@ -105,7 +105,7 @@ class TestStartupLatencyReduced:
         mock_redis_pipeline.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis_pipeline.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis_pipeline):
+        with patch("src.app.core.utils.cache.client", mock_redis_pipeline):
             start = time.perf_counter()
             await warm_policy_cache(tier_policies)
             pipeline_time = time.perf_counter() - start
@@ -132,7 +132,7 @@ class TestStartupLatencyReduced:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             start = time.perf_counter()
             count = await warm_policy_cache(tier_policies)
             elapsed = time.perf_counter() - start
@@ -163,7 +163,7 @@ class TestPipelineCorrectness:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await warm_policy_cache(tier_policies)
 
             # Assert
@@ -183,7 +183,7 @@ class TestPipelineCorrectness:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             await warm_policy_cache(tier_policies)
 
             # Assert - verify setex called with correct key pattern and TTL
@@ -204,7 +204,7 @@ class TestPipelineCorrectness:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             await warm_policy_cache(tier_policies)
 
             # Assert - verify data is serialized
@@ -229,7 +229,7 @@ class TestErrorHandling:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await warm_policy_cache(tier_policies)
 
             # Assert
@@ -245,7 +245,7 @@ class TestErrorHandling:
         mock_redis.pipeline.return_value.__aenter__.return_value = mock_pipe
         mock_redis.pipeline.return_value.__aexit__.return_value = None
 
-        with patch("src.app.core.security.rate_limit_cache.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             count = await warm_policy_cache(tier_policies)
 
             # Assert

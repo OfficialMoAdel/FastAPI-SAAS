@@ -199,7 +199,9 @@ warmer = CacheWarmer()
 @warmer.register("tenant")
 async def warm_tenant_cache(session: AsyncSession) -> int:
     """Preload all active tenant slugs into Redis cache."""
-    from src.app.core.utils.cache import client as redis_client
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
 
     if redis_client is None:
         logger.warning("Redis client not available, skipping tenant cache warming")
@@ -245,7 +247,9 @@ async def warm_tenant_cache(session: AsyncSession) -> int:
 @warmer.register("tier")
 async def warm_tier_cache(session: AsyncSession) -> int:
     """Preload all tier names into Redis cache."""
-    from src.app.core.utils.cache import client as redis_client
+    from src.app.core.redis_provider import get_redis
+
+    redis_client = get_redis()
 
     if redis_client is None:
         logger.warning("Redis client not available, skipping tier cache warming")

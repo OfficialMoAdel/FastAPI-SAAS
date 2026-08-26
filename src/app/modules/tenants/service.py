@@ -9,7 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.tenants.crud import crud_tenants
@@ -71,6 +71,7 @@ class TenantService(BaseService[Tenant]):
         P2-4: Caches both ID and slug lookups for O(1) retrieval.
         Use this for ORM Tenant objects.
         """
+        redis_client = get_redis()
         if not redis_client:
             return
 
@@ -91,6 +92,7 @@ class TenantService(BaseService[Tenant]):
         P2-4: Used when FastCRUD returns a dict (schema_to_select=TenantResponse).
         Caches both by ID and by slug for O(1) retrieval.
         """
+        redis_client = get_redis()
         if not redis_client or not tenant_data:
             return
 
@@ -112,6 +114,7 @@ class TenantService(BaseService[Tenant]):
         is_active=True for up to 60s. Publishing on the middleware's
         invalidation channel drops those L1 entries immediately.
         """
+        redis_client = get_redis()
         if not redis_client:
             return
 
@@ -133,6 +136,7 @@ class TenantService(BaseService[Tenant]):
 
     async def _get_cached_tenant(self, tenant_id: UUID) -> dict[str, Any] | None:
         """Get tenant from cache if available."""
+        redis_client = get_redis()
         if not redis_client:
             return None
 
@@ -148,6 +152,7 @@ class TenantService(BaseService[Tenant]):
 
     async def _get_cached_tenant_by_slug(self, slug: str) -> dict[str, Any] | None:
         """Get tenant by slug from cache if available."""
+        redis_client = get_redis()
         if not redis_client:
             return None
 
@@ -222,6 +227,7 @@ class TenantService(BaseService[Tenant]):
         await self._cache_tenant(created_tenant)
 
         # Invalidate the negative cache so newly created tenants aren't hidden
+        redis_client = get_redis()
         if redis_client and tenant.slug:
             await redis_client.delete(f"tenant:negative:{tenant.slug}")
 

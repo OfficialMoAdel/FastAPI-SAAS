@@ -121,7 +121,7 @@ async def test_validate_api_key_cache_hit() -> None:
         return '{"user_id": 1, "tenant_id": "t", "scopes": ["read"], "key_id": 1}'
 
     fake_redis.get.side_effect = _redis_get
-    with patch("src.app.modules.api_keys.service.redis_client", fake_redis):
+    with patch("src.app.core.utils.cache.client", fake_redis):
         result = await service.validate_api_key("rawkey")
     assert result is not None
     assert result["user_id"] == 1
@@ -136,7 +136,7 @@ async def test_validate_api_key_cache_hit_expired() -> None:
     fake_redis.get.return_value = (
         f'{{"user_id": 1, "tenant_id": "t", "scopes": [], "key_id": 1, "expires_at": "{expired}"}}'
     )
-    with patch("src.app.modules.api_keys.service.redis_client", fake_redis):
+    with patch("src.app.core.utils.cache.client", fake_redis):
         result = await service.validate_api_key("rawkey")
     assert result is None
     fake_redis.delete.assert_awaited_once()
@@ -151,7 +151,7 @@ async def test_validate_api_key_cache_hit_valid_from_future() -> None:
     fake_redis.get.return_value = (
         f'{{"user_id": 1, "tenant_id": "t", "scopes": [], "key_id": 1, "valid_from": "{future}"}}'
     )
-    with patch("src.app.modules.api_keys.service.redis_client", fake_redis):
+    with patch("src.app.core.utils.cache.client", fake_redis):
         result = await service.validate_api_key("rawkey")
     assert result is None
 
@@ -162,7 +162,7 @@ async def test_validate_api_key_cache_miss() -> None:
     fake_redis.get.return_value = None
     # _validate_from_db returns None (key not in db)
     with (
-        patch("src.app.modules.api_keys.service.redis_client", fake_redis),
+        patch("src.app.core.utils.cache.client", fake_redis),
         patch.object(service, "_validate_from_db", AsyncMock(return_value=None)),
     ):
         result = await service.validate_api_key("rawkey")
@@ -182,7 +182,7 @@ async def test_validate_api_key_cache_miss_then_cache() -> None:
         "valid_from": None,
     }
     with (
-        patch("src.app.modules.api_keys.service.redis_client", fake_redis),
+        patch("src.app.core.utils.cache.client", fake_redis),
         patch.object(service, "_validate_from_db", AsyncMock(return_value=db_result)),
     ):
         result = await service.validate_api_key("rawkey")

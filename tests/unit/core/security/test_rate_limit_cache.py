@@ -21,7 +21,7 @@ def mock_redis():
     mock_pipe = AsyncMock()
     mock_pipe.__aenter__.return_value = mock_pipe
     mock.pipeline = MagicMock(return_value=mock_pipe)
-    with patch("src.app.core.security.rate_limit_cache.redis_client", mock):
+    with patch("src.app.core.utils.cache.client", mock):
         yield mock
 
 
@@ -49,7 +49,7 @@ async def test_get_tier_policy_not_found(mock_redis) -> None:
 
 @pytest.mark.asyncio
 async def test_get_tier_policy_no_redis() -> None:
-    with patch("src.app.core.security.rate_limit_cache.redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         result = await get_tier_policy(1)
         assert result is None
 
@@ -84,7 +84,7 @@ async def test_warm_policy_cache_empty(mock_redis) -> None:
 
 @pytest.mark.asyncio
 async def test_warm_policy_cache_no_redis() -> None:
-    with patch("src.app.core.security.rate_limit_cache.redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         result = await warm_policy_cache({1: []})
         assert result == 0
 
@@ -108,7 +108,7 @@ async def test_invalidate_tier_policy_success(mock_redis) -> None:
 
 @pytest.mark.asyncio
 async def test_invalidate_tier_policy_no_redis() -> None:
-    with patch("src.app.core.security.rate_limit_cache.redis_client", None):
+    with patch("src.app.core.utils.cache.client", None):
         result = await invalidate_tier_policy(1)
         assert result is False
 

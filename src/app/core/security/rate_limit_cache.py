@@ -13,7 +13,7 @@ from cachetools import TTLCache
 from src.app.core.config import settings
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
-from src.app.core.utils.cache import client as redis_client
+from src.app.core.redis_provider import get_redis
 
 logger = get_logger(__name__)
 
@@ -30,6 +30,7 @@ _policy_invalidation_task: asyncio.Task | None = None
 def _start_policy_invalidation_listener() -> None:
     """Start (once per event loop) a subscriber applying L1 invalidations."""
     global _policy_invalidation_task
+    redis_client = get_redis()
     if redis_client is None:
         return
     if _policy_invalidation_task is not None and not _policy_invalidation_task.done():
@@ -58,6 +59,7 @@ def _start_policy_invalidation_listener() -> None:
 
 
 async def _publish_policy_invalidation(tier_id: int) -> None:
+    redis_client = get_redis()
     if redis_client is None:
         return
     try:
@@ -85,6 +87,7 @@ async def get_tier_policy(tier_id: int) -> list[dict[str, Any]] | None:
     if tier_id in _tier_policy_l1:
         return _tier_policy_l1[tier_id]
 
+    redis_client = get_redis()
     if redis_client is None:
         _tier_policy_l1[tier_id] = None
         return None
@@ -115,6 +118,7 @@ async def warm_policy_cache(tier_policies: dict[int, list[dict[str, Any]]]) -> i
     Returns:
         Number of tiers cached
     """
+    redis_client = get_redis()
     if redis_client is None or not tier_policies:
         return 0
 
@@ -147,6 +151,7 @@ async def invalidate_tier_policy(tier_id: int) -> bool:
         True if invalidated successfully
     """
     _tier_policy_l1.pop(tier_id, None)
+    redis_client = get_redis()
     if redis_client is None:
         return False
 

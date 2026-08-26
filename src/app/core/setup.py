@@ -51,17 +51,12 @@ async def create_tables() -> None:
 # -------------- cache --------------
 async def create_redis_cache_pool() -> None:
     """Initialize Redis cache pool and client via the Redis provider."""
-    from src.app.core.redis_provider import _rebind_legacy_module_clients
-
     # Cache client needs string decoding; the shared pool is raw (bytes),
     # but the client overrides decoding.
     if cache.client is None or cache.pool is None:
         pool = await get_redis_pool()
         cache.pool = pool
         cache.client = redis.Redis(connection_pool=pool, decode_responses=True)
-    # Re-point import-time `redis_client` bindings at the live client so
-    # modules that captured None at import time see it (see redis_provider).
-    _rebind_legacy_module_clients(cache.client)
 
 
 async def close_redis_cache_pool() -> None:
@@ -76,11 +71,6 @@ async def close_redis_cache_pool() -> None:
             await _cache.client.close()
         _cache.client = None
     _cache.pool = None
-    # NOTE: no legacy-module rebind here. Teardown runs at process shutdown, so
-    # module-level `redis_client` refs do not need clearing; rebinding to None
-    # here would also clobber `mock.patch`-ed globals during TestClient
-    # teardown in the test suite. Startup rebinding (create_redis_cache_pool)
-    # is what fixes the import-time None capture.
 
 
 # -------------- queue --------------

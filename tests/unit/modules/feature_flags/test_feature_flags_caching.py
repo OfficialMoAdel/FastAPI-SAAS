@@ -8,7 +8,7 @@ from src.app.modules.feature_flags import utils
 
 @pytest.fixture
 def mock_redis():
-    with patch("src.app.modules.feature_flags.utils.redis_client", new_callable=AsyncMock) as m:
+    with patch("src.app.core.utils.cache.client", new_callable=AsyncMock) as m:
         yield m
 
 

@@ -41,7 +41,7 @@ class TestTemplateLoadingUsesToThread:
     """Test that template loading uses asyncio.to_thread."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.notifications.service.redis_client", None)
+    @patch("src.app.core.utils.cache.client", None)
     @patch("src.app.modules.notifications.service.jinja_env")
     @patch("src.app.modules.notifications.service.asyncio.to_thread")
     async def test_template_loading_uses_to_thread(
@@ -92,7 +92,7 @@ class TestTemplateLoadingNonBlocking:
     """Test that template loading doesn't block the event loop."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.notifications.service.redis_client", None)
+    @patch("src.app.core.utils.cache.client", None)
     @patch("src.app.modules.notifications.service.jinja_env")
     async def test_template_loading_non_blocking(
         self,
@@ -144,7 +144,7 @@ class TestTemplateCachingStillWorks:
     """Test that Jinja2 internal caching still works."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.notifications.service.redis_client", None)
+    @patch("src.app.core.utils.cache.client", None)
     @patch("src.app.modules.notifications.service.jinja_env")
     async def test_template_caching_still_works(
         self,
@@ -194,7 +194,7 @@ class TestRedisCacheCheckedFirst:
         template_name = "welcome_email"
 
         # Mock Redis cache hit with AsyncMock
-        with patch("src.app.modules.notifications.service.redis_client") as mock_redis:
+        with patch("src.app.core.utils.cache.client") as mock_redis:
             mock_redis.get = AsyncMock(return_value='["Welcome", "<html>Cached content</html>"]')
 
             # Act
@@ -211,7 +211,7 @@ class TestTemplateRendersCorrectly:
     """Test that template output is unchanged."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.notifications.service.redis_client", None)
+    @patch("src.app.core.utils.cache.client", None)
     async def test_template_renders_correctly(
         self,
         notification_service,
@@ -251,7 +251,7 @@ class TestTemplateLoadingPerformance:
     """Test template loading performance characteristics."""
 
     @pytest.mark.asyncio
-    @patch("src.app.modules.notifications.service.redis_client", None)
+    @patch("src.app.core.utils.cache.client", None)
     @patch("src.app.modules.notifications.service.jinja_env")
     async def test_template_loading_performance(
         self,

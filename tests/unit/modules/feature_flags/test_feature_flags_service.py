@@ -141,7 +141,7 @@ async def test_override_crud_operations(service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_get_tenant_flags_cache_hit(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=b'{"test_flag": true}')
     t_id = uuid4()
@@ -151,7 +151,7 @@ async def test_get_tenant_flags_cache_hit(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_get_tenant_flags_db_fallback(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
     t_id = uuid4()
@@ -168,7 +168,7 @@ async def test_get_tenant_flags_db_fallback(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_is_enabled_cache_hit(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=b"true")
     t_id = uuid4()
@@ -178,7 +178,7 @@ async def test_is_enabled_cache_hit(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_is_enabled_uses_override(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
     t_id = uuid4()
@@ -197,7 +197,7 @@ async def test_is_enabled_uses_override(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_is_enabled_uses_flag_default(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
     t_id = uuid4()
@@ -215,7 +215,7 @@ async def test_is_enabled_uses_flag_default(mock_redis, service, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_is_enabled_uses_tenant(mock_redis, service, mock_db):
     mock_redis.get = AsyncMock(return_value=None)
     t_id = uuid4()
@@ -233,7 +233,7 @@ async def test_is_enabled_uses_tenant(mock_redis, service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.modules.feature_flags.service.flag_modified")
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_update_tenant_flag(mock_redis, mock_flag_mod, service, mock_db):
     t_id = uuid4()
     mock_tenant = make_mock_tenant(t_id, {})
@@ -257,7 +257,7 @@ async def test_update_tenant_flag_not_found(service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.modules.feature_flags.service.flag_modified")
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_delete_tenant_flag(mock_redis, mock_flag_mod, service, mock_db):
     t_id = uuid4()
     mock_tenant = make_mock_tenant(t_id, {"test_flag": True})
@@ -282,7 +282,7 @@ async def test_delete_tenant_flag_not_found(service, mock_db):
 
 @pytest.mark.asyncio
 @patch("src.app.modules.feature_flags.service.flag_modified")
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_bulk_update_tenant_flags(mock_redis, mock_flag_mod, service, mock_db):
     t_id = uuid4()
     mock_tenant = make_mock_tenant(t_id, {"old": True})
@@ -320,7 +320,7 @@ async def test_legacy_service(mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_warm_feature_flags(mock_redis, mock_db):
     mock_flag = make_mock_flag(key="warm_test")
     mock_result = MagicMock()
@@ -334,7 +334,7 @@ async def test_warm_feature_flags(mock_redis, mock_db):
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.feature_flags.service.redis_client")
+@patch("src.app.core.utils.cache.client")
 async def test_warm_feature_flags_exception(mock_redis, mock_db):
     mock_flag = make_mock_flag(key="warm_test")
     mock_result = MagicMock()

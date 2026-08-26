@@ -61,11 +61,9 @@ class TestL1CacheE2E:
 
         middleware = TenantMiddleware(MagicMock())
 
-        # CRITICAL: Patch where the name is USED, not where it's DEFINED
-        # tenant.py imports: from src.app.core.utils.cache import client as redis_client
-        # So we must patch "src.app.middleware.tenant.redis_client"
-        # NOT "src.app.core.utils.cache.client" (that won't affect the imported reference)
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        # tenant.py resolves the client at call time via redis_provider.get_redis(),
+        # which reads src.app.core.utils.cache.client — patching the seam works.
+        with patch("src.app.core.utils.cache.client", mock_redis):
             # First call - should hit Redis
             logger.info("Call 1: Expecting Redis hit...")
             result1 = await middleware._get_tenant_by_slug("test")

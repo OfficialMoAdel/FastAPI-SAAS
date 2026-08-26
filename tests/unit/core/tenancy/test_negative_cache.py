@@ -34,7 +34,7 @@ class TestNegativeCache:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=None)
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             # Mock DB query to return None (tenant not found)
             # The middleware calls local_session() context manager
             mock_db = AsyncMock()
@@ -62,7 +62,7 @@ class TestNegativeCache:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(return_value=None)
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             mock_db = AsyncMock()
             mock_result = MagicMock()
             mock_result.scalar_one_or_none.return_value = None
@@ -110,7 +110,7 @@ class TestNegativeCachePropagation:
         mock_redis = AsyncMock()
         mock_redis.get = AsyncMock(side_effect=AssertionError("L2 should not be called"))
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             result = await middleware._get_tenant_by_slug("cached-negative")
 
         assert result is None
@@ -126,7 +126,7 @@ class TestNegativeCachePropagation:
         # L2 has negative cache (null string in Redis)
         mock_redis.get = AsyncMock(return_value="null")
 
-        with patch("src.app.middleware.tenant.redis_client", mock_redis):
+        with patch("src.app.core.utils.cache.client", mock_redis):
             await middleware._get_tenant_by_slug("l2-negative")
 
         # L1 should be populated with None

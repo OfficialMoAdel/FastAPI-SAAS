@@ -170,7 +170,9 @@ class TierService(BaseService[Tier]):
 
         # B12 FIX: keep any cached representation consistent on mutation.
         try:
-            from src.app.core.cache.redis import redis_client
+            from src.app.core.redis_provider import get_redis
+
+            redis_client = get_redis()
 
             if redis_client:
                 await redis_client.delete(f"tier:{name}")
@@ -240,7 +242,9 @@ class TierService(BaseService[Tier]):
 
         # B12 FIX: drop the stale cache entry on deletion.
         try:
-            from src.app.core.cache.redis import redis_client as _redis_client
+            from src.app.core.redis_provider import get_redis
+
+            _redis_client = get_redis()
 
             if _redis_client:
                 await _redis_client.delete(f"tier:{name}")

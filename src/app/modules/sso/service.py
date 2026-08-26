@@ -106,7 +106,9 @@ class SSOService:
             extra_data["connect_mode"] = True
             extra_data["user_id"] = user_id
 
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
@@ -148,7 +150,9 @@ class SSOService:
             state: State token for CSRF protection
             user_data: Optional user data (Apple sends name on first auth)
         """
-        from src.app.core.utils.cache import client as redis_client
+        from src.app.core.redis_provider import get_redis
+
+        redis_client = get_redis()
 
         if not redis_client:
             raise BadRequestException("Redis client not initialized")
@@ -366,9 +370,11 @@ class SSOService:
             mfa_enabled = await mfa_service.is_mfa_enabled(normalized_user["id"], db)
 
             if mfa_enabled:
+                from src.app.core.redis_provider import get_redis
                 from src.app.core.security import get_mfa_pending_token_manager
                 from src.app.core.security.tokens import TokenGenerator
-                from src.app.core.utils.cache import client as mfa_redis_client
+
+                mfa_redis_client = get_redis()
                 from src.app.core.utils.ip_utils import get_client_ip
 
                 if not mfa_redis_client:
