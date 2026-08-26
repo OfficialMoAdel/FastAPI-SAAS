@@ -181,14 +181,17 @@ async def get_auth_context(
     # same fallback, so token_data.sid is always populated).
     if cached_payload:
         session_id = cached_payload.get("sid") or cached_payload.get("jti")
+        jwt_exp = cached_payload.get("exp")
     else:
         session_id = getattr(token_data, "sid", None)
+        jwt_exp = getattr(token_data, "exp", None)
     if session_id:
         from src.app.core.security.session_manager import session_manager
 
         session_valid = await session_manager.is_session_valid(
             user_id=user["id"],
             session_id=session_id,
+            jwt_exp=jwt_exp,
         )
         if not session_valid:
             raise UnauthorizedException("Session has been revoked.")

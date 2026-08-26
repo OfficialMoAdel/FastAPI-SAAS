@@ -78,7 +78,10 @@ class LocalStorage(StorageProvider):
         if os.name == "nt":
             norm_full = os.path.normcase(str(full_path))
             norm_base = os.path.normcase(str(resolved_base))
-            if not norm_full.startswith(norm_base):
+            # Compare against base + separator: a bare startswith(norm_base)
+            # would accept sibling dirs sharing the prefix (C:\uploads2 passes
+            # a C:\uploads check) — the exact traversal this guard must block.
+            if norm_full != norm_base and not norm_full.startswith(norm_base + os.sep):
                 raise ValueError("Invalid path: directory traversal detected")
         else:
             if not full_path.is_relative_to(resolved_base):

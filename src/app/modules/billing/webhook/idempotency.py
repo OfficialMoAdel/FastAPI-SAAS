@@ -176,6 +176,7 @@ async def _release_webhook_event_lock(event_id: str) -> None:
     # Do NOT mark as processed on failure - allow Stripe to retry
     # CRITICAL FIX: We MUST delete the Redis lock we just acquired, otherwise
     # Stripe's retries will be false-positively rejected as "already_processed" for 7 days!
+    lock_released = False
     redis_client = _pkg.redis_client
     if redis_client:
         try:

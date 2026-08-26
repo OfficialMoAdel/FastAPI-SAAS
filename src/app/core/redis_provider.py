@@ -23,6 +23,53 @@ logger = get_logger(__name__)
 __all__ = ["get_arq", "get_redis", "get_redis_pool", "require_redis", "set_clients", "shutdown"]
 
 
+def _rebind_legacy_module_clients(client: Redis | None) -> None:
+    """Re-point import-time ``redis_client`` bindings at the live client.
+
+    Several modules bind the shared client at IMPORT time via
+    ``from src.app.core.utils.cache import client as redis_client``. Because
+    ``cache.client`` is ``None`` until the lifespan startup assigns it (which
+    runs AFTER all imports), those module-level names permanently captured
+    ``None`` and every Redis-backed feature they guard (auto-ban, tenant L2
+    cache, API-key/feature-flag/notification caching, ...) silently degraded
+    to the no-Redis path in production.
+
+    Functions reference ``redis_client`` as a bare global, which Python
+    resolves from ``module.__dict__`` at CALL time. Rebinding that dict entry
+    here therefore makes every already-imported module see the live client
+    without touching the modules. Modules imported after startup bind the live
+    client directly and need no rebinding.
+
+    CONSERVATIVE: only entries that are still ``None`` (the stale import-time
+    capture) are replaced. An entry that already holds a client — e.g. one a
+    test fixture ``mock.patch``-ed with a fake — is left untouched, so this
+    helper never clobbers test mocks or installs a client over an existing one.
+
+    TEST MODE: skipped entirely when ``TESTING=1`` (set by tests/conftest.py).
+    Under pytest the fixtures patch these module globals directly, and some
+    tests invoke the real ``create_redis_cache_pool`` with a mocked pool —
+    rebinding there would propagate a MagicMock-backed client into modules the
+    fixture does not patch and break later tests.
+
+    Long-term these modules should migrate to reading ``cache.client`` at call
+    time (the ``token_blacklist_cache`` pattern); this helper keeps them
+    correct in the meantime.
+    """
+    import os
+    import sys
+
+    if os.environ.get("TESTING") == "1":
+        return
+
+    for module in list(sys.modules.values()):
+        name = getattr(module, "__name__", "")
+        if not name.startswith("src.app"):
+            continue
+        module_dict = getattr(module, "__dict__", None)
+        if module_dict is not None and module_dict.get("redis_client") is None:
+            module_dict["redis_client"] = client
+
+
 
 
 async def get_redis_pool() -> ConnectionPool:
@@ -79,6 +126,7 @@ async def set_clients(
     _cache.pool = redis_pool
     if arq_pool is not None:
         queue.pool = arq_pool
+    _rebind_legacy_module_clients(redis_client)
 
 
 async def shutdown() -> None:
@@ -97,6 +145,10 @@ async def shutdown() -> None:
             logger.warning("redis_client_close_failed", error=str(e))
         _cache.client = None
     _cache.pool = None
+    # NOTE: no legacy-module rebind on teardown. Startup rebinding (set_clients)
+    # is what fixes the import-time None capture; at shutdown the process is
+    # exiting, so module-level refs need no clearing, and rebinding to None
+    # here would clobber `mock.patch`-ed globals in the test suite.
 
     if queue.pool is not None:
         try:

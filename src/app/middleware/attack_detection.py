@@ -27,12 +27,6 @@ from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.observability.log_sanitizer import LogSanitizer
 from src.app.core.security.logging import SecurityEventType, create_security_event, log_security_event
-
-
-class BodyScanError(Exception):
-    """Raised when the request body cannot be properly scanned or reinjected."""
-
-
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.security.service import IPFilterService
 
@@ -282,15 +276,12 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
                     body_chunks: list[bytes] = []
                     body_size = 0
 
+                    # Buffer the full body (bounded upstream by
+                    # RequestBodyLimitMiddleware at MAX_BODY_SIZE) so it can be
+                    # reinjected for downstream handlers after scanning.
                     async for chunk in request.stream():
                         body_chunks.append(chunk)
                         body_size += len(chunk)
-                        if body_size > MAX_SCAN_SIZE:
-                            # Instead of rejecting, we just stop buffering and let the request continue,
-                            # but we can't easily reconstruct the stream. We'll raise BodyScanError
-                            # which now bypasses the scan instead of returning 413.
-                            logger.warning("Request body exceeded maximum scan size of %d bytes", MAX_SCAN_SIZE)
-                            raise BodyScanError(f"Request body exceeded maximum scan size of {MAX_SCAN_SIZE} bytes")
 
                     body_to_scan = b"".join(body_chunks)
 
@@ -308,23 +299,35 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
 
                         request = Request(request.scope, receive=receive)
 
-                        # Sanitize then scan — NFKC + zero-width stripping.
-                        # P1 FIX: bodies above _BODY_OFFLOAD_THRESHOLD are
-                        # sanitized+scanned in the thread pool so a large
-                        # multipart/JSON payload cannot stall the event loop
-                        # for every concurrent request.
-                        sanitized_body = self._sanitize_input(body_to_scan)
-                        if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
-                            await asyncio.get_running_loop().run_in_executor(
-                                None,
-                                lambda: self._check_for_patterns(
-                                    sanitized_body, "request_body", detected_attacks
-                                ),
+                        # Consistent with the Content-Length pre-check above:
+                        # bodies larger than MAX_SCAN_SIZE skip the pattern scan
+                        # and continue. Rejecting here (413) would close no gap —
+                        # an attacker can declare a large Content-Length and hit
+                        # that skip path anyway — it would only break legitimate
+                        # chunked uploads. The outer RequestBodyLimitMiddleware
+                        # still enforces the hard MAX_BODY_SIZE cap.
+                        if body_size > MAX_SCAN_SIZE:
+                            logger.warning(
+                                "Skipping attack scan of oversized body | size=%d > max_scan=%d",
+                                body_size,
+                                MAX_SCAN_SIZE,
                             )
                         else:
-                            self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
-                except BodyScanError:
-                    raise
+                            # Sanitize then scan — NFKC + zero-width stripping.
+                            # P1 FIX: bodies above _BODY_OFFLOAD_THRESHOLD are
+                            # sanitized+scanned in the thread pool so a large
+                            # multipart/JSON payload cannot stall the event loop
+                            # for every concurrent request.
+                            sanitized_body = self._sanitize_input(body_to_scan)
+                            if len(sanitized_body) > self._BODY_OFFLOAD_THRESHOLD:
+                                await asyncio.get_running_loop().run_in_executor(
+                                    None,
+                                    lambda: self._check_for_patterns(
+                                        sanitized_body, "request_body", detected_attacks
+                                    ),
+                                )
+                            else:
+                                self._check_for_patterns(sanitized_body, "request_body", detected_attacks)
                 except Exception as e:
                     logger.error("Error reading request body in AttackDetectionMiddleware", error=e)
                     # Fail closed on body read error
@@ -492,19 +495,7 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         client_ip = getattr(request.state, "client_ip", None) or get_client_ip(request)
 
         # Detect attack patterns
-        try:
-            detected_attacks, request = await self._detect_attack_patterns(request)
-            if isinstance(detected_attacks, Response):
-                return detected_attacks
-        except BodyScanError as e:
-            logger.error("Body scan failed: %s", str(e))
-            from src.app.core.errors import ErrorCode, create_error_response
-
-            return create_error_response(
-                code=ErrorCode.VALIDATION_ERROR,
-                message="Payload Too Large - Request body exceeded maximum scan size",
-                status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-            )
+        detected_attacks, request = await self._detect_attack_patterns(request)
 
         if detected_attacks:
             # Handle based on mode

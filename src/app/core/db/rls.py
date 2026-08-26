@@ -53,25 +53,16 @@ def restore_rls_context(dbapi_connection: Any, connection_record: Any, connectio
     we can set a session-level config (`is_local=False`) that persists across all
     transactions on this connection checkout, until it is returned to the pool and checked out again.
 
-    P3 FIX: each pooled connection remembers which tenant it was last
-    configured for (``connection_record.info["rls_tenant"]``). Repeat
-    checkouts for the SAME tenant skip the set_config roundtrip entirely —
-    session-level GUCs are already correct. Any tenant change, or a
-    no-tenant checkout, still executes the statement (fail-closed reset).
+    SECURITY: ``set_config`` runs on EVERY checkout — there is no skip.
+    Session-level GUCs can be mutated outside this listener (``bypass_rls``,
+    ``set_rls_context``, ``clear_rls_context``) and ``connection_record.info``
+    is NOT reset on pool return, so a same-tenant skip shortcut could carry a
+    stale ``app.bypass_rls`` or tenant GUC into the next checkout: a
+    cross-tenant data leak / RLS-bypass leak. Re-asserting the tenant and
+    clearing bypass/user on every checkout is the fail-closed invariant.
     """
     tenant = get_current_tenant()
     tenant_id = str(tenant.id) if tenant else None
-
-    # P3: skip when this physical connection was already configured for the
-    # same tenant during its CURRENT checkout cycle. info is reset by
-    # pool "reset-on-return", so a returned-and-rechecked-out connection
-    # re-runs set_config — never stale.
-    try:
-        if tenant_id and connection_record is not None and connection_record.info.get("rls_tenant") == tenant_id:
-            logger.debug("RLS context already configured; skipping redundant roundtrip")
-            return
-    except AttributeError:
-        pass  # unusual record type — fall through to explicit set
 
     async def _do_restore(conn: Any) -> None:
         try:

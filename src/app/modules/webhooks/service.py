@@ -1043,3 +1043,37 @@ async def handle_webhook_trigger_event(data: dict[str, Any]) -> None:
         # W6 FIX: swallow-and-return defeated the event bus's arq Retry/DLQ
         # routing - transient DB failures killed the event permanently.
         raise
+
+
+# R1-H9: Route common business events to the webhook dispatcher.
+# MUST be a module-level function (not a closure): the async event path
+# enqueues handler.__module__ + handler.__name__ and the ARQ worker
+# re-imports it dynamically. A closure fails getattr() in the worker and
+# every business-event webhook lands in the DLQ as a "Permanent Error".
+async def webhook_event_adapter(data: dict[str, Any]) -> None:
+    """Adapt a business event payload to handle_webhook_trigger_event.
+
+    The event type is read from the canonical ``_event_meta.event_name``
+    injected by EventBus.publish, so one function serves every registered
+    business event.
+    """
+    meta = data.get("_event_meta") or {}
+    event_type = meta.get("event_name")
+    if not event_type:
+        logger.warning("webhook_event_adapter_missing_event_name")
+        return
+
+    # Prefer top-level tenant_id, fall back to canonical publish metadata
+    tenant_id = data.get("tenant_id")
+    if not tenant_id:
+        tenant = meta.get("tenant") or {}
+        tenant_id = tenant.get("id")
+
+    # W9 FIX: internal publish metadata (sequence, event ids, tenant record
+    # info) must never be forwarded as part of the externally signed webhook
+    # payload.
+    external_payload = {k: v for k, v in data.items() if k != "_event_meta"}
+    if tenant_id:
+        await handle_webhook_trigger_event(
+            {"tenant_id": str(tenant_id), "event_type": event_type, "payload": external_payload}
+        )

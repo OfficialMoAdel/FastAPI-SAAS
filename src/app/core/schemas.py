@@ -78,6 +78,7 @@ class TokenData(BaseModel):
     jti: str | None = None  # Unique token identifier for blacklist tracking
     tier_id: int | None = None  # For Zero-DB rate limiting
     absolute_exp: float | None = None  # Absolute session expiration timestamp
+    exp: float | None = None  # JWT exp claim; bounds degraded session validation
     token_version: int = 0
     sid: str | None = None  # A3: stable session id shared by access+refresh tokens
     iat: float | None = None  # A2: original login iat, preserved through rotation

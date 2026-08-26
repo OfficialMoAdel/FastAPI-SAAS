@@ -273,6 +273,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
         jti=jti,
         tier_id=tier_id,
         absolute_exp=absolute_exp,
+        exp=payload.get("exp"),
         token_version=token_version or 0,
         sid=payload.get("sid") or jti,  # A3: fall back to jti for pre-sid tokens
         iat=payload.get("iat"),  # A2: original login iat

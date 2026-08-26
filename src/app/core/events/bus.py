@@ -823,33 +823,20 @@ class EventBus:
                 handle_notification_request_event,
                 handle_notification_send_event,
             )
-            from src.app.modules.webhooks.service import handle_webhook_trigger_event
+            from src.app.modules.webhooks.service import handle_webhook_trigger_event, webhook_event_adapter
 
             self.register_handler("audit.log", handle_audit_log_event)
             self.register_handler("notification.send", handle_notification_send_event)
             self.register_handler("notification.request", handle_notification_request_event)
             self.register_handler("webhook.trigger", handle_webhook_trigger_event)
 
-            # R1-H9: Route common business events to webhook dispatcher
-            def make_webhook_adapter(event_type: str) -> Callable[[dict[str, Any]], Coroutine[Any, Any, None]]:
-                async def adapter(data: dict[str, Any]) -> None:
-                    # Prefer top-level tenant_id, fall back to canonical publish metadata
-                    tenant_id = data.get("tenant_id")
-                    if not tenant_id:
-                        meta = data.get("_event_meta") or {}
-                        tenant = meta.get("tenant") or {}
-                        tenant_id = tenant.get("id")
-                    # W9 FIX: internal publish metadata (sequence, event ids,
-                    # tenant record info) must never be forwarded as part of
-                    # the externally signed webhook payload.
-                    external_payload = {k: v for k, v in data.items() if k != "_event_meta"}
-                    if tenant_id:
-                        await handle_webhook_trigger_event(
-                            {"tenant_id": str(tenant_id), "event_type": event_type, "payload": external_payload}
-                        )
-
-                return adapter
-
+            # R1-H9: Route common business events to the webhook dispatcher.
+            # webhook_event_adapter is a MODULE-LEVEL function (see its
+            # definition in webhooks/service.py): the async ARQ path enqueues
+            # handler.__module__ + handler.__name__ and the worker re-imports
+            # it. A per-event closure failed getattr() in the worker and every
+            # business-event webhook landed in the DLQ as a "Permanent Error".
+            # The adapter recovers the event type from _event_meta.event_name.
             business_events = [
                 "user.created",
                 "user.deleted",
@@ -863,7 +850,7 @@ class EventBus:
                 "auth.logout",
             ]
             for evt in business_events:
-                self.register_handler(evt, make_webhook_adapter(evt))
+                self.register_handler(evt, webhook_event_adapter)
 
             _pkg.logger.info(
                 "Event handler registration complete",
