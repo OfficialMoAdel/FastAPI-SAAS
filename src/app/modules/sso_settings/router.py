@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_superuser
+from src.app.api.deps import get_current_superuser
 from src.app.core.db.database import async_get_db
 from src.app.modules.sso_settings.crud import crud_sso_settings
 from src.app.modules.sso_settings.schemas import (

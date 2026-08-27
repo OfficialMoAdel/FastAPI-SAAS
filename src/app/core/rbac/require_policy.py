@@ -29,7 +29,7 @@ def require_policy(policy: ResourcePolicy) -> Callable[..., Any]:
         async def update_user(...):
             ...
     """
-    from src.app.api.dependencies import get_current_user
+    from src.app.api.deps import get_current_user
 
     async def _policy_checker(
         request: Request,

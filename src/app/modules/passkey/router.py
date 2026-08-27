@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, Request, Response
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.utils.cache import async_get_redis

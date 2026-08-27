@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import tenant_dependency
+from src.app.api.deps import tenant_dependency
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.tenancy.context import TenantContext

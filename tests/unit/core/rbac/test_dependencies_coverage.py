@@ -181,13 +181,13 @@ async def test_invalidate_users_permissions_cache_batch_with_redis():
 async def test_get_current_user_from_token_success(mock_db):
     auth_ctx = MagicMock()
     auth_ctx.user.model_dump.return_value = {"id": 1, "is_superuser": False}
-    with patch("src.app.api.dependencies.get_auth_context", AsyncMock(return_value=auth_ctx)):
+    with patch("src.app.api.deps.get_auth_context", AsyncMock(return_value=auth_ctx)):
         result = await rbac_deps._get_current_user_from_token("tok", mock_db)
     assert result == {"id": 1, "is_superuser": False}
 
 
 async def test_get_current_user_from_token_error(mock_db):
-    with patch("src.app.api.dependencies.get_auth_context", AsyncMock(side_effect=ValueError("boom"))):
+    with patch("src.app.api.deps.get_auth_context", AsyncMock(side_effect=ValueError("boom"))):
         with pytest.raises(Exception):
             await rbac_deps._get_current_user_from_token("tok", mock_db)
 

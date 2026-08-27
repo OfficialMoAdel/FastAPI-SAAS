@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request, Response, status
 from fastcrud import PaginatedListResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import AuthenticatedUser, get_current_superuser, get_current_user
+from src.app.api.deps import AuthenticatedUser, get_current_superuser, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.schemas import MessageResponse
 from src.app.core.utils.cache import cache

@@ -385,7 +385,7 @@ class TestTriStateBlacklist:
     async def test_breaker_open_fail_closed_returns_true_flag(self):
         """Circuit breaker open + fail_closed setting -> (None, True)."""
         breaker = MagicMock()
-        breaker.can_attempt.return_value = False
+        breaker.is_closed = False  # circuit open -> gate blocks Redis
         with (
             _patch_setting("TOKEN_CACHE_FAILURE_MODE", "fail_closed"),
             patch("src.app.core.security.token_blacklist_cache._circuit_breaker", breaker),
@@ -398,7 +398,7 @@ class TestTriStateBlacklist:
     async def test_breaker_open_fail_open_returns_none_result(self):
         """Circuit breaker open + fail_open setting -> probe yields None."""
         breaker = MagicMock()
-        breaker.can_attempt.return_value = False
+        breaker.is_closed = False  # circuit open -> gate blocks Redis
         with (
             _patch_setting("TOKEN_CACHE_FAILURE_MODE", "fail_open"),
             patch("src.app.core.security.token_blacklist_cache._circuit_breaker", breaker),

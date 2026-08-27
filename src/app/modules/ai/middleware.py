@@ -10,7 +10,7 @@ from typing import Annotated
 
 from fastapi import Depends, HTTPException, Response, status
 
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 from src.app.modules.ai.rate_limiter import RateLimitError, check_ai_rate_limit
 
 

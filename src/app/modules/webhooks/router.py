@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import tenant_dependency, get_current_user
+from src.app.api.deps import get_current_user, tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.tenants.models import Tenant

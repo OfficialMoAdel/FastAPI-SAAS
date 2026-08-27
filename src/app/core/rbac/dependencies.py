@@ -32,7 +32,7 @@ from src.app.core.utils.user_utils import get_user_attr
 
 logger = get_logger(__name__)
 
-# OAuth2 scheme - same as used in api/dependencies.py
+# OAuth2 scheme - same as used in core/security/jwt_service.py
 _oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/account/login")
 
 
@@ -184,7 +184,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
-    from src.app.api.dependencies import get_auth_context
+    from src.app.api.deps import get_auth_context
     from src.app.core.db.database import async_get_db
 
     async def _check_permission(
@@ -202,7 +202,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         ):
             # Fall back to resolving the user manually using _get_current_user_from_token(token, db)
             user_data = await _get_current_user_from_token(token, db)
-            from src.app.api.dependencies import AuthenticatedUser
+            from src.app.api.deps import AuthenticatedUser
 
             if isinstance(user_data, dict):
                 from src.app.core.config import settings
@@ -367,7 +367,7 @@ async def invalidate_users_permissions_cache_batch(user_ids: list[int], tenant_i
 
 async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str, Any]:
     """Validate token and return current user dict using get_auth_context."""
-    from src.app.api.dependencies import get_auth_context
+    from src.app.api.deps import get_auth_context
 
     try:
         auth_context = await get_auth_context(request=None, db=db, token=token)  # type: ignore[arg-type]

@@ -13,7 +13,7 @@ from urllib.parse import quote
 from fastapi import APIRouter, Depends, File, HTTPException, Query, UploadFile, status
 from fastapi.responses import Response, StreamingResponse
 
-from src.app.api.dependencies import RequestContextDep
+from src.app.api.deps import RequestContextDep
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.files.schemas import (

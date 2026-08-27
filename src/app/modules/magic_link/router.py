@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Request, Response
 
-from src.app.api.dependencies import rate_limiter_dependency
+from src.app.api.deps import rate_limiter_dependency
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.schemas import LoginMFAResponse, LoginTokenResponse
 from src.app.modules.magic_link.schemas import MagicLinkSendRequest, MagicLinkSendResponse, MagicLinkVerifyRequest

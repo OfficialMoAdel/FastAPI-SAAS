@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
 from src.app.modules.ai.factory import AIProviderFactory

@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import get_current_user, rate_limiter_dependency
+from src.app.api.deps import get_current_user, rate_limiter_dependency
 from src.app.core.logger import get_logger
 from src.app.modules.tasks.schemas import Job, TaskCreate, TaskStatus
 from src.app.modules.tasks.service import QueueUnavailableError, task_service
@@ -11,7 +11,7 @@ logger = get_logger(__name__)
 
 router = APIRouter(prefix="/tasks", tags=["tasks"])
 
-from src.app.api.dependencies import AuthenticatedUser
+from src.app.api.deps import AuthenticatedUser
 
 
 @router.post(

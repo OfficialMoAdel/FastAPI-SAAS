@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Request, status
 from fastcrud import PaginatedListResponse
 
-from src.app.api.dependencies import get_current_superuser
+from src.app.api.deps import get_current_superuser
 from src.app.core.schemas import MessageResponse
 from src.app.modules.tiers.schemas import TierCreate, TierRead, TierUpdate
 from src.app.modules.tiers.service import TierService, get_tier_service

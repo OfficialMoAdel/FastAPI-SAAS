@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
 from fastapi.openapi.utils import get_openapi
 
-from src.app.api.dependencies import get_current_superuser
+from src.app.api.deps import get_current_superuser
 from src.app.core.cache.manager import close_redis_pool, get_redis_pool
 from src.app.core.config import (
     EnvironmentOption,

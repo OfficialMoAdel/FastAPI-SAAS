@@ -224,7 +224,7 @@ def get_test_app():
     app.dependency_overrides.clear()
 
     # --- INJECT TEST-AWARE MOCKS ---
-    # This replaces the logic that was removed from src.app.api.dependencies in production.
+    # This replaces the logic that was removed from src.app.api.deps.auth in production.
     # It allows tests to patch `_get_current_user_from_token` or override `get_current_user`
     # and bypass token validation without polluting production code with `Mock` checks.
     from unittest.mock import Mock

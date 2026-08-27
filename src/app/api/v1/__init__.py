@@ -2,7 +2,7 @@ from fastapi import APIRouter, Depends
 
 
 def get_v1_router() -> APIRouter:
-    from src.app.api.dependencies import get_current_superuser
+    from src.app.api.deps import get_current_superuser
     from src.app.api.v1.admin.circuit_breakers import router as circuit_breakers_router
     from src.app.api.v1.admin.jobs import router as jobs_router
     from src.app.modules.ai.router import router as ai_router

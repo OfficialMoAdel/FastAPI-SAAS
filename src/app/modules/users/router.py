@@ -5,7 +5,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_superuser, get_current_user
+from src.app.api.deps import get_current_superuser, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.pagination import PaginationParams, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission

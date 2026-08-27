@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.responses import PlainTextResponse
 from pydantic import BaseModel
 
-from src.app.api.dependencies import get_current_superuser
+from src.app.api.deps import get_current_superuser
 from src.app.core.config import settings
 from src.app.core.monitoring.r1_unified_metrics import get_r1_metrics
 

@@ -25,63 +25,23 @@ import xxhash
 from redis.asyncio import Redis
 
 from src.app.core.logger import get_logger
+from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
 from src.app.core.utils import cache
 from src.app.core.utils.lua_manager import get_lua_manager
 
-
-class TokenCacheCircuitBreaker:
-    """Circuit breaker for Redis-based token blacklist operations.
-
-    Prevents total authentication outages during infrastructure disruptions
-    by temporarily failing open (bypassing Redis) after repeated failures,
-    even if TOKEN_CACHE_FAILURE_MODE is set to 'fail_closed'.
-    """
-
-    def __init__(self, failure_threshold: int = 5, recovery_timeout: int = 30):
-        self.failure_count = 0
-        self.last_failure_time = 0.0
-        self.failure_threshold = failure_threshold
-        self.recovery_timeout = recovery_timeout
-        self.is_open = False
-
-    def record_failure(self, error: Exception) -> None:
-        """Record a Redis operation failure."""
-        self.failure_count += 1
-        self.last_failure_time = time.time()
-        if self.failure_count >= self.failure_threshold:
-            if not self.is_open:
-                import structlog
-
-                structlog.get_logger("app.core.security").error(
-                    "auth_cache_circuit_opened",
-                    error=str(error),
-                    failure_count=self.failure_count,
-                    recovery_timeout=self.recovery_timeout,
-                )
-            self.is_open = True
-
-    def record_success(self) -> None:
-        """Record a successful Redis operation, closing the circuit."""
-        if self.is_open:
-            import structlog
-
-            structlog.get_logger("app.core.security").info("auth_cache_circuit_closed_recovered")
-        self.failure_count = 0
-        self.is_open = False
-
-    def can_attempt(self) -> bool:
-        """Check if a Redis operation should be attempted."""
-        if not self.is_open:
-            return True
-
-        # Check if recovery timeout has passed (half-open state)
-        if time.time() - self.last_failure_time > self.recovery_timeout:
-            return True
-
-        return False
-
-
-_circuit_breaker = TokenCacheCircuitBreaker()
+# Registered with the central CircuitBreakerRegistry (ServiceType.REDIS) so it
+# is visible to the admin circuit-breaker endpoints and health summaries,
+# instead of rolling its own state like the legacy TokenCacheCircuitBreaker.
+# success_threshold=1 preserves the legacy "first success closes the circuit"
+# behavior; failure_threshold=5 / recovery_timeout=30 match the old defaults.
+_circuit_breaker = create_circuit_breaker(
+    name="token_cache_circuit",
+    failure_threshold=5,
+    recovery_timeout=30.0,
+    success_threshold=1,
+    service_type=ServiceType.REDIS,
+    description="Redis token-blacklist cache (auth revocation lookups)",
+)
 
 
 def _get_redis_client() -> Redis | None:
@@ -98,7 +58,7 @@ def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:
         If Redis is unavailable, returns (None, False) for fail-open behavior.
     """
     fail_closed = settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed"
-    if not _circuit_breaker.can_attempt():
+    if not _circuit_breaker.is_closed:
         # A1: the breaker's job is to stop hammering a failing Redis — NOT to
         # downgrade the configured failure mode. Under fail_closed, report
         # unknown-as-blacklisted so callers (deps DB fallback, verify_token)
@@ -220,11 +180,11 @@ async def is_token_blacklisted(token: str, jti: str | None = None) -> bool | Non
                 str(settings.r1_unified.TOKEN_NEGATIVE_CACHE_TTL),
             ],
         )
-        _circuit_breaker.record_success()
+        await _circuit_breaker.record_success()
         return bool(int(result))
 
     except Exception as e:
-        _circuit_breaker.record_failure(e)
+        await _circuit_breaker.record_failure(e)
         logger.warning("Redis blacklist check failed", error=e)
         # SECURITY FIX: Fail closed if configured
         if settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed":
