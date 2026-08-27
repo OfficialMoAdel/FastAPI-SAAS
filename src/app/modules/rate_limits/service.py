@@ -11,7 +11,6 @@ from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.redis_provider import get_redis
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.rate_limits.crud import crud_rate_limits
 from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.schemas import RateLimitCreate, RateLimitCreateInternal, RateLimitRead, RateLimitUpdate
 from src.app.modules.tiers.service import TierService
@@ -67,7 +66,7 @@ class RateLimitService(BaseService[RateLimit]):
             if cached:
                 return cast(dict[str, Any], json_loads(cached))
 
-        rate_limits_data = await crud_rate_limits.get_multi(db=self.db, tier_id=tier_id)
+        rate_limits_data = await self.crud.get_multi(db=self.db, tier_id=tier_id)
 
         # Cache result (1 hour TTL)
         if client:
@@ -107,11 +106,11 @@ class RateLimitService(BaseService[RateLimit]):
                 f"{tier_name}:{rate_limit_dict['path']}:{rate_limit_dict['limit']}:{rate_limit_dict['period']}"
             )
 
-        rate_limit_exists = await crud_rate_limits.exists(db=self.db, name=rate_limit_dict["name"])
+        rate_limit_exists = await self.crud.exists(db=self.db, name=rate_limit_dict["name"])
         if rate_limit_exists:
             raise DuplicateError("name", rate_limit_dict["name"])
 
-        path_exists = await crud_rate_limits.exists(
+        path_exists = await self.crud.exists(
             db=self.db,
             tier_id=db_tier["id"],
             path=rate_limit_dict["path"]
@@ -120,7 +119,7 @@ class RateLimitService(BaseService[RateLimit]):
             raise DuplicateError("path", f"Rate limit for path '{rate_limit_dict['path']}' already exists on this tier")
 
         rate_limit_internal = RateLimitCreateInternal(**rate_limit_dict)
-        created_rate_limit = await crud_rate_limits.create(
+        created_rate_limit = await self.crud.create(
             db=self.db, object=rate_limit_internal, schema_to_select=RateLimitRead
         )
 
@@ -155,7 +154,7 @@ class RateLimitService(BaseService[RateLimit]):
         """
         db_tier = await self._get_tier_or_404(tier_name)
 
-        rate_limits_data = await crud_rate_limits.get_multi(
+        rate_limits_data = await self.crud.get_multi(
             db=self.db,
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
@@ -190,7 +189,7 @@ class RateLimitService(BaseService[RateLimit]):
         """
         db_tier = await self._get_tier_or_404(tier_name)
 
-        db_rate_limit = await crud_rate_limits.get(
+        db_rate_limit = await self.crud.get(
             db=self.db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
@@ -222,20 +221,20 @@ class RateLimitService(BaseService[RateLimit]):
         """
         db_tier = await self._get_tier_or_404(tier_name)
 
-        db_rate_limit = await crud_rate_limits.get(
+        db_rate_limit = await self.crud.get(
             db=self.db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
         if values.name and values.name != db_rate_limit.get("name"):
-            name_exists = await crud_rate_limits.exists(db=self.db, name=values.name)
+            name_exists = await self.crud.exists(db=self.db, name=values.name)
             if name_exists:
                 from src.app.modules._base.exceptions import DuplicateError
 
                 raise DuplicateError("name", values.name)
 
-        await crud_rate_limits.update(db=self.db, object=values, id=rate_limit_id)
+        await self.crud.update(db=self.db, object=values, id=rate_limit_id)
         await self._invalidate_tier_rate_limits_cache(db_tier["id"])
         return {"message": "Rate Limit updated"}
 
@@ -261,13 +260,13 @@ class RateLimitService(BaseService[RateLimit]):
         """
         db_tier = await self._get_tier_or_404(tier_name)
 
-        db_rate_limit = await crud_rate_limits.get(
+        db_rate_limit = await self.crud.get(
             db=self.db, tier_id=db_tier["id"], id=rate_limit_id, schema_to_select=RateLimitRead
         )
         if db_rate_limit is None:
             raise ModelNotFoundError("RateLimit", rate_limit_id)
 
-        await crud_rate_limits.delete(db=self.db, id=rate_limit_id)
+        await self.crud.delete(db=self.db, id=rate_limit_id)
         await self._invalidate_tier_rate_limits_cache(db_tier["id"])
         return {"message": "Rate Limit deleted"}
 

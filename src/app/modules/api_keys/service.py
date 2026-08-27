@@ -16,7 +16,6 @@ from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.api_keys.crud import crud_api_keys
 from src.app.modules.api_keys.models import APIKey
 from src.app.modules.api_keys.schemas import APIKeyCreate, APIKeyRead, APIKeyResponse
 
@@ -178,7 +177,7 @@ class APIKeyService(BaseService[APIKey]):
         dict
             Paginated list of API keys (without actual keys)
         """
-        return await crud_api_keys.get_multi(
+        return await self.crud.get_multi(
             db=self.db,
             user_id=user_id,
             tenant_id=tenant_id,
@@ -246,7 +245,7 @@ class APIKeyService(BaseService[APIKey]):
             cache_key = self._get_cache_key(api_key_hashed)
             await redis_client.delete(cache_key)
 
-        await crud_api_keys.update(
+        await self.crud.update(
             db=self.db,
             id=key_id,
             object={"is_active": False},
@@ -441,9 +440,7 @@ class APIKeyService(BaseService[APIKey]):
         # SECURITY FIX (C4): Previously committed here on the shared request-scoped session,
         # which could flush unrelated pending changes from other parts of the request.
         try:
-            from src.app.modules.api_keys.crud import crud_api_keys
-
-            await crud_api_keys.update(
+            await self.crud.update(
                 db=self.db,
                 id=key.id,
                 object={"last_used_at": datetime.now(UTC)},
@@ -556,7 +553,7 @@ class APIKeyService(BaseService[APIKey]):
         self.db.add(new_key_record)
 
         # Mark old key to expire after the grace period (atomic update in same transaction)
-        await crud_api_keys.update(
+        await self.crud.update(
             db=self.db,
             id=api_key_id,
             object={"expires_at": grace_expires_at},

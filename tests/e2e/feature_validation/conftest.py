@@ -247,6 +247,13 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
         "user:auth:*",
         "user_sessions_v2:*",
         "user_sessions_order:*",
+        # Tenant resolution caches. The test tenant row can be recreated with a
+        # NEW UUID between runs, but the middleware caches slug->tenant_id in
+        # Redis (1h TTL) and an in-process L1 TTLCache. A stale cached id makes
+        # the middleware set the wrong tenant context, so user lookups filter on
+        # a tenant_id that no longer matches the DB row and login fails 401.
+        "tenant:slug:*",
+        "tenant:negative:*",
     ]
     for pattern in pre_patterns:
         try:
@@ -258,6 +265,17 @@ async def client(ensure_test_tenant) -> AsyncGenerator[AsyncClient, None]:
                 logger.info(f"Pre-cleaned {len(keys)} keys matching: {pattern}")
         except Exception as e:
             logger.warning(f"Pre-cleanup failed for {pattern}: {e}")
+
+    # Also clear the middleware's in-process L1 tenant cache (same process as the
+    # app under ASGITransport), so a stale slug->tenant_id mapping cannot survive
+    # even when Redis was already clean.
+    try:
+        from src.app.middleware.tenant import _L1_TENANT_CACHE
+
+        _L1_TENANT_CACHE.clear()
+        logger.info("Cleared middleware L1 tenant cache")
+    except Exception as e:
+        logger.warning(f"Failed to clear L1 tenant cache: {e}")
 
     transport = ASGITransport(app=app)
     async with AsyncClient(

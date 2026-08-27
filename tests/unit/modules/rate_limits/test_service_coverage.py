@@ -26,8 +26,8 @@ def _patch_tier():
     )
 
 
-def _patch_crud(crud: AsyncMock):
-    return patch("src.app.modules.rate_limits.service.crud_rate_limits", crud)
+def _patch_crud(service: RateLimitService, crud: AsyncMock):
+    return patch.object(service, "crud", crud)
 
 
 async def test_get_rate_limits_by_tier_id_cache_miss() -> None:
@@ -36,7 +36,7 @@ async def test_get_rate_limits_by_tier_id_cache_miss() -> None:
     crud.get_multi.return_value = {"data": [{"id": 1}]}
     with (
         patch.object(cache_module, "client", None),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         out = await service.get_rate_limits_by_tier_id(tier_id=5)
     assert out == {"data": [{"id": 1}]}
@@ -50,7 +50,7 @@ async def test_get_rate_limits_by_tier_id_cache_hit() -> None:
     crud = AsyncMock()
     with (
         patch.object(cache_module, "client", client),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         out = await service.get_rate_limits_by_tier_id(tier_id=5)
     assert out == {"data": [{"id": 9}]}
@@ -65,7 +65,7 @@ async def test_create_rate_limit_success() -> None:
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         out = await service.create_rate_limit("free", data)
@@ -80,7 +80,7 @@ async def test_create_rate_limit_duplicate_name() -> None:
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         with pytest.raises(DuplicateError):
@@ -94,7 +94,7 @@ async def test_create_rate_limit_duplicate_path() -> None:
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         with pytest.raises(DuplicateError):
@@ -109,7 +109,7 @@ async def test_create_rate_limit_none_returned_raises() -> None:
     data = RateLimitCreate(path="/a", limit=10, period=60)
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         with pytest.raises(ModelNotFoundError):
@@ -122,7 +122,7 @@ async def test_get_rate_limits_paginated() -> None:
     crud.get_multi.return_value = {"data": [], "total": 0}
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         out = await service.get_rate_limits("free", page=2, items_per_page=5)
     assert "data" in out
@@ -135,7 +135,7 @@ async def test_get_rate_limit_found() -> None:
     crud.get.return_value = {"id": 3, "name": "r"}
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         out = await service.get_rate_limit("free", 3)
     assert out["id"] == 3
@@ -147,7 +147,7 @@ async def test_get_rate_limit_not_found() -> None:
     crud.get.return_value = None
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):
             await service.get_rate_limit("free", 99)
@@ -161,7 +161,7 @@ async def test_update_rate_limit_success() -> None:
     values = RateLimitUpdate(name="newname")
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         out = await service.update_rate_limit("free", 3, values)
@@ -177,7 +177,7 @@ async def test_update_rate_limit_duplicate_name() -> None:
     values = RateLimitUpdate(name="taken")
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         with pytest.raises(DuplicateError):
@@ -191,7 +191,7 @@ async def test_update_rate_limit_not_found() -> None:
     values = RateLimitUpdate(name="x")
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):
             await service.update_rate_limit("free", 3, values)
@@ -203,7 +203,7 @@ async def test_delete_rate_limit_success() -> None:
     crud.get.return_value = {"id": 3, "name": "r"}
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
         patch.object(cache_module, "client", None),
     ):
         out = await service.delete_rate_limit("free", 3)
@@ -217,7 +217,7 @@ async def test_delete_rate_limit_not_found() -> None:
     crud.get.return_value = None
     with (
         _patch_tier(),
-        _patch_crud(crud),
+        _patch_crud(service, crud),
     ):
         with pytest.raises(ModelNotFoundError):
             await service.delete_rate_limit("free", 3)

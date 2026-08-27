@@ -18,7 +18,7 @@ async def test_create_tier_success():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.exists = AsyncMock(return_value=False)
         crud.create = AsyncMock(return_value={"id": 1, "name": "pro"})
         result = await service.create_tier(tier)
@@ -29,7 +29,7 @@ async def test_create_tier_duplicate():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.exists = AsyncMock(return_value=True)
         with pytest.raises(DuplicateError):
             await service.create_tier(tier)
@@ -39,7 +39,7 @@ async def test_create_tier_not_created():
     service, db = _make_service()
     tier = MagicMock()
     tier.model_dump.return_value = {"name": "pro"}
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.exists = AsyncMock(return_value=False)
         crud.create = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
@@ -49,7 +49,7 @@ async def test_create_tier_not_created():
 async def test_get_tiers():
     service, db = _make_service()
     with (
-        patch.object(tiers_service, "crud_tiers") as crud,
+        patch.object(service, "crud") as crud,
         patch.object(tiers_service, "paginated_response", return_value={"items": []}) as pr,
     ):
         crud.get_multi = AsyncMock(return_value={"data": []})
@@ -61,7 +61,7 @@ async def test_get_tiers():
 
 async def test_get_tier_by_id_success():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value={"id": 1})
         result = await service.get_tier_by_id(1)
     assert result == {"id": 1}
@@ -69,7 +69,7 @@ async def test_get_tier_by_id_success():
 
 async def test_get_tier_by_id_not_found():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.get_tier_by_id(1)
@@ -77,7 +77,7 @@ async def test_get_tier_by_id_not_found():
 
 async def test_get_tier_by_name_success():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value={"id": 1, "name": "pro"})
         result = await service.get_tier("pro")
     assert result == {"id": 1, "name": "pro"}
@@ -85,7 +85,7 @@ async def test_get_tier_by_name_success():
 
 async def test_get_tier_by_name_not_found():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.get_tier("pro")
@@ -93,7 +93,7 @@ async def test_get_tier_by_name_not_found():
 
 async def test_update_tier_success():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value={"name": "pro"})
         crud.update = AsyncMock()
         result = await service.update_tier("pro", MagicMock())
@@ -102,7 +102,7 @@ async def test_update_tier_success():
 
 async def test_update_tier_not_found():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.update_tier("pro", MagicMock())
@@ -110,7 +110,7 @@ async def test_update_tier_not_found():
 
 async def test_delete_tier_success():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value={"name": "pro"})
         crud.delete = AsyncMock()
         result = await service.delete_tier("pro")
@@ -119,7 +119,7 @@ async def test_delete_tier_success():
 
 async def test_delete_tier_not_found():
     service, db = _make_service()
-    with patch.object(tiers_service, "crud_tiers") as crud:
+    with patch.object(service, "crud") as crud:
         crud.get = AsyncMock(return_value=None)
         with pytest.raises(ModelNotFoundError):
             await service.delete_tier("pro")

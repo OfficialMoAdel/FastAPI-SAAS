@@ -88,7 +88,7 @@ class TestPostServiceCreate:
 
         service = PostService(mock_db)
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.create.return_value = mock_post
 
             result = await service.create_post(
@@ -111,7 +111,7 @@ class TestPostServiceGet:
 
         service = PostService(mock_db)
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
             result = await service.get_post(
@@ -130,7 +130,7 @@ class TestPostServiceGet:
 
         service = PostService(mock_db)
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = None
 
             with pytest.raises(ModelNotFoundError):
@@ -144,7 +144,7 @@ class TestPostServiceGet:
         service = PostService(mock_db)
         mock_response = {"data": [mock_post], "total_count": 1}
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get_multi.return_value = mock_response
 
             result = await service.get_posts(
@@ -168,7 +168,7 @@ class TestPostServiceUpdate:
         service = PostService(mock_db)
         updated_post = {**mock_post, "title": "Updated Title", "text": "Updated content."}
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.update.return_value = updated_post
 
@@ -190,7 +190,7 @@ class TestPostServiceUpdate:
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):
@@ -211,7 +211,7 @@ class TestPostServiceDelete:
 
         service = PostService(mock_db)
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.delete.return_value = None
 
@@ -230,7 +230,7 @@ class TestPostServiceDelete:
 
         service = PostService(mock_db)
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
             mock_crud.db_delete.return_value = None
 
@@ -250,7 +250,7 @@ class TestPostServiceDelete:
         service = PostService(mock_db)
         other_user = {**mock_user, "id": 999, "username": "otheruser"}
 
-        with patch("src.app.modules.posts.service.crud_posts", new_callable=AsyncMock) as mock_crud:
+        with patch.object(service, "crud", new_callable=AsyncMock) as mock_crud:
             mock_crud.get.return_value = mock_post
 
             with pytest.raises(ForbiddenException):

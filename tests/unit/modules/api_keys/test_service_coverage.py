@@ -103,7 +103,7 @@ async def test_revoke_api_key_success() -> None:
     result.scalar_one_or_none.return_value = key
     db.execute.return_value = result
     tenant = "11111111-1111-1111-1111-111111111111"
-    with patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update:
+    with patch.object(service.crud, "update") as mock_update:
         mock_update.return_value = None
         out = await service.revoke_api_key(key_id=1, user_id=1, tenant_id=tenant)
     assert out["message"] == "API key revoked successfully"

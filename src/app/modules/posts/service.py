@@ -9,7 +9,6 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.posts.crud import crud_posts
 from src.app.modules.posts.models import Post
 from src.app.modules.posts.schemas import PostCreate, PostCreateInternal, PostRead, PostUpdate
 
@@ -71,7 +70,7 @@ class PostService(BaseService[Post]):
 
         post_internal = PostCreateInternal(**post_dict)
         created_post = cast(
-            dict[str, Any], await crud_posts.create(db=self.db, object=post_internal, schema_to_select=PostRead)
+            dict[str, Any], await self.crud.create(db=self.db, object=post_internal, schema_to_select=PostRead)
         )
 
         if created_post is None:
@@ -108,7 +107,7 @@ class PostService(BaseService[Post]):
             "is_deleted": False,
         }
 
-        posts_data = await crud_posts.get_multi(
+        posts_data = await self.crud.get_multi(
             db=self.db,
             offset=compute_offset(page, items_per_page),
             limit=items_per_page,
@@ -147,7 +146,7 @@ class PostService(BaseService[Post]):
             "is_deleted": False,
         }
 
-        db_post = await crud_posts.get(db=self.db, schema_to_select=PostRead, **filters)
+        db_post: dict[str, Any] | None = await self.crud.get(db=self.db, schema_to_select=PostRead, **filters)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
@@ -182,7 +181,7 @@ class PostService(BaseService[Post]):
         ForbiddenException
             If current user doesn't own this post
         """
-        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
@@ -194,7 +193,7 @@ class PostService(BaseService[Post]):
 
 
 
-        await crud_posts.update(db=self.db, object=values, id=post_id)
+        await self.crud.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
 
     async def delete_post(
@@ -223,7 +222,7 @@ class PostService(BaseService[Post]):
         ForbiddenException
             If current user doesn't own this post
         """
-        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None:
             raise ModelNotFoundError("Post", post_id)
 
@@ -235,7 +234,7 @@ class PostService(BaseService[Post]):
 
 
 
-        await crud_posts.delete(db=self.db, id=post_id)
+        await self.crud.delete(db=self.db, id=post_id)
         return {"message": "Post deleted"}
 
     async def hard_delete(self, post_id: int) -> dict[str, str]:
@@ -258,11 +257,11 @@ class PostService(BaseService[Post]):
         """
         from src.app.core.tenancy.context import get_current_tenant
         tenant = get_current_tenant()
-        db_post = await crud_posts.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
+        db_post = await self.crud.get(db=self.db, id=post_id, is_deleted=False, schema_to_select=PostRead)
         if db_post is None or (tenant and str(db_post["tenant_id"]) != str(tenant.id)):
             raise ModelNotFoundError("Post", post_id)
 
-        await crud_posts.db_delete(db=self.db, id=post_id)
+        await self.crud.db_delete(db=self.db, id=post_id)
         return {"message": "Post deleted from the database"}
 
 

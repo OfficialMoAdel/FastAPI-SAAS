@@ -32,7 +32,7 @@ async def test_get_rate_limits_by_tier_id_cache_miss(service):
         mock_redis.get.return_value = None  # Cache miss
 
         # Mock CRUD
-        with patch("src.app.modules.rate_limits.service.crud_rate_limits") as mock_crud:
+        with patch.object(service, "crud") as mock_crud:
             mock_crud.get_multi = AsyncMock(return_value=RATE_LIMITS_DATA)
 
             # Execute
@@ -66,7 +66,7 @@ async def test_get_rate_limits_by_tier_id_cache_hit(service):
         mock_redis.get.return_value = cached_data  # Cache hit
 
         # Mock CRUD
-        with patch("src.app.modules.rate_limits.service.crud_rate_limits") as mock_crud:
+        with patch.object(service, "crud") as mock_crud:
             mock_crud.get_multi = AsyncMock()
 
             # Execute
@@ -96,7 +96,7 @@ async def test_invalidate_cache_on_create(service):
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
 
-        with patch("src.app.modules.rate_limits.service.crud_rate_limits") as mock_crud:
+        with patch.object(service, "crud") as mock_crud:
             # Correctly mock async methods to return awaitables
             mock_crud.exists = AsyncMock(return_value=False)
             mock_crud.create = AsyncMock(return_value={"id": 1, "name": "new"})
@@ -123,7 +123,7 @@ async def test_invalidate_cache_on_update(service):
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
 
-        with patch("src.app.modules.rate_limits.service.crud_rate_limits") as mock_crud:
+        with patch.object(service, "crud") as mock_crud:
             # Correctly mock async methods
             mock_crud.get = AsyncMock(return_value={"id": 1})
             mock_crud.update = AsyncMock(return_value={"id": 1})
@@ -150,7 +150,7 @@ async def test_invalidate_cache_on_delete(service):
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
 
-        with patch("src.app.modules.rate_limits.service.crud_rate_limits") as mock_crud:
+        with patch.object(service, "crud") as mock_crud:
             # Correctly mock async methods
             mock_crud.get = AsyncMock(return_value={"id": 1})
             mock_crud.delete = AsyncMock(return_value=None)

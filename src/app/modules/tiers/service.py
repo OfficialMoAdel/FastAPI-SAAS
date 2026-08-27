@@ -10,7 +10,6 @@ from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
-from src.app.modules.tiers.crud import crud_tiers
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierCreate, TierCreateInternal, TierRead, TierUpdate
 
@@ -51,12 +50,12 @@ class TierService(BaseService[Tier]):
             If tier creation fails
         """
         tier_dict = tier.model_dump()
-        tier_exists = await crud_tiers.exists(db=self.db, name=tier_dict["name"])
+        tier_exists = await self.crud.exists(db=self.db, name=tier_dict["name"])
         if tier_exists:
             raise DuplicateError("name", tier_dict["name"])
 
         tier_internal = TierCreateInternal(**tier_dict)
-        created_tier = await crud_tiers.create(db=self.db, object=tier_internal, schema_to_select=TierRead)
+        created_tier = await self.crud.create(db=self.db, object=tier_internal, schema_to_select=TierRead)
 
         if created_tier is None:
             raise ModelNotFoundError("Tier", "new")
@@ -78,7 +77,7 @@ class TierService(BaseService[Tier]):
         dict[str, Any]
             Paginated tiers response
         """
-        tiers_data = await crud_tiers.get_multi(
+        tiers_data = await self.crud.get_multi(
             db=self.db, offset=(page - 1) * items_per_page, limit=items_per_page, schema_to_select=TierRead
         )
         response: dict[str, Any] = paginated_response(crud_data=tiers_data, page=page, items_per_page=items_per_page)
@@ -104,7 +103,7 @@ class TierService(BaseService[Tier]):
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=self.db, id=tier_id, schema_to_select=TierRead)
+        db_tier = await self.crud.get(db=self.db, id=tier_id, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", tier_id)
         return db_tier
@@ -127,7 +126,7 @@ class TierService(BaseService[Tier]):
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
+        db_tier = await self.crud.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
         return db_tier
@@ -152,7 +151,7 @@ class TierService(BaseService[Tier]):
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
+        db_tier = await self.crud.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
 
@@ -166,7 +165,7 @@ class TierService(BaseService[Tier]):
         if isinstance(new_name, str) and new_name and new_name != name:
             raise DuplicateError("name", f"renaming tier '{name}' is not supported; create a new tier instead")
 
-        await crud_tiers.update(db=self.db, object=values, name=name)
+        await self.crud.update(db=self.db, object=values, name=name)
 
         # B12 FIX: keep any cached representation consistent on mutation.
         try:
@@ -201,7 +200,7 @@ class TierService(BaseService[Tier]):
         ModelNotFoundError
             If tier not found
         """
-        db_tier = await crud_tiers.get(db=self.db, name=name, schema_to_select=TierRead)
+        db_tier = await self.crud.get(db=self.db, name=name, schema_to_select=TierRead)
         if db_tier is None:
             raise ModelNotFoundError("Tier", name)
 
@@ -238,7 +237,7 @@ class TierService(BaseService[Tier]):
                     "and cannot be deleted",
                 )
 
-        await crud_tiers.delete(db=self.db, name=name)
+        await self.crud.delete(db=self.db, name=name)
 
         # B12 FIX: drop the stale cache entry on deletion.
         try:

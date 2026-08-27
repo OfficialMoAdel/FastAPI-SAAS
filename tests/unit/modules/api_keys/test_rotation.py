@@ -54,7 +54,7 @@ class TestAPIKeyValidFromValidation:
         mock_db_session.execute.return_value = mock_result
 
         # Mock crud_api_keys.update
-        with patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update:
+        with patch.object(api_key_service.crud, "update") as mock_update:
             mock_update.return_value = None
 
             result = await api_key_service._validate_from_db("hashed_key_123")
@@ -84,7 +84,7 @@ class TestAPIKeyValidFromValidation:
         mock_db_session.execute.return_value = mock_result
 
         # Mock crud_api_keys.update
-        with patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update:
+        with patch.object(api_key_service.crud, "update") as mock_update:
             mock_update.return_value = None
 
             result = await api_key_service._validate_from_db("hashed_key_123")
@@ -165,8 +165,8 @@ class TestAPIKeyRotation:
 
         # Mock crud_api_keys.get
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
@@ -217,8 +217,8 @@ class TestAPIKeyRotation:
         before_rotation = datetime.now(UTC)
 
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
@@ -274,8 +274,8 @@ class TestAPIKeyRotation:
         mock_key.expires_at = None
 
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
@@ -317,8 +317,8 @@ class TestAPIKeyRotation:
         mock_key.expires_at = expires
 
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update", new_callable=AsyncMock) as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update", new_callable=AsyncMock) as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish", new_callable=AsyncMock),
         ):
             mock_result = MagicMock()
@@ -352,7 +352,7 @@ class TestAPIKeyRotation:
         mock_key.tenant_id = 1
         mock_key.is_active = True
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -379,7 +379,7 @@ class TestAPIKeyRotation:
         mock_key.tenant_id = 2  # Different tenant
         mock_key.is_active = True
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -406,7 +406,7 @@ class TestAPIKeyRotation:
         mock_key.tenant_id = 1
         mock_key.is_active = False  # Already revoked
 
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = mock_key
@@ -427,7 +427,7 @@ class TestAPIKeyRotation:
     @pytest.mark.asyncio
     async def test_rotate_nonexistent_key(self, api_key_service: APIKeyService, mock_db_session: AsyncMock) -> None:
         """Test that rotation fails for non-existent keys."""
-        with patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get:
+        with patch.object(api_key_service.crud, "get") as mock_get:
             mock_result = MagicMock()
 
             mock_result.scalar_one_or_none.return_value = None
@@ -485,8 +485,8 @@ class TestAPIKeyRotationGracePeriod:
         before = datetime.now(UTC)
 
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update") as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):
@@ -537,8 +537,8 @@ class TestAPIKeyRotationGracePeriod:
         before = datetime.now(UTC)
 
         with (
-            patch("src.app.modules.api_keys.service.crud_api_keys.get") as mock_get,
-            patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update,
+            patch.object(api_key_service.crud, "get") as mock_get,
+            patch.object(api_key_service.crud, "update") as mock_update,
             patch("src.app.modules.api_keys.service.event_bus.publish"),
             patch.object(api_key_service, "_generate_key") as mock_gen,
         ):

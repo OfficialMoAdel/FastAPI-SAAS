@@ -90,7 +90,7 @@ class TestAPIKeyValidationCaching:
 
         with (
             patch("src.app.core.utils.cache.client") as mock_redis,
-            patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
+            patch.object(api_key_service, "crud") as mock_crud,
         ):
             mock_redis.get = AsyncMock(return_value=None)  # Cache miss
             mock_redis.setex = AsyncMock()
@@ -187,7 +187,7 @@ class TestAPIKeyRevocationCacheInvalidation:
 
         with (
             patch("src.app.core.utils.cache.client") as mock_redis,
-            patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
+            patch.object(api_key_service, "crud") as mock_crud,
         ):
             mock_crud.update = AsyncMock()
             mock_redis.delete = AsyncMock()
@@ -217,7 +217,7 @@ class TestAPIKeyRevocationCacheInvalidation:
 
         with (
             patch("src.app.core.utils.cache.client", None),
-            patch("src.app.modules.api_keys.service.crud_api_keys") as mock_crud,
+            patch.object(api_key_service, "crud") as mock_crud,
         ):
             mock_crud.update = AsyncMock()
 
@@ -269,7 +269,7 @@ class TestAPIKeyValidationWithoutRedis:
         api_key_service.db.execute = AsyncMock(return_value=mock_result)
 
         # Mock crud update for last_used_at
-        with patch("src.app.modules.api_keys.service.crud_api_keys.update") as mock_update:
+        with patch.object(api_key_service.crud, "update") as mock_update:
             mock_update.return_value = None
 
             result = await api_key_service.validate_api_key("hashed_key_123")

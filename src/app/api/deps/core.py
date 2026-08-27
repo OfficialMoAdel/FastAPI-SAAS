@@ -1,6 +1,7 @@
 from typing import Annotated
 
 from fastapi import Depends, Request
+from fastcrud import FastCRUD
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps.auth import AuthenticatedUser, get_optional_user
@@ -12,8 +13,13 @@ from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.path_utils import sanitize_path
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.user_utils import get_user_attr
-from src.app.modules.rate_limits.crud import crud_rate_limits
+from src.app.modules.rate_limits.models import RateLimit
 from src.app.modules.rate_limits.schemas import RateLimitRead
+
+# RateLimit has no tenant_id column, so a plain (non-tenant-scoped) FastCRUD is
+# correct here. Local stateless instance replaces the deleted rate_limits/crud.py
+# module global.
+crud_rate_limits: FastCRUD[RateLimit, None, None, None, None, RateLimitRead] = FastCRUD(RateLimit)  # type: ignore[type-var]
 
 logger = get_logger(__name__)
 
