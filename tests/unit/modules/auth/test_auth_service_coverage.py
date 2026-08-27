@@ -131,7 +131,7 @@ class TestPublishLoginAudit:
     async def test_publish_audit_event_bus_failure(self, auth_service, mock_request):
         """Test audit log failure when event_bus.publish fails (lines 140-149)."""
         with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Redis connection failed")):
-            with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
+            with patch("src.app.modules.auth.service.get_current_tenant", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     # Test fail_open mode (default)
                     mock_settings.AUDIT_LOG_FAILURE_MODE = "fail_open"
@@ -144,7 +144,7 @@ class TestPublishLoginAudit:
         from src.app.modules._base.exceptions import ServiceUnavailableError
 
         with patch("src.app.modules.auth.service.event_bus.publish", side_effect=Exception("Connection failed")):
-            with patch("src.app.modules.auth.service.get_tenant_context", return_value=None):
+            with patch("src.app.modules.auth.service.get_current_tenant", return_value=None):
                 with patch("src.app.modules.auth.service.settings") as mock_settings:
                     mock_settings.auth.AUDIT_LOG_FAILURE_MODE = "fail_closed"
 

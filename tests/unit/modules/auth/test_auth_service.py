@@ -728,7 +728,7 @@ class TestA2CachedAuthInfoFields:
         # Call the method that should include A2 fields
         from unittest.mock import patch
 
-        with patch("src.app.modules.users.crud.get_tenant_context", return_value=MagicMock(id=1)):
+        with patch("src.app.modules.users.crud.get_current_tenant", return_value=MagicMock(id=1)):
             result = await crud.get_user_with_tier_eager(db=mock_db, username="testuser")
 
         # A2 Assertions: These fields MUST be present
@@ -774,7 +774,7 @@ class TestA2CachedAuthInfoFields:
 
         from unittest.mock import patch
 
-        with patch("src.app.modules.users.crud.get_tenant_context", return_value=MagicMock(id=1)):
+        with patch("src.app.modules.users.crud.get_current_tenant", return_value=MagicMock(id=1)):
             result = await crud.get_user_with_tier_eager(db=mock_db, email="deleted@example.com")
 
         # A2 Security: is_deleted=True must propagate

@@ -55,7 +55,7 @@ async def test_case_1_valid_jwt_token(mock_request, mock_db, mock_tenant):
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
         patch("src.app.api.deps.auth.UserService") as MockUserService,
-        patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant,
+        patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="test@example.com", token_version=1)
@@ -92,7 +92,7 @@ async def test_case_2_suspended_user_token(mock_request, mock_db, mock_tenant):
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
         patch("src.app.api.deps.auth.UserService") as MockUserService,
-        patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant,
+        patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="suspended@example.com", token_version=1)
@@ -126,7 +126,7 @@ async def test_case_3_deleted_user_token(mock_request, mock_db, mock_tenant):
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
         patch("src.app.api.deps.auth.UserService") as MockUserService,
-        patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant,
+        patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="deleted@example.com", token_version=1)
@@ -160,7 +160,7 @@ async def test_case_4_expired_token_version(mock_request, mock_db, mock_tenant):
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
         patch("src.app.api.deps.auth.UserService") as MockUserService,
-        patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant,
+        patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         # Token carries version 1
@@ -195,7 +195,7 @@ async def test_case_5_tenant_mismatch(mock_request, mock_db, mock_tenant):
     with (
         patch("src.app.api.deps.auth.verify_token") as mock_verify,
         patch("src.app.api.deps.auth.UserService") as MockUserService,
-        patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant,
+        patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant,
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
     ):
         mock_verify.return_value = MagicMock(username_or_email="mismatch@example.com", token_version=1)

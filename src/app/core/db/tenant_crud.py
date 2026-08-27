@@ -21,7 +21,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.resilience.db_circuit_breaker import db_circuit_guard
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 
 ModelType = TypeVar("ModelType")
 CreateSchemaType = TypeVar("CreateSchemaType", bound=BaseModel)
@@ -80,7 +80,7 @@ class TenantAwareCRUD(
         UUID(int=0), silently matching 0 rows for reads/updates while Stripe
         received a 200. Truthiness now rejects both None and the sentinel.
         """
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         # B6-LEAK FIX: consume the escape hatch UNCONDITIONALLY. Previously it
         # was only popped in the no-context branch, so when tenant context WAS
         # present the flag stayed in kwargs and reached FastCRUD, whose column
@@ -144,7 +144,7 @@ class TenantAwareCRUD(
         -------
             The created model instance or selected schema.
         """
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant:
             tenant_id = tenant.id
             # Fix for SQLite tests where cached tenant from Redis is a dictionary with string IDs
@@ -267,7 +267,7 @@ class TenantAwareCRUD(
         if isinstance(object, dict) and "tenant_id" in object:
             object = {k: v for k, v in object.items() if k != "tenant_id"}
         elif isinstance(object, BaseModel) and hasattr(object, "tenant_id"):
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             if tenant:  # B1: truthiness rejects NO_TENANT sentinel too
                 try:
                     object.tenant_id = tenant.id  # type: ignore[attr-defined]

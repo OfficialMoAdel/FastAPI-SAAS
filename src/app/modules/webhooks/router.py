@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import tenant_dependency, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.tenants.models import Tenant
@@ -45,7 +45,7 @@ async def list_webhook_endpoints(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """List all webhook endpoints for the current tenant."""
@@ -79,7 +79,7 @@ async def list_webhook_endpoints(
 async def create_webhook_endpoint(
     request: WebhookEndpointCreate,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
@@ -128,7 +128,7 @@ async def list_webhook_deliveries_route(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
@@ -168,7 +168,7 @@ async def list_webhook_deliveries_route(
 async def get_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get a single webhook endpoint by ID."""
@@ -194,7 +194,7 @@ async def update_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookEndpointUpdate,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Update a webhook endpoint."""
@@ -221,7 +221,7 @@ async def update_webhook_endpoint(
 async def delete_webhook_endpoint(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> None:
     """Delete a webhook endpoint."""
@@ -246,7 +246,7 @@ async def delete_webhook_endpoint(
 async def get_webhook_delivery(
     delivery_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get details of a specific webhook delivery attempt."""
@@ -271,7 +271,7 @@ async def get_webhook_delivery(
 async def retry_webhook_delivery(
     delivery_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
@@ -308,7 +308,7 @@ async def test_webhook_endpoint(
     endpoint_id: UUID,
     request: WebhookTestRequest,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """
@@ -376,7 +376,7 @@ async def test_webhook_endpoint(
 async def get_signing_secret(
     endpoint_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Get signing-secret METADATA for a webhook endpoint (admin only).
@@ -419,7 +419,7 @@ async def rotate_signing_secret(
     endpoint_id: UUID,
     request: SigningSecretRotateRequest,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: dict[str, Any] = Depends(get_current_user),
 ) -> Any:
     """Rotate the signing secret for a webhook endpoint.

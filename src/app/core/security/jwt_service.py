@@ -190,6 +190,36 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
         return None
 
 
+async def is_token_revoked(token: str, jti: str | None, db: AsyncSession) -> bool:
+    """Single revocation oracle — the ONE place that decides fail-open/fail-closed.
+
+    Returns True when the token must be treated as revoked:
+
+    - Redis blacklist says True  -> revoked.
+    - Redis blacklist says False -> not revoked.
+    - Redis unavailable (None)   -> the DB is authoritative via the
+      thundering-herd-protected fallback; a DB error fails CLOSED (revoked)
+      so a possibly-revoked token is never accepted during an outage.
+
+    Every caller (``verify_token``, the auth dependencies) routes through this
+    function so the failure semantics live in one module instead of leaking
+    across each seam.
+    """
+    cache_result = await is_token_blacklisted(token, jti=jti)
+    if cache_result is True:
+        return True
+    if cache_result is False:
+        return False
+    # Redis unavailable — fall back to the DB (authoritative).
+    _jwt_logger.warning(
+        "Redis unavailable for token blacklist check, falling back to DB. "
+        "Restore Redis ASAP for optimal security."
+    )
+    db_result = await _check_db_fallback(jti, token, db)
+    # Fail closed: an error (None) or a hit (True) both mean revoked.
+    return db_result is None or db_result is True
+
+
 async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSession) -> TokenData | None:
     """Verify a JWT token and return TokenData if valid.
 
@@ -211,20 +241,8 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
     if username_or_email is None or token_type != expected_token_type:
         return None
 
-    if jti:
-        cache_result = await is_token_blacklisted(f"jti:{jti}")
-    else:
-        cache_result = await is_token_blacklisted(token)
-
-    if cache_result is True:
+    if await is_token_revoked(token, jti, db):
         return None
-    elif cache_result is None:
-        _jwt_logger.warning(
-            "Redis unavailable for token blacklist check, falling back to DB. Restore Redis ASAP for optimal security."
-        )
-        is_blacklisted = await _check_db_fallback(jti, token, db)
-        if is_blacklisted is None or is_blacklisted is True:
-            return None
 
     token_version: int | None = payload.get("token_version")
     if token_version is not None:
@@ -288,9 +306,9 @@ async def _resolve_tenant_id_for_token(payload: dict[str, Any], db: AsyncSession
     if tenant_id:
         return tenant_id
 
-    from src.app.core.tenancy.context import get_tenant_context
+    from src.app.core.tenancy.context import get_current_tenant
 
-    tenant = get_tenant_context()
+    tenant = get_current_tenant()
     if tenant:
         return tenant.id
 

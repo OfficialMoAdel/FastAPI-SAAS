@@ -230,7 +230,7 @@ async def test_billing_record_service_operations(mock_crud, mock_get_tenant, moc
 
 
 @pytest.mark.asyncio
-@patch("src.app.modules.billing.checkout_service.get_current_tenant")
+@patch("src.app.modules.billing.checkout_service.require_active_tenant")
 @patch("src.app.modules.billing.service.StripeSettingsService.get_settings", new_callable=AsyncMock)
 @patch("src.app.modules.billing.gateway.get_payment_gateway")
 async def test_checkout_service_create_portal_session(

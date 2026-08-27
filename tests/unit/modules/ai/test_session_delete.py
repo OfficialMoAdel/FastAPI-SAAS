@@ -106,7 +106,7 @@ class TestSessionDeletion:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -135,7 +135,7 @@ class TestSessionDeletion:
         session_id = 999
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -166,7 +166,7 @@ class TestSessionDeletion:
         # }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -229,7 +229,7 @@ class TestCascadeDelete:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -265,7 +265,7 @@ class TestSessionDeletionEdgeCases:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -291,7 +291,7 @@ class TestSessionDeletionEdgeCases:
         session_ids = [1, 2, 3]
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -329,7 +329,7 @@ class TestSessionDeletionEdgeCases:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(

@@ -13,7 +13,7 @@ from src.app.api.deps.request_context import (
     RequestContext,
     get_request_context,
 )
-from src.app.api.deps.tenant import get_current_tenant
+from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.tenancy.context import NO_TENANT, TenantContext
@@ -98,7 +98,7 @@ class TestRequestContextDependency:
             return AsyncMock(spec=AsyncSession)
 
         app.dependency_overrides[get_current_user] = override_user
-        app.dependency_overrides[get_current_tenant] = override_tenant
+        app.dependency_overrides[tenant_dependency] = override_tenant
         app.dependency_overrides[async_get_db] = override_db
 
         @app.get("/probe")

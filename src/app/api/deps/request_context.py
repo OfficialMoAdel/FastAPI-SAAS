@@ -4,7 +4,7 @@ Replaces the repeated two/three-dependency ceremony at endpoint signature
 level::
 
     # Before (repeated at ~150 parameter positions):
-    tenant: Tenant = Depends(get_current_tenant),
+    tenant: Tenant = Depends(tenant_dependency),
     _user: Any = Depends(get_current_user),
     service: FileService = Depends(get_file_service),
 
@@ -15,7 +15,7 @@ level::
 Design notes
 ------------
 * ``RequestContext`` composes the *existing* cached dependencies
-  (``get_current_user``, ``get_current_tenant``, ``async_get_db``).
+  (``get_current_user``, ``tenant_dependency``, ``async_get_db``).
   FastAPI caches dependency results per-request, so this adds **zero**
   extra authentication lookups or DB sessions per request.
 * The concept "the current request's principal inside its tenant" now has
@@ -50,7 +50,7 @@ from fastapi import Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.api.deps.auth import AuthenticatedUser, get_current_user
-from src.app.api.deps.tenant import get_current_tenant
+from src.app.api.deps.tenant import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.tenancy.context import NO_TENANT, TenantContext
@@ -125,7 +125,7 @@ class RequestContext:
 
 async def get_request_context(
     user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
 ) -> RequestContext:
     """Build the request context from existing cached dependencies.

@@ -124,19 +124,6 @@ def clear_tenant_context() -> None:
     _current_tenant.set(None)
 
 
-# --- Backward-compatibility aliases -----------------------------------------
-# Canonical interface is the get/set/clear triple above. These aliases exist
-# because ~35 call sites import them; new code should use the canonical names.
-
-
-def get_tenant_context() -> "TenantContext | None":
-    """Alias for :func:`get_current_tenant`."""
-    return get_current_tenant()
-
-
-def set_tenant_context(tenant: "Tenant | None") -> None:
-    """Alias for :func:`set_current_tenant`."""
-    set_current_tenant(tenant)
 
 
 def require_active_tenant() -> "TenantContext":

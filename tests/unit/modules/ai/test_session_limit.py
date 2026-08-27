@@ -51,7 +51,7 @@ class TestSessionLimit:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -81,7 +81,7 @@ class TestSessionLimit:
         session_data = ChatSessionCreate(title="Test Session", model="gemma3")
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -109,7 +109,7 @@ class TestSessionLimit:
         session_data = ChatSessionCreate(title="Test Session", model="gemma3")
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -142,7 +142,7 @@ class TestSessionLimit:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(

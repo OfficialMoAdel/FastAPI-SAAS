@@ -62,13 +62,13 @@ def test_list_endpoint_supports_filters():
             from fastapi import FastAPI
             from fastapi.testclient import TestClient
 
-            from src.app.api.deps import get_current_tenant
+            from src.app.api.deps import tenant_dependency
 
             app = FastAPI()
             app.include_router(prices_router, prefix="/api/v1")
 
             # Use dependency overrides instead of patch
-            app.dependency_overrides[get_current_tenant] = lambda: MagicMock(id="test-tenant-id")
+            app.dependency_overrides[tenant_dependency] = lambda: MagicMock(id="test-tenant-id")
 
             client = TestClient(app)
 

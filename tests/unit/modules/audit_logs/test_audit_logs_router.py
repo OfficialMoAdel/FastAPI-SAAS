@@ -51,10 +51,10 @@ class TestAuditLogsRouter:
         mock_service.query_logs = AsyncMock(return_value=[mock_log])
         mock_service_cls.return_value = mock_service
 
-        from src.app.api.deps import get_current_tenant, get_current_user
+        from src.app.api.deps import tenant_dependency, get_current_user
 
         # Override dependencies
-        client.app.dependency_overrides[get_current_tenant] = lambda: mock_tenant
+        client.app.dependency_overrides[tenant_dependency] = lambda: mock_tenant
         client.app.dependency_overrides[get_current_user] = lambda: mock_user
 
         # We need to bypass permissions or mock them. The client fixture usually handles auth

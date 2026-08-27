@@ -310,7 +310,7 @@ class TestTriStateBlacklist:
                 "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
                 new=AsyncMock(return_value=True),
             ) as mock_fb,
-            patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+            patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
             patch("src.app.api.deps.auth.UserService") as mock_us,
         ):
             svc = mock_us.return_value

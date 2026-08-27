@@ -62,7 +62,7 @@ class TestGetOptionalUserWithValidToken:
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
-                with patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant:
+                with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = MagicMock(username_or_email="test@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
@@ -91,7 +91,7 @@ class TestGetOptionalUserWithValidToken:
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
-                with patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant:
+                with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = MagicMock(username_or_email="user@test.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 
@@ -157,7 +157,7 @@ class TestGetOptionalUserRateLimitIntegration:
 
         with patch("src.app.api.deps.auth.verify_token") as mock_verify:
             with patch("src.app.api.deps.auth.UserService") as MockUserService:
-                with patch("src.app.api.deps.auth.get_tenant_context") as mock_get_tenant:
+                with patch("src.app.api.deps.auth.get_current_tenant") as mock_get_tenant:
                     mock_verify.return_value = MagicMock(username_or_email="premium@example.com", token_version=1)
                     mock_get_tenant.return_value = mock_tenant
 

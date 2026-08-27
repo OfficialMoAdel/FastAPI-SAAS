@@ -543,9 +543,9 @@ def audit_action(action: str, entity_type: str) -> Callable:
             # Resolve tenant_id from context if missing
             if not tenant_id:
                 try:
-                    from src.app.core.tenancy.context import get_tenant_context
+                    from src.app.core.tenancy.context import get_current_tenant
 
-                    tenant = get_tenant_context()
+                    tenant = get_current_tenant()
                     if tenant:
                         tenant_id = tenant.id
                 except ImportError:

@@ -34,10 +34,10 @@ def mock_tenant_context(tenant):
 
     mock_ctx = TenantContext(tenant_id=tenant.id, tenant_slug=tenant.slug, tenant_name=tenant.name, is_active=True)
     with (
-        patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx),
+        patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx),
         patch("src.app.core.tenancy.context.get_current_tenant", return_value=mock_ctx),
         patch("src.app.modules.billing.subscription_service.get_current_tenant", return_value=mock_ctx),
-        patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=mock_ctx),
+        patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=mock_ctx),
     ):
         yield
 
@@ -258,7 +258,7 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     from src.app.core.tenancy.context import TenantContext
     mock_ctx_2 = TenantContext(tenant_id=tenant2_id, tenant_slug="tenant-2", tenant_name="Tenant 2", is_active=True)
 
-    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
         # Cleanup tenant 2 settings
         existing2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
         if existing2:
@@ -276,14 +276,14 @@ async def test_stripe_settings_multi_tenancy(db_session: AsyncSession, tenant):
     assert f1["stripe_customer_id"] == "cus_t1"
 
     # Get for tenant 2 should return s2
-    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
         f2 = await crud_stripe_settings.get(db=db_session, tenant_id=tenant2_id)
         assert f2["id"] == s2_id
         assert f2["stripe_customer_id"] == "cus_t2"
 
     # Cleanup
     await crud_stripe_settings.db_delete(db=db_session, id=s1_id)
-    with patch("src.app.core.db.tenant_crud.get_tenant_context", return_value=mock_ctx_2):
+    with patch("src.app.core.db.tenant_crud.get_current_tenant", return_value=mock_ctx_2):
         await crud_stripe_settings.db_delete(db=db_session, id=s2_id)
 
 

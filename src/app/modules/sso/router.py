@@ -12,7 +12,7 @@ from src.app.api.dependencies import get_current_user
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.sso.crud import crud_user_sso_connections
 from src.app.modules.sso.schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
@@ -120,7 +120,7 @@ async def initiate_sso(
     # Validate redirect URI to prevent open redirects (H-11)
     _validate_redirect_uri(redirect_uri)
 
-    # tenant context available via get_tenant_context() if needed
+    # tenant context available via get_current_tenant() if needed
 
     auth_url, state = await sso_service.get_authorization_url(
         provider=provider,
@@ -289,7 +289,7 @@ async def connect_provider(
     """Connect SSO provider to existing authenticated account."""
     _validate_redirect_uri(redirect_uri)
 
-    tenant = get_tenant_context()
+    tenant = get_current_tenant()
     tenant_id = tenant.id if tenant else None
     if tenant_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")
@@ -336,7 +336,7 @@ async def disconnect_provider(
     sso_service: Annotated[SSOService, Depends(get_sso_service)],
 ) -> dict[str, str]:
     """Disconnect SSO provider from account."""
-    tenant = get_tenant_context()
+    tenant = get_current_tenant()
     tenant_id = tenant.id if tenant else None
     if tenant_id is None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Tenant context not set")

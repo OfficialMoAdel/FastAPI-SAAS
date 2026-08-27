@@ -160,7 +160,7 @@ async def test_process_callback_success(
 
     # process_callback now requires an active tenant context (raises
     # "Cannot process SSO login without tenant context" otherwise).
-    with patch("src.app.modules.sso.service.get_tenant_context") as mock_get_tenant_ctx:
+    with patch("src.app.modules.sso.service.get_current_tenant") as mock_get_tenant_ctx:
         mock_tenant = MagicMock()
         mock_tenant.id = uuid4()
         mock_get_tenant_ctx.return_value = mock_tenant
@@ -243,8 +243,8 @@ async def test_process_callback_connect_mode(
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
 
-    # We must patch get_tenant_context because _link_account needs it
-    with patch("src.app.modules.sso.service.get_tenant_context") as mock_get_tenant_ctx:
+    # We must patch get_current_tenant because _link_account needs it
+    with patch("src.app.modules.sso.service.get_current_tenant") as mock_get_tenant_ctx:
         mock_tenant = MagicMock()
         mock_tenant.id = uuid4()
         mock_get_tenant_ctx.return_value = mock_tenant
@@ -330,7 +330,7 @@ async def test_process_callback_apple_custom_flow(
     mock_create_access.return_value = "jwt_access"
     mock_create_refresh.return_value = "jwt_refresh"
 
-    with patch("src.app.modules.sso.service.get_tenant_context") as mock_get_tenant_ctx:
+    with patch("src.app.modules.sso.service.get_current_tenant") as mock_get_tenant_ctx:
         mock_tenant = MagicMock()
         mock_tenant.id = uuid4()
         mock_get_tenant_ctx.return_value = mock_tenant

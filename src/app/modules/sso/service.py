@@ -13,7 +13,7 @@ from src.app.core.exceptions.http_exceptions import (
 )
 from src.app.core.logger import get_logger
 from src.app.core.security.tokens import get_sso_state_manager
-from src.app.core.tenancy.context import get_tenant_context, set_current_tenant, set_tenant_context
+from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.auth.services.tokens import TokenIssuer
 from src.app.modules.sso.crud import crud_user_sso_connections
@@ -98,7 +98,7 @@ class SSOService:
             base_url = str(request.base_url).rstrip("/")
             redirect_uri = f"{base_url}/api/v1/account/sso/{provider}/callback"
 
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         extra_data: dict[str, Any] = {"tenant_id": tenant.id} if tenant else {}
 
         # Store connect mode info in state for callback
@@ -169,7 +169,7 @@ class SSOService:
         # authenticated user in connect_mode). We only override it below if the SSO
         # state carries an explicit tenant_id, and we must restore the prior value
         # afterwards so we don't discard the caller's context.
-        prior_tenant_ctx = get_tenant_context()
+        prior_tenant_ctx = get_current_tenant()
 
         try:
             redirect_uri = state_data["redirect_uri"]
@@ -184,7 +184,7 @@ class SSOService:
                 if tenant_result:
                     # tenant_result may be dict or model - handle both
                     if isinstance(tenant_result, dict):
-                        # Need to fetch actual model for set_tenant_context
+                        # Need to fetch actual model for set_current_tenant
                         from sqlalchemy import select
 
                         from src.app.modules.tenants.models import Tenant as TenantModel
@@ -193,11 +193,11 @@ class SSOService:
                         result = await db.execute(query)
                         tenant_model = result.scalar_one_or_none()
                         if tenant_model:
-                            set_tenant_context(tenant_model)
+                            set_current_tenant(tenant_model)
                         else:
                             raise BadRequestException("Tenant context not found")
                     else:
-                        set_tenant_context(cast(Tenant, tenant_result))
+                        set_current_tenant(cast(Tenant, tenant_result))
                 else:
                     raise BadRequestException("Tenant context not found")
 
@@ -238,7 +238,7 @@ class SSOService:
                 logger.error("SSO User Info Fetch Failed", error_type=type(e).__name__, provider=provider)
                 raise BadRequestException("Failed to fetch user info from provider")
 
-            current_tenant = get_tenant_context()
+            current_tenant = get_current_tenant()
             if not current_tenant:
                 raise BadRequestException("Cannot process SSO login without tenant context")
 
@@ -311,7 +311,7 @@ class SSOService:
                             "link this provider in your account settings."
                         )
                     else:
-                        current_tenant = get_tenant_context()
+                        current_tenant = get_current_tenant()
                         if not current_tenant:
                             # Auto-create a personal tenant for organic SSO signups
                             from src.app.modules.tenants.models import Tenant as TenantModel
@@ -335,7 +335,7 @@ class SSOService:
                             if not tenant_orm:
                                 raise BadRequestException("Failed to create personal tenant")
 
-                            set_tenant_context(tenant_orm)
+                            set_current_tenant(tenant_orm)
 
                         found_user_data = await self._create_sso_user(db, user_info)
                         user_id = found_user_data.id if hasattr(found_user_data, "id") else found_user_data["id"]
@@ -462,7 +462,7 @@ class SSOService:
 
     async def _link_account(self, db: AsyncSession, user_id: int, provider: str, user_info: Any) -> None:
         """Create UserSSOConnection."""
-        current_tenant = get_tenant_context()
+        current_tenant = get_current_tenant()
         if not current_tenant:
             raise BadRequestException("Cannot link account without tenant context")
         connection_in = UserSSOConnectionCreate(

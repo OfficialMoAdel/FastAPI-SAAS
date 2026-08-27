@@ -31,7 +31,7 @@ def mock_request():
 
 @pytest.mark.asyncio
 @patch("src.app.modules.sso_settings.service.sso_settings_service.get_decrypted_settings")
-@patch("src.app.modules.sso.service.get_tenant_context")
+@patch("src.app.modules.sso.service.get_current_tenant")
 @patch("src.app.modules.sso.service.get_sso_state_manager")
 @patch("src.app.core.utils.cache.client")
 async def test_get_authorization_url_success(
@@ -223,7 +223,7 @@ async def test_get_authorization_url_custom_redirect(mock_get_settings, service,
     mock_tenant = MagicMock()
     mock_tenant.id = uuid4()
 
-    with patch("src.app.modules.sso.service.get_tenant_context", return_value=mock_tenant):
+    with patch("src.app.modules.sso.service.get_current_tenant", return_value=mock_tenant):
         with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_manager:
             mock_manager_instance = AsyncMock()
             mock_manager_instance.create = AsyncMock()
@@ -253,7 +253,7 @@ async def test_get_authorization_url_connect_mode(mock_get_settings, service, mo
     mock_tenant = MagicMock()
     mock_tenant.id = uuid4()
 
-    with patch("src.app.modules.sso.service.get_tenant_context", return_value=mock_tenant):
+    with patch("src.app.modules.sso.service.get_current_tenant", return_value=mock_tenant):
         with patch("src.app.modules.sso.service.get_sso_state_manager") as mock_manager:
             mock_manager_instance = AsyncMock()
             mock_manager_instance.create = AsyncMock()

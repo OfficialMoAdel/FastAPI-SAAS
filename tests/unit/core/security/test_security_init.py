@@ -26,6 +26,7 @@ from src.app.core.security import (
     create_refresh_token,
     get_mfa_pending_token_manager,
     get_password_hash,
+    is_token_revoked,
     verify_password,
     verify_token,
 )
@@ -173,6 +174,50 @@ async def test_check_db_fallback_exception() -> None:
     ):
         result = await _check_db_fallback("abc", "tok", db)
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# is_token_revoked — the single revocation oracle
+# ---------------------------------------------------------------------------
+
+
+async def test_is_token_revoked_cache_true() -> None:
+    with patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=True)):
+        assert await is_token_revoked("tok", "abc", _make_db()) is True
+
+
+async def test_is_token_revoked_cache_false() -> None:
+    with patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=False)):
+        assert await is_token_revoked("tok", "abc", _make_db()) is False
+
+
+async def test_is_token_revoked_redis_down_db_hit() -> None:
+    with (
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=None)),
+        patch("src.app.core.security.jwt_service.crud_token_blacklist.exists", new=AsyncMock(return_value=True)),
+    ):
+        assert await is_token_revoked("tok", "abc", _make_db()) is True
+
+
+async def test_is_token_revoked_redis_down_db_miss() -> None:
+    with (
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=None)),
+        patch("src.app.core.security.jwt_service.crud_token_blacklist.exists", new=AsyncMock(return_value=False)),
+    ):
+        assert await is_token_revoked("tok", "abc", _make_db()) is False
+
+
+async def test_is_token_revoked_redis_down_db_error_fails_closed() -> None:
+    """DB error during outage -> fail CLOSED (revoked), never accept a
+    possibly-revoked token."""
+    with (
+        patch("src.app.core.security.jwt_service.is_token_blacklisted", new=AsyncMock(return_value=None)),
+        patch(
+            "src.app.core.security.jwt_service.crud_token_blacklist.exists",
+            new=AsyncMock(side_effect=RuntimeError("db down")),
+        ),
+    ):
+        assert await is_token_revoked("tok", "abc", _make_db()) is True
 
 
 # ---------------------------------------------------------------------------
@@ -381,7 +426,7 @@ async def test_resolve_tenant_from_context() -> None:
     db = _make_db()
     tenant = MagicMock()
     tenant.id = 7
-    with patch("src.app.core.tenancy.context.get_tenant_context", return_value=tenant):
+    with patch("src.app.core.tenancy.context.get_current_tenant", return_value=tenant):
         assert await _resolve_tenant_id_for_token({}, db) == 7
 
 
@@ -390,13 +435,13 @@ async def test_resolve_tenant_from_db() -> None:
     result = MagicMock()
     result.scalar = MagicMock(return_value=4)
     db.execute = AsyncMock(return_value=result)
-    with patch("src.app.core.tenancy.context.get_tenant_context", return_value=None):
+    with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
         assert await _resolve_tenant_id_for_token({"sub": "u"}, db) == 4
 
 
 async def test_resolve_tenant_none() -> None:
     db = _make_db()
-    with patch("src.app.core.tenancy.context.get_tenant_context", return_value=None):
+    with patch("src.app.core.tenancy.context.get_current_tenant", return_value=None):
         assert await _resolve_tenant_id_for_token({}, db) is None
 
 

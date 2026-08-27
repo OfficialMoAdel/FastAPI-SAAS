@@ -43,6 +43,18 @@ def _make_db() -> MagicMock:
     return MagicMock()
 
 
+@pytest.fixture(autouse=True)
+def _clear_security_caches():
+    """Clear jwt_service DB-fallback caches that persist across tests."""
+    from src.app.core.security.jwt_service import _db_fallback_cache, _in_flight_db_checks
+
+    _db_fallback_cache.clear()
+    _in_flight_db_checks.clear()
+    yield
+    _db_fallback_cache.clear()
+    _in_flight_db_checks.clear()
+
+
 async def test_authenticated_user_attr_access() -> None:
     from src.app.core.rbac.policy import get_user_attr
 
@@ -70,7 +82,7 @@ async def test_create_auth_context_from_obj() -> None:
 
 async def test_is_token_blacklisted_cache_true() -> None:
     with patch(
-        "src.app.core.security.token_blacklist_cache.is_token_blacklisted",
+        "src.app.core.security.jwt_service.is_token_blacklisted",
         new=AsyncMock(return_value=True),
     ):
         assert await _is_token_blacklisted_with_fallback("tok", "jti", _make_db()) is True
@@ -80,10 +92,10 @@ async def test_is_token_blacklisted_cache_false_db_hit() -> None:
     db = _make_db()
     with (
         patch(
-            "src.app.core.security.token_blacklist_cache.is_token_blacklisted",
+            "src.app.core.security.jwt_service.is_token_blacklisted",
             new=AsyncMock(return_value=None),
         ),
-        patch("src.app.core.db.crud_token_blacklist.crud_token_blacklist") as mock_crud,
+        patch("src.app.core.security.jwt_service.crud_token_blacklist") as mock_crud,
     ):
         mock_crud.exists = AsyncMock(return_value=True)
         assert await _is_token_blacklisted_with_fallback("tok", "jti", db) is True
@@ -93,10 +105,10 @@ async def test_is_token_blacklisted_cache_none_db_miss() -> None:
     db = _make_db()
     with (
         patch(
-            "src.app.core.security.token_blacklist_cache.is_token_blacklisted",
+            "src.app.core.security.jwt_service.is_token_blacklisted",
             new=AsyncMock(return_value=None),
         ),
-        patch("src.app.core.db.crud_token_blacklist.crud_token_blacklist") as mock_crud,
+        patch("src.app.core.security.jwt_service.crud_token_blacklist") as mock_crud,
     ):
         mock_crud.exists = AsyncMock(return_value=False)
         assert await _is_token_blacklisted_with_fallback("tok", "jti", db) is False
@@ -166,7 +178,7 @@ async def test_get_auth_context_cached_success() -> None:
     user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch(
             "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
             new=AsyncMock(return_value=False),
@@ -188,7 +200,7 @@ async def test_get_auth_context_verify_token_success() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -205,7 +217,7 @@ async def test_get_auth_context_user_not_found() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -223,7 +235,7 @@ async def test_get_auth_context_inactive() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -241,7 +253,7 @@ async def test_get_auth_context_deleted() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -259,7 +271,7 @@ async def test_get_auth_context_version_mismatch() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -280,7 +292,7 @@ async def test_get_auth_context_tenant_mismatch() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=tenant),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=tenant),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -308,7 +320,7 @@ async def test_get_auth_context_superuser_tenant_ok() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=tenant),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=tenant),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -452,11 +464,11 @@ async def test_is_token_blacklisted_token_check() -> None:
     db = _make_db()
     with (
         patch(
-            "src.app.core.security.token_blacklist_cache.is_token_blacklisted",
+            "src.app.core.security.jwt_service.is_token_blacklisted",
             new=AsyncMock(return_value=None),
         ),
         patch(
-            "src.app.core.db.crud_token_blacklist.crud_token_blacklist.exists",
+            "src.app.core.security.jwt_service.crud_token_blacklist.exists",
             new=AsyncMock(return_value=True),
         ),
     ):
@@ -496,7 +508,7 @@ async def test_get_auth_context_cached_email_user() -> None:
     user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -512,7 +524,7 @@ async def test_get_auth_context_cached_no_user() -> None:
     payload = {"jti": "j1", "token_type": "access", "sub": "u", "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -529,7 +541,7 @@ async def test_get_auth_context_cached_deleted() -> None:
     user = {"id": 2, "email": "u@x.com", "is_active": True, "is_deleted": True, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -546,7 +558,7 @@ async def test_get_auth_context_cached_version_mismatch() -> None:
     user = {"id": 2, "email": "u@x.com", "is_active": True, "token_version": 2}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -576,7 +588,7 @@ async def test_get_optional_auth_context_user_lookup_exception() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -630,7 +642,7 @@ async def test_verify_optional_cached_email_success() -> None:
     user = {"id": 1, "email": "user@example.com", "is_active": True, "token_version": 2, "tenant_id": 5}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -647,7 +659,7 @@ async def test_verify_optional_cached_no_user() -> None:
     payload = {"jti": "j1", "token_type": "access", "sub": "u", "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -664,7 +676,7 @@ async def test_verify_optional_cached_deleted() -> None:
     user = {"id": 2, "email": "u@x.com", "is_active": True, "is_deleted": True, "token_version": 0}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -681,7 +693,7 @@ async def test_verify_optional_cached_version_mismatch() -> None:
     user = {"id": 2, "email": "u@x.com", "is_active": True, "token_version": 2}
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value
@@ -764,6 +776,27 @@ async def test_verify_optional_tenant_mismatch() -> None:
     assert result is None
 
 
+async def test_verify_optional_state_none_runs_db_fallback() -> None:
+    """Regression: middleware tri-state None (Redis down) must trigger the DB
+    fallback in the optional path, not be treated as "not blacklisted".
+    Previously getattr(..., False) collapsed None to falsy and skipped the
+    fallback — a fail-open hole for revoked tokens during Redis outages."""
+    state = MagicMock()
+    state.is_token_blacklisted = None  # Redis was down during the middleware probe
+    request = _make_request(state=state)
+    payload = {"jti": "j1", "token_type": "access", "sub": "u", "token_version": 0}
+    with (
+        patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=payload),
+        patch(
+            "src.app.api.deps.auth._is_token_blacklisted_with_fallback",
+            new=AsyncMock(return_value=True),
+        ) as mock_fb,
+    ):
+        result = await _verify_optional_bearer_token("tok", _make_db(), request, None)
+    assert result is None
+    mock_fb.assert_awaited_once()
+
+
 # ---------------------------------------------------------------------------
 # get_optional_auth_context
 # ---------------------------------------------------------------------------
@@ -793,7 +826,7 @@ async def test_get_optional_api_key_valid() -> None:
     api_user = AuthenticatedUser(id=1, email="a@b.com")
     with (
         patch("src.app.api.deps.auth.get_user_by_api_key", new=AsyncMock(return_value=api_user)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
     ):
         ctx = await get_optional_auth_context(request, _make_db(), None)
     assert ctx is not None
@@ -809,7 +842,7 @@ async def test_get_optional_bearer_success() -> None:
     with (
         patch("src.app.api.deps.auth.get_cached_jwt_payload", return_value=None),
         patch("src.app.api.deps.auth.verify_token", new=AsyncMock(return_value=token_data)),
-        patch("src.app.api.deps.auth.get_tenant_context", return_value=None),
+        patch("src.app.api.deps.auth.get_current_tenant", return_value=None),
         patch("src.app.api.deps.auth.UserService") as mock_us,
     ):
         svc = mock_us.return_value

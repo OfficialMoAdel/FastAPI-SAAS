@@ -19,6 +19,7 @@ from src.app.core.security.jwt_service import (
     create_access_token,
     create_refresh_token,
     get_mfa_pending_token_manager,
+    is_token_revoked,
     oauth2_scheme,
     verify_token,
 )
@@ -55,6 +56,7 @@ __all__ = [
     "get_mfa_pending_token_manager",
     "get_password_hash",
     "is_token_blacklisted",
+    "is_token_revoked",
     "needs_rehash",
     "oauth2_scheme",
     "verify_password",

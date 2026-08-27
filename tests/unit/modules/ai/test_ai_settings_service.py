@@ -61,7 +61,7 @@ class TestAISettingsService:
         """Test getting existing AI settings for a user."""
         user_id = 1
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=sample_settings)
 
@@ -77,7 +77,7 @@ class TestAISettingsService:
         """Test getting settings for user without settings returns None."""
         user_id = 999
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
 
@@ -90,7 +90,7 @@ class TestAISettingsService:
         """Test get_or_create returns existing settings."""
         user_id = 1
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=sample_settings)
 
@@ -115,7 +115,7 @@ class TestAISettingsService:
             "system_prompt": None,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value=new_settings)
@@ -139,7 +139,7 @@ class TestAISettingsService:
         user_id = 1
         updated_settings = {**sample_settings, "model": "llama3"}
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(side_effect=[sample_settings, updated_settings])
                 mock_crud.update = AsyncMock(return_value=None)
@@ -165,7 +165,7 @@ class TestAISettingsService:
             "system_prompt": None,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value=new_settings)
@@ -183,7 +183,7 @@ class TestAISettingsService:
         user_id = 1
         updated_settings = {**sample_settings, "temperature": 0.9}
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(side_effect=[sample_settings, updated_settings])
                 mock_crud.update = AsyncMock(return_value=None)
@@ -202,7 +202,7 @@ class TestAISettingsService:
         new_prompt = "You are a helpful coding assistant."
         updated_settings = {**sample_settings, "system_prompt": new_prompt}
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(side_effect=[sample_settings, updated_settings])
                 mock_crud.update = AsyncMock(return_value=None)
@@ -224,7 +224,7 @@ class TestAISettingsService:
             "max_tokens": 4096,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(side_effect=[sample_settings, updated_settings])
                 mock_crud.update = AsyncMock(return_value=None)
@@ -242,7 +242,7 @@ class TestAISettingsService:
         """Test that update adds updated_at timestamp."""
         user_id = 1
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(side_effect=[sample_settings, sample_settings])
                 mock_crud.update = AsyncMock(return_value=None)
@@ -284,7 +284,7 @@ class TestDefaultAISettings:
             "system_prompt": None,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value=new_settings)
@@ -307,7 +307,7 @@ class TestDefaultAISettings:
             "system_prompt": None,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value=new_settings)
@@ -330,7 +330,7 @@ class TestDefaultAISettings:
             "system_prompt": None,
         }
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value=new_settings)

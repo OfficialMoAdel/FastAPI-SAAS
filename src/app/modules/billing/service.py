@@ -12,7 +12,7 @@ __all__ = [
     "crud_stripe_settings",
     # Core & Tenant
     "get_current_tenant",
-    "_require_active_tenant",
+    "require_active_tenant",
     "settings",
     # Services (this module)
     "StripeSettingsService",
@@ -94,7 +94,7 @@ from sqlalchemy.orm import selectinload
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.security.encryption import CredentialEncryption
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
 from src.app.modules._base.exceptions import (
     ModelNotFoundError,
     TenantContextError,
@@ -169,13 +169,6 @@ from src.app.modules.billing.schemas import (
 )
 
 
-def _require_active_tenant():
-    """Get the current active tenant (delegates to the canonical seam)."""
-    from src.app.core.tenancy.context import require_active_tenant
-
-    return require_active_tenant()
-
-
 def _pricing_tier_to_dict(pricing: Pricing) -> dict[str, Any]:
     """Convert Pricing ORM object to response dict directly.
 
@@ -236,7 +229,7 @@ class StripeSettingsService(BaseService[StripeSettings]):
 
     async def update_settings(self, data: StripeSettingsUpdate) -> dict[str, Any]:
         """Update Stripe settings for the current tenant."""
-        tenant = _require_active_tenant()
+        tenant = require_active_tenant()
 
         stripe_settings_record = await crud_stripe_settings.get(db=self.db, tenant_id=tenant.id)
 
@@ -287,7 +280,7 @@ class ProductService(BaseService[Product]):
 
     async def create_product(self, data: ProductCreate) -> dict[str, Any]:
         """Create a new product."""
-        tenant = _require_active_tenant()
+        tenant = require_active_tenant()
 
         product_data = data.model_dump()
         product_data["tenant_id"] = tenant.id

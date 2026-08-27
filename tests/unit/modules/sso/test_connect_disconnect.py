@@ -53,7 +53,7 @@ class TestConnectProviderService:
                 mock_manager.create = AsyncMock()
                 mock_state_mgr.return_value = mock_manager
 
-                with patch("src.app.modules.sso.service.get_tenant_context") as mock_tenant:
+                with patch("src.app.modules.sso.service.get_current_tenant") as mock_tenant:
                     mock_tenant.return_value = MagicMock(id=uuid.uuid4())
 
                     with patch(

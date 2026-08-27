@@ -68,9 +68,9 @@ class RBACPolicy:
         user_id = get_user_attr(user, "id")
         tenant_id = get_user_attr(user, "tenant_id")
         if not tenant_id:
-            from src.app.core.tenancy.context import get_tenant_context
+            from src.app.core.tenancy.context import get_current_tenant
 
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             tenant_id = tenant.id if tenant else None
 
         if not user_id or not tenant_id:
@@ -120,9 +120,9 @@ class OwnershipPolicy:
             user_id = get_user_attr(user, "id")
             tenant_id = get_user_attr(user, "tenant_id")
             if not tenant_id:
-                from src.app.core.tenancy.context import get_tenant_context
+                from src.app.core.tenancy.context import get_current_tenant
 
-                tenant = get_tenant_context()
+                tenant = get_current_tenant()
                 tenant_id = tenant.id if tenant else None
             if user_id and tenant_id:
                 from src.app.core.rbac.dependencies import has_permission_cached
@@ -148,8 +148,8 @@ class OwnershipPolicy:
             if res_tenant is not None:
                 caller_tenant = get_user_attr(user, "tenant_id")
                 if not caller_tenant:
-                    from src.app.core.tenancy.context import get_tenant_context
-                    ctx = get_tenant_context()
+                    from src.app.core.tenancy.context import get_current_tenant
+                    ctx = get_current_tenant()
                     caller_tenant = ctx.id if ctx else None
                 if caller_tenant is not None and str(res_tenant) != str(caller_tenant):
                     logger.warning("OwnershipPolicy blocked cross-tenant access", resource_tenant=str(res_tenant), caller_tenant=str(caller_tenant))  # noqa: E501
@@ -185,7 +185,7 @@ class OwnershipPolicy:
                 if rec_tenant is not None:
                     caller_tenant2 = get_user_attr(user, "tenant_id")
                     if not caller_tenant2:
-                        from src.app.core.tenancy.context import get_tenant_context as _get_ctx
+                        from src.app.core.tenancy.context import get_current_tenant as _get_ctx
                         _ctx = _get_ctx()
                         caller_tenant2 = _ctx.id if _ctx else None
                     if caller_tenant2 is not None and str(rec_tenant) != str(caller_tenant2):

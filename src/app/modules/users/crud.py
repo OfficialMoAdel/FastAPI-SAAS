@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.app.core.db.tenant_crud import TenantAwareCRUD
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreateInternal, UserDelete, UserRead, UserUpdate, UserUpdateInternal
 
@@ -32,7 +32,7 @@ class CRUDUser(TenantAwareCRUD[User, UserCreateInternal, UserUpdate, UserUpdateI
         if not id and not username and not email:
             return None
 
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
 
         # Build WHERE clause based on lookup type - case-insensitive.
         # P6: compare against the pre-lowered parameter (not func.lower(param))

@@ -29,7 +29,7 @@ class TestChatSessionService:
         from src.app.modules.ai.schemas import ChatSessionCreate
         from src.app.modules.ai.service import ChatSessionService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_crud:
                 mock_crud.create = AsyncMock(return_value=MagicMock(id=1, tenant_id=1, user_id=1))
                 mock_crud.count = AsyncMock(return_value=0)
@@ -49,7 +49,7 @@ class TestChatSessionService:
         from src.app.modules.ai.schemas import ChatSessionCreate
         from src.app.modules.ai.service import ChatSessionService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=None):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=None):
             service = ChatSessionService(mock_db)
             data = ChatSessionCreate(title="Test Session")
 
@@ -216,7 +216,7 @@ class TestAISettingsService:
         """Test that get_settings filters by user_id and tenant_id."""
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"})
 
@@ -230,7 +230,7 @@ class TestAISettingsService:
         """Test that get_or_create_settings creates default settings if none exist."""
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1, "model": "gemma3"})
@@ -253,7 +253,7 @@ class TestAISettingsService:
 
         existing_settings = {"id": 1, "user_id": 1, "tenant_id": 1, "model": "llama3", "temperature": 0.5}
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=existing_settings)
 
@@ -270,7 +270,7 @@ class TestAISettingsService:
         from src.app.modules.ai.schemas import AISettingsUpdate
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(return_value=None)
                 mock_crud.create = AsyncMock(return_value={"id": 1, "user_id": 1, "tenant_id": 1})
@@ -292,7 +292,7 @@ class TestAISettingsService:
         from src.app.modules.ai.schemas import AISettingsUpdate
         from src.app.modules.ai.service import AISettingsService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_ai_settings") as mock_crud:
                 mock_crud.get = AsyncMock(
                     side_effect=[
@@ -346,7 +346,7 @@ class TestChatCompletionService:
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
                 with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                     with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
@@ -394,7 +394,7 @@ class TestChatCompletionService:
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
                 with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                     with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
@@ -450,7 +450,7 @@ class TestChatCompletionService:
         from src.app.modules.ai.schemas import ChatCompletionRequest
         from src.app.modules.ai.service import ChatCompletionService
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
                 with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                     with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:
@@ -503,7 +503,7 @@ class TestChatCompletionService:
             side_effect=AIProviderError("Connection refused", error_code="connection_error", provider="ollama")
         )
 
-        with patch("src.app.modules.ai.service.get_tenant_context", return_value=mock_tenant_context):
+        with patch("src.app.modules.ai.service.get_current_tenant", return_value=mock_tenant_context):
             with patch("src.app.modules.ai.service.crud_chat_sessions") as mock_sessions:
                 with patch("src.app.modules.ai.service.crud_chat_messages") as mock_messages:
                     with patch("src.app.modules.ai.service.crud_ai_settings") as mock_settings:

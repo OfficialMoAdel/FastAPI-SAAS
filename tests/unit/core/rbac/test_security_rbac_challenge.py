@@ -41,7 +41,7 @@ async def test_rbac_exempt_path_extracts_tenant_from_path_params(mock_db):
             return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_id},
         ),
         patch(
-            "src.app.core.tenancy.context.get_tenant_context", return_value=None
+            "src.app.core.tenancy.context.get_current_tenant", return_value=None
         ),  # Exempt path has no tenant context
         patch(
             "src.app.core.rbac.dependencies.has_permission_cached",
@@ -82,7 +82,7 @@ async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
             "src.app.core.rbac.dependencies._get_current_user_from_token",
             return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_a_id},  # User belongs to tenant_a
         ),
-        patch("src.app.core.tenancy.context.get_tenant_context", return_value=None),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
         patch(
             "src.app.core.rbac.dependencies.has_permission_cached",
             return_value=True,
@@ -135,7 +135,7 @@ async def test_rbac_exempt_path_uuid_string_coercion_match(mock_db):
             "src.app.core.rbac.dependencies._get_current_user_from_token",
             return_value={"id": 1, "is_superuser": False, "tenant_id": tenant_id_uuid},  # User has UUID object
         ),
-        patch("src.app.core.tenancy.context.get_tenant_context", return_value=None),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
         patch(
             "src.app.core.rbac.dependencies.has_permission_cached",
             return_value=True,
@@ -159,7 +159,7 @@ async def test_rbac_exempt_path_no_tenant_raises_bad_request(mock_db):
             "src.app.core.rbac.dependencies._get_current_user_from_token",
             return_value={"id": 1, "is_superuser": False, "tenant_id": uuid.uuid4()},
         ),
-        patch("src.app.core.tenancy.context.get_tenant_context", return_value=None),
+        patch("src.app.core.tenancy.context.get_current_tenant", return_value=None),
     ):
         with pytest.raises(HTTPException) as exc_info:
             await checker(request=request, token="fake_token", db=mock_db)

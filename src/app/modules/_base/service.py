@@ -87,7 +87,7 @@ class BaseService(Generic[T]):
 
         If the SQLAlchemy model declares a ``tenant_id`` column the returned
         instance is a :class:`TenantAwareCRUD` so every operation is
-        automatically scoped to the current tenant from ``get_tenant_context()``,
+        automatically scoped to the current tenant from ``get_current_tenant()``,
         preventing cross-tenant leakage. Models without ``tenant_id`` (e.g.
         ``Tenant``, ``Tier``) continue to use plain :class:`FastCRUD`.
         The flyweight cache is keyed by model, so the choice is stable per

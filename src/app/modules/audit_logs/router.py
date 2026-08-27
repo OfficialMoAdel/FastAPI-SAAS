@@ -13,7 +13,7 @@ from fastapi.responses import StreamingResponse
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant, get_current_user
+from src.app.api.dependencies import tenant_dependency, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
 from src.app.core.rbac import Permission, requires_permission
@@ -44,7 +44,7 @@ async def list_audit_logs(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
@@ -103,7 +103,7 @@ async def list_audit_logs(
 )
 async def list_available_actions(
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
@@ -134,7 +134,7 @@ async def get_export_count(
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
@@ -177,7 +177,7 @@ async def export_audit_logs(
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """
@@ -340,7 +340,7 @@ async def export_audit_logs(
 async def get_audit_log(
     log_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: Tenant = Depends(get_current_tenant),
+    current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
 ) -> Any:
     """

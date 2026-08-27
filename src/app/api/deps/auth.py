@@ -11,7 +11,7 @@ from src.app.core.exceptions.http_exceptions import ForbiddenException, Unauthor
 from src.app.core.logger import get_logger
 from src.app.core.security import TokenType, api_key_scheme, oauth2_scheme, verify_token
 from src.app.core.security.jwt_utils import get_cached_jwt_payload
-from src.app.core.tenancy.context import get_current_tenant as get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.users.service import UserService
 
@@ -88,22 +88,14 @@ async def _create_auth_context(
 async def _is_token_blacklisted_with_fallback(token: str, jti: str | None, db: AsyncSession) -> bool:
     """Check if token is blacklisted, falling back to DB if Redis fails.
 
-    A1: returns a definite boolean. When the Redis probe returns None (unknown),
-    the DB is authoritative; if the DB lookup itself errors, crud raises and the
-    request 500s rather than silently accepting a possibly-revoked token.
+    Delegates to :func:`src.app.core.security.jwt_service.is_token_revoked`,
+    the single revocation oracle that owns the fail-open/fail-closed decision:
+    Redis unavailable -> DB authoritative; DB error -> fail closed (revoked),
+    so a possibly-revoked token is never accepted during an outage.
     """
-    from src.app.core.db.crud_token_blacklist import crud_token_blacklist
-    from src.app.core.security.token_blacklist_cache import is_token_blacklisted
+    from src.app.core.security.jwt_service import is_token_revoked
 
-    cache_result = await is_token_blacklisted(token, jti=jti)
-    if cache_result is True:
-        return True
-    if cache_result is None:
-        if jti and await crud_token_blacklist.exists(db, token=f"jti:{jti}"):
-            return True
-        if await crud_token_blacklist.exists(db, token=token):
-            return True
-    return False
+    return await is_token_revoked(token, jti, db)
 
 
 async def get_auth_context(
@@ -196,7 +188,7 @@ async def get_auth_context(
         if not session_valid:
             raise UnauthorizedException("Session has been revoked.")
 
-    current_tenant = get_tenant_context()
+    current_tenant = get_current_tenant()
     if current_tenant and not user.get("is_superuser", False):
         if str(user.get("tenant_id")) != str(current_tenant.id):
             logger.warning(
@@ -297,10 +289,17 @@ async def _verify_optional_bearer_token(
 
     if cached_payload:
         jti = cached_payload.get("jti")
-        if getattr(request.state, "is_token_blacklisted", False) or (
-            not hasattr(request.state, "is_token_blacklisted")
-            and await _is_token_blacklisted_with_fallback(token_value, jti, db)
-        ):
+        # A1: request.state.is_token_blacklisted is tri-state (True/False/None).
+        # Only a DEFINITE True/False from the middleware's Redis probe
+        # short-circuits; None (Redis down) or an absent attribute runs the
+        # DB fallback so revoked tokens are still caught during outages.
+        # (Previously this path used getattr(..., False), which treated a
+        # stored None as "not blacklisted" and skipped the DB fallback —
+        # a fail-open hole. Mirrors get_auth_context's fail-closed logic.)
+        cached_blacklist = getattr(request.state, "is_token_blacklisted", None)
+        if cached_blacklist is False:
+            pass  # Verified clean by the middleware probe; skip redundant checks.
+        elif cached_blacklist is True or await _is_token_blacklisted_with_fallback(token_value, jti, db):
             return None
 
         token_type = cached_payload.get("token_type")
@@ -361,7 +360,7 @@ async def get_optional_auth_context(
         else:
             api_key_user = None
 
-    current_tenant = get_tenant_context()
+    current_tenant = get_current_tenant()
 
     has_api_key = "X-API-Key" in request.headers if request is not None else False
     if has_api_key:

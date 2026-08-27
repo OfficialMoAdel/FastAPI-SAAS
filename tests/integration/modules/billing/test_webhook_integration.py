@@ -109,7 +109,7 @@ async def test_webhook_checkout_flow(mock_redis_lifespan, client, db_session, te
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
         patch("stripe.Subscription.retrieve", return_value=mock_stripe_sub),
-        patch("src.app.core.db.tenant_crud.get_tenant_context") as mock_get_tenant,
+        patch("src.app.core.db.tenant_crud.get_current_tenant") as mock_get_tenant,
     ):
         # Mock tenant context
         from src.app.core.tenancy.context import TenantContext
@@ -194,7 +194,7 @@ async def test_webhook_invoice_payment_succeeded_flow(
         patch("src.app.modules.billing.router.verify_webhook_signature") as mock_verify,
         patch("src.app.modules.billing.webhook.job_bypass_context") as mock_bypass_ctx,
         patch("src.app.modules.billing.webhook.job_tenant_context") as mock_tenant_ctx,
-        patch("src.app.core.db.tenant_crud.get_tenant_context") as mock_get_tenant,
+        patch("src.app.core.db.tenant_crud.get_current_tenant") as mock_get_tenant,
     ):
         mock_verify.return_value = event_payload
 

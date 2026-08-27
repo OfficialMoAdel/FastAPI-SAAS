@@ -75,7 +75,7 @@ class TestTenantContextAvailability:
     @pytest.mark.asyncio
     async def test_tenant_context_set_before_rate_limit(self):
         """Verify tenant context is set before rate limit middleware runs."""
-        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
+        from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
 
         # Simulate TenantMiddleware setting context
         mock_tenant = MagicMock()
@@ -83,10 +83,10 @@ class TestTenantContextAvailability:
         mock_tenant.slug = "test-tenant"
         mock_tenant.is_active = True
 
-        set_tenant_context(mock_tenant)
+        set_current_tenant(mock_tenant)
 
         # RateLimitMiddleware should be able to access tenant
-        context = get_tenant_context()
+        context = get_current_tenant()
         assert context is not None
         assert context.id == 123
         assert context.slug == "test-tenant"
@@ -94,16 +94,16 @@ class TestTenantContextAvailability:
     @pytest.mark.asyncio
     async def test_rate_limit_can_use_tenant_for_key(self):
         """Test rate limiter can incorporate tenant into rate limit key."""
-        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
+        from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
 
         mock_tenant = MagicMock()
         mock_tenant.id = 456
         mock_tenant.slug = "acme-corp"
 
-        set_tenant_context(mock_tenant)
+        set_current_tenant(mock_tenant)
 
         # Simulate building a tenant-aware rate limit key
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant:
             rate_limit_key = f"rate_limit:tenant:{tenant.id}:endpoint:/api/users"
         else:
@@ -148,7 +148,7 @@ class TestRateLimitMiddlewareTenantIntegration:
     async def test_rate_limit_respects_tenant_tier(self):
         """Test rate limiter can apply tenant-specific limits."""
         # This tests the capability enabled by P2-5
-        from src.app.core.tenancy.context import get_tenant_context, set_tenant_context
+        from src.app.core.tenancy.context import get_current_tenant, set_current_tenant
 
         # Tenant with premium tier (higher limits)
         premium_tenant = MagicMock()
@@ -157,9 +157,9 @@ class TestRateLimitMiddlewareTenantIntegration:
         premium_tenant.name = "Premium Company"
         premium_tenant.is_active = True
 
-        set_tenant_context(premium_tenant)
+        set_current_tenant(premium_tenant)
 
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
 
         # Verify tenant context was set correctly
         assert tenant.id == 1
@@ -168,10 +168,10 @@ class TestRateLimitMiddlewareTenantIntegration:
     @pytest.mark.asyncio
     async def test_rate_limit_falls_back_without_tenant(self):
         """Test rate limiter works without tenant context."""
-        from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context
+        from src.app.core.tenancy.context import clear_tenant_context, get_current_tenant
 
         clear_tenant_context()
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
 
         # Rate limiter should fall back to IP-based or global limits
         assert tenant is None

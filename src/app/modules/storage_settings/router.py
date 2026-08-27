@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import get_current_tenant
+from src.app.api.dependencies import tenant_dependency
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.storage_settings.schemas import (
@@ -33,7 +33,7 @@ router = APIRouter(prefix="/storage", tags=["storage"])
     dependencies=[Depends(requires_permission(Permission.MANAGE_STORAGE_SETTINGS))],
 )
 async def get_storage_settings(
-    tenant: Tenant = Depends(get_current_tenant),
+    tenant: Tenant = Depends(tenant_dependency),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Get storage settings for the current tenant.
@@ -65,7 +65,7 @@ async def get_storage_settings(
 )
 async def create_storage_settings(
     data: StorageSettingsCreate,
-    tenant: Tenant = Depends(get_current_tenant),
+    tenant: Tenant = Depends(tenant_dependency),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Create storage settings for the current tenant.
@@ -116,7 +116,7 @@ async def create_storage_settings(
 )
 async def update_storage_settings(
     data: StorageSettingsUpdate,
-    tenant: Tenant = Depends(get_current_tenant),
+    tenant: Tenant = Depends(tenant_dependency),
     service: StorageSettingsService = Depends(get_storage_settings_service),
 ) -> StorageSettingsRead:
     """Update storage settings for the current tenant.

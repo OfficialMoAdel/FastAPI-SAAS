@@ -222,10 +222,10 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
             else:
                 current_user = user_data
 
-            # Retrieve tenant_context from get_tenant_context()
-            from src.app.core.tenancy.context import get_tenant_context
+            # Retrieve tenant_context from get_current_tenant()
+            from src.app.core.tenancy.context import get_current_tenant
 
-            tenant_context = get_tenant_context()
+            tenant_context = get_current_tenant()
             is_dependency_override = True
         else:
             tenant_context = auth_context.tenant
@@ -385,9 +385,9 @@ async def _get_current_user_from_token(token: str, db: AsyncSession) -> dict[str
 
 def _get_current_tenant_id() -> UUID:
     """Get current tenant ID from middleware context."""
-    from src.app.core.tenancy.context import get_tenant_context
+    from src.app.core.tenancy.context import get_current_tenant
 
-    tenant_context = get_tenant_context()
+    tenant_context = get_current_tenant()
     if tenant_context is None:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

@@ -11,9 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import require_active_tenant
 from src.app.modules._base.exceptions import (
-    ModelNotFoundError,
     StripeError,
     ValidationError,
 )
@@ -32,9 +31,7 @@ class CheckoutService:
 
     async def create_session(self, user_id: int, user_email: str, data: CheckoutCreate) -> CheckoutSession:
         """Create a Stripe Checkout session."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
+        tenant = require_active_tenant()
 
         # Use Platform API Key from Env
         from src.app.modules.billing.gateway import get_payment_gateway
@@ -104,9 +101,7 @@ class CheckoutService:
 
     async def create_portal_session(self, return_url: str) -> str:
         """Create a Stripe Customer Portal session."""
-        tenant = get_current_tenant()
-        if tenant is None:
-            raise ModelNotFoundError("Tenant", "current")
+        tenant = require_active_tenant()
 
         # Validate return_url to prevent open redirects (M-01)
         if return_url:

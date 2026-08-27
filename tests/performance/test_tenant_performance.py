@@ -14,7 +14,7 @@ import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 
-from src.app.core.tenancy.context import clear_tenant_context, get_tenant_context, set_tenant_context
+from src.app.core.tenancy.context import clear_tenant_context, get_current_tenant, set_current_tenant
 from src.app.main import app
 
 
@@ -90,13 +90,13 @@ class TestTenantResolutionPerformance:
         # Benchmark set operation
         start = time.perf_counter()
         for _ in range(iterations):
-            set_tenant_context(tenant)  # type: ignore
+            set_current_tenant(tenant)  # type: ignore
         set_time = (time.perf_counter() - start) * 1000 / iterations
 
         # Benchmark get operation
         start = time.perf_counter()
         for _ in range(iterations):
-            get_tenant_context()
+            get_current_tenant()
         get_time = (time.perf_counter() - start) * 1000 / iterations
 
         # Benchmark clear operation
@@ -106,8 +106,8 @@ class TestTenantResolutionPerformance:
         clear_time = (time.perf_counter() - start) * 1000 / iterations
 
         # All operations should be sub-millisecond
-        assert set_time < 1.0, f"set_tenant_context too slow: {set_time:.4f}ms"
-        assert get_time < 1.0, f"get_tenant_context too slow: {get_time:.4f}ms"
+        assert set_time < 1.0, f"set_current_tenant too slow: {set_time:.4f}ms"
+        assert get_time < 1.0, f"get_current_tenant too slow: {get_time:.4f}ms"
         assert clear_time < 1.0, f"clear_tenant_context too slow: {clear_time:.4f}ms"
 
         print("\nContext operation latencies:")
@@ -129,13 +129,13 @@ class TestTenantResolutionPerformance:
                     self.is_active = True
 
             tenant = MockTenant(tenant_id)
-            set_tenant_context(tenant)  # type: ignore
+            set_current_tenant(tenant)  # type: ignore
 
             # Simulate some async work
             await asyncio.sleep(0.001)
 
             # Verify context is still correct
-            current = get_tenant_context()
+            current = get_current_tenant()
             results[tenant_id] = current.id if current else None
 
             clear_tenant_context()

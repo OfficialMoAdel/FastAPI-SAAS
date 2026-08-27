@@ -9,14 +9,13 @@ from typing import Any, cast
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import get_current_tenant
+from src.app.core.tenancy.context import get_current_tenant, require_active_tenant
 from src.app.modules._base.exceptions import (
     ModelNotFoundError,
     StripeError,
     TenantContextError,
 )
 from src.app.modules._base.service import BaseService
-from src.app.modules.billing.common import _require_active_tenant
 from src.app.modules.billing.crud import (
     crud_billing_records,
     crud_subscription_plans,
@@ -69,7 +68,7 @@ class SubscriptionPlanService(BaseService[SubscriptionPlan]):
 
     async def create_plan(self, data: SubscriptionPlanCreate) -> dict[str, Any]:
         """Create a new subscription plan."""
-        tenant = _require_active_tenant()
+        tenant = require_active_tenant()
 
         plan_data = data.model_dump()
         plan_data["tenant_id"] = tenant.id

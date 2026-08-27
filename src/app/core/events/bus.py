@@ -265,9 +265,9 @@ class EventBus:
 
             # SECURITY FIX: Capture tenant context if available to propagate to background tasks
             # This is critical for RLS-enabled database operations in worker processes.
-            from src.app.core.tenancy.context import get_tenant_context
+            from src.app.core.tenancy.context import get_current_tenant
 
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             tenant_info = None
             if tenant:
                 tenant_info = {

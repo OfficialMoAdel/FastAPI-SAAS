@@ -96,7 +96,7 @@ async def test_upload_profile_image_success(service, mock_db, valid_image_bytes)
     fake_tenant.tenant_id = "tenant-uuid"
 
     with (
-        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.get_current_tenant", return_value=fake_tenant),
         patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
     ):
         mock_settings_svc.return_value.get_provider = AsyncMock(return_value=mock_storage)
@@ -180,7 +180,7 @@ def test_upload_profile_image_flow(client, regular_user_token_headers):
 
     # Mock storage to avoid actual S3 calls
     with (
-        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.get_current_tenant", return_value=fake_tenant),
         patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
     ):
         mock_storage = AsyncMock()
@@ -218,7 +218,7 @@ def test_delete_profile_image_flow(client, regular_user_token_headers):
     fake_tenant.tenant_id = "tenant-uuid"
 
     with (
-        patch("src.app.modules.user_preferences.service.get_tenant_context", return_value=fake_tenant),
+        patch("src.app.modules.user_preferences.service.get_current_tenant", return_value=fake_tenant),
         patch("src.app.modules.user_preferences.service.StorageSettingsService") as mock_settings_svc,
     ):
         mock_storage = AsyncMock()

@@ -219,7 +219,7 @@ class TestSessionServiceListPagination:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(
@@ -244,7 +244,7 @@ class TestSessionServiceListPagination:
         }
 
         with patch(
-            "src.app.modules.ai.service.get_tenant_context",
+            "src.app.modules.ai.service.get_current_tenant",
             return_value=mock_tenant,
         ):
             with patch(

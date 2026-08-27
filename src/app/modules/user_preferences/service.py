@@ -18,7 +18,7 @@ from fastapi import UploadFile
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base import ModelNotFoundError, ValidationError
 from src.app.modules.storage_settings.service import StorageSettingsService
 from src.app.modules.user_preferences.crud import crud_user_preferences
@@ -215,7 +215,7 @@ class PreferencesService:
             raise ModelNotFoundError("User", user_id)
 
         # 4. Prepare storage — tenant-aware provider from storage settings
-        tenant_ctx = get_tenant_context()
+        tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
             raise StorageError("upload", "Tenant context not available")
         storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)
@@ -284,7 +284,7 @@ class PreferencesService:
         # But S3 delete requires key.
 
         # Tenant-aware provider from storage settings
-        tenant_ctx = get_tenant_context()
+        tenant_ctx = get_current_tenant()
         if tenant_ctx is None:
             raise StorageError("delete", "Tenant context not available")
         storage = await StorageSettingsService(db).get_provider(tenant_ctx.tenant_id)

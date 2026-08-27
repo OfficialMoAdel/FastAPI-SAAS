@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import local_session
 from src.app.core.logger import get_logger
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.modules._base.exceptions import ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.ai.crud import crud_ai_settings, crud_chat_messages, crud_chat_sessions
@@ -137,7 +137,7 @@ class ChatSessionService(BaseService[AIChatSession]):
 
         T134: Enforces maximum 100 concurrent sessions per tenant.
         """
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
 
@@ -246,13 +246,13 @@ class AISettingsService(BaseService[AISettings]):
 
     async def get_settings(self, user_id: int) -> dict[str, Any] | None:
         """Get AI settings for a user within current tenant."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         tenant_id = tenant.id if tenant else None
         return await crud_ai_settings.get(db=self.db, user_id=user_id, tenant_id=tenant_id)
 
     async def get_or_create_settings(self, user_id: int) -> dict[str, Any]:
         """Get AI settings for a user, creating defaults if needed."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
         tenant_id = tenant.id
@@ -278,7 +278,7 @@ class AISettingsService(BaseService[AISettings]):
 
     async def update_settings(self, user_id: int, data: AISettingsUpdate) -> dict[str, Any]:
         """Update AI settings for a user."""
-        tenant = get_tenant_context()
+        tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Tenant", "current")
         tenant_id = tenant.id
@@ -633,9 +633,9 @@ class ChatCompletionService:
         response_chunks = []
         token_count = None
 
-        from src.app.core.tenancy.context import get_tenant_context
+        from src.app.core.tenancy.context import get_current_tenant
 
-        current_tenant = get_tenant_context()
+        current_tenant = get_current_tenant()
 
         try:
             _last_err: list[Exception] = []
@@ -690,9 +690,9 @@ class ChatCompletionService:
                     for attempt in range(max_retries):
                         try:
                             if tenant_ctx:
-                                from src.app.core.tenancy.context import set_tenant_context
+                                from src.app.core.tenancy.context import set_current_tenant
 
-                                set_tenant_context(tenant_ctx)
+                                set_current_tenant(tenant_ctx)
                             async with local_session() as fresh_db:
                                 message_service = ChatMessageService(fresh_db)
                                 await message_service.add_message(

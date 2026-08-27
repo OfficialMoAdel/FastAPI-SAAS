@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from src.app.api.dependencies import get_current_tenant
+from src.app.api.dependencies import tenant_dependency
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.core.tenancy.context import TenantContext
@@ -33,7 +33,7 @@ def _get_tenant_id(current_tenant: TenantContext) -> UUID:
 )
 async def list_feature_flags(
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
 ) -> FeatureFlagsResponse:
     """
     Get all feature flags for the current tenant.
@@ -54,7 +54,7 @@ async def list_feature_flags(
 async def check_feature_flag(
     flag_name: str,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
 ) -> FeatureFlagCheckResponse:
     """
     Check if a specific feature flag is enabled.
@@ -80,7 +80,7 @@ async def update_feature_flag(
     flag_name: str,
     request: FeatureFlagUpdateRequest,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
 ) -> FeatureFlagCheckResponse:
     """
     Update a specific feature flag for the current tenant.
@@ -120,7 +120,7 @@ from fastapi import Response
 async def delete_feature_flag(
     flag_name: str,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
 ) -> Response:
     """
     Remove a feature flag from the tenant configuration.
@@ -148,7 +148,7 @@ async def delete_feature_flag(
 async def bulk_update_flags(
     request: FeatureFlagBulkUpdateRequest,
     service: FeatureFlagService = Depends(get_feature_flag_service),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
 ) -> FeatureFlagsResponse:
     """
     Bulk update feature flags for the current tenant.

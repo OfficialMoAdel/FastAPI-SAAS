@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import AuthenticatedUser, get_current_tenant, get_current_user
+from src.app.api.dependencies import AuthenticatedUser, tenant_dependency, get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
@@ -37,7 +37,7 @@ router = APIRouter(prefix="/notifications", tags=["notifications"])
 async def send_notification(
     request: SendEmailRequest,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Any:
     """
@@ -84,7 +84,7 @@ async def list_notifications(
     page: int = Query(1, ge=1, description="Page number"),
     per_page: int = Query(100, ge=1, le=1000, description="Page size"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Any:
     """
@@ -125,7 +125,7 @@ async def list_template_overrides(
     limit: int = Query(100, ge=1, le=1000, description="Page size"),
     offset: int = Query(0, ge=0, description="Page offset"),
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Any:
     """List all email template overrides for the current tenant with pagination."""
@@ -144,7 +144,7 @@ async def list_template_overrides(
 async def create_template_override(
     request: EmailTemplateOverrideCreate,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Any:
     """Create or update an email template override for the current tenant."""
@@ -168,7 +168,7 @@ async def create_template_override(
 async def delete_template_override(
     template_name: str,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> None:
     """Delete an email template override (revert to default template)."""
@@ -187,7 +187,7 @@ async def delete_template_override(
 async def get_notification(
     notification_id: UUID,
     db: AsyncSession = Depends(async_get_db),
-    current_tenant: TenantContext = Depends(get_current_tenant),
+    current_tenant: TenantContext = Depends(tenant_dependency),
     current_user: AuthenticatedUser = Depends(get_current_user),
 ) -> Any:
     """Get a single notification by ID."""

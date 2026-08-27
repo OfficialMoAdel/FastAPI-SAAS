@@ -19,7 +19,7 @@ from src.app.core.exceptions.http_exceptions import (
     NotFoundException,
 )
 from src.app.core.security.encryption import get_encryption
-from src.app.core.tenancy.context import get_tenant_context  # Needed to get default tenant_id if not passed
+from src.app.core.tenancy.context import get_current_tenant  # Needed to get default tenant_id if not passed
 from src.app.modules.audit_logs.service import audit_action
 from src.app.modules.sso_settings.crud import crud_sso_settings
 from src.app.modules.sso_settings.models import SSOSettings
@@ -50,7 +50,7 @@ class SSOSettingsService:
 
         # Determine tenant_id if not passed
         if not tenant_id:
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             if tenant:
                 tenant_id = tenant.id
 
@@ -193,7 +193,7 @@ class SSOSettingsService:
 
         # Determine tenant_id if not passed
         if not tenant_id:
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             if tenant:
                 tenant_id = tenant.id
 
@@ -230,7 +230,7 @@ class SSOSettingsService:
         """Delete SSO settings."""
         # Determine tenant_id if not passed (for audit log)
         if not tenant_id:
-            tenant = get_tenant_context()
+            tenant = get_current_tenant()
             if tenant:
                 tenant_id = tenant.id
 

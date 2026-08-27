@@ -20,7 +20,7 @@ from src.app.api.deps.request_context import (
     RequestContextDep,
     get_request_context,
 )
-from src.app.api.deps.tenant import get_current_tenant
+from src.app.api.deps.tenant import tenant_dependency
 
 __all__ = [
     "AuthenticatedUser",
@@ -32,7 +32,7 @@ __all__ = [
     "get_optional_user",
     "requires_api_key_scope",
     "get_current_superuser",
-    "get_current_tenant",
+    "tenant_dependency",
     "rate_limiter_dependency",
     "RequestContext",
     "RequestContextDep",

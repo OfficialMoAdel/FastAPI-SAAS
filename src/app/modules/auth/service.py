@@ -23,7 +23,7 @@ from src.app.core.security import (
     verify_password,
     verify_token,
 )
-from src.app.core.tenancy.context import get_tenant_context
+from src.app.core.tenancy.context import get_current_tenant
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.modules.auth.services.email_verification import EmailVerificationService
 from src.app.modules.auth.services.lockout import LoginLockoutPolicy
@@ -112,7 +112,7 @@ class AuthService:
         """Publish audit log for login attempt."""
         try:
             if not tenant_id:
-                tenant = get_tenant_context()
+                tenant = get_current_tenant()
                 if tenant:
                     tenant_id = tenant.id
 

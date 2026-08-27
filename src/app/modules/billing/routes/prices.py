@@ -9,7 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from src.app.api.dependencies import get_current_tenant
+from src.app.api.dependencies import tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
 from src.app.core.rbac.dependencies import requires_permission
@@ -49,7 +49,7 @@ async def create_price(
 @router.get("", response_model=list[PricingRead])
 async def list_prices(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    current_tenant: Annotated[Any, Depends(get_current_tenant)],
+    current_tenant: Annotated[Any, Depends(tenant_dependency)],
     product_id: Annotated[int | None, Query(description="Filter by product ID")] = None,
     is_active: Annotated[bool | None, Query(description="Filter by active status")] = None,
 ) -> list[dict]:

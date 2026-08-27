@@ -18,7 +18,7 @@ async def test_create_session_success(db_session, tenant):
         # Mock dependencies
         mock_stripe_session = MagicMock(url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890)
         with (
-            patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 return_value={"stripe_customer_id": "cus_123"},
@@ -62,7 +62,7 @@ async def test_create_session_no_api_key(db_session, tenant):
     with patch_setting("STRIPE_SECRET_KEY", None):
         service = CheckoutService(db_session)
         with (
-            patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.subscription_service.SubscriptionPlanService.get_plan",
                 return_value={"stripe_price_id_monthly": "price_123"},
@@ -92,7 +92,7 @@ async def test_create_portal_session_success(db_session, tenant):
         service = CheckoutService(db_session)
 
         with (
-            patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 return_value={"stripe_customer_id": "cus_123"},
@@ -116,7 +116,7 @@ async def test_create_session_has_tenant_metadata(db_session, tenant):
         # Mock dependencies
         mock_stripe_session = MagicMock(url="https://checkout.stripe.com/...", id="cs_test_123", expires_at=1234567890)
         with (
-            patch("src.app.modules.billing.checkout_service.get_current_tenant", return_value=tenant),
+            patch("src.app.modules.billing.checkout_service.require_active_tenant", return_value=tenant),
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 return_value={"stripe_customer_id": "cus_123"},

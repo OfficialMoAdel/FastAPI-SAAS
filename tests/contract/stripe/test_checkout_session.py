@@ -291,7 +291,7 @@ class TestCheckoutSessionLive:
         service = CheckoutService(db_session)
 
         with (
-            patch("src.app.modules.billing.service.get_tenant_context") as mock_tenant,
+            patch("src.app.modules.billing.service.get_current_tenant") as mock_tenant,
             patch(
                 "src.app.modules.billing.service.StripeSettingsService.get_settings",
                 new_callable=AsyncMock,

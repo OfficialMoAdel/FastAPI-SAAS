@@ -139,8 +139,8 @@ async def get_stripe_settings(
     service = get_stripe_settings_service(db)
     stripe_settings = await service.get_settings()
     if stripe_settings is None:
-        from src.app.core.tenancy.context import get_tenant_context
-        tenant = get_tenant_context()
+        from src.app.core.tenancy.context import get_current_tenant
+        tenant = get_current_tenant()
         tenant_id = tenant.id if tenant else None
         return {
             "id": 0,

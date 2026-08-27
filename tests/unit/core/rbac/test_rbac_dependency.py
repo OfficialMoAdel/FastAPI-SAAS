@@ -138,7 +138,7 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": True},
             ),
-            patch("src.app.core.tenancy.context.get_tenant_context", return_value=DummyTenant()),
+            patch("src.app.core.tenancy.context.get_current_tenant", return_value=DummyTenant()),
             patch("src.app.core.rbac.dependencies.get_cached_permissions_bitmask") as mock_perms,
         ):
             mock_db = AsyncMock()
@@ -161,7 +161,7 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
+            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 return_value=True,
@@ -187,7 +187,7 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
+            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 return_value=False,
@@ -216,7 +216,7 @@ class TestRequiresPermission:
                 "src.app.core.rbac.dependencies._get_current_user_from_token",
                 return_value={"id": 1, "is_superuser": False},
             ),
-            patch("src.app.core.tenancy.context.get_tenant_context") as mock_tenant,
+            patch("src.app.core.tenancy.context.get_current_tenant") as mock_tenant,
             patch(
                 "src.app.core.rbac.dependencies.has_permission_cached",
                 return_value=True,
