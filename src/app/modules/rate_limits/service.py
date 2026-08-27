@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps, json_loads
-from src.app.core.utils import cache
+from src.app.core.redis_provider import get_redis
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules._base.service import BaseService
 from src.app.modules.rate_limits.crud import crud_rate_limits
@@ -37,9 +37,10 @@ class RateLimitService(BaseService[RateLimit]):
 
     async def _invalidate_tier_rate_limits_cache(self, tier_id: int) -> None:
         """Invalidate rate limits cache for a tier."""
-        if cache.client:
+        client = get_redis()
+        if client:
             cache_key = f"rate_limits:tier:{tier_id}"
-            await cache.client.delete(cache_key)
+            await client.delete(cache_key)
 
     async def get_rate_limits_by_tier_id(self, tier_id: int) -> dict[str, Any]:
         """Get all rate limits for a tier by tier ID.
@@ -60,16 +61,17 @@ class RateLimitService(BaseService[RateLimit]):
         cache_key = f"rate_limits:tier:{tier_id}"
 
         # Try cache first
-        if cache.client:
-            cached = await cache.client.get(cache_key)
+        client = get_redis()
+        if client:
+            cached = await client.get(cache_key)
             if cached:
                 return cast(dict[str, Any], json_loads(cached))
 
         rate_limits_data = await crud_rate_limits.get_multi(db=self.db, tier_id=tier_id)
 
         # Cache result (1 hour TTL)
-        if cache.client:
-            await cache.client.setex(cache_key, 3600, json_dumps(rate_limits_data, as_str=True))
+        if client:
+            await client.setex(cache_key, 3600, json_dumps(rate_limits_data, as_str=True))
 
         return rate_limits_data
 

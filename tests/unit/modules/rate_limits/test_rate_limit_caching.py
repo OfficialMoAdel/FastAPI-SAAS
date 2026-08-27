@@ -27,9 +27,8 @@ async def test_get_rate_limits_by_tier_id_cache_miss(service):
     """Test that cache miss triggers DB query and sets cache."""
 
     # Mock Redis - patch at the module level where it's imported
-    with patch("src.app.modules.rate_limits.service.cache") as mock_cache_module:
-        mock_redis = AsyncMock()
-        mock_cache_module.client = mock_redis
+    mock_redis = AsyncMock()
+    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
         mock_redis.get.return_value = None  # Cache miss
 
         # Mock CRUD
@@ -62,9 +61,8 @@ async def test_get_rate_limits_by_tier_id_cache_hit(service):
     cached_data = json.dumps(RATE_LIMITS_DATA)
 
     # Mock Redis - patch at the module level where it's imported
-    with patch("src.app.modules.rate_limits.service.cache") as mock_cache_module:
-        mock_redis = AsyncMock()
-        mock_cache_module.client = mock_redis
+    mock_redis = AsyncMock()
+    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
         mock_redis.get.return_value = cached_data  # Cache hit
 
         # Mock CRUD
@@ -92,9 +90,8 @@ async def test_invalidate_cache_on_create(service):
     tier_data = {"id": TIER_ID}
 
     # Mock Redis - patch at the module level where it's imported
-    with patch("src.app.modules.rate_limits.service.cache") as mock_cache_module:
-        mock_redis = AsyncMock()
-        mock_cache_module.client = mock_redis
+    mock_redis = AsyncMock()
+    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -120,9 +117,8 @@ async def test_invalidate_cache_on_update(service):
     tier_data = {"id": TIER_ID}
 
     # Mock Redis - patch at the module level where it's imported
-    with patch("src.app.modules.rate_limits.service.cache") as mock_cache_module:
-        mock_redis = AsyncMock()
-        mock_cache_module.client = mock_redis
+    mock_redis = AsyncMock()
+    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)
@@ -148,9 +144,8 @@ async def test_invalidate_cache_on_delete(service):
     tier_data = {"id": TIER_ID}
 
     # Mock Redis - patch at the module level where it's imported
-    with patch("src.app.modules.rate_limits.service.cache") as mock_cache_module:
-        mock_redis = AsyncMock()
-        mock_cache_module.client = mock_redis
+    mock_redis = AsyncMock()
+    with patch("src.app.modules.rate_limits.service.get_redis", return_value=mock_redis):
 
         # Mock internal methods
         service._get_tier_or_404 = AsyncMock(return_value=tier_data)

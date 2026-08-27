@@ -22,7 +22,7 @@ from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import BadRequestException, UnauthorizedException
-from src.app.core.utils import cache
+from src.app.core.redis_provider import get_redis
 from src.app.modules.mfa.crud import crud_mfa_methods
 from src.app.modules.mfa.models import MFAMethod
 from src.app.modules.mfa.schemas import (
@@ -104,9 +104,10 @@ class MFAService:
 
         # Store secret temporarily in redis (Expires in 10 minutes)
         setup_token = str(uuid.uuid4())
-        if cache.client is not None:
+        client = get_redis()
+        if client is not None:
             try:
-                await cache.client.setex(f"mfa_setup:{setup_token}", 600, secret)
+                await client.setex(f"mfa_setup:{setup_token}", 600, secret)
             except Exception as e:
                 logger.error("Redis failed during MFA setup: %s", e)
                 from src.app.modules._base.exceptions import ServiceUnavailableError
@@ -151,7 +152,8 @@ class MFAService:
 
         # Retrieve secret from Redis using setup_token
         mfa_setup_key = f"mfa_setup:{request.setup_token}"
-        totp_secret_bytes = await cache.client.get(mfa_setup_key) if cache.client else None
+        client = get_redis()
+        totp_secret_bytes = await client.get(mfa_setup_key) if client else None
 
         if not totp_secret_bytes:
             raise BadRequestException("Setup token expired or invalid. Please restart MFA setup.")
@@ -164,8 +166,8 @@ class MFAService:
             raise BadRequestException("Invalid TOTP token. Please try again.")
 
         # Clean up the setup token
-        if cache.client is not None:
-            await cache.client.delete(mfa_setup_key)
+        if client is not None:
+            await client.delete(mfa_setup_key)
 
         # Generate backup codes
         backup_codes = await self._generate_backup_codes()
@@ -226,7 +228,8 @@ class MFAService:
         Raises:
             UnauthorizedException: If user is locked out.
         """
-        if cache.client is None:
+        client = get_redis()
+        if client is None:
             # SECURITY FIX: Fail closed during infrastructure disruptions
             from src.app.core.config import settings
 
@@ -241,7 +244,7 @@ class MFAService:
             from src.app.core.utils.lua_manager import get_lua_manager
 
             raw_result = await get_lua_manager().execute(
-                cache.client,
+                client,
                 "mfa_lockout_check",
                 keys=[mfa_attempts_key],
                 args=[str(MFA_MAX_ATTEMPTS), str(MFA_LOCKOUT_DURATION_SECONDS)],
@@ -263,9 +266,10 @@ class MFAService:
 
     async def _reset_mfa_lockout(self, user_id: int) -> None:
         """Reset MFA lockout counter after successful verification."""
-        if cache.client is not None:
+        client = get_redis()
+        if client is not None:
             try:
-                await cache.client.delete(f"mfa_attempts:{user_id}")
+                await client.delete(f"mfa_attempts:{user_id}")
             except Exception as e:
                 logger.debug("Failed to reset MFA lockout counter", user_id=user_id, error=str(e))
 
@@ -453,9 +457,10 @@ class MFAService:
 
             # Clear lockout counter on successful backup code use so the user isn't
             # locked out on their very next MFA verification attempt.
-            if cache.client is not None:
+            client = get_redis()
+            if client is not None:
                 try:
-                    await cache.client.delete(f"mfa_attempts:{user_id}")
+                    await client.delete(f"mfa_attempts:{user_id}")
                 except Exception:
                     pass  # Non-critical
 

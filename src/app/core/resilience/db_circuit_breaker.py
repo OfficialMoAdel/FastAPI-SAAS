@@ -19,8 +19,8 @@ from sqlalchemy.exc import (
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
+from src.app.core.redis_provider import get_redis
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
-from src.app.core.utils import cache
 from src.app.core.utils.circuit_breaker import CircuitState
 
 logger = get_logger(__name__)
@@ -127,15 +127,17 @@ async def execute_query_with_circuit_breaker(
     Returns:
         Query results or fallback data
     """
+    client = get_redis()
+
     # Check circuit state first (fast path)
     current_state = db_circuit.state
     if current_state == CircuitState.OPEN:
         logger.warning("Database circuit OPEN, attempting cache fallback")
 
         # Try cache fallback
-        if cache_key and cache.client:
+        if cache_key and client:
             try:
-                cached = await cache.client.get(cache_key)
+                cached = await client.get(cache_key)
                 if cached:
                     logger.info("Using cached data", cache_key=cache_key)
                     # Assume simple JSON serialization for fallback data
@@ -185,11 +187,11 @@ async def execute_query_with_circuit_breaker(
         await db_circuit.record_success()
 
         # Cache result for future fallback
-        if cache_key and cache.client:
+        if cache_key and client:
             try:
                 # Handle datetime/decimal serialization if needed (simplified here)
                 # Using strings for non-serializable types for fallback purposes
-                await cache.client.setex(cache_key, cache_ttl, json.dumps(rows, default=str))
+                await client.setex(cache_key, cache_ttl, json.dumps(rows, default=str))
             except Exception as cache_error:
                 logger.warning("Failed to cache result:", cache_error=cache_error)
 
@@ -204,9 +206,9 @@ async def execute_query_with_circuit_breaker(
         )
 
         # Try fallback on failure
-        if cache_key and cache.client:
+        if cache_key and client:
             try:
-                cached = await cache.client.get(cache_key)
+                cached = await client.get(cache_key)
                 if cached:
                     logger.info("Using cached data after failure", cache_key=cache_key)
                     return list(json.loads(cached))

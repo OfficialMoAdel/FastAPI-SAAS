@@ -4,7 +4,6 @@ from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from src.app.core.logger import get_logger
-from src.app.core.utils import cache
 from src.app.core.utils.lua_manager import get_lua_manager
 from src.app.core.utils.path_utils import sanitize_path
 
@@ -21,10 +20,13 @@ class RateLimiter:
 
     @classmethod
     def get_client(cls) -> Redis:
-        if cache.client is None:
+        from src.app.core.redis_provider import get_redis
+
+        client = get_redis()
+        if client is None:
             logger.error("Redis client is not initialized.")
             raise Exception("Redis client is not initialized.")
-        return cache.client
+        return client
 
     async def check_rate_limit(self, key: str, limit: int, period: int) -> tuple[bool, int]:
         """

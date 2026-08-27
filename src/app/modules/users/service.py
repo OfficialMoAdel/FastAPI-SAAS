@@ -15,9 +15,9 @@ from src.app.core.events import EventPriority, event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
+from src.app.core.redis_provider import get_redis
 from src.app.core.security import blacklist_token, get_password_hash
 from src.app.core.tenancy.context import get_current_tenant
-from src.app.core.utils import cache
 from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.service import TierService
@@ -144,7 +144,8 @@ class UserService:
 
     async def _cache_user(self, user: User | dict[str, Any]) -> None:
         """Cache user profile in Redis."""
-        if cache.client is None:
+        client = get_redis()
+        if client is None:
             return
 
         try:
@@ -181,7 +182,7 @@ class UserService:
             serialized = json_dumps(user_data)
 
             # Cache by all lookup keys using a pipeline for single round-trip
-            async with cache.client.pipeline(transaction=False) as pipe:
+            async with client.pipeline(transaction=False) as pipe:
                 pipe.setex(_user_cache_key(user_id), USER_CACHE_TTL, serialized)
                 pipe.setex(_user_email_cache_key(email, tenant_id), USER_CACHE_TTL, serialized)
                 pipe.setex(_user_username_cache_key(username, tenant_id), USER_CACHE_TTL, serialized)
@@ -198,7 +199,8 @@ class UserService:
         when available to build tenant-scoped cache keys safely.
         Falls back to get_current_tenant() if tenant_id is not in user data.
         """
-        if cache.client is None:
+        client = get_redis()
+        if client is None:
             return
 
         try:
@@ -248,7 +250,7 @@ class UserService:
                 )
 
             if keys:
-                await cache.client.delete(*keys)
+                await client.delete(*keys)
 
             if token_keys:
                 # Forcefully overwrite token_version to prevent stale-read race conditions
@@ -268,7 +270,7 @@ class UserService:
                 # Benign profile updates (name, avatar) should NOT invalidate sessions.
                 new_version = current_version + 1 if bump_token_version else current_version
 
-                async with cache.client.pipeline(transaction=False) as pipe:
+                async with client.pipeline(transaction=False) as pipe:
                     for key in token_keys:
                         pipe.set(key, str(new_version), ex=300)
                     await pipe.execute()
@@ -278,11 +280,12 @@ class UserService:
 
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""
-        if cache.client is None:
+        client = get_redis()
+        if client is None:
             return None
 
         try:
-            cached = await cache.client.get(cache_key)
+            cached = await client.get(cache_key)
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 return result
@@ -435,10 +438,11 @@ class UserService:
             return None
 
         # Cache it
-        if cache.client:
+        client = get_redis()
+        if client:
             try:
                 serialized = json_dumps(user_with_tier)
-                await cache.client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
+                await client.setex(cache_key, AUTH_INFO_CACHE_TTL, serialized)
             except Exception as e:
                 logger.warning("Failed to cache auth info for :", identifier=identifier, error=e)
 

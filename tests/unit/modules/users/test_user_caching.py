@@ -51,10 +51,10 @@ class TestUserAuthInfoCaching:
             "tier": {"id": 1, "name": "free"},
         }
 
-        with patch("src.app.modules.users.service.cache") as mock_cache:
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
-                mock_cache.client = AsyncMock()
-                mock_cache.client.get = AsyncMock(
+                mock_client.get = AsyncMock(
                     return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
                     '"username": "testuser", "email": "test@example.com", '
                     '"tier": {"id": 1, "name": "free"}}'
@@ -78,10 +78,10 @@ class TestUserAuthInfoCaching:
             "tier": {"id": 1, "name": "free"},
         }
 
-        with patch("src.app.modules.users.service.cache") as mock_cache:
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
-                mock_cache.client = AsyncMock()
-                mock_cache.client.get = AsyncMock(
+                mock_client.get = AsyncMock(
                     return_value='{"id": "550e8400-e29b-41d4-a716-446655440000", '
                     '"username": "testuser", "email": "test@example.com", '
                     '"tier": {"id": 1, "name": "free"}}'
@@ -104,11 +104,11 @@ class TestUserAuthInfoCaching:
             "tier": {"id": 1, "name": "free"},
         }
 
-        with patch("src.app.modules.users.service.cache") as mock_cache:
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
-                mock_cache.client = AsyncMock()
-                mock_cache.client.get = AsyncMock(return_value=None)  # Cache miss
-                mock_cache.client.setex = AsyncMock()
+                mock_client.get = AsyncMock(return_value=None)  # Cache miss
+                mock_client.setex = AsyncMock()
 
                 # Mock CRUD response
                 user_service.crud.get_user_with_tier_eager = AsyncMock(return_value=user_data)
@@ -118,8 +118,8 @@ class TestUserAuthInfoCaching:
                 assert result is not None
                 assert result["username"] == "testuser"
                 # Verify cache was set with 1-hour TTL
-                mock_cache.client.setex.assert_called_once()
-                call_args = mock_cache.client.setex.call_args
+                mock_client.setex.assert_called_once()
+                call_args = mock_client.setex.call_args
                 assert call_args[0][1] == 3600  # AUTH_INFO_CACHE_TTL
 
     @pytest.mark.asyncio
@@ -176,7 +176,8 @@ class TestUserCacheInvalidation:
             "email": "test@example.com",
         }
 
-        with patch("src.app.modules.users.service.cache") as mock_cache:
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
             with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
                 class MockPipeline:
                     def __init__(self):
@@ -191,14 +192,14 @@ class TestUserCacheInvalidation:
                         pass
 
                 mock_pipe = MockPipeline()
-                mock_cache.client.pipeline = MagicMock(return_value=mock_pipe)
-                mock_cache.client.delete = AsyncMock()
+                mock_client.pipeline = MagicMock(return_value=mock_pipe)
+                mock_client.delete = AsyncMock()
 
                 await user_service._invalidate_user_cache(user_data)
 
                 # Verify profile cache keys were deleted (5 keys total)
-                mock_cache.client.delete.assert_called_once()
-                call_args = mock_cache.client.delete.call_args[0]
+                mock_client.delete.assert_called_once()
+                call_args = mock_client.delete.call_args[0]
                 assert len(call_args) == 5
 
                 # Verify the right keys were invalidated (tenant-scoped)
@@ -245,9 +246,8 @@ class TestUserCachingWithoutRedis:
             "tier": {"id": 1, "name": "free"},
         }
 
-        with patch("src.app.modules.users.service.cache") as mock_cache:
+        with patch("src.app.modules.users.service.get_redis", return_value=None):
             with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
-                mock_cache.client = None  # Redis unavailable
 
                 user_service.crud.get_user_with_tier_eager = AsyncMock(return_value=user_data)
 

@@ -5,7 +5,7 @@ from typing import Any
 from arq.jobs import Job as ArqJob
 
 from src.app.core.logger import get_logger
-from src.app.core.utils import queue
+from src.app.core.redis_provider import get_arq
 
 logger = get_logger(__name__)
 
@@ -24,7 +24,8 @@ class TaskService:
         request while the previous job still exists returns the SAME job id
         instead of failing (B7 FIX - previously raised ValueError -> HTTP 500).
         """
-        if queue.pool is None:
+        arq = get_arq()
+        if arq is None:
             raise QueueUnavailableError("Queue is not available")
 
         import hashlib
@@ -32,7 +33,7 @@ class TaskService:
         job_id_input = f"{tenant_id}:{message}".encode()
         deterministic_job_id = f"sample_task:{hashlib.sha256(job_id_input).hexdigest()}"
 
-        job = await queue.pool.enqueue_job(
+        job = await arq.enqueue_job(
             "sample_background_task",
             message,
             tenant_id=tenant_id,
@@ -71,10 +72,11 @@ class TaskService:
         if not tenant_id:
             raise ValueError("tenant_id is required for task isolation")
 
-        if queue.pool is None:
+        arq = get_arq()
+        if arq is None:
             raise QueueUnavailableError("Queue is not available")
 
-        job = ArqJob(task_id, queue.pool)
+        job = ArqJob(task_id, arq)
         job_info = await job.info()
         if job_info is None:
             return None

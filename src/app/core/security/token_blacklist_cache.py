@@ -26,7 +26,6 @@ from redis.asyncio import Redis
 
 from src.app.core.logger import get_logger
 from src.app.core.resilience.registry import ServiceType, create_circuit_breaker
-from src.app.core.utils import cache
 from src.app.core.utils.lua_manager import get_lua_manager
 
 # Registered with the central CircuitBreakerRegistry (ServiceType.REDIS) so it
@@ -43,10 +42,11 @@ _circuit_breaker = create_circuit_breaker(
     description="Redis token-blacklist cache (auth revocation lookups)",
 )
 
-
 def _get_redis_client() -> Redis | None:
-    """Get Redis client dynamically to support test fixtures that set cache.client."""
-    return cache.client
+    """Get Redis client via the single seam (observes test patches of utils.cache.client)."""
+    from src.app.core.redis_provider import get_redis
+
+    return get_redis()
 
 
 def _get_available_redis_client_for_blacklist() -> tuple[Redis | None, bool]:

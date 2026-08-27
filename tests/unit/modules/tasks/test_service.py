@@ -45,8 +45,7 @@ class TestTaskServiceCreate:
         mock_pool = AsyncMock()
         mock_pool.enqueue_job = AsyncMock(return_value=mock_job)
 
-        with patch("src.app.modules.tasks.service.queue") as mock_queue:
-            mock_queue.pool = mock_pool
+        with patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool):
 
             result = await task_service.create_task("test message")
 
@@ -60,8 +59,7 @@ class TestTaskServiceCreate:
         """Test task creation when queue is unavailable."""
         from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
-        with patch("src.app.modules.tasks.service.queue") as mock_queue:
-            mock_queue.pool = None
+        with patch("src.app.modules.tasks.service.get_arq", return_value=None):
 
             with pytest.raises(QueueUnavailableError) as exc_info:
                 await task_service.create_task("test message")
@@ -80,8 +78,7 @@ class TestTaskServiceCreate:
         mock_pool = AsyncMock()
         mock_pool.enqueue_job = AsyncMock(return_value=None)
 
-        with patch("src.app.modules.tasks.service.queue") as mock_queue:
-            mock_queue.pool = mock_pool
+        with patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool):
 
             result = await task_service.create_task("test message")
 
@@ -101,10 +98,9 @@ class TestTaskServiceGet:
         mock_pool = MagicMock()
 
         with (
-            patch("src.app.modules.tasks.service.queue") as mock_queue,
+            patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool),
             patch("src.app.modules.tasks.service.ArqJob") as MockArqJob,
         ):
-            mock_queue.pool = mock_pool
             mock_arq_job = AsyncMock()
             mock_arq_job.info = AsyncMock(return_value=mock_job_info)
             MockArqJob.return_value = mock_arq_job
@@ -125,10 +121,9 @@ class TestTaskServiceGet:
         mock_pool = MagicMock()
 
         with (
-            patch("src.app.modules.tasks.service.queue") as mock_queue,
+            patch("src.app.modules.tasks.service.get_arq", return_value=mock_pool),
             patch("src.app.modules.tasks.service.ArqJob") as MockArqJob,
         ):
-            mock_queue.pool = mock_pool
             mock_arq_job = AsyncMock()
             mock_arq_job.info = AsyncMock(return_value=None)
             MockArqJob.return_value = mock_arq_job
@@ -142,8 +137,7 @@ class TestTaskServiceGet:
         """Test task retrieval when queue is unavailable."""
         from src.app.modules.tasks.service import QueueUnavailableError, task_service
 
-        with patch("src.app.modules.tasks.service.queue") as mock_queue:
-            mock_queue.pool = None
+        with patch("src.app.modules.tasks.service.get_arq", return_value=None):
 
             with pytest.raises(QueueUnavailableError) as exc_info:
                 await task_service.get_task("test-job-123", tenant_id="tenant-1")

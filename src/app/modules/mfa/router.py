@@ -17,8 +17,8 @@ from src.app.api.deps import get_current_user
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException, UnauthorizedException
+from src.app.core.redis_provider import get_redis
 from src.app.core.security import get_mfa_pending_token_manager
-from src.app.core.utils import cache as _redis_cache
 from src.app.core.utils.ip_utils import get_client_ip
 from src.app.core.utils.rate_limit import rate_limiter
 from src.app.core.utils.user_utils import get_user_attr
@@ -278,15 +278,16 @@ async def complete_mfa_login(
     await check_mfa_rate_limit(fastapi_request, identifier=request.mfa_token)
 
     # Validate MFA pending token
-    # Use live cache.client (refreshed by tests per-loop)
-    if not _redis_cache.client:
+    # Use the live seam (refreshed by tests per-loop)
+    client = get_redis()
+    if not client:
         raise UnauthorizedException("Authentication service unavailable")
 
     from src.app.core.utils.ip_utils import get_client_ip
 
     client_ip = get_client_ip(fastapi_request)
 
-    token_store = get_mfa_pending_token_manager(_redis_cache.client)
+    token_store = get_mfa_pending_token_manager(client)
     token_data = await token_store.consume(request.mfa_token)
 
     if not token_data or token_data.get("scope") != "mfa_pending":

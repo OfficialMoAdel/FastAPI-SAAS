@@ -516,10 +516,10 @@ class WebhookService:
         # same delivery_id is enqueued twice (e.g. a retry scheduled while the
         # original is still in flight). A short-lived Redis lock ensures only one
         # worker performs the HTTP call; others skip and return the current state.
-        from src.app.core.utils import cache as _cache
+        from src.app.core.redis_provider import get_redis
         from src.app.core.utils.circuit_breaker import CircuitBreakerOpen, webhook_circuit
 
-        _redis = _cache.client
+        _redis = get_redis()
         _lock_key = f"webhook:deliver_lock:{delivery_id}"
         _lock_held = False
         if _redis is not None:

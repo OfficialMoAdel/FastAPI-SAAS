@@ -340,16 +340,17 @@ class MagicLinkService:
         """
         from urllib.parse import quote
 
-        from src.app.core.utils import queue
+        from src.app.core.redis_provider import get_arq
 
         # Build magic link URL. URL-encode the token to guard against any special
         # characters in future token formats and prevent URL truncation or injection.
         magic_link_url = f"{settings.FRONTEND_URL}/auth/magic-link?token={quote(token, safe='')}"
 
         # Enqueue via ARQ if available
-        if queue.pool:
+        arq = get_arq()
+        if arq:
             try:
-                await queue.pool.enqueue_job(
+                await arq.enqueue_job(
                     "send_magic_link_email_task",
                     email,
                     magic_link_url,
