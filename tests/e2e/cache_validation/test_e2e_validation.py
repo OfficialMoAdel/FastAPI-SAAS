@@ -48,16 +48,24 @@ class TestL1CacheE2E:
         # Clear cache
         _L1_TENANT_CACHE.clear()
         redis_call_count = 0
+        cached_payload = '{"id": "00000000-0000-0000-0000-000000000001", "slug": "test", "is_active": true}'
 
-        async def mock_redis_get(key):
-            nonlocal redis_call_count
-            redis_call_count += 1
-            logger.info(f"Redis GET called (call #{redis_call_count}): {key}")
-            return '{"id": "00000000-0000-0000-0000-000000000001", "slug": "test", "is_active": true}'
+        def _pipeline(*args, **kwargs):
+            # P7: the tenant L2 lookup is a single pipeline (exists + get) —
+            # one round-trip per L2 miss. Count each execute as one Redis call.
+            pipe = MagicMock()
+
+            async def _execute():
+                nonlocal redis_call_count
+                redis_call_count += 1
+                logger.info(f"Redis pipeline executed (call #{redis_call_count})")
+                return [False, cached_payload]  # no negative marker, cached tenant
+
+            pipe.execute = _execute
+            return pipe
 
         mock_redis = AsyncMock()
-        mock_redis.get = mock_redis_get
-        mock_redis.exists = AsyncMock(return_value=False)  # No negative cache
+        mock_redis.pipeline = _pipeline
 
         middleware = TenantMiddleware(MagicMock())
 

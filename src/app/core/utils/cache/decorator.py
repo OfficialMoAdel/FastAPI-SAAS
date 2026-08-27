@@ -372,21 +372,19 @@ def cache(  # noqa: C901
                             # filter; return cached bytes verbatim (zero-copy).
                             # This is the common case for raw dict endpoints and
                             # saves parse+validate+dump (~0.5-2ms) per hit.
-                            if response_model is None:
-                                return Response(content=cached_data, media_type="application/json")
-
-
-                                import json as _json
-                                raw = _json.loads(cached_data) if isinstance(cached_data, str | bytes) else cached_data
+                            if response_model is not None:
+                                raw = _state.json_loads(cached_data)
                                 if hasattr(response_model, "model_validate"):
                                     validated = response_model.model_validate(raw)
                                     filtered = validated.model_dump(mode="json", by_alias=True)
-                                else:
+                                elif hasattr(response_model, "parse_obj"):
                                     validated = response_model.parse_obj(raw)
                                     filtered = validated.dict(by_alias=True)
+                                else:
+                                    # Non-Pydantic response_model: nothing to filter.
+                                    filtered = None
                                 if filtered is not None:
-                                    import json as _j2
-                                    cached_data = _j2.dumps(filtered, default=str)
+                                    cached_data = _state.json_dumps(filtered, as_str=True)
                         except Exception as e:
                             # Never return an unfiltered cached payload on validation failure:
                             # fall through to a fresh handler call (treat as cache miss).
@@ -396,8 +394,10 @@ def cache(  # noqa: C901
                                 cache_key=cache_key,
                             )
                             cached_data = None
-                        # P6: Skip re-parse - return raw JSON bytes directly
-                        return Response(content=cached_data, media_type="application/json")
+
+                        if cached_data is not None:
+                            # P6: Skip re-parse - return raw JSON bytes directly
+                            return Response(content=cached_data, media_type="application/json")
 
             result = await func(request, *args, **kwargs)
 

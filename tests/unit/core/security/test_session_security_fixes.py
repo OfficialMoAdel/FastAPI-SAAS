@@ -416,3 +416,49 @@ def _patch_setting(name, value):
     settings_obj = MagicMock()
     setattr(settings_obj, name, value)
     return patch("src.app.core.config.settings.auth", settings_obj)
+
+
+class TestTokenVersionSingleflight:
+    """P6: concurrent Redis misses for the same user must collapse into ONE
+    DB lookup instead of stampeding SELECT users."""
+
+    @pytest.mark.asyncio
+    async def test_concurrent_misses_single_db_lookup(self):
+        from src.app.core.security.jwt_service import TokenType, verify_token
+
+        payload = {
+            "sub": "u",
+            "token_type": "access",
+            "jti": "abc",
+            "token_version": 7,
+            "tenant_id": 1,
+        }
+        db = MagicMock()
+        redis_client = MagicMock()
+        redis_client.get = AsyncMock(return_value=None)  # L2 miss for everyone
+        redis_client.set = AsyncMock()
+
+        get_calls = 0
+
+        async def slow_get(*args, **kwargs):
+            nonlocal get_calls
+            get_calls += 1
+            await asyncio.sleep(0.05)  # widen the herd window
+            return {"token_version": 7}
+
+        with (
+            patch("src.app.core.security.jwt_service.jwt.decode", return_value=payload),
+            patch(
+                "src.app.core.security.jwt_service.is_token_blacklisted",
+                new=AsyncMock(return_value=False),
+            ),
+            patch("src.app.core.utils.cache.client", redis_client),
+            patch("src.app.modules.users.crud.crud_users.get", new=slow_get),
+        ):
+            results = await asyncio.gather(
+                *(verify_token("tok", TokenType.ACCESS, db) for _ in range(10))
+            )
+
+        assert all(r is not None for r in results)
+        assert get_calls == 1  # singleflight collapsed the 10-way herd
+        redis_client.set.assert_awaited()  # winner backfilled the cache

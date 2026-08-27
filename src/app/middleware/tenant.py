@@ -16,6 +16,7 @@ Performance Optimization (R2-HYBRID MED-1):
 """
 
 import asyncio
+import re
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any, cast
@@ -46,6 +47,10 @@ _TENANT_LOCKS: dict[str, dict] = {}
 # immediately instead of serving stale is_active=True for up to ttl seconds.
 _L1_INVALIDATION_CHANNEL = "tenant:l1_invalidate"
 _l1_invalidation_task: asyncio.Task | None = None
+
+# P4: slug validation regex compiled once at import (was re-imported and
+# re-matched per request inside _get_tenant_by_slug).
+_SLUG_RE = re.compile(r"^[a-z0-9\-]+$")
 
 
 def invalidate_tenant_l1(slug: str | None = None) -> None:
@@ -227,9 +232,7 @@ class TenantMiddleware(BaseHTTPMiddleware):
 
     async def _get_tenant_by_slug(self, slug: str) -> Tenant | TenantContext | None:
         """Look up tenant by slug with L1+L2 caching and DB fallback."""
-        import re
-
-        if len(slug) > 64 or not re.match(r"^[a-z0-9\-]+$", slug):
+        if len(slug) > 64 or not _SLUG_RE.match(slug):
             return None
 
         # L1: In-memory cache
@@ -258,11 +261,15 @@ class TenantMiddleware(BaseHTTPMiddleware):
                     try:
                         # Check negative cache first (dedicated key avoids sentinel collision)
                         neg_key = f"tenant:negative:{slug}"
-                        if await redis_client.exists(neg_key):
+                        # P7: negative marker + cached tenant in ONE pipeline RTT
+                        # (previously two sequential awaits: exists then get).
+                        pipe = redis_client.pipeline(transaction=False)
+                        pipe.exists(neg_key)
+                        pipe.get(cache_key)
+                        neg_exists, cached = await pipe.execute()
+                        if neg_exists:
                             _L1_TENANT_CACHE[slug] = None
                             return None
-
-                        cached = await redis_client.get(cache_key)
                         if cached:
                             data = json_loads(cached)
                             _L1_TENANT_CACHE[slug] = data

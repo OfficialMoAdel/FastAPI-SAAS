@@ -257,3 +257,122 @@ class TestUserCachingWithoutRedis:
                 assert result["username"] == "testuser"
                 # DB should be queried
                 user_service.crud.get_user_with_tier_eager.assert_called_once()
+
+
+class TestUserCacheBatchInvalidation:
+    """N3: batch invalidation collapses per-user loops into one pipeline."""
+
+    @pytest.fixture
+    def mock_db_session(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def user_service(self, mock_db_session: AsyncMock) -> Any:
+        from src.app.modules.users.service import UserService
+
+        return UserService(mock_db_session)
+
+    @pytest.mark.asyncio
+    async def test_batch_invalidates_all_users_single_pipeline(self, user_service: Any) -> None:
+        """Multiple users must be invalidated in ONE pipeline round-trip."""
+        mock_tenant = _create_mock_tenant()
+        tid = mock_tenant.id
+        # SQLAlchemy Row-like tuples projected by the RBAC call site
+        rows = [
+            MagicMock(id=1, email="a@example.com", username="alice", tenant_id=tid, token_version=3),
+            MagicMock(id=2, email="b@example.com", username="bob", tenant_id=tid, token_version=5),
+        ]
+
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+                class MockPipeline:
+                    def __init__(self):
+                        self.set_calls = []
+                        self.delete_calls = []
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, exc_type, exc, tb):
+                        pass
+
+                    def delete(self, *keys):
+                        self.delete_calls.extend(keys)
+
+                    def set(self, key, val, ex=None):
+                        self.set_calls.append((key, val))
+
+                    async def execute(self):
+                        pass
+
+                mock_pipe = MockPipeline()
+                mock_client.pipeline = MagicMock(return_value=mock_pipe)
+
+                await user_service._invalidate_user_cache_batch(rows)
+
+                # ONE pipeline round-trip: deletes + token sets all inside it
+                mock_client.pipeline.assert_called_once()
+                deleted = mock_pipe.delete_calls
+                assert len(deleted) == 10
+                assert f"user:profile:{tid}:email:a@example.com" in deleted
+                assert f"user:profile:{tid}:username:bob" in deleted
+
+                # ONE pipeline: 2 token_version keys per user = 4 sets, versions preserved
+                assert len(mock_pipe.set_calls) == 4
+                set_map = dict(mock_pipe.set_calls)
+                assert set_map[f"tenant:{tid}:user:alice:token_version"] == "3"
+                assert set_map[f"tenant:{tid}:user:bob:token_version"] == "5"
+
+    @pytest.mark.asyncio
+    async def test_batch_bump_token_version(self, user_service: Any) -> None:
+        """bump_token_version=True increments every user's cached version."""
+        mock_tenant = _create_mock_tenant()
+        tid = mock_tenant.id
+        rows = [MagicMock(id=1, email="a@example.com", username="alice", tenant_id=tid, token_version=3)]
+
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+            with patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant):
+                class MockPipeline:
+                    def __init__(self):
+                        self.set_calls = []
+
+                    async def __aenter__(self):
+                        return self
+
+                    async def __aexit__(self, exc_type, exc, tb):
+                        pass
+
+                    def delete(self, *keys):
+                        pass
+
+                    def set(self, key, val, ex=None):
+                        self.set_calls.append((key, val))
+
+                    async def execute(self):
+                        pass
+
+                mock_pipe = MockPipeline()
+                mock_client.pipeline = MagicMock(return_value=mock_pipe)
+
+                await user_service._invalidate_user_cache_batch(rows, bump_token_version=True)
+
+                set_map = dict(mock_pipe.set_calls)
+                assert set_map[f"tenant:{tid}:user:alice:token_version"] == "4"
+
+    @pytest.mark.asyncio
+    async def test_batch_noop_without_redis(self, user_service: Any) -> None:
+        """No Redis client -> no-op, no error."""
+        rows = [MagicMock(id=1, email="a@example.com", username="alice", tenant_id="t", token_version=1)]
+        with patch("src.app.modules.users.service.get_redis", return_value=None):
+            await user_service._invalidate_user_cache_batch(rows)  # must not raise
+
+    @pytest.mark.asyncio
+    async def test_batch_empty_input_noop(self, user_service: Any) -> None:
+        """Empty user list -> no Redis interaction."""
+        mock_client = AsyncMock()
+        with patch("src.app.modules.users.service.get_redis", return_value=mock_client):
+            await user_service._invalidate_user_cache_batch([])
+            mock_client.pipeline.assert_not_called()
+            mock_client.delete.assert_not_called()

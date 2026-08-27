@@ -497,10 +497,15 @@ class RoleService:
 
             from src.app.modules.users.models import User
 
-            # Fetch affected users to get email/username for invalidating their cache
-            users_stmt = select(User).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+            # N3: project only the columns needed for cache invalidation
+            # (id/email/username/tenant_id/token_version) instead of loading
+            # full User rows (incl. hashed_password), then invalidate the whole
+            # batch in ONE Redis pipeline instead of 2 round-trips per user.
+            users_stmt = select(
+                User.id, User.email, User.username, User.tenant_id, User.token_version
+            ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
             users_result = await self.db.execute(users_stmt)
-            users_records = users_result.scalars().all()
+            users_records = users_result.all()
 
             await self.db.execute(
                 sa_update(User)
@@ -511,9 +516,7 @@ class RoleService:
 
             from src.app.modules.users.service import UserService
 
-            user_service = UserService(self.db)
-            for u in users_records:
-                await user_service._invalidate_user_cache(u)
+            await UserService(self.db)._invalidate_user_cache_batch(users_records)
 
         if affected_user_ids:
             await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
@@ -560,10 +563,15 @@ class RoleService:
 
                 from src.app.modules.users.models import User
 
-                # Fetch affected users to get email/username for invalidating their cache
-                users_stmt = select(User).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+                # N3: project only the columns needed for cache invalidation
+                # (id/email/username/tenant_id/token_version) instead of loading
+                # full User rows (incl. hashed_password), then invalidate the whole
+                # batch in ONE Redis pipeline instead of 2 round-trips per user.
+                users_stmt = select(
+                    User.id, User.email, User.username, User.tenant_id, User.token_version
+                ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
                 users_result = await self.db.execute(users_stmt)
-                users_records = users_result.scalars().all()
+                users_records = users_result.all()
 
                 await self.db.execute(
                     sa_update(User)
@@ -574,9 +582,7 @@ class RoleService:
 
                 from src.app.modules.users.service import UserService
 
-                user_service = UserService(self.db)
-                for u in users_records:
-                    await user_service._invalidate_user_cache(u)
+                await UserService(self.db)._invalidate_user_cache_batch(users_records)
 
             if affected_user_ids:
                 await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)

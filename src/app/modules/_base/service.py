@@ -209,6 +209,9 @@ class BaseService(Generic[T]):
                     db=self.db,
                     offset=offset,
                     limit=per_page,
+                    # P5: this method returns only the page rows (total_count is
+                    # discarded below), so skip fastcrud's separate COUNT query.
+                    return_total_count=False,
                     **kwargs,
                 )
                 if isinstance(result, dict):
@@ -262,6 +265,8 @@ class BaseService(Generic[T]):
                 offset=offset,
                 limit=per_page,
                 joins_config=joins_config,
+                # P5: only page rows are returned; skip the COUNT query.
+                return_total_count=False,
                 **kwargs,
             )
         # FastCRUD returns dict with 'data' key containing the records list

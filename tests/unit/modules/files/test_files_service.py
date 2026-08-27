@@ -75,6 +75,98 @@ async def test_upload_file_success(file_service, mock_db, mock_storage_service):
 
 
 @pytest.mark.asyncio
+async def test_upload_file_txn_split_ends_read_txn_before_upload(file_service, mock_db, mock_storage_service):
+    """N1: with FEATURE_UPLOAD_TXN_SPLIT the read-phase transaction must end
+    (rollback) BEFORE the storage upload, and the metadata write must commit
+    in a fresh transaction after it."""
+    from unittest.mock import patch
+
+    from src.app.core.config import settings as app_settings
+
+    tenant_id = uuid4()
+    file_obj = io.BytesIO(b"test content")
+
+    mock_settings = MagicMock()
+    mock_settings.max_file_size_mb = 10
+    mock_settings.allowed_file_types = ["text/plain"]
+    mock_settings.max_file_count = 100
+    mock_settings.storage_quota_bytes = 1024 * 1024 * 1024
+    mock_settings.provider = "local"
+    mock_storage_service.get_settings_or_raise.return_value = mock_settings
+
+    mock_result = MagicMock()
+    mock_row = MagicMock()
+    mock_row.file_count = 5
+    mock_row.storage_usage_bytes = 1000
+    mock_result.one_or_none.return_value = mock_row
+    mock_db.execute.return_value = mock_result
+
+    mock_upload_result = MagicMock()
+    mock_upload_result.success = True
+    mock_provider = MagicMock()
+    mock_storage_service.get_provider.return_value = mock_provider
+
+    order: list[str] = []
+
+    async def _upload(*args, **kwargs):
+        order.append("upload")
+        return mock_upload_result
+
+    mock_provider.upload = _upload
+    mock_db.rollback = AsyncMock(side_effect=lambda *a, **k: order.append("rollback"))
+    mock_db.add = MagicMock(side_effect=lambda *a, **k: order.append("add"))
+    mock_db.commit = AsyncMock(side_effect=lambda *a, **k: order.append("commit"))
+
+    with patch.object(app_settings.performance, "FEATURE_UPLOAD_TXN_SPLIT", True):
+        result = await file_service.upload_file(
+            tenant_id=tenant_id,
+            user_id=1,
+            file=file_obj,
+            filename="test.txt",
+            mime_type="text/plain",
+            size_bytes=100,
+        )
+
+    assert result.original_name == "test.txt"
+    assert order == ["rollback", "upload", "add", "commit"]
+
+
+@pytest.mark.asyncio
+async def test_upload_file_default_keeps_single_txn(file_service, mock_db, mock_storage_service):
+    """Default (flag off): no mid-flow rollback — original single-transaction behavior."""
+    tenant_id = uuid4()
+    file_obj = io.BytesIO(b"test content")
+
+    mock_settings = MagicMock()
+    mock_settings.max_file_size_mb = 10
+    mock_settings.allowed_file_types = ["text/plain"]
+    mock_settings.max_file_count = 100
+    mock_settings.storage_quota_bytes = 1024 * 1024 * 1024
+    mock_settings.provider = "local"
+    mock_storage_service.get_settings_or_raise.return_value = mock_settings
+
+    mock_result = MagicMock()
+    mock_row = MagicMock()
+    mock_row.file_count = 5
+    mock_row.storage_usage_bytes = 1000
+    mock_result.one_or_none.return_value = mock_row
+    mock_db.execute.return_value = mock_result
+
+    mock_provider = MagicMock()
+    mock_upload_result = MagicMock()
+    mock_upload_result.success = True
+    mock_provider.upload = AsyncMock(return_value=mock_upload_result)
+    mock_storage_service.get_provider.return_value = mock_provider
+
+    await file_service.upload_file(
+        tenant_id=tenant_id, user_id=1, file=file_obj, filename="test.txt", mime_type="text/plain", size_bytes=100
+    )
+
+    mock_db.rollback.assert_not_called()
+    mock_db.commit.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_upload_file_size_exceeded(file_service, mock_storage_service):
     tenant_id = uuid4()
     mock_settings = MagicMock()

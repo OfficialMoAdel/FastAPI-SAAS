@@ -14,6 +14,7 @@ import structlog
 from structlog.types import Processor
 
 from src.app.core.config import EnvironmentOption, settings
+from src.app.core.observability.log_sampling import make_sampling_processor
 from src.app.core.observability.log_sanitizer import SanitizingProcessor
 
 # Log directory setup
@@ -43,7 +44,6 @@ def setup_logging() -> None:
         structlog.processors.TimeStamper(fmt="iso"),
         structlog.processors.StackInfoRenderer(),
         structlog.processors.UnicodeDecoder(),
-        SanitizingProcessor(),  # Sanitize sensitive data before rendering
     ]
 
     if IS_PRODUCTION:
@@ -55,9 +55,18 @@ def setup_logging() -> None:
         shared_processors.append(structlog.dev.set_exc_info)
         renderer = structlog.dev.ConsoleRenderer(colors=True)
 
+    # P10: INFO/DEBUG sampling runs BEFORE sanitization, on the structlog-native
+    # chain only. structlog 25.x ProcessorFormatter.format does not catch
+    # DropEvent from foreign_pre_chain, so stdlib records must never reach the
+    # sampler — they keep full sanitization, no sampling.
+    structlog_processors = shared_processors + [
+        make_sampling_processor(settings.LOG_SAMPLING_RATE),
+        SanitizingProcessor(),  # Sanitize sensitive data before rendering
+    ]
+
     # Configure structlog
     structlog.configure(
-        processors=shared_processors
+        processors=structlog_processors
         + [
             structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
         ],
@@ -70,7 +79,7 @@ def setup_logging() -> None:
 
     # Create formatter that uses structlog processors
     formatter = structlog.stdlib.ProcessorFormatter(
-        foreign_pre_chain=shared_processors,
+        foreign_pre_chain=shared_processors + [SanitizingProcessor()],
         processors=[
             structlog.stdlib.ProcessorFormatter.remove_processors_meta,
             renderer,

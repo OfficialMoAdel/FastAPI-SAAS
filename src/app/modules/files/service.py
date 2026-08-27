@@ -16,6 +16,7 @@ from fastapi import Depends
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from src.app.core.config import settings as app_settings
 from src.app.core.db.database import async_get_db
 from src.app.modules.files.models import File
 from src.app.modules.files.schemas import FileUpdate
@@ -154,6 +155,23 @@ class FileService:
         # Get storage provider
         provider = await self._storage_service.get_provider(tenant_id)
 
+        # N1 (FEATURE_UPLOAD_TXN_SPLIT): every query above is a read; end the
+        # implicit transaction and release the pooled connection BEFORE the
+        # storage upload. Without this, the connection + open txn are held
+        # across network I/O (tens of ms–s), starving the pool
+        # (pool_size = workers × 10) under concurrent uploads. The metadata
+        # write below starts a fresh short transaction.
+        #
+        # `settings` is an ORM instance loaded via this session; rollback()
+        # expires it, so any later attribute read would trigger an illegal
+        # synchronous lazy-load under async SQLAlchemy. Snapshot the scalars
+        # we still need AFTER the upload, before ending the read transaction.
+        max_file_count = settings.max_file_count
+        storage_quota_bytes = settings.storage_quota_bytes
+        provider_name = settings.provider
+        if app_settings.performance.FEATURE_UPLOAD_TXN_SPLIT:
+            await self.db.rollback()
+
         # Upload to storage
         try:
             result = await provider.upload(file, storage_path, mime_type)
@@ -178,7 +196,7 @@ class FileService:
 
             # Atomically increment quota counters and strictly enforce hard limit (P0 optimization)
             await self._increment_quota_counters(
-                tenant_id, size_bytes, settings.max_file_count, settings.storage_quota_bytes
+                tenant_id, size_bytes, max_file_count, storage_quota_bytes
             )
 
             await self.db.commit()
@@ -199,7 +217,7 @@ class FileService:
             # Record metrics
             storage_metrics.record_upload(
                 tenant_id=str(tenant_id),
-                provider=settings.provider,
+                provider=provider_name,
                 size_bytes=size_bytes,
                 mime_type=mime_type,
                 success=True,
@@ -217,7 +235,7 @@ class FileService:
             )
             storage_metrics.record_upload(
                 tenant_id=str(tenant_id),
-                provider=settings.provider,
+                provider=provider_name,
                 size_bytes=size_bytes,
                 success=False,
             )

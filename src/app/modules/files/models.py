@@ -50,6 +50,14 @@ class File(Base):
         # R2-HYBRID MED-5: Composite index for MIME type filtering
         # Enables O(1) lookup for queries like: WHERE tenant_id=? AND mime_type=?
         Index("ix_files_tenant_mime", "tenant_id", "mime_type"),
+        # N5: unfiltered list is ORDER BY created_at DESC with tenant filter;
+        # the 3-column (tenant_id, user_id, created_at) index cannot serve it.
+        Index(
+            "idx_files_tenant_created",
+            "tenant_id",
+            "created_at",
+            postgresql_ops={"created_at": "DESC"},
+        ),
         {"extend_existing": True},
     )
 

@@ -125,11 +125,11 @@ class TestL1CacheIntegration:
 
         middleware = TenantMiddleware(MagicMock())
         mock_redis = AsyncMock()
-        mock_redis.exists = AsyncMock(return_value=False)  # No negative cache
-        # Use proper JSON string with lowercase true (valid JSON)
-        mock_redis.get = AsyncMock(
-            return_value='{"id": "00000000-0000-0000-0000-000000000002", "slug": "redis-tenant", "is_active": true}'
-        )
+        # P7: L2 lookup is a single pipeline (exists + get)
+        mock_pipe = MagicMock()
+        cached_json = '{"id": "00000000-0000-0000-0000-000000000002", "slug": "redis-tenant", "is_active": true}'
+        mock_pipe.execute = AsyncMock(return_value=[False, cached_json])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             result = await middleware._get_tenant_by_slug("redis-tenant")

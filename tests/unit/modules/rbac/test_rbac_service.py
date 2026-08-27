@@ -351,6 +351,61 @@ class TestRoleServicePermissions:
         with pytest.raises(ModelNotFoundError):
             await role_service.remove_permission_from_role(1, "unknown")
 
+    @pytest.mark.asyncio
+    async def test_add_permission_invalidates_affected_users_in_batch(
+        self, role_service, mock_db, mock_role, mock_permission
+    ):
+        """N3: affected users are projected (no full rows) and invalidated via
+        the single-pipeline batch method, not a per-user loop."""
+        role_service.get_role = AsyncMock(return_value=mock_role)
+
+        mock_result_perm = MagicMock()
+        mock_result_perm.scalar_one_or_none.return_value = mock_permission
+
+        mock_result_link = MagicMock()
+        mock_result_link.scalar_one_or_none.return_value = None
+
+        mock_affected_result = MagicMock()
+        mock_affected_result.scalars.return_value.all.return_value = [10, 11]
+
+        projected_rows = [("row-10",), ("row-11",)]
+        mock_users_result = MagicMock()
+        mock_users_result.all.return_value = projected_rows
+
+        # execute order: permission, existing link, affected user ids,
+        # projected user columns, token_version UPDATE
+        mock_db.execute.side_effect = [
+            mock_result_perm,
+            mock_result_link,
+            mock_affected_result,
+            mock_users_result,
+            MagicMock(),
+        ]
+
+        with (
+            patch(
+                "src.app.modules.users.service.UserService._invalidate_user_cache_batch",
+                new_callable=AsyncMock,
+            ) as mock_batch,
+            patch(
+                "src.app.modules.rbac.service.invalidate_users_permissions_cache_batch",
+                new_callable=AsyncMock,
+            ),
+        ):
+            await role_service.add_permission_to_role(1, "users:read")
+
+        mock_batch.assert_awaited_once_with(projected_rows)
+        # Projection query must not select the full ORM entity
+        users_stmt = mock_db.execute.call_args_list[3].args[0]
+        assert users_stmt.column_descriptions[0]["name"] == "id"
+        assert {c["name"] for c in users_stmt.column_descriptions} == {
+            "id",
+            "email",
+            "username",
+            "tenant_id",
+            "token_version",
+        }
+
 
 class TestRoleServiceUserAssignment:
     """Tests for assigning roles to users."""

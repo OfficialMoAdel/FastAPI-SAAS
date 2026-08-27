@@ -36,6 +36,12 @@ _db_fallback_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=300)
 _in_flight_db_checks: dict[str, asyncio.Task[bool]] = {}
 _db_fallback_lock = asyncio.Lock()
 
+# P6: singleflight for token_version DB lookups on Redis miss — collapses a
+# cache-miss herd for the same user into ONE SELECT (mirrors the
+# _in_flight_db_checks pattern above).
+_in_flight_token_version: dict[str, asyncio.Task[int | None]] = {}
+_token_version_lock = asyncio.Lock()
+
 _jwt_logger = get_logger(__name__)
 
 
@@ -190,6 +196,31 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
         return None
 
 
+async def _load_token_version(
+    cache_key: str, username_or_email: str, db: AsyncSession, redis_client: Any
+) -> int | None:
+    """P6: one DB lookup for the user's token_version; backfills Redis (nx).
+
+    Returns the stored token_version, or None when the user does not exist.
+    Only the singleflight winner runs this; concurrent waiters await its task.
+    """
+    from src.app.modules.users.crud import crud_users
+
+    if "@" in username_or_email:
+        user = await crud_users.get(db, email=username_or_email)
+    else:
+        user = await crud_users.get(db, username=username_or_email)
+    if not user:
+        return None
+    version = user.get("token_version")
+    if redis_client and version is not None:
+        try:
+            await redis_client.set(cache_key, str(version), ex=300, nx=True)
+        except Exception as e:
+            _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
+    return version
+
+
 async def is_token_revoked(token: str, jti: str | None, db: AsyncSession) -> bool:
     """Single revocation oracle — the ONE place that decides fail-open/fail-closed.
 
@@ -268,20 +299,26 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
             if cached_version != token_version:
                 return None
         else:
-            from src.app.modules.users.crud import crud_users
-
-            if "@" in username_or_email:
-                user = await crud_users.get(db, email=username_or_email)
-            else:
-                user = await crud_users.get(db, username=username_or_email)
-            if not user or user.get("token_version") != token_version:
+            # P6: singleflight — concurrent Redis misses for the same user
+            # share one DB lookup instead of stampeding SELECT users.
+            async with _token_version_lock:
+                task = _in_flight_token_version.get(cache_key)
+                if task is None:
+                    task = asyncio.create_task(
+                        _load_token_version(cache_key, username_or_email, db, redis_client)
+                    )
+                    _in_flight_token_version[cache_key] = task
+            try:
+                db_version = await task
+            except Exception as e:
+                # Fail closed: an unloadable token_version rejects the token.
+                _jwt_logger.error("token_version lookup failed, rejecting", error=str(e), user=username_or_email)
                 return None
-
-            if redis_client:
-                try:
-                    await redis_client.set(cache_key, str(user.get("token_version")), ex=300, nx=True)
-                except Exception as e:
-                    _jwt_logger.warning("token_version_cache_write_error", error=str(e), user=username_or_email)
+            finally:
+                async with _token_version_lock:
+                    _in_flight_token_version.pop(cache_key, None)
+            if db_version != token_version:
+                return None
 
     absolute_exp: float | None = payload.get("absolute_exp")
     if absolute_exp is not None and absolute_exp < datetime.now(UTC).timestamp():

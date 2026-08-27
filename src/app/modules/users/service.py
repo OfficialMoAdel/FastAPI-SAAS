@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Sequence
 from typing import Any, cast
 from uuid import UUID
 
@@ -277,6 +278,87 @@ class UserService:
         except Exception as e:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)
+
+    async def _invalidate_user_cache_batch(
+        self, users: Sequence[Any], bump_token_version: bool = False
+    ) -> None:
+        """Invalidate cache entries for many users in ONE Redis pipeline.
+
+        N3: replaces per-user ``_invalidate_user_cache`` loops (2 round-trips
+        per user) with a single pipelined round-trip for the whole batch.
+        Accepts ORM objects, dicts, or SQLAlchemy ``Row`` tuples — only
+        ``id/email/username/tenant_id/token_version`` are read, so callers
+        should project just those columns instead of loading full rows.
+
+        Mirrors ``_invalidate_user_cache`` key construction exactly so cache
+        behavior is unchanged; a malformed entry is skipped, not fatal.
+        """
+        client = get_redis()
+        if client is None or not users:
+            return
+
+        from src.app.core.utils.cache import build_tenant_key
+
+        tenant_context = get_current_tenant()
+        delete_keys: list[str] = []
+        token_sets: list[tuple[str, int]] = []
+
+        for user in users:
+            try:
+                if isinstance(user, dict):
+                    user_id = user["id"]
+                    email = user["email"]
+                    username = user["username"]
+                    tenant_id = user.get("tenant_id")
+                    current_version = user.get("token_version", 0)
+                else:
+                    user_id = user.id
+                    email = user.email
+                    username = user.username
+                    tenant_id = user.tenant_id
+                    current_version = getattr(user, "token_version", 0)
+
+                if tenant_id is None and tenant_context is not None:
+                    tenant_id = tenant_context.tenant_id
+
+                email = email.lower().strip()
+                username = username.lower().strip()
+                tid_arg = str(tenant_id) if tenant_id else None
+
+                delete_keys.append(_user_cache_key(user_id))
+                token_sets.append(
+                    (build_tenant_key(f"user:{username}:token_version", tid_arg), current_version)
+                )
+                token_sets.append(
+                    (build_tenant_key(f"user:{email}:token_version", tid_arg), current_version)
+                )
+
+                if tenant_id is not None:
+                    tenant_id_str = str(tenant_id)
+                    delete_keys.extend(
+                        [
+                            f"{USER_CACHE_PREFIX}:{tenant_id_str}:email:{email}",
+                            f"{USER_CACHE_PREFIX}:{tenant_id_str}:username:{username}",
+                            f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{username}",
+                            f"{AUTH_INFO_CACHE_PREFIX}:{tenant_id_str}:{email}",
+                        ]
+                    )
+            except Exception as e:
+                logger.warning("Failed to build batch-invalidation keys for user", error=e)
+
+        if not delete_keys and not token_sets:
+            return
+
+        try:
+            async with client.pipeline(transaction=False) as pipe:
+                if delete_keys:
+                    pipe.delete(*delete_keys)
+                for key, version in token_sets:
+                    new_version = version + 1 if bump_token_version else version
+                    pipe.set(key, str(new_version), ex=300)
+                await pipe.execute()
+        except Exception as e:
+            logger.warning("Failed to batch-invalidate user caches", count=len(users), error=e)
 
     async def _get_cached_user(self, cache_key: str) -> dict[str, Any] | None:
         """Get cached user data if available."""

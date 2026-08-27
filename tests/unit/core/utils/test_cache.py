@@ -13,6 +13,7 @@ from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from redis.asyncio import Redis
 
 from src.app.core.exceptions.cache_exceptions import (
@@ -534,6 +535,79 @@ async def test_cache_get_hit(client: MagicMock) -> None:
     ):
         resp = await handler(request, rid=1)
     assert resp.body == b'{"cached": true}'
+
+
+async def test_cache_get_hit_filters_via_response_model(client: MagicMock) -> None:
+    """H2: cached payload must be re-filtered through the route response_model.
+
+    Regression: the re-validation block was unreachable dead code, so cached
+    payloads for routes WITH a response_model were returned unfiltered
+    (exclude/alias bypass).
+    """
+    from fastapi import Request
+
+    class OutModel(BaseModel):
+        ok: bool
+
+    client.get = AsyncMock(return_value=b'{"ok": true, "secret": "leak"}')
+    client.ttl = AsyncMock(return_value=100)
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    route = MagicMock()
+    route.response_model = OutModel
+    request.scope = {"route": route}
+
+    calls = {"n": 0}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        calls["n"] += 1
+        return {"ok": True, "secret": "leak"}
+
+    with (
+        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
+        patch("src.app.core.utils.cache.random.random", return_value=1.0),
+    ):
+        resp = await handler(request, rid=1)
+
+    assert calls["n"] == 0  # cache hit, no fresh fetch
+    assert b"secret" not in resp.body
+    assert b'"ok":true' in resp.body or b'"ok": true' in resp.body
+
+
+async def test_cache_get_hit_invalid_payload_falls_through(client: MagicMock) -> None:
+    """H2: a cached payload that fails response_model validation must never be
+    served — fall through to a fresh handler call."""
+    from fastapi import Request
+
+    class OutModel(BaseModel):
+        ok: bool
+
+    client.get = AsyncMock(return_value=b'{"wrong_shape": 1}')
+    client.ttl = AsyncMock(return_value=100)
+    request = MagicMock(spec=Request)
+    request.method = "GET"
+    request.state = MagicMock()
+    route = MagicMock()
+    route.response_model = OutModel
+    request.scope = {"route": route}
+
+    calls = {"n": 0}
+
+    @cache(key_prefix="p", resource_id_name="rid")
+    async def handler(request, rid):
+        calls["n"] += 1
+        return {"ok": True}
+
+    with (
+        patch("src.app.core.utils.cache.get_current_tenant", return_value=None),
+        patch("src.app.core.utils.cache.random.random", return_value=1.0),
+    ):
+        resp = await handler(request, rid=1)
+
+    assert calls["n"] == 1  # fresh handler call, not the invalid cached payload
+    assert resp.body == b'{"ok":true}'
 
 
 async def test_cache_get_miss_and_set(client: MagicMock) -> None:

@@ -739,6 +739,16 @@ class PerformanceSettings(BaseSettings):
     FEATURE_REMOVE_WASTED_CONNECTION: bool = True
     """Remove wasted DB connection in tenant middleware (P0-1)."""
 
+    FEATURE_UPLOAD_TXN_SPLIT: bool = False
+    """N1: commit the quota read-phase before the storage upload so the pooled
+    connection is not held across network I/O; the metadata write runs in a
+    fresh short transaction after the upload."""
+
+    LOG_SAMPLING_RATE: float = Field(default=1.0, ge=0.0, le=1.0)
+    """P10: keep-probability for INFO/DEBUG structlog events (1.0 = keep all).
+    WARNING and above are never sampled. Dropped events skip sanitization and
+    rendering entirely."""
+
 
 class QueryProfilerSettings(BaseSettings):
     """Development mode SQL query profiler configuration.

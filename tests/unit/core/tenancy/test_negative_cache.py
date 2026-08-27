@@ -30,9 +30,11 @@ class TestNegativeCache:
         middleware = TenantMiddleware(MagicMock())
         tenant_slug = "nonexistent"
 
-        # Mock Redis to return None (L2 miss)
+        # Mock Redis pipeline: no negative marker, no cached tenant (L2 miss)
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[False, None])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             # Mock DB query to return None (tenant not found)
@@ -60,7 +62,9 @@ class TestNegativeCache:
         tenant_slug = "ghost"
 
         mock_redis = AsyncMock()
-        mock_redis.get = AsyncMock(return_value=None)
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[False, None])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             mock_db = AsyncMock()
@@ -123,8 +127,10 @@ class TestNegativeCachePropagation:
         middleware = TenantMiddleware(MagicMock())
 
         mock_redis = AsyncMock()
-        # L2 has negative cache (null string in Redis)
-        mock_redis.get = AsyncMock(return_value="null")
+        # L2 has negative marker set
+        mock_pipe = MagicMock()
+        mock_pipe.execute = AsyncMock(return_value=[True, None])
+        mock_redis.pipeline = MagicMock(return_value=mock_pipe)
 
         with patch("src.app.core.utils.cache.client", mock_redis):
             await middleware._get_tenant_by_slug("l2-negative")

@@ -74,6 +74,14 @@ def upgrade() -> None:
     op.create_index("idx_files_user", "files", ["user_id"])
     op.create_index("idx_files_tenant_user_created", "files", ["tenant_id", "user_id", "created_at"])
     op.create_index("ix_files_tenant_mime", "files", ["tenant_id", "mime_type"])
+    # N5: unfiltered file list is WHERE tenant_id = ? ORDER BY created_at DESC;
+    # the 3-column idx_files_tenant_user_created cannot serve it (user_id gap).
+    op.create_index(
+        "idx_files_tenant_created",
+        "files",
+        ["tenant_id", "created_at"],
+        postgresql_ops={"created_at": "DESC"},
+    )
 
     # ===== USER_PREFERENCES =====
     op.create_table(
