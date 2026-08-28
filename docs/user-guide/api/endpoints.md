@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.core.db.database import async_get_db
 from src.app.modules.users.service import UserService
 from src.app.modules.users.schemas import UserRead, UserCreate
-from src.app.api.dependencies import get_current_user
+from src.app.api.deps import get_current_user
 
 router = APIRouter(prefix="/users", tags=["users"])
 

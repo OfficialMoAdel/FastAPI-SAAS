@@ -54,6 +54,9 @@ def _make_db() -> MagicMock:
     db.begin_nested.return_value.__aexit__ = AsyncMock(return_value=False)
     db.flush = AsyncMock()
     db.commit = AsyncMock()
+    # AsyncSession.rollback() is always awaitable (C-2 removed the
+    # inspect.isawaitable guard that let a non-awaitable mock slip through).
+    db.rollback = AsyncMock()
     db.add = MagicMock()
     db.execute = AsyncMock()
     return db
@@ -138,12 +141,13 @@ async def test_create_refresh_token_custom() -> None:
 async def test_check_db_fallback_cache_hit() -> None:
     from src.app.core.security.jwt_service import _db_fallback_cache
 
-    _db_fallback_cache["jti:abc"] = True
+    # The fast path looks up cache_key = jti (raw), not the "jti:"-prefixed DB form.
+    _db_fallback_cache["abc"] = True
     try:
         result = await _check_db_fallback("abc", "tok", _make_db())
         assert result is True
     finally:
-        _db_fallback_cache.pop("jti:abc", None)
+        _db_fallback_cache.pop("abc", None)
 
 
 async def test_check_db_fallback_in_flight() -> None:

@@ -96,8 +96,33 @@ def _start_l1_invalidation_listener() -> None:
             raise
         except Exception as e:  # noqa: BLE001
             logger.warning("Tenant L1 invalidation listener exited: %s", e)
+        finally:
+            # M-3: release the subscription so the connection returns to the pool.
+            try:
+                await pubsub.unsubscribe(_L1_INVALIDATION_CHANNEL)
+                await pubsub.close()
+            except Exception:  # noqa: BLE001
+                pass
 
     _l1_invalidation_task = asyncio.create_task(_listen())
+
+
+async def stop_l1_invalidation_listener() -> None:
+    """M-3: cancel the L1 invalidation listener on application shutdown.
+
+    Previously the task created in ``_start_l1_invalidation_listener`` was never
+    cancelled, leaking the pubsub subscription across shutdown.
+    """
+    global _l1_invalidation_task
+    if _l1_invalidation_task is None or _l1_invalidation_task.done():
+        _l1_invalidation_task = None
+        return
+    _l1_invalidation_task.cancel()
+    try:
+        await _l1_invalidation_task
+    except (asyncio.CancelledError, Exception):  # noqa: BLE001
+        pass
+    _l1_invalidation_task = None
 
 
 @asynccontextmanager

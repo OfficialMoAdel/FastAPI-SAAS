@@ -145,19 +145,19 @@ class CryptSettings(BaseSettings):
         import os
         from pathlib import Path
 
+        from dotenv import dotenv_values
+
         env_value: str | None = os.environ.get("ENVIRONMENT")
         if env_value is None:
+            # M-4: use python-dotenv's parser instead of hand-rolled line
+            # splitting (handles quoting/escaping consistently with the loader).
             src_dir_env = Path(__file__).resolve().parents[1] / ".env"
             repo_env = Path(".env")
             for candidate in (src_dir_env, repo_env):
                 if candidate.is_file():
-                    for line in candidate.read_text(encoding="utf-8", errors="ignore").splitlines():
-                        line = line.strip()
-                        if line.startswith("ENVIRONMENT="):
-                            env_value = line.split("=", 1)[1].strip().strip("'\"")
-                            break
-                if env_value is not None:
-                    break
+                    env_value = dotenv_values(candidate).get("ENVIRONMENT")
+                    if env_value is not None:
+                        break
 
         env = (env_value or "local").lower()
         if env in ("production", "staging"):
@@ -357,9 +357,23 @@ class AuthSettings(BaseSettings):
     # Token blacklist cache failure mode - fail_closed by default for security
     # "fail_open": Return None when Redis unavailable (allow auth to continue)
     # "fail_closed": Return True when Redis unavailable (treat as blacklisted, block auth)
+    # S-1 NOTE: with fail_open, SessionManager enters degraded mode during Redis
+    # outages and accepts sessions whose JWT is unexpired — revoked sessions can
+    # be accepted for the outage duration. Only choose fail_open if availability
+    # outweighs that risk.
     TOKEN_CACHE_FAILURE_MODE: Literal["fail_open", "fail_closed"] = Field(
         default="fail_closed",
         description="How to handle token blacklist cache failures: 'fail_open' (allow) or 'fail_closed' (block)",
+    )
+    # SECURITY FIX (S-4): Session registration failure mode. Previously there was
+    # no config knob — the getattr fallback in login_helpers.py silently defaulted
+    # to fail_open, so concurrent-session limiting was bypassed during Redis outages.
+    # "fail_open": Log the error but let the login proceed (availability focused).
+    # "fail_closed": Reject the login with 503 (security focused — session limiting enforced).
+    # Mirrors AUDIT_LOG_FAILURE_MODE / TOKEN_CACHE_FAILURE_MODE (fail_closed default).
+    SESSION_REGISTRATION_FAIL_MODE: Literal["fail_open", "fail_closed"] = Field(
+        default="fail_closed",
+        description="Session-registration failure mode: 'fail_open' (allow login) or 'fail_closed' (block login)",
     )
 
 
@@ -835,7 +849,9 @@ class Settings(BaseSettings):
     def validate_cors_origins(self) -> "Settings":
         """Validate CORS origins for production safety.
 
-        Warns if wildcard '*' is used in non-local environments.
+        Raises if wildcard '*' is used in non-local environments.
+        Warns (S-6) if localhost origins are present in production/staging —
+        the defaults include localhost for local dev and are not production-gated.
         """
         env = getattr(self.env.ENVIRONMENT, "value", self.env.ENVIRONMENT)
         has_wildcard = "*" in self.cors.CORS_ORIGINS
@@ -846,6 +862,25 @@ class Settings(BaseSettings):
                 "This allows any website to access your API. "
                 "Specify explicit origins for production."
             )
+
+        # S-6: localhost origins in production/staging are almost always a
+        # misconfiguration (leftover dev defaults). Warn, don't block.
+        if env in ("production", "staging"):
+            localhost_markers = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
+            localhost_origins = [
+                origin
+                for origin in self.cors.CORS_ORIGINS
+                if any(marker in origin for marker in localhost_markers)
+            ]
+            if localhost_origins:
+                import logging
+
+                logging.getLogger(__name__).warning(
+                    "SECURITY WARNING (S-6): CORS_ORIGINS contains localhost origins in %s: %s. "
+                    "Restrict CORS_ORIGINS to your real deployment origins.",
+                    env,
+                    localhost_origins,
+                )
 
         return self
 

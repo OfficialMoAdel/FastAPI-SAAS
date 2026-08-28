@@ -117,20 +117,26 @@ def test_route_count():
 
 
 def test_response_models():
-    """Test that endpoints have correct response models."""
-    from src.app.modules.users.schemas import UserList, UserRead
+    """Test that endpoints have correct response models.
+
+    S-7: the ungated read endpoints (/me, /{user_id}) return UserReadPublic,
+    which omits privilege/tenancy fields (is_superuser, tenant_id). The
+    admin-gated create (USERS_MANAGE) and list (USERS_READ) endpoints keep the
+    full UserRead / UserList schemas.
+    """
+    from src.app.modules.users.schemas import UserList, UserRead, UserReadPublic
 
     # Find routes and check response models
     for route in users_router.routes:
         if route.path in ["/users/", "/users"] and "POST" in route.methods:
-            # Create endpoint should return UserRead
+            # Create endpoint (admin-gated) should return full UserRead
             assert route.response_model == UserRead
         elif route.path in ["/users/", "/users"] and "GET" in route.methods:
-            # List endpoint should return UserList
+            # List endpoint (admin-gated) should return UserList
             assert route.response_model == UserList
         elif route.path == "/users/me" and "GET" in route.methods:
-            # Me endpoint should return UserRead
-            assert route.response_model == UserRead
+            # Me endpoint (self, ungated) should return UserReadPublic
+            assert route.response_model == UserReadPublic
         elif route.path == "/users/{user_id}" and "GET" in route.methods:
-            # Get by ID should return UserRead
-            assert route.response_model == UserRead
+            # Get by ID (ungated) should return UserReadPublic
+            assert route.response_model == UserReadPublic

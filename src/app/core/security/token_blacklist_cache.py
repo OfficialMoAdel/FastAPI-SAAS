@@ -75,6 +75,15 @@ BLACKLIST_KEY = "token:blacklist"
 # P2-4: Negative cache key prefix - stores tokens verified as NOT blacklisted
 # R2-HYBRID LOW-2: TTL tuned via settings for configurable trade-off
 # Reduced to 60 seconds to minimize negative cache invalidation delays
+#
+# S-2 revocation semantics: add_token_to_blacklist / add_tokens_to_blacklist
+# delete the negative key in the SAME pipeline as the blacklist ZADD, so
+# revocation is immediate on successful write. The Lua check path is atomic
+# (single EVALSHA), so it cannot interleave with a revocation. The only race
+# window is the non-atomic 4-roundtrip FALLBACK path (used when Lua script
+# loading fails): a concurrent verify can re-SET the negative key after the
+# revocation's DELETE, accepting a revoked token for at most NEGATIVE_CACHE_TTL
+# (60s). Bounded by design; keep the TTL low.
 NEGATIVE_CACHE_KEY = "token:verified:"
 
 # Import settings for configurable TTL
@@ -196,15 +205,22 @@ async def _is_token_blacklisted_fallback(token: str, jti: str | None = None) -> 
     """Fallback implementation without Lua script (original 4-roundtrip version).
 
     Used when Lua script loading fails.
+
+    SECURITY FIX: honors TOKEN_CACHE_FAILURE_MODE on error. Previously this
+    path returned None (fail-open) unconditionally, so with fail_closed
+    configured a Redis error during the fallback still let the caller treat
+    the token as not revoked — defeating the configured failure mode.
     """
     from src.app.core.config import settings
 
+    fail_closed = settings.auth.TOKEN_CACHE_FAILURE_MODE == "fail_closed"
     redis_client = _get_redis_client()
     if redis_client is None:
         from src.app.core.monitoring.r1_unified_metrics import record_fail_open
 
-        record_fail_open("token_blacklist_fallback")
-        return None
+        if not fail_closed:
+            record_fail_open("token_blacklist_fallback")
+        return True if fail_closed else None
 
     blacklist_member = _extract_blacklist_member(token, jti)
 
@@ -228,7 +244,7 @@ async def _is_token_blacklisted_fallback(token: str, jti: str | None = None) -> 
         return True
     except Exception as e:
         logger.warning("Redis blacklist fallback check failed", error=e)
-        return None
+        return True if fail_closed else None
 
 
 async def add_token_to_blacklist(token: str, expires_at: datetime) -> bool:

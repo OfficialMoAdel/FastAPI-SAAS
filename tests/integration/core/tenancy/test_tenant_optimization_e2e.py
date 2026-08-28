@@ -120,7 +120,9 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert response.status_code == 200, f"Alpha failed: {response.text}"
             data = response.json()
             assert data["email"] == user_alpha.email
-            assert data["tenant_id"] == str(tenant_alpha.id)  # Compare as string
+            # S-7: /users/me returns UserReadPublic — privileged fields are stripped.
+            assert "tenant_id" not in data
+            assert "is_superuser" not in data
 
             # 2. Login as Beta - use dict for current_user
             app.dependency_overrides[get_current_user] = lambda: beta_user_dict
@@ -130,7 +132,9 @@ async def test_tenant_optimization_e2e(db_session, tenant_alpha, user_alpha, ten
             assert response.status_code == 200, f"Beta failed: {response.text}"
             data = response.json()
             assert data["email"] == user_beta.email
-            assert data["tenant_id"] == str(tenant_beta.id)  # Compare as string
+            # S-7: /users/me returns UserReadPublic — privileged fields are stripped.
+            assert "tenant_id" not in data
+            assert "is_superuser" not in data
 
             # Clean up
             app.dependency_overrides.clear()

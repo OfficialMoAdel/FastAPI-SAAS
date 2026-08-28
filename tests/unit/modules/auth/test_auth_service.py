@@ -163,6 +163,12 @@ class TestAuthServiceLockout:
             patch("src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock) as mock_access,
             patch("src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock) as mock_refresh,
             patch("src.app.modules.mfa.service.get_mfa_service", return_value=mock_mfa_service),
+            # S-4: session registration is orthogonal to lockout logic; it now
+            # fails closed without Redis, so mock it out in this unit test.
+            # Patch at the tokens.py lookup site (module-level import there).
+            patch(
+                "src.app.modules.auth.services.tokens.register_login_session", new_callable=AsyncMock
+            ),
         ):
             mock_auth.return_value = mock_user
             mock_access.return_value = "access_token"
@@ -649,6 +655,11 @@ class TestAuthServiceSecurityBugFixes:
             patch("src.app.modules.auth.service.blacklist_token", new_callable=AsyncMock),
             patch("src.app.modules.auth.service.UserService") as mock_get_user_service,
             patch("src.app.modules.users.service.get_current_tenant", return_value=mock_tenant),
+            # S-4: session registration is orthogonal to refresh logic; it now
+            # fails closed without Redis, so mock it out in this unit test.
+            patch(
+                "src.app.core.security.login_helpers.register_login_session", new_callable=AsyncMock
+            ),
         ):
             from src.app.core.config import EnvironmentOption
 

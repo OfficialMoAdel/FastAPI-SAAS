@@ -34,7 +34,7 @@ from src.app.modules.auth.schemas import (
     SessionListResponse,
 )
 from src.app.modules.auth.service import AuthService
-from src.app.modules.users.schemas import UserCreate, UserRead
+from src.app.modules.users.schemas import UserCreate, UserReadPublic
 from src.app.modules.users.service import UserService
 
 
@@ -89,7 +89,7 @@ async def login_for_access_token(
 
 @router.post(
     "/register",
-    response_model=UserRead,
+    response_model=UserReadPublic,
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(check_auth_rate_limit)],
 )

@@ -23,7 +23,7 @@ exactly where they ran before.
 ## Usage
 
 ```python
-from src.app.api.dependencies import RequestContextDep
+from src.app.api.deps import RequestContextDep
 
 @router.post("/upload", dependencies=[Depends(requires_permission(Permission.FILES_WRITE))])
 async def upload_file(

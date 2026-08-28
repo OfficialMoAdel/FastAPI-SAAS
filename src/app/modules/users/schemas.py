@@ -112,18 +112,35 @@ class UserUpdateInternal(BaseUpdate):
 # =============================================================================
 
 
-class UserRead(BaseRead):
-    """API response schema for user data."""
+class UserReadPublic(BaseRead):
+    """Public API response schema for user data.
+
+    S-7: Deliberately excludes privilege/tenancy fields (``is_superuser``,
+    ``tenant_id``) so they cannot be enumerated from public/self endpoints.
+    Admin-gated endpoints and internal code use :class:`UserRead`, which adds
+    those fields back.
+    """
 
     name: str
     username: str
     email: EmailStr
     profile_image_url: str
     tier_id: int | None
-    tenant_id: UUID
-    is_superuser: bool = False
     is_email_verified: bool = False
     is_active: bool = True
+
+
+class UserRead(UserReadPublic):
+    """Full API response schema for user data (admin/internal).
+
+    S-7: Adds privilege/tenancy fields on top of :class:`UserReadPublic`.
+    Used by admin-gated endpoints and as the internal CRUD projection schema —
+    the router IDOR/tenant check reads ``tenant_id`` from this representation
+    before FastAPI serializes the response, so it must stay complete.
+    """
+
+    tenant_id: UUID
+    is_superuser: bool = False
 
 
 class UserCreate(UserBase, BaseCreate):

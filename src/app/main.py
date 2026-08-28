@@ -1,5 +1,6 @@
 """FastAPI SaaS application entry point."""
 
+import asyncio
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -148,9 +149,6 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
             except Exception as e:
                 logger.warning("Failed to preload Lua scripts", error=str(e))
 
-        # Warm token blacklist cache from database
-        await _warm_token_blacklist_cache()
-
         # Warm application caches
         logger.info("Loading security runtime config...")
         from src.app.core.utils.config_store import get_runtime_config
@@ -174,15 +172,15 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
             logger.info("Security runtime config loaded from Redis")
 
         logger.info("Starting application cache warming...")
-        await _warm_application_caches()
+        # A-7: the two warmers are independent (each opens its own session and
+        # catches its own errors), so run them concurrently instead of serially.
+        await asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches())
 
         if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION and settings.app.CACHE_WARMING_DELAY_SECONDS > 0:
             logger.info(
                 "Cache warming completed, sleeping before ready in production",
                 total_seconds=settings.app.CACHE_WARMING_DELAY_SECONDS,
             )
-            import asyncio
-
             await asyncio.sleep(settings.app.CACHE_WARMING_DELAY_SECONDS)
 
         # Initialize admin interface if it exists
@@ -208,6 +206,13 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
                 logger.info("Bcrypt thread pool shutdown successfully")
         except Exception as e:
             logger.error("Failed to shutdown bcrypt thread pool", error=str(e))
+
+        # M-3: cancel the tenant L1 invalidation listener (leaked pubsub task).
+        # No try/except needed: stop_l1_invalidation_listener is fully
+        # self-guarded (catches CancelledError/Exception internally).
+        from src.app.middleware.tenant import stop_l1_invalidation_listener
+
+        await stop_l1_invalidation_listener()
 
 
 app = create_application(

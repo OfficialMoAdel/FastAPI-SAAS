@@ -32,6 +32,7 @@ from sqlalchemy.orm import selectinload
 
 from src.app.core.config import settings
 from src.app.core.db.tenant_crud import TenantAwareCRUD
+from src.app.core.pagination import MAX_PER_PAGE
 
 T = TypeVar("T")
 
@@ -147,11 +148,10 @@ class BaseService(Generic[T]):
             page = 1
         if per_page < 1:
             per_page = 1
-        from src.app.core.pagination import MAX_PER_PAGE as _MAX_PP  # local to avoid cycle
-        if per_page > _MAX_PP:
+        if per_page > MAX_PER_PAGE:
             from src.app.core.logger import get_logger
-            get_logger(__name__).warning("per_page_clamped", requested=per_page, clamped=_MAX_PP)
-            per_page = _MAX_PP
+            get_logger(__name__).warning("per_page_clamped", requested=per_page, clamped=MAX_PER_PAGE)
+            per_page = MAX_PER_PAGE
         offset = max(0, (page - 1) * per_page)
         _SENSITIVE_COLS = {"hashed_password", "password", "secret", "api_key"}
         if "sort_columns" in kwargs:

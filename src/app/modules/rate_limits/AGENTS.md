@@ -19,14 +19,12 @@ rg -n "RateLimit" src/app/modules/rate_limits/
 ### DO: Use tier-based rate limits
 
 ```python
-from src.app.modules.rate_limits.crud import crud_rate_limits
+from src.app.modules.rate_limits.service import RateLimitService
 
-# Get rate limits for a tier
-rate_limits = await crud_rate_limits.get_multi(
-    db=db,
-    tenant_id=tenant_id,
-    tier_name=tier_name,
-)
+# Rate limits are accessed through the service (BaseService flyweight CRUD),
+# not a module-global crud instance (crud.py was removed in the C4 refactor).
+svc = RateLimitService(db)
+rate_limits = await svc.get_rate_limits_by_tier_id(tier_id)
 ```
 
 ### DON'T: Hardcode rate limits
@@ -57,17 +55,16 @@ X-RateLimit-Reset: 3600
 
 ```
 src/app/modules/rate_limits/
-├── __init__.py           # Exports crud_rate_limits
+├── __init__.py           # Exports RateLimitService
 ├── router.py             # /rate_limits endpoints
-├── crud.py               # FastCRUD operations
 ├── models.py             # RateLimit model
 ├── schemas.py            # Pydantic schemas
-└── service.py            # RateLimitService
+└── service.py            # RateLimitService (BaseService flyweight CRUD)
 ```
 
 ## Touch Points
 
-- **CRUD operations**: `modules/rate_limits/crud.py`
+- **CRUD operations**: `modules/rate_limits/service.py::RateLimitService` (via `self.crud`)
 - **Models**: `modules/rate_limits/models.py::RateLimit`
 - **Tier integration**: `modules/tiers/` for limit lookup
 - **Middleware**: `src/app/middleware/rate_limit.py`

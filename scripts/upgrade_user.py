@@ -5,10 +5,16 @@ import sys
 # Add src to path
 sys.path.append(os.getcwd())
 
+from fastcrud import FastCRUD
+
 from src.app.core.db.database import async_session_maker
-from src.app.modules.tiers.crud import crud_tiers
+from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.schemas import TierCreateInternal
 from src.app.modules.users.crud import crud_users
+
+# tiers/crud.py was deleted in the C4 refactor; Tier has no tenant_id column,
+# so a plain FastCRUD instance matches the BaseService flyweight behavior.
+crud_tiers = FastCRUD(Tier)
 
 
 async def upgrade_perf_user():

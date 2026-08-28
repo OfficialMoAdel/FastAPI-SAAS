@@ -500,89 +500,65 @@ class EventBus:
                     error=str(result),
                 )
 
-                # Graceful degradation: try sync execution with timeout
-                try:
-                    await asyncio.wait_for(
-                        handler(data),
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                    _pkg.logger.info(
-                        "Handler executed synchronously after gather queue failure",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                    )
-                except TimeoutError as e:
-                    _pkg.logger.error(
-                        "Sync fallback timed out after gather failure",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                    await self.add_to_dlq(
-                        event_name=event_name,
-                        handler_name=getattr(handler, "__name__", repr(handler)),
-                        data=data,
-                        error=str(e),
-                        attempt_count=0,
-                    )
-                except Exception as handler_error:
-                    _pkg.logger.error(
-                        "Sync fallback also failed",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        error=str(handler_error),
-                    )
-                    await self.add_to_dlq(
-                        event_name=event_name,
-                        handler_name=getattr(handler, "__name__", repr(handler)),
-                        data=data,
-                        error=str(handler_error),
-                        attempt_count=0,
-                    )
+                await self._sync_fallback_handler(event_name, handler, data, reason="gather queue failure")
                 continue
 
             # Unpack result tuple (narrowed to tuple by isinstance check above)
             success, handler, error = result  # type: ignore[misc]
             if not success and error is not None:
-                # Graceful degradation: try sync execution with timeout
-                try:
-                    await asyncio.wait_for(
-                        handler(data),
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                    _pkg.logger.info(
-                        "Handler executed synchronously after queue failure",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                    )
-                except TimeoutError as e:
-                    _pkg.logger.error(
-                        "Sync fallback timed out after queue failure",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
-                    )
-                    await self.add_to_dlq(
-                        event_name=event_name,
-                        handler_name=getattr(handler, "__name__", repr(handler)),
-                        data=data,
-                        error=str(e),
-                        attempt_count=0,
-                    )
-                except Exception as handler_error:
-                    _pkg.logger.error(
-                        "Sync fallback also failed",
-                        event_name=event_name,
-                        handler=handler.__name__,
-                        error=str(handler_error),
-                    )
-                    await self.add_to_dlq(
-                        event_name=event_name,
-                        handler_name=getattr(handler, "__name__", repr(handler)),
-                        data=data,
-                        error=str(handler_error),
-                        attempt_count=0,
-                    )
+                await self._sync_fallback_handler(event_name, handler, data, reason="queue failure")
+
+    async def _sync_fallback_handler(
+        self,
+        event_name: str,
+        handler: Callable[..., Coroutine[Any, Any, None]],
+        data: dict[str, Any],
+        reason: str,
+    ) -> None:
+        """A-2: single graceful-degradation path for a handler that failed to enqueue.
+
+        Runs the handler synchronously with the configured timeout; on timeout
+        or error, records the failure in the dead-letter queue. Consolidates the
+        two previously duplicated inline blocks in ``_publish_async``.
+        """
+        try:
+            await asyncio.wait_for(
+                handler(data),
+                timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+            )
+            _pkg.logger.info(
+                "Handler executed synchronously after " + reason,
+                event_name=event_name,
+                handler=handler.__name__,
+            )
+        except TimeoutError as e:
+            _pkg.logger.error(
+                "Sync fallback timed out after " + reason,
+                event_name=event_name,
+                handler=handler.__name__,
+                timeout=_pkg.settings.EVENT_HANDLER_TIMEOUT_SECONDS,
+            )
+            await self.add_to_dlq(
+                event_name=event_name,
+                handler_name=getattr(handler, "__name__", repr(handler)),
+                data=data,
+                error=str(e),
+                attempt_count=0,
+            )
+        except Exception as handler_error:
+            _pkg.logger.error(
+                "Sync fallback also failed",
+                event_name=event_name,
+                handler=handler.__name__,
+                error=str(handler_error),
+            )
+            await self.add_to_dlq(
+                event_name=event_name,
+                handler_name=getattr(handler, "__name__", repr(handler)),
+                data=data,
+                error=str(handler_error),
+                attempt_count=0,
+            )
 
     async def _publish_async_batch(
         self,

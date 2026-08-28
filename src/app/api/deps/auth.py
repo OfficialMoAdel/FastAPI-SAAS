@@ -42,20 +42,29 @@ class AuthenticatedUser(BaseModel):
     api_key_id: str | int | None = None
     api_key_scopes: list[str] | None = None
 
+    # M-1: dict-compat accessors used to call model_dump() on EVERY access —
+    # a full serialization per lookup on the hot auth path. With extra="ignore"
+    # the dump's key set is exactly the declared fields, so direct field lookup
+    # (instance attrs) and model_fields (class-level) are behavior-identical
+    # and allocation-free.
     def __getitem__(self, key: str) -> Any:
-        return self.model_dump()[key]
+        if key in self.model_fields:
+            return getattr(self, key)
+        raise KeyError(key)
 
     def get(self, key: str, default: Any = None) -> Any:
-        return self.model_dump().get(key, default)
+        if key in self.model_fields:
+            return getattr(self, key)
+        return default
 
     def keys(self) -> Any:
-        return self.model_dump().keys()
+        return self.model_fields.keys()
 
     def __contains__(self, key: str) -> bool:
-        return key in self.model_dump()
+        return key in self.model_fields
 
     def __len__(self) -> int:
-        return len(self.model_dump())
+        return len(self.model_fields)
 
 
 class AuthContext(BaseModel):

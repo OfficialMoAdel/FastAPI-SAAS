@@ -191,8 +191,6 @@ class PostService(BaseService[Post]):
         )
         await self._check_ownership(get_user_attr(current_user, "id"), created_by_user_id)
 
-
-
         await self.crud.update(db=self.db, object=values, id=post_id)
         return {"message": "Post updated"}
 

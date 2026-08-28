@@ -376,3 +376,75 @@ class TestUserCacheBatchInvalidation:
             await user_service._invalidate_user_cache_batch([])
             mock_client.pipeline.assert_not_called()
             mock_client.delete.assert_not_called()
+
+
+class TestDowngradeToFreeTierTokenVersion:
+    """Regression: downgrade_to_free_tier must bump token_version.
+
+    JWTs embed tier claims for zero-DB rate limiting; without the bump a
+    downgraded user keeps premium tier claims until the access token expires.
+    """
+
+    @pytest.fixture
+    def mock_db_session(self) -> AsyncMock:
+        return AsyncMock()
+
+    @pytest.fixture
+    def user_service(self, mock_db_session: AsyncMock) -> Any:
+        from src.app.modules.users.service import UserService
+
+        return UserService(mock_db_session)
+
+    @pytest.mark.asyncio
+    async def test_downgrade_bumps_token_version(self, user_service: Any, mock_db_session: AsyncMock) -> None:
+        """Downgrade must issue token_version = token_version + 1 and commit."""
+
+        from sqlalchemy import Update
+
+        from src.app.modules.users.models import User
+
+        mock_tier_svc = MagicMock()
+        mock_tier_svc.get_tier = AsyncMock(return_value={"id": 1, "name": "free"})
+        user_service.crud = MagicMock()
+        user_service.crud.update = AsyncMock()
+        user_service.crud.get = AsyncMock(return_value=None)
+        user_service._invalidate_user_cache = AsyncMock()
+
+        with (
+            patch("src.app.modules.users.service.TierService", return_value=mock_tier_svc),
+            patch("src.app.modules.users.service.get_redis", return_value=None),
+        ):
+            result = await user_service.downgrade_to_free_tier(user_id=42)
+
+        assert result == 1
+        user_service.crud.update.assert_awaited_once()
+
+        # Exactly one execute(): the token_version bump UPDATE.
+        mock_db_session.execute.assert_awaited_once()
+        stmt = mock_db_session.execute.await_args.args[0]
+        assert isinstance(stmt, Update)
+        assert stmt.table.name == User.__tablename__
+        # The SET clause must bump token_version (verify via compiled SQL).
+        from sqlalchemy.dialects import sqlite
+
+        compiled_sql = str(stmt.compile(dialect=sqlite.dialect()))
+        assert "token_version" in compiled_sql
+        mock_db_session.commit.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_downgrade_no_free_tier_returns_none(self, user_service: Any, mock_db_session: AsyncMock) -> None:
+        """No free tier configured -> None, no update, no bump, no commit."""
+        from src.app.modules._base.exceptions import ModelNotFoundError
+
+        mock_tier_svc = MagicMock()
+        mock_tier_svc.get_tier = AsyncMock(side_effect=ModelNotFoundError("Tier", "free"))
+        user_service.crud = MagicMock()
+        user_service.crud.update = AsyncMock()
+
+        with patch("src.app.modules.users.service.TierService", return_value=mock_tier_svc):
+            result = await user_service.downgrade_to_free_tier(user_id=42)
+
+        assert result is None
+        user_service.crud.update.assert_not_awaited()
+        mock_db_session.execute.assert_not_awaited()
+        mock_db_session.commit.assert_not_awaited()

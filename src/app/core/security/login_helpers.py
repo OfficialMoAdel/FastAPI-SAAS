@@ -47,7 +47,14 @@ async def register_login_session(
     verify: bool = True,
     device_label: str | None = None,
 ) -> None:
-    """Register session in Redis with device info. Fail-safe (logs on error).
+    """Register session in Redis with device info.
+
+    Failure handling is governed by ``settings.auth.SESSION_REGISTRATION_FAIL_MODE``
+    (S-4): ``fail_closed`` (default) raises HTTP 503 so concurrent-session
+    limiting is never silently bypassed; ``fail_open`` logs and lets the login
+    proceed. Covers both failure signals from ``register_session`` — a raised
+    ``RedisError`` and a ``{"registered": False}`` result (Redis unconfigured
+    or Lua registration error).
 
     Args:
         user_id: The ID of the user logging in.
@@ -86,13 +93,32 @@ async def register_login_session(
         }
         device_info_str = json.dumps(device_info_data)
 
-        await global_session_manager.register_session(
+        result = await global_session_manager.register_session(
             user_id=user_id,
             session_id=session_id,
             device_info=device_info_str,
         )
+        # S-4: register_session signals failure two ways — raising RedisError
+        # (handled below) OR returning {"registered": False} when Redis is
+        # unconfigured or the Lua registration errored. Both must honor the
+        # configured fail mode, otherwise fail_closed silently fails open.
+        if not result.get("registered", True):
+            logger.warning("session_registration_failed", reason=result.get("reason"))
+            _enforce_session_registration_fail_mode()
     except redis.exceptions.RedisError as e:
         logger.warning("session_registration_failed", error=str(e))
-        if getattr(settings.auth, "SESSION_REGISTRATION_FAIL_MODE", "fail_open") == "fail_closed":
-            from fastapi import HTTPException
-            raise HTTPException(status_code=503, detail="Authentication service temporarily unavailable")
+        _enforce_session_registration_fail_mode()
+
+
+def _enforce_session_registration_fail_mode() -> None:
+    """S-4: apply SESSION_REGISTRATION_FAIL_MODE after a registration failure.
+
+    fail_closed rejects the login (503) so concurrent-session limiting is never
+    silently bypassed; fail_open logs and lets the login proceed.
+    """
+    if settings.auth.SESSION_REGISTRATION_FAIL_MODE == "fail_closed":
+        from fastapi import HTTPException
+
+        raise HTTPException(
+            status_code=503, detail="Authentication service temporarily unavailable"
+        )

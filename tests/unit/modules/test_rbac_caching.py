@@ -53,22 +53,20 @@ class TestRBACPermissionsCaching:
             mock_settings.RBAC_USE_REDIS_CACHE = True
             mock_settings.RBAC_CACHE_TTL_SECONDS = 3600
 
-            with patch("src.app.modules.rbac.service.Permission") as mock_perm_class:
-                mock_perm = MagicMock()
-                mock_perm.slug = "read:users"
-                mock_perm_class.return_value = mock_perm
+            # C1 FIX: set_committed_value populates `id` on the real instrumented
+            # Permission class, so the old mock-factory patch is unnecessary and
+            # would break set_committed_value. Use the real Permission class.
+            service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
 
-                service = RoleService(db=mock_db, tenant_id=1, redis_client=mock_redis)
+            permissions = await service.get_role_permissions(role_id=5)
 
-                permissions = await service.get_role_permissions(role_id=5)
+            # Should use cached data
+            mock_redis.get.assert_called_once()
+            assert len(permissions) == 1
+            assert permissions[0].slug == "read:users"
 
-                # Should use cached data
-                mock_redis.get.assert_called_once()
-                assert len(permissions) == 1
-                assert permissions[0].slug == "read:users"
-
-                # Database should NOT be queried
-                mock_db.execute.assert_not_called()
+            # Database should NOT be queried
+            mock_db.execute.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cache_miss_queries_database(self, mock_db: AsyncMock, mock_redis: AsyncMock) -> None:

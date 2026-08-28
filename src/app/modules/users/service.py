@@ -118,6 +118,27 @@ class UserService:
         self.db = db
         self.crud = crud_users
 
+    @staticmethod
+    def _parse_user_id(username: str) -> int | None:
+        """M-8: parse a user identifier that may be an integer ID or a username.
+
+        Returns the integer ID when ``username`` is a valid int string, else None.
+        """
+        try:
+            return int(username)
+        except ValueError:
+            return None
+
+    async def _get_active_user(self, username: str) -> dict[str, Any] | None:
+        """M-8: fetch a non-deleted user by integer ID or username.
+
+        Consolidates the six copy-pasted ``try: int(username)`` lookup blocks.
+        """
+        parsed_id = self._parse_user_id(username)
+        if parsed_id is not None:
+            return await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
+        return await self.crud.get(db=self.db, username=username, is_deleted=False)
+
     async def list_users(
         self,
         *,
@@ -649,11 +670,7 @@ class UserService:
             If new email/username already taken
         """
         # SECURITY FIX: Prevent updating soft-deleted users
-        try:
-            parsed_id = int(username)
-            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
-        except ValueError:
-            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        db_user = await self._get_active_user(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
@@ -748,11 +765,7 @@ class UserService:
         ForbiddenException
             If current user doesn't own this account
         """
-        try:
-            parsed_id = int(username)
-            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
-        except ValueError:
-            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        db_user = await self._get_active_user(username)
 
         if not db_user:
             raise ModelNotFoundError("User", username)
@@ -817,7 +830,7 @@ class UserService:
         except Exception as e:
             logger.warning("failed_to_publish_user_deletion_audit_log", error=str(e))
 
-        await self._invalidate_user_cache(db_user)
+        await self._invalidate_user_cache(db_user, bump_token_version=True)
 
         return {"message": "User deleted successfully"}
 
@@ -842,11 +855,7 @@ class UserService:
             If user not found
         """
         # SECURITY FIX: Single query with soft-delete filter (prevents double query)
-        try:
-            parsed_id = int(username)
-            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
-        except ValueError:
-            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        db_user = await self._get_active_user(username)
 
         if not db_user:
             raise ModelNotFoundError("User", username)
@@ -895,11 +904,7 @@ class UserService:
             If user or tier not found
         """
         # Use service registry for cross-module decoupling
-        try:
-            parsed_id = int(username)
-            db_user = await self.crud.get(db=self.db, id=parsed_id, is_deleted=False)
-        except ValueError:
-            db_user = await self.crud.get(db=self.db, username=username, is_deleted=False)
+        db_user = await self._get_active_user(username)
 
         if db_user is None:
             raise ModelNotFoundError("User", username)
@@ -960,9 +965,24 @@ class UserService:
             db=self.db,
             object={"tier_id": free_tier_id},
             id=user_id,
+            commit=False,
         )
 
-        # Invalidate cached profile/auth data
+        # SECURITY FIX: honor the docstring contract — bump token_version so
+        # existing JWTs (which embed tier claims for zero-DB rate limiting)
+        # are invalidated promptly. Previously the bump was missing, so a
+        # downgraded user kept premium tier claims/rate limits until the
+        # access token expired.
+        from sqlalchemy import update as sa_update
+
+        await self.db.execute(
+            sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
+        )
+        await self.db.commit()
+
+        # Invalidate cached profile/auth data. db_user is fetched post-bump, so
+        # its token_version already equals old+1 — the default bump=False writes
+        # exactly the DB value into the token_version cache keys.
         db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if db_user is not None:
             await self._invalidate_user_cache(db_user)
@@ -992,14 +1012,14 @@ class UserService:
         """
         # Eager load User + Tier + RateLimits in single query
         # joinedload(User.tier).joinedload(Tier.rate_limits) ensures we fetch everything at once
-        try:
-            parsed_id = int(username)
+        parsed_id = self._parse_user_id(username)
+        if parsed_id is not None:
             stmt = (
                 select(User)
                 .options(joinedload(User.tier).joinedload(Tier.rate_limits))
                 .where(User.id == parsed_id, User.is_deleted.is_(False))
             )
-        except ValueError:
+        else:
             stmt = (
                 select(User)
                 .options(joinedload(User.tier).joinedload(Tier.rate_limits))
@@ -1055,10 +1075,10 @@ class UserService:
 
         Optimized to use single query via get_user_with_tier_eager.
         """
-        try:
-            parsed_id = int(username)
+        parsed_id = self._parse_user_id(username)
+        if parsed_id is not None:
             user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, id=parsed_id)
-        except ValueError:
+        else:
             user_with_tier = await self.crud.get_user_with_tier_eager(db=self.db, username=username)
 
         if not user_with_tier:

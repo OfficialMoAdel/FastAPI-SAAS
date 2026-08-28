@@ -343,16 +343,22 @@ class TestRefreshAccessToken:
                         "src.app.modules.auth.services.tokens.create_access_token", new_callable=AsyncMock
                     ) as mock_create:
                         with patch("src.app.modules.auth.services.tokens.create_refresh_token", new_callable=AsyncMock):
-                            mock_create.return_value = "new_access_token"
+                            # S-4: session registration is orthogonal to refresh
+                            # logic; it now fails closed without Redis, so mock it.
+                            with patch(
+                                "src.app.core.security.login_helpers.register_login_session",
+                                new_callable=AsyncMock,
+                            ):
+                                mock_create.return_value = "new_access_token"
 
-                            mock_response.set_cookie = MagicMock()
+                                mock_response.set_cookie = MagicMock()
 
-                            # Should call with email parameter
-                            result = await auth_service.refresh_access_token(
-                                "valid_refresh_token", mock_response, mock_db
-                            )
+                                # Should call with email parameter
+                                result = await auth_service.refresh_access_token(
+                                    "valid_refresh_token", mock_response, mock_db
+                                )
 
-                            assert result["access_token"] == "new_access_token"
+                                assert result["access_token"] == "new_access_token"
 
 
 # ============================================================================

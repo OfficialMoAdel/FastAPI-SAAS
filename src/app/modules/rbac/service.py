@@ -336,22 +336,23 @@ class RoleService:
         touching the database. These are transient objects suitable
         for permission checking.
 
-        BUG FIX: Replaced `object.__setattr__(perm, "id", p["id"])` which bypassed
-        SQLAlchemy's instrumented state tracking. Now uses a two-step approach:
-        creating the ORM object normally and setting `id` via ORM-aware attribute
-        assignment on a detached instance. This avoids unexpected session interactions
-        if these objects are ever accidentally merged into a managed session.
+        C1 FIX: ``Permission.id`` is ``init=False`` (SQLAlchemy 2.0 typed
+        dataclass style), so it cannot be passed to the constructor. The prior
+        ``perm.__dict__["id"] = ...`` write bypassed instrumentation exactly
+        like the ``object.__setattr__`` it claimed to replace — its comment was
+        misleading. ``set_committed_value`` is the canonical SQLAlchemy API for
+        populating a column on a detached instance without marking it dirty or
+        triggering session side-effects.
         """
+        from sqlalchemy.orm.attributes import set_committed_value
+
         permissions = []
         for p in perm_dicts:
             perm = Permission(
                 slug=p["slug"],
                 description=p.get("description"),
             )
-            # BUG FIX: Use SQLAlchemy-aware attribute set via instance dict instead of
-            # object.__setattr__ bypass. The perm object is detached (not added to any session)
-            # so this is safe and does not trigger lazy loading or other session side-effects.
-            perm.__dict__["id"] = p["id"]
+            set_committed_value(perm, "id", p["id"])
             permissions.append(perm)
         return permissions
 

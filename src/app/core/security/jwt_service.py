@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import inspect
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from functools import lru_cache
@@ -157,7 +156,16 @@ async def create_refresh_token(data: dict[str, Any], expires_delta: timedelta | 
 
 
 async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> bool | None:
-    """Helper to perform DB fallback check for token blacklisting."""
+    """Helper to perform DB fallback check for token blacklisting.
+
+    SECURITY FIX: the singleflight task is shared across concurrent requests,
+    so it must NOT run on the winner's request-scoped session (the winner's
+    request may commit/close mid-task, leaving waiters with a closed session
+    during exactly the Redis outage this path exists for). The lookup uses its
+    own short-lived session; blacklist entries are global jti/token strings,
+    so no tenant context is needed. The ``db`` parameter is kept for signature
+    compatibility.
+    """
     try:
         cache_key = jti if jti else token
         # Fast path: positive cache (blacklisted=True only; negative not cached — H3)
@@ -172,12 +180,15 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
             else:
 
                 async def _check_db() -> bool:
-                    _is_bl = False
-                    if jti:
-                        _is_bl = await crud_token_blacklist.exists(db, token=f"jti:{jti}")
-                    if not _is_bl:
-                        _is_bl = await crud_token_blacklist.exists(db, token=token)
-                    return _is_bl
+                    from src.app.core.db.database import local_session
+
+                    async with local_session() as session:
+                        _is_bl = False
+                        if jti:
+                            _is_bl = await crud_token_blacklist.exists(session, token=f"jti:{jti}")
+                        if not _is_bl:
+                            _is_bl = await crud_token_blacklist.exists(session, token=token)
+                        return _is_bl
 
                 task = asyncio.create_task(_check_db())
                 _in_flight_db_checks[cache_key] = task
@@ -197,19 +208,27 @@ async def _check_db_fallback(jti: str | None, token: str, db: AsyncSession) -> b
 
 
 async def _load_token_version(
-    cache_key: str, username_or_email: str, db: AsyncSession, redis_client: Any
+    cache_key: str, username_or_email: str, redis_client: Any
 ) -> int | None:
     """P6: one DB lookup for the user's token_version; backfills Redis (nx).
 
     Returns the stored token_version, or None when the user does not exist.
     Only the singleflight winner runs this; concurrent waiters await its task.
+
+    SECURITY FIX: uses its own short-lived session instead of the winner's
+    request session. The task is shared across concurrent requests; running it
+    on the winner's request-scoped session meant waiters' awaits could execute
+    on a session that was mid-commit, rolled back, or already closed
+    (SessionClosedError / stale transaction state), rejecting valid tokens.
     """
+    from src.app.core.db.database import local_session
     from src.app.modules.users.crud import crud_users
 
-    if "@" in username_or_email:
-        user = await crud_users.get(db, email=username_or_email)
-    else:
-        user = await crud_users.get(db, username=username_or_email)
+    async with local_session() as session:
+        if "@" in username_or_email:
+            user = await crud_users.get(session, email=username_or_email)
+        else:
+            user = await crud_users.get(session, username=username_or_email)
     if not user:
         return None
     version = user.get("token_version")
@@ -305,7 +324,7 @@ async def verify_token(token: str, expected_token_type: TokenType, db: AsyncSess
                 task = _in_flight_token_version.get(cache_key)
                 if task is None:
                     task = asyncio.create_task(
-                        _load_token_version(cache_key, username_or_email, db, redis_client)
+                        _load_token_version(cache_key, username_or_email, redis_client)
                     )
                     _in_flight_token_version[cache_key] = task
             try:
@@ -420,17 +439,15 @@ async def blacklist_tokens(
             async with db.begin_nested():
                 await db.flush()
         except IntegrityError:
-            _r = db.rollback()
-            if inspect.isawaitable(_r):
-                await _r
+            # C-2: AsyncSession.rollback() is always awaitable — the
+            # inspect.isawaitable guard was dead defensive code.
+            await db.rollback()
             _jwt_logger.info("Token already blacklisted in DB (IntegrityError during flush)")
 
         try:
             await db.commit()
         except Exception as e:
-            _r = db.rollback()
-            if inspect.isawaitable(_r):
-                await _r
+            await db.rollback()
             # A4 FIX: previously this early-returned BEFORE the Redis write,
             # leaving the token blacklisted NOWHERE while the user believed
             # they were logged out. Fall through so the cache blacklist (the
@@ -489,9 +506,8 @@ async def blacklist_token(token: str, db: AsyncSession, payload: dict[str, Any] 
                 await db.commit()
                 await add_token_to_blacklist(cache_key, expires_at)
             except IntegrityError:
-                _r = db.rollback()
-                if inspect.isawaitable(_r):
-                    await _r
+                # C-2: AsyncSession.rollback() is always awaitable.
+                await db.rollback()
                 _jwt_logger.info("Token already blacklisted in DB (IntegrityError)")
     except JWTError as e:
         _jwt_logger.warning("Skipping blacklist for invalid token", error=str(e))

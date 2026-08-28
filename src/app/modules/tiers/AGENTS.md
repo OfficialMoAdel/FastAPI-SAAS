@@ -13,8 +13,8 @@ uv run pytest tests/integration/test_tier_api.py -v
 # Create default tiers
 uv run python scripts/create_first_tier.py
 
-# List available tiers
-uv run python -c "from src.app.modules.tiers.crud import crud_tiers; print('Loaded')"
+# List available tiers (crud.py was removed in the C4 refactor; use the service)
+uv run python -c "from src.app.modules.tiers.service import TierService; print('Loaded')"
 ```
 
 ## Patterns & Conventions
@@ -22,11 +22,13 @@ uv run python -c "from src.app.modules.tiers.crud import crud_tiers; print('Load
 ### DO: Use tier for resource limits
 
 ```python
-from src.app.modules.tiers.crud import crud_tiers
+from src.app.modules.tiers.service import TierService
 
-tier = await crud_tiers.get(db=db, name=tier_name)
-max_users = tier.max_users
-rate_limit = tier.rate_limit
+# Tiers are accessed through the service (BaseService flyweight CRUD),
+# not a module-global crud instance (crud.py was removed in the C4 refactor).
+tier_svc = TierService(db)
+tier = await tier_svc.get_tier(tier_name)
+max_users = tier["max_users"]
 ```
 
 ### DON'T: hardcode tier-specific logic
@@ -43,11 +45,9 @@ elif tier_name == "pro":
 
 ```python
 # Rate limits are associated with tiers
-# Get tier's rate limits from rate_limits module
-rate_limits = await crud_rate_limits.get_multi(
-    db=db,
-    tier_name=tier.name,
-)
+# Get tier's rate limits from rate_limits module (via its service)
+from src.app.modules.rate_limits.service import RateLimitService
+rate_limits = await RateLimitService(db).get_rate_limits_by_tier_id(tier["id"])
 ```
 
 ### DO: Use tier enum for comparisons
@@ -66,12 +66,11 @@ TIER_HIERARCHY = {
 
 ```
 src/app/modules/tiers/
-├── __init__.py           # Exports tier_service, TierName
+├── __init__.py           # Exports TierService, TierName
 ├── router.py             # /tiers endpoints
-├── service.py            # TierService class
+├── service.py            # TierService class (BaseService flyweight CRUD)
 ├── models.py             # Tier model, TierName enum
-├── schemas.py            # Pydantic schemas
-└── crud.py               # FastCRUD operations
+└── schemas.py            # Pydantic schemas
 ```
 
 ## Touch Points

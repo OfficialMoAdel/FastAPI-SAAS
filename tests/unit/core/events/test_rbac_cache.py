@@ -54,18 +54,13 @@ async def test_cache_hit_avoids_database_query(mock_redis_client, mock_db_sessio
     mock_db_session.execute = AsyncMock(return_value=mock_result)
 
     with patch("src.app.modules.rbac.service.settings", mock_settings):
-        # Patch Permission class to allow instantiation with id parameter
-        def mock_permission_init(**kwargs):
-            perm = MagicMock(spec=Permission)
-            for key, value in kwargs.items():
-                if key in ["created_at", "updated_at"] and isinstance(value, str):
-                    value = datetime.fromisoformat(value)
-                setattr(perm, key, value)
-            return perm
-
-        with patch("src.app.modules.rbac.service.Permission", side_effect=mock_permission_init):
-            with patch("src.app.modules.rbac.service.record_rbac_cache_hit") as mock_hit:
-                permissions = await service.get_role_permissions(role_id=1)
+        # C1 FIX: the old code couldn't set `id` via the constructor (init=False),
+        # so this test patched Permission with a mock factory. set_committed_value
+        # now populates `id` on the real instrumented class, so the patch is
+        # unnecessary — and it would break set_committed_value, which needs the
+        # real attribute. Use the real Permission class.
+        with patch("src.app.modules.rbac.service.record_rbac_cache_hit") as mock_hit:
+            permissions = await service.get_role_permissions(role_id=1)
 
     # Should return permissions from cache
     assert len(permissions) == 2

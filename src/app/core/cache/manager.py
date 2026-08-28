@@ -46,7 +46,15 @@ class CacheManager:
 
     @property
     def client(self) -> Redis | None:
-        """Get the active Redis client (live reference, not stale alias)."""
+        """Get the active Redis client (live reference, not stale alias).
+
+        C4 NOTE: reads the legacy ``utils.cache.client`` global directly by
+        design. This manager OWNS the pool and ``redis_provider.get_redis_pool``
+        delegates to it (provider line ~32), so routing this property through
+        ``redis_provider.get_redis`` would create a circular import. Application
+        code must use ``redis_provider.get_redis()`` / ``async_get_redis`` — not
+        this property or the bare global.
+        """
         return _cache_utils.client
 
 

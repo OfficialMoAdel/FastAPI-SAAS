@@ -16,6 +16,7 @@ from src.app.modules.users.schemas import (
     UserDeleteResponse,
     UserList,
     UserRead,
+    UserReadPublic,
     UserTierResponse,
     UserTierUpdate,
     UserUpdate,
@@ -59,7 +60,7 @@ async def read_users(
     )
 
 
-@router.get("/me", response_model=UserRead)
+@router.get("/me", response_model=UserReadPublic)
 async def read_users_me(
     request: Request,
     current_user: Annotated[dict | Any, Depends(get_current_user)],
@@ -102,7 +103,7 @@ async def read_users_me(
     raise HTTPException(status_code=401, detail="Invalid user context")
 
 
-@router.get("/{user_id}", response_model=UserRead)
+@router.get("/{user_id}", response_model=UserReadPublic)
 async def read_user(
     request: Request,
     user_id: str,

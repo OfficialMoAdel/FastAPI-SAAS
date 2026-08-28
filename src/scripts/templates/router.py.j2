@@ -4,9 +4,9 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, status
 
-from ...api.dependencies import AuthenticatedUser, get_current_user
+from ...api.deps import AuthenticatedUser, get_current_user, tenant_dependency
 from ...core.db.database import async_get_db
-from ...core.tenancy.context import get_current_tenant, TenantContext
+from ...core.tenancy.context import TenantContext
 from ...modules.users.models import User
 from .schemas import {{ ModelName }}Create, {{ ModelName }}List, {{ ModelName }}Read, {{ ModelName }}Update
 from .service import {{ ModelName }}Service, get_{{ module_name }}_service
@@ -28,7 +28,7 @@ router = APIRouter(prefix="/{{ module_name }}s", tags=["{{ module_name }}s"])
 async def create_{{ module_name }}(
     body: {{ ModelName }}Create,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    current_tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
 ) -> {{ ModelName }}Read:
     """Create a new {{ module_name }}."""
@@ -42,7 +42,7 @@ async def create_{{ module_name }}(
 @router.get("", response_model={{ ModelName }}List)
 async def list_{{ module_name }}s(
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    current_tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
     page: int = 1,
     per_page: int = 20,
@@ -69,7 +69,7 @@ async def list_{{ module_name }}s(
 async def get_{{ module_name }}(
     id: int,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    current_tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
 ) -> {{ ModelName }}Read:
     """Get a {{ module_name }} by ID."""
@@ -90,7 +90,7 @@ async def update_{{ module_name }}(
     id: int,
     body: {{ ModelName }}Update,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    current_tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
 ) -> {{ ModelName }}Read:
     """Update a {{ module_name }}."""
@@ -106,7 +106,7 @@ async def update_{{ module_name }}(
 async def delete_{{ module_name }}(
     id: int,
     current_user: Annotated[AuthenticatedUser, Depends(get_current_user)],
-    current_tenant: Annotated[TenantContext, Depends(get_current_tenant)],
+    current_tenant: Annotated[TenantContext, Depends(tenant_dependency)],
     service: {{ ModelName }}ServiceDep,
 ) -> None:
     """Delete a {{ module_name }}."""
