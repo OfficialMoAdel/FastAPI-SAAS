@@ -28,6 +28,18 @@ from src.app.core.security.auto_ban import (
 from tests.conftest import patch_setting
 
 
+@pytest.fixture(autouse=True)
+def _clear_ban_negative_cache():
+    """R1-01: the module-level negative cache persists across tests using the
+    same sample_ip, so a not-banned lookup in one test would mask a banned
+    lookup in the next. Clear it before each test."""
+    from src.app.core.security import auto_ban
+
+    auto_ban._ban_negative_cache.clear()
+    yield
+    auto_ban._ban_negative_cache.clear()
+
+
 @pytest.fixture
 def mock_redis():
     """Create mock Redis client."""

@@ -11,6 +11,7 @@ from src.app.api.deps import get_current_user
 from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.logger import get_logger
+from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac.dependencies import requires_permission
 from src.app.core.rbac.permissions import Permission
 from src.app.modules.billing.checkout_service import get_checkout_service
@@ -80,9 +81,7 @@ async def stripe_webhook(
             detail="Missing Stripe-Signature header",
         )
 
-    webhook_secret = (
-        settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
-    )
+    webhook_secret = settings.STRIPE_WEBHOOK_SECRET.get_secret_value() if settings.STRIPE_WEBHOOK_SECRET else None
     if not webhook_secret:
         logger.error("STRIPE_WEBHOOK_SECRET is not set in configuration")
         raise HTTPException(
@@ -140,6 +139,7 @@ async def get_stripe_settings(
     stripe_settings = await service.get_settings()
     if stripe_settings is None:
         from src.app.core.tenancy.context import get_current_tenant
+
         tenant = get_current_tenant()
         tenant_id = tenant.id if tenant else None
         return {
@@ -197,23 +197,15 @@ async def create_subscription_plan(
 @router.get("/plans", response_model=SubscriptionPlanList)
 async def list_subscription_plans(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> Any:
     """List subscription plans (public for pricing page)."""
     service = get_subscription_plan_service(db)
-    result = await service.get_plans(page=page, limit=per_page, is_active=is_active)
+    result = await service.get_plans(page=pagination.page, limit=pagination.limit, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {
-        "items": data,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.get("/plans/{plan_id}", response_model=SubscriptionPlanRead)
@@ -279,23 +271,15 @@ async def create_product(
 @router.get("/products", response_model=ProductList)
 async def list_products(
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     is_active: bool | None = Query(None, description="Filter by active status"),
 ) -> Any:
     """List products."""
     service = get_product_service(db)
-    result = await service.get_products(page=page, limit=per_page, is_active=is_active)
+    result = await service.get_products(page=pagination.page, limit=pagination.limit, is_active=is_active)
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {
-        "items": data,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.get("/products/{product_id}", response_model=ProductRead)
@@ -407,29 +391,24 @@ async def create_portal_session(
 async def list_billing_records(
     current_user: Annotated[dict, Depends(get_current_user)],
     db: Annotated[AsyncSession, Depends(async_get_db)],
-    page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(20, ge=1, le=100, description="Items per page"),
+    pagination: Annotated[PaginationParams, Depends(get_pagination_params)],
     status: str | None = Query(None, description="Filter by status (succeeded, failed, pending, refunded)"),
 ) -> Any:
     """List billing records for the current user.
 
     Args:
-        page: Page number (1-indexed)
-        per_page: Number of records per page
+        current_user: Authenticated user
+        db: Database session
+        pagination: Standardized pagination params (R1-10)
         status: Optional filter by status (succeeded, failed, pending, refunded)
     """
     service = get_billing_record_service(db)
-    result = await service.get_user_records(current_user["id"], page=page, limit=per_page, status=status)
+    result = await service.get_user_records(
+        current_user["id"], page=pagination.page, limit=pagination.limit, status=status
+    )
     data = result.get("data", [])
     total = result.get("total_count", len(data))
-    return {
-        "items": data,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=data, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.get("/records/{record_id}", response_model=BillingRecordRead)

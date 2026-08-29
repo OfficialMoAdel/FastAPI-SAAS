@@ -137,11 +137,9 @@ def _extract_blacklist_member(token: str, jti: str | None = None) -> str:
     if jti:
         return f"jti:{jti}"
 
-    from src.app.core.security.jwt_utils import extract_jti_unverified
-
-    extracted_jti = extract_jti_unverified(token)
-    if extracted_jti:
-        return f"jti:{extracted_jti}"
+    # R4-01: do not extract JTI from unverified token — attacker could craft
+    # arbitrary jti to pollute the blacklist cache key space. Only use
+    # verified jti passed explicitly; otherwise fall back to raw token.
     return token
 
 

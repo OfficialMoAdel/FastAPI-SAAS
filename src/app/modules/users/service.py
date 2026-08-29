@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from src.app.core.events import EventPriority, event_bus
+from src.app.core.events.envelope import typed_event_bus
 from src.app.core.exceptions.http_exceptions import ForbiddenException
 from src.app.core.json_utils import json_dumps, json_loads
 from src.app.core.logger import get_logger
@@ -23,8 +24,10 @@ from src.app.modules._base.exceptions import DuplicateError, ModelNotFoundError
 from src.app.modules.tiers.models import Tier
 from src.app.modules.tiers.service import TierService
 from src.app.modules.users.crud import CRUDUser, crud_users
+from src.app.modules.users.events import UserCreated, UserCreatedPayload
 from src.app.modules.users.models import User
 from src.app.modules.users.schemas import UserCreate, UserCreateInternal, UserRead, UserTierUpdate, UserUpdate
+from src.app.modules.users.session_invalidation import InvalidationReason, should_bump_token_version
 
 logger = get_logger(__name__)
 
@@ -214,13 +217,37 @@ class UserService:
             user_id_log = user["id"] if isinstance(user, dict) else user.id
             logger.warning("Failed to cache user %s: %s", user_id_log, e)
 
-    async def _invalidate_user_cache(self, user: User | dict[str, Any], bump_token_version: bool = False) -> None:
+    async def _invalidate_user_cache(
+        self,
+        user: User | dict[str, Any],
+        bump_token_version: bool,
+        reason: InvalidationReason,
+        explicit_token_version: int | None = None,
+    ) -> None:
         """Invalidate all cache entries for a user.
 
         Avoids relying on tenant context by using tenant_id from the user payload
         when available to build tenant-scoped cache keys safely.
         Falls back to get_current_tenant() if tenant_id is not in user data.
+
+        Both ``bump_token_version`` and ``reason`` are REQUIRED (no defaults) so
+        every caller must make the security-affecting-vs-benign decision
+        explicitly. A credential change that forgets to bump is a session
+        invalidation bypass; a benign profile edit that bumps forces every
+        user to re-auth on every name/avatar change. The two parameters
+        must agree — ``bump_token_version`` MUST equal
+        ``should_bump_token_version(reason)`` — to keep the two sources of
+        truth from diverging silently.
         """
+        # R2-02: the two parameters encode the same decision and must agree.
+        # Checked BEFORE the try block so this programming error propagates
+        # instead of being swallowed by the broad cache-failure handler below.
+        if bump_token_version != should_bump_token_version(reason):
+            raise ValueError(
+                f"bump_token_version={bump_token_version} does not match "
+                f"should_bump_token_version(reason={reason!r}). "
+                "Pass the bump value derived from the reason."
+            )
         client = get_redis()
         if client is None:
             return
@@ -273,7 +300,6 @@ class UserService:
 
             if keys:
                 await client.delete(*keys)
-
             if token_keys:
                 # Forcefully overwrite token_version to prevent stale-read race conditions
                 # where an old token_version is re-cached right after invalidation.
@@ -281,16 +307,23 @@ class UserService:
                 # it's usually `user.token_version + 1`. For normal profile updates, it's unchanged.
                 # To be safe, we assume it incremented, as an artificially higher version just logs out the user
                 # which is acceptable on profile changes that trigger invalidation.
-                # If it's a dict, use .get, otherwise getattr
-                if isinstance(user, dict):
-                    current_version = user.get("token_version", 0)
+                # If explicit_token_version is provided (post-bump caller already knows the new DB value),
+                # use it directly — this lets downgrade_to_free_tier pass TIER_CHANGE honestly instead of
+                # PROFILE_EDIT, decoupling the cache write from ORM-fetch timing.
+                if explicit_token_version is not None:
+                    new_version = explicit_token_version
                 else:
-                    current_version = getattr(user, "token_version", 0)
+                    if isinstance(user, dict):
+                        current_version = user.get("token_version", 0)
+                    else:
+                        current_version = getattr(user, "token_version", 0)
 
-                # S3 FIX: Only bump token_version for security-affecting changes
-                # (password change, email change, deletion, tier change).
-                # Benign profile updates (name, avatar) should NOT invalidate sessions.
-                new_version = current_version + 1 if bump_token_version else current_version
+                    # S3 FIX: Only bump token_version for security-affecting changes
+                    # (password change, email change, deletion, tier change).
+                    # Benign profile updates (name, avatar) should NOT invalidate sessions.
+                    # R2-02: agreement between bump_token_version and reason is
+                    # enforced at the function entry; trust the parameter here.
+                    new_version = current_version + 1 if bump_token_version else current_version
 
                 async with client.pipeline(transaction=False) as pipe:
                     for key in token_keys:
@@ -301,7 +334,10 @@ class UserService:
             logger.warning("Failed to invalidate cache for user", user_id_log=user_id_log, error=e)
 
     async def _invalidate_user_cache_batch(
-        self, users: Sequence[Any], bump_token_version: bool = False
+        self,
+        users: Sequence[Any],
+        bump_token_version: bool = False,
+        reason: InvalidationReason | None = None,
     ) -> None:
         """Invalidate cache entries for many users in ONE Redis pipeline.
 
@@ -313,7 +349,14 @@ class UserService:
 
         Mirrors ``_invalidate_user_cache`` key construction exactly so cache
         behavior is unchanged; a malformed entry is skipped, not fatal.
+        When ``reason`` is provided, ``bump_token_version`` must agree with
+        ``should_bump_token_version(reason)`` (R2-02 guard).
         """
+        if reason is not None and bump_token_version != should_bump_token_version(reason):
+            raise ValueError(
+                f"bump_token_version={bump_token_version} does not match "
+                f"should_bump_token_version(reason={reason!r})."
+            )
         client = get_redis()
         if client is None or not users:
             return
@@ -347,12 +390,8 @@ class UserService:
                 tid_arg = str(tenant_id) if tenant_id else None
 
                 delete_keys.append(_user_cache_key(user_id))
-                token_sets.append(
-                    (build_tenant_key(f"user:{username}:token_version", tid_arg), current_version)
-                )
-                token_sets.append(
-                    (build_tenant_key(f"user:{email}:token_version", tid_arg), current_version)
-                )
+                token_sets.append((build_tenant_key(f"user:{username}:token_version", tid_arg), current_version))
+                token_sets.append((build_tenant_key(f"user:{email}:token_version", tid_arg), current_version))
 
                 if tenant_id is not None:
                     tenant_id_str = str(tenant_id)
@@ -452,12 +491,16 @@ class UserService:
 
             # SECURITY FIX: Ensure event is published ONLY after successful commit
             # Capture result data before commit since it may expire after session flush
-            event_payload = {
-                "user_id": result.id,
-                "email": result.email,
-                "username": result.username,
-                "tenant_id": str(result.tenant_id),
-            }
+            # R2-01: typed event — payload validated at construction; wire
+            # dict (model_dump) is byte-identical to the legacy hand-built one.
+            user_created_event = UserCreated(
+                payload=UserCreatedPayload(
+                    user_id=result.id,
+                    email=result.email,
+                    username=result.username,
+                    tenant_id=str(result.tenant_id),
+                )
+            )
 
             # Now explicitly commit the transaction so the event fires
             await self.db.commit()
@@ -487,13 +530,7 @@ class UserService:
             # Fire-and-forget task to publish the event safely from async context
             from src.app.core.utils.background_task import create_safe_task
 
-            task = create_safe_task(
-                event_bus.publish(
-                    "user.created",
-                    event_payload,
-                    priority=EventPriority.NORMAL,
-                )
-            )
+            task = create_safe_task(typed_event_bus.publish_event(user_created_event))
             task.add_done_callback(_log_task_error)
 
         except IntegrityError as e:
@@ -687,16 +724,18 @@ class UserService:
             raise ForbiddenException("You do not have permission to modify this user's email.")
 
         # Check for duplicate email if changing (exclude soft-deleted users)
-        bump_token_version = False
+        # R2-02: track the invalidation reason; the bump decision is derived
+        # from the SessionInvalidator policy, not a bare bool.
+        reason = InvalidationReason.PROFILE_EDIT
         if values.email is not None and values.email != db_email:
-            bump_token_version = True
+            reason = InvalidationReason.CREDENTIAL_CHANGE
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
             if await self.crud.exists(db=self.db, email=values.email, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("email", values.email)
 
         # Check for duplicate username if changing (exclude soft-deleted users)
         if values.username is not None and values.username != db_username:
-            bump_token_version = True
+            reason = InvalidationReason.CREDENTIAL_CHANGE
             tenant_id_val = db_user.get("tenant_id") if isinstance(db_user, dict) else db_user.tenant_id
             if await self.crud.exists(db=self.db, username=values.username, tenant_id=tenant_id_val, is_deleted=False):
                 raise DuplicateError("username", values.username)
@@ -705,7 +744,7 @@ class UserService:
 
         # SECURITY FIX (C2): Permanently invalidate sessions on email/username change.
         # Previously only set Redis keys with 300s TTL — old tokens worked again after expiry.
-        if bump_token_version:
+        if should_bump_token_version(reason):
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
@@ -717,9 +756,13 @@ class UserService:
 
         await self.db.commit()
 
-        # Invalidate cache after update
-        await self._invalidate_user_cache(db_user, bump_token_version=bump_token_version)
-
+        # Invalidate cache after update. Derive bump_token_version from the
+        # reason to keep the two parameters in lock-step with the policy.
+        await self._invalidate_user_cache(
+            db_user,
+            bump_token_version=should_bump_token_version(reason),
+            reason=reason,
+        )
         return {"message": "User updated"}
 
     async def update_password_hash(self, user_id: int, hashed_password: str) -> None:
@@ -734,8 +777,11 @@ class UserService:
 
         db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if db_user is not None:
-            await self._invalidate_user_cache(db_user)
-
+            # PROFILE_EDIT-class change: hash upgrade without plaintext
+            # rotation must NOT force every active session to re-auth.
+            await self._invalidate_user_cache(
+                db_user, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT
+            )
     async def delete(
         self,
         username: str,
@@ -830,7 +876,11 @@ class UserService:
         except Exception as e:
             logger.warning("failed_to_publish_user_deletion_audit_log", error=str(e))
 
-        await self._invalidate_user_cache(db_user, bump_token_version=True)
+        await self._invalidate_user_cache(
+            db_user,
+            bump_token_version=should_bump_token_version(InvalidationReason.DELETION),
+            reason=InvalidationReason.DELETION,
+        )
 
         return {"message": "User deleted successfully"}
 
@@ -879,7 +929,11 @@ class UserService:
 
         db_username = db_user.username if not isinstance(db_user, dict) else db_user["username"]
         await self.crud.db_delete(db=self.db, username=db_username)
-        await self._invalidate_user_cache(db_user, bump_token_version=True)
+        await self._invalidate_user_cache(
+            db_user,
+            bump_token_version=should_bump_token_version(InvalidationReason.DELETION),
+            reason=InvalidationReason.DELETION,
+        )
 
         return {"message": "User deleted from the database"}
 
@@ -929,8 +983,14 @@ class UserService:
         )
         await self.db.commit()
 
-        # Invalidate cache
-        await self._invalidate_user_cache(db_user, bump_token_version=True)
+        # Invalidate cache. SQL UPDATE above already bumped token_version; the
+        # cache invalidation writes the new value to the token_version keys
+        # with bump_token_version=should_bump_token_version(TIER_CHANGE) == True.
+        await self._invalidate_user_cache(
+            db_user,
+            bump_token_version=should_bump_token_version(InvalidationReason.TIER_CHANGE),
+            reason=InvalidationReason.TIER_CHANGE,
+        )
 
         # A3 FIX: Handle both ORM objects and dict responses
         user_name = db_user["name"] if isinstance(db_user, dict) else db_user.name
@@ -975,19 +1035,20 @@ class UserService:
         # access token expired.
         from sqlalchemy import update as sa_update
 
-        await self.db.execute(
-            sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
-        )
+        await self.db.execute(sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1))
         await self.db.commit()
-
-        # Invalidate cached profile/auth data. db_user is fetched post-bump, so
-        # its token_version already equals old+1 — the default bump=False writes
-        # exactly the DB value into the token_version cache keys.
+        # Invalidate cached profile/auth data. Explicit version keeps the
+        # cache in lock-step with the DB even though the bump already happened;
+        # this lets us pass the honest TIER_CHANGE reason instead of PROFILE_EDIT.
         db_user = await self.crud.get(db=self.db, id=user_id, is_deleted=False)
         if db_user is not None:
-            await self._invalidate_user_cache(db_user)
-
-        logger.info("User downgraded to free tier", user_id=user_id, tier_id=free_tier_id)
+            new_version = db_user["token_version"] if isinstance(db_user, dict) else db_user.token_version
+            await self._invalidate_user_cache(
+                db_user,
+                bump_token_version=True,
+                reason=InvalidationReason.TIER_CHANGE,
+                explicit_token_version=new_version,
+            )
         return free_tier_id
 
     async def get_with_rate_limits(self, username: str) -> dict[str, Any]:

@@ -31,4 +31,4 @@ class RateLimit(Base, kw_only=True):
         DateTime(timezone=True), default=None, onupdate=lambda: datetime.now(UTC)
     )
 
-    tier: Mapped["Tier"] = relationship("Tier", back_populates="rate_limits", init=False)
+    tier: Mapped["Tier"] = relationship("Tier", back_populates="rate_limits", init=False, lazy="selectin")

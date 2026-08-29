@@ -207,3 +207,6 @@ skills-lock.json
 graphify-out
 src/.env.local
 *live-baseline.json
+.codegraph
+*.json
+docs/adr/*

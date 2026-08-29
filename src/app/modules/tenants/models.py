@@ -8,6 +8,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 from uuid6 import uuid7
 
 from src.app.core.db.database import Base
+from src.app.core.logger import get_logger
+
+logger = get_logger(__name__)
 
 if TYPE_CHECKING:
     from src.app.modules.ai.models import AIChatSession, AITokenUsage
@@ -117,8 +120,8 @@ def _ensure_related_models_registered() -> None:
     ]:
         try:
             importlib.import_module(module_path)
-        except ImportError:
-            pass  # Optional modules may not be installed in all environments
+        except ImportError as e:
+            logger.warning("tenant_related_model_import_failed", module=module_path, error=str(e))
 
 
 _ensure_related_models_registered()

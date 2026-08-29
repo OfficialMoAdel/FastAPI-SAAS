@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from src.app.api.deps import get_current_user, tenant_dependency
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_dumps
+from src.app.core.pagination import PaginationParams, build_paginated_response, get_pagination_params
 from src.app.core.rbac import Permission, requires_permission
 from src.app.modules.audit_logs.models import AuditLog
 from src.app.modules.audit_logs.schemas import (
@@ -41,8 +42,7 @@ async def list_audit_logs(
     entity_type: str | None = Query(None, description="Filter by entity type"),
     start_date: datetime | None = Query(None, description="Filter from date"),
     end_date: datetime | None = Query(None, description="Filter to date"),
-    page: int = Query(1, ge=1, description="Page number"),
-    per_page: int = Query(100, ge=1, le=1000, description="Page size"),
+    pagination: PaginationParams = Depends(get_pagination_params),
     db: AsyncSession = Depends(async_get_db),
     current_tenant: Tenant = Depends(tenant_dependency),
     current_user: User = Depends(get_current_user),
@@ -61,39 +61,21 @@ async def list_audit_logs(
     # Get database objects via service
     audit_service = AuditLogService(db)
 
-    # Get total count
-    total = await audit_service.count_logs(
+    # R1-04: page + total in a single query (COUNT(*) OVER window) instead of
+    # two sequential round-trips. R1-10: pagination via the shared dependency
+    # so per_page is capped at MAX_PER_PAGE (was le=1000, bypassing the guard).
+    logs, total = await audit_service.query_logs_with_total(
         tenant_id=current_tenant.id,
         user_id=user_id,
         action=action,
         entity_type=entity_type,
         start_date=start_date,
         end_date=end_date,
+        limit=pagination.limit,
+        offset=pagination.offset,
     )
 
-    # Apply pagination
-    offset = (page - 1) * per_page
-
-    # Execute query
-    logs = await audit_service.query_logs(
-        tenant_id=current_tenant.id,
-        user_id=user_id,
-        action=action,
-        entity_type=entity_type,
-        start_date=start_date,
-        end_date=end_date,
-        limit=per_page,
-        offset=offset,
-    )
-
-    return {
-        "items": logs,
-        "total": total,
-        "page": page,
-        "per_page": per_page,
-        "has_next": page * per_page < total,
-        "has_previous": page > 1,
-    }
+    return build_paginated_response(items=logs, total=total, page=pagination.page, per_page=pagination.per_page)
 
 
 @router.get(
@@ -119,7 +101,6 @@ async def list_available_actions(
 # ============================================================================
 # Export Endpoints (Phase 7)
 # ============================================================================
-
 
 
 @router.get(

@@ -32,10 +32,7 @@ class Role(Base):
 
     # Relationship back to User (via user_roles association table)
     users: Mapped[list["User"]] = relationship(
-        secondary="user_roles",
-        back_populates="roles",
-        viewonly=True,
-        default_factory=list,
+        secondary="user_roles", back_populates="roles", viewonly=True, default_factory=list, lazy="noload"
     )
 
     __table_args__ = (UniqueConstraint("tenant_id", "name", name="uq_role_tenant_name"),)

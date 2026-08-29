@@ -20,6 +20,7 @@ from src.app.core.security import get_password_hash, verify_password
 from src.app.core.security.tokens import hash_token
 from src.app.modules.auth.models import PasswordResetToken, generate_reset_token
 from src.app.modules.users.service import UserService
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 logger = get_logger(__name__)
 
@@ -71,15 +72,13 @@ class PasswordLifecycleService:
 
         # Invalidate auth cache so new password works immediately, AFTER commit
         # to prevent race condition where concurrent reads see old DB value and re-cache it.
+        # Password change is CREDENTIAL_CHANGE; bump token_version to force
+        # re-auth of every active session.
         user_service = UserService(db)
-        await user_service._invalidate_user_cache(user)
-        await self.delete_user_token_cache(user)
-
-        logger.info(
-            "Password changed successfully",
-            extra={"user_id": user["id"]},
+        await user_service._invalidate_user_cache(
+            user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
         )
-
+        await self.delete_user_token_cache(user)
         # SECURITY FIX: Add audit log for password change (H-13)
         try:
             await event_bus.publish(
@@ -309,10 +308,14 @@ class PasswordLifecycleService:
         await self.invalidate_all_user_sessions(user, db)
 
         await db.commit()
-
-        # Invalidate auth cache AFTER commit
+        # Invalidate auth cache AFTER commit. Password reset is a
+        # CREDENTIAL_CHANGE; bump token_version to force re-auth of every
+        # active session and prevent the lost-password attacker from reusing
+        # a captured JWT.
         user_service = UserService(db)
-        await user_service._invalidate_user_cache(user)
+        await user_service._invalidate_user_cache(
+            user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        )
         await self.delete_user_token_cache(user)
 
         logger.info("Password reset successful", user_id=reset_token.user_id, token_id=reset_token.id)

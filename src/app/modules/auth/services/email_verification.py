@@ -11,15 +11,13 @@ from uuid import UUID
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from structlog import get_logger
 
 from src.app.core.config import settings
 from src.app.core.exceptions.http_exceptions import UnauthorizedException
 from src.app.core.security.tokens import hash_token
 from src.app.modules.auth.models import EmailVerificationToken, generate_verification_token
 from src.app.modules.users.service import UserService
-
-logger = get_logger(__name__)
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 
 class EmailVerificationService:
@@ -125,12 +123,29 @@ class EmailVerificationService:
             db=db, id=verification_token.user_id, object={"is_email_verified": True, "is_active": True}, commit=False
         )
 
+        # CREDENTIAL_CHANGE: bump token_version in the SAME transaction so the
+        # cache invalidation (old+1 → new DB value) is durable. Without this,
+        # Redis holds old+1 for 300s while DB stays old → fresh logins are
+        # rejected for 300s and the invalidation silently reverts on expiry.
+        from sqlalchemy import update as sa_update
+
+        from src.app.modules.users.models import User
+
+        await db.execute(
+            sa_update(User).where(User.id == verification_token.user_id).values(token_version=User.token_version + 1)
+        )
+
         # Delete token (it's single use)
         await db.delete(verification_token)
         await db.commit()
 
-        # Invalidate auth cache AFTER commit
+        # Invalidate auth cache AFTER commit. Email verification is a
+        # CREDENTIAL_CHANGE (the verified email becomes the new identity
+        # factor for password resets / magic links); bump token_version so
+        # any session established with the unverified email loses access.
         user_service = UserService(db)
-        await user_service._invalidate_user_cache(user)
+        await user_service._invalidate_user_cache(
+            user, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        )
 
         return {"message": "Email verified successfully."}

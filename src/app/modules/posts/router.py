@@ -14,7 +14,13 @@ from src.app.core.utils.user_utils import get_user_attr
 from src.app.modules.posts.schemas import PostCreate, PostRead, PostUpdate
 from src.app.modules.posts.service import PostService, get_post_service
 
-router = APIRouter(tags=["posts"])
+# R1-08: posts previously mounted a top-level path param (/{username}/posts)
+# directly under /v1, the only router to do so. That made {username} match any
+# first segment and risked shadowing future /v1/<x>/posts routes. The resource
+# now lives under a /posts prefix; {username} is nested under /by-user so it no
+# longer occupies the top level. The param is retained (cache keys + ownership
+# guard reference it) even though it must equal the authenticated user.
+router = APIRouter(prefix="/posts", tags=["posts"])
 
 
 async def _get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostService:
@@ -22,7 +28,7 @@ async def _get_post_service(db: AsyncSession = Depends(async_get_db)) -> PostSer
     return get_post_service(db)
 
 
-@router.post("/{username}/posts", response_model=PostRead, status_code=status.HTTP_201_CREATED)
+@router.post("/by-user/{username}", response_model=PostRead, status_code=status.HTTP_201_CREATED)
 async def write_post(
     request: Request,
     username: str,
@@ -38,7 +44,7 @@ async def write_post(
     return await service.create_post(post, current_user)
 
 
-@router.get("/{username}/posts", response_model=PaginatedListResponse[PostRead])
+@router.get("/by-user/{username}", response_model=PaginatedListResponse[PostRead])
 @cache(
     key_prefix="user_posts:{username}:page_{page}:per_page_{per_page}",
     resource_id_name="username",
@@ -64,7 +70,7 @@ async def read_posts(
     return await service.get_posts(get_user_attr(current_user, "id"), page, per_page)
 
 
-@router.get("/{username}/posts/{id}", response_model=PostRead)
+@router.get("/by-user/{username}/{id}", response_model=PostRead)
 @cache(key_prefix="user_post_cache:{username}", resource_id_name="id", user_scoped=True)
 async def read_post(
     request: Request,
@@ -81,7 +87,7 @@ async def read_post(
     return await service.get_post(id, get_user_attr(current_user, "id"))
 
 
-@router.patch("/{username}/posts/{id}", response_model=MessageResponse)
+@router.patch("/by-user/{username}/{id}", response_model=MessageResponse)
 @cache(
     "user_post_cache:{username}",
     resource_id_name="id",
@@ -104,7 +110,7 @@ async def patch_post(
     return await service.update_post(id, values, current_user)
 
 
-@router.delete("/{username}/posts/{id}", status_code=status.HTTP_204_NO_CONTENT)
+@router.delete("/by-user/{username}/{id}", status_code=status.HTTP_204_NO_CONTENT)
 @cache(
     "user_post_cache:{username}",
     resource_id_name="id",
@@ -128,7 +134,7 @@ async def erase_post(
 
 
 @router.delete(
-    "/{username}/db_posts/{id}",
+    "/by-user/{username}/db/{id}",
     status_code=status.HTTP_204_NO_CONTENT,
     dependencies=[Depends(get_current_superuser)],
 )

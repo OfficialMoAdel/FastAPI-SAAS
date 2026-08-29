@@ -1,4 +1,7 @@
 import asyncio
+import importlib
+import importlib.util
+import pkgutil
 from logging.config import fileConfig
 
 from alembic import context
@@ -6,34 +9,20 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
-# Import all models for autogenerate to detect them
-# Core models
+# R3-04: dynamic model discovery — replaces the manual 20-import list so new
+# modules are auto-registered for autogenerate without editing this file.
+# Each module's ``models`` (if present) is imported for its Base.metadata
+# side-effect; import failures for modules without models are ignored.
+import src.app.modules as _modules_pkg
 from src.app.core.config import settings
 from src.app.core.db.database import Base
 from src.app.core.db.token_blacklist import TokenBlacklist  # noqa: F401
-from src.app.modules.ai import models  # noqa: F401
 
-# Import all modules models to register them with Base.metadata
-from src.app.modules.api_keys import models as api_keys_models  # noqa: F401
-from src.app.modules.audit_logs import models as audit_logs_models  # noqa: F401
-from src.app.modules.auth import models as auth_models  # noqa: F401
-from src.app.modules.billing import models as billing_models  # noqa: F401
-from src.app.modules.feature_flags import models as feature_flags_models  # noqa: F401
-from src.app.modules.files import models as files_models  # noqa: F401
-from src.app.modules.magic_link import models as magic_link_models  # noqa: F401
-from src.app.modules.notifications import models as notifications_models  # noqa: F401
-from src.app.modules.passkey import models as passkey_models  # noqa: F401
-from src.app.modules.posts import models as posts_models  # noqa: F401
-from src.app.modules.rate_limits import models as rate_limits_models  # noqa: F401
-from src.app.modules.rbac import models as rbac_models  # noqa: F401
-from src.app.modules.sso import models as sso_models  # noqa: F401
-from src.app.modules.sso_settings import models as sso_settings_models  # noqa: F401
-from src.app.modules.storage_settings import models as storage_settings_models  # noqa: F401
-from src.app.modules.tenants import models as tenants_models  # noqa: F401
-from src.app.modules.tiers import models as tiers_models  # noqa: F401
-from src.app.modules.user_preferences import models as user_preferences_models  # noqa: F401
-from src.app.modules.users import models as users_models  # noqa: F401
-from src.app.modules.webhooks import models as webhooks_models  # noqa: F401
+for _mod in pkgutil.iter_modules(_modules_pkg.__path__):
+    _name = f"src.app.modules.{_mod.name}.models"
+    if importlib.util.find_spec(_name) is None:
+        continue
+    importlib.import_module(_name)
 
 # Debug: Print registered tables
 # print("Registered tables:", Base.metadata.tables.keys())

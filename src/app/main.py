@@ -176,13 +176,9 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         # catches its own errors), so run them concurrently instead of serially.
         await asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches())
 
-        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION and settings.app.CACHE_WARMING_DELAY_SECONDS > 0:
-            logger.info(
-                "Cache warming completed, sleeping before ready in production",
-                total_seconds=settings.app.CACHE_WARMING_DELAY_SECONDS,
-            )
-            await asyncio.sleep(settings.app.CACHE_WARMING_DELAY_SECONDS)
-
+        # R1-06: the fixed post-warming sleep was removed. Cache warming is
+        # already awaited above; sleeping before yield only delayed worker
+        # readiness (2s x workers per boot) with no functional benefit.
         # Initialize admin interface if it exists
         if admin:
             try:

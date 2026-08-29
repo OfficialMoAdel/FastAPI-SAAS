@@ -114,14 +114,10 @@ class AuditLog(Base):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
-        "Tenant",
-        back_populates="audit_logs",
-        init=False,
+        "Tenant", back_populates="audit_logs", init=False, lazy="selectin"
     )
     user: Mapped["User | None"] = relationship(  # type: ignore
-        "User",
-        back_populates="audit_logs",
-        init=False,
+        "User", back_populates="audit_logs", init=False, lazy="selectin"
     )
 
     # Composite Indexes for Performance

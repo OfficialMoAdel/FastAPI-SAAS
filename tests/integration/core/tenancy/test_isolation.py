@@ -139,8 +139,8 @@ def test_tenant_isolation_list_posts(client, user_alpha: User, tenant_alpha, pos
         "tier_id": None,
     }
 
-    # Correct URL: /api/v1/{username}/posts
-    response = client.get(f"/api/v1/{user_alpha.username}/posts", headers={"X-Tenant-ID": tenant_alpha.slug})
+    # R1-08: posts moved under /posts/by-user/{username}
+    response = client.get(f"/api/v1/posts/by-user/{user_alpha.username}", headers={"X-Tenant-ID": tenant_alpha.slug})
 
     assert response.status_code == 200, f"Response: {response.text}"
     data = response.json()["data"]
@@ -168,7 +168,7 @@ def test_cross_tenant_access_denied(client, user_alpha: User, user_beta: User, t
         "tier_id": None,
     }
 
-    response = client.get(f"/api/v1/{user_beta.username}/posts", headers={"X-Tenant-ID": tenant_alpha.slug})
+    response = client.get(f"/api/v1/posts/by-user/{user_beta.username}", headers={"X-Tenant-ID": tenant_alpha.slug})
 
     # Expectation: 403 Forbidden or 404 Not Found
     print(f"Cross-tenant request status: {response.status_code}")

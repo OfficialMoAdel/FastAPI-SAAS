@@ -8,6 +8,7 @@ from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, Mod
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
 from src.app.modules.rbac.service import RoleService
+from src.app.modules.users.session_invalidation import InvalidationReason
 from tests.conftest import MockUser
 
 
@@ -393,9 +394,10 @@ class TestRoleServicePermissions:
             ),
         ):
             await role_service.add_permission_to_role(1, "users:read")
+        mock_batch.assert_awaited_once_with(
+            projected_rows, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        )
 
-        mock_batch.assert_awaited_once_with(projected_rows)
-        # Projection query must not select the full ORM entity
         users_stmt = mock_db.execute.call_args_list[3].args[0]
         assert users_stmt.column_descriptions[0]["name"] == "id"
         assert {c["name"] for c in users_stmt.column_descriptions} == {

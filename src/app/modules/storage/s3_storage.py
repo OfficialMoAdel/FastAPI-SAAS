@@ -15,8 +15,8 @@ Note:
     Requires boto3 package: pip install boto3
 """
 
-
 import asyncio
+import posixpath
 from collections.abc import AsyncGenerator
 from typing import TYPE_CHECKING, Any, BinaryIO
 
@@ -75,6 +75,27 @@ class S3Storage(StorageProvider):
             self.client = boto3.client("s3", **client_kwargs)
 
         self.kwargs = kwargs
+    @staticmethod
+    def _validate_s3_key(path: str) -> str:
+        """Validate and normalize S3 key, rejecting directory traversal.
+
+        R4-07: S3 keys are not filesystem paths but must still reject ``..``
+        traversal and absolute keys. Mirrors the local_storage guard.
+        """
+        if not path or path.startswith("/") or "//" in path:
+            raise ValueError("Invalid S3 key: must be relative and not empty")
+        # Reject any ``..`` segment BEFORE normalizing — otherwise ``a/../b``
+        # silently resolves to ``b`` with a different key than requested.
+        if any(seg == ".." for seg in path.split("/")):
+            raise ValueError("Invalid S3 key: directory traversal detected")
+        normalized = posixpath.normpath(path)
+        if normalized.startswith("..") or "/../" in f"/{normalized}/" or normalized == "..":
+            raise ValueError("Invalid S3 key: directory traversal detected")
+        # normpath strips trailing slash and collapses .// — reject originals that relied on it
+        if ".." in normalized.split("/"):
+            raise ValueError("Invalid S3 key: directory traversal detected")
+        return normalized
+
 
     async def close(self) -> None:
         """Close the S3 client."""
@@ -97,6 +118,7 @@ class S3Storage(StorageProvider):
         Returns:
             StorageResult with success status and file details.
         """
+        path = self._validate_s3_key(path)
         try:
             if settings.FEATURE_STREAMING_UPLOADS:
                 # Streaming upload with multipart support
@@ -182,6 +204,7 @@ class S3Storage(StorageProvider):
         Yields:
             Chunks of file content (8KB each).
         """
+        path = self._validate_s3_key(path)
         try:
             response = await asyncio.to_thread(
                 self.client.get_object,
@@ -214,6 +237,7 @@ class S3Storage(StorageProvider):
         Returns:
             StorageResult with success status.
         """
+        path = self._validate_s3_key(path)
         try:
             # Wrap blocking delete_object in asyncio.to_thread to avoid blocking event loop
             await asyncio.to_thread(
@@ -250,6 +274,7 @@ class S3Storage(StorageProvider):
         Raises:
             Exception: On any S3 error other than not-found.
         """
+        path = self._validate_s3_key(path)
         try:
             # Wrap blocking head_object in asyncio.to_thread to avoid blocking event loop
             await asyncio.to_thread(
@@ -278,6 +303,7 @@ class S3Storage(StorageProvider):
         Returns:
             Signed URL for temporary access, or empty string on failure.
         """
+        path = self._validate_s3_key(path)
         try:
             # Wrap blocking generate_presigned_url in asyncio.to_thread to avoid blocking event loop
             url = await asyncio.to_thread(

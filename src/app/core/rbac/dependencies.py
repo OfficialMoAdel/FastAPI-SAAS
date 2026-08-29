@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any
 from uuid import UUID
 
 from fastapi import Depends, HTTPException, Request, status
-from fastapi.params import Depends as DependsClass
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -60,8 +59,6 @@ async def get_user_permissions(
     )
     result = await db.execute(stmt)
     return set(result.scalars().all())
-
-
 
 
 def _get_bitmask_cache_key(user_id: int, tenant_id: int | UUID) -> str:
@@ -184,7 +181,7 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
     """
     permission_slug = permission.value if isinstance(permission, PermissionEnum) else permission
 
-    from src.app.api.deps import get_auth_context
+    from src.app.api.deps import AuthContext, get_auth_context
     from src.app.core.db.database import async_get_db
 
     async def _check_permission(
@@ -193,13 +190,12 @@ def requires_permission(permission: PermissionEnum | str) -> Callable[..., Any]:
         db: AsyncSession = Depends(async_get_db),
         auth_context: Any = Depends(get_auth_context),
     ) -> None:
-        is_dependency_override = False
-        if (
-            auth_context is None
-            or isinstance(auth_context, DependsClass)
-            or hasattr(auth_context, "dependency")
-            or type(auth_context).__name__ == "Depends"
-        ):
+        # R1-14: positive type check replaces the fragile negative-detection
+        # block (isinstance DependsClass / hasattr "dependency" /
+        # type(...).__name__ == "Depends" string hack). A real AuthContext is
+        # used directly; anything else (None, an unresolved Depends sentinel,
+        # or a test override) falls back to manual token resolution.
+        if not isinstance(auth_context, AuthContext):
             # Fall back to resolving the user manually using _get_current_user_from_token(token, db)
             user_data = await _get_current_user_from_token(token, db)
             from src.app.api.deps import AuthenticatedUser

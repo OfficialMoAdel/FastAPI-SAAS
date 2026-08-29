@@ -20,22 +20,63 @@ from src.app.core.utils.ip_utils import get_client_ip
 logger = get_logger(__name__)
 
 
+# R0-05: refresh cookie naming and attributes.
+#
+# Staging/production use the ``__Host-`` prefix: browsers enforce Secure +
+# Path=/ + no Domain for it, which pins the cookie to the exact host and
+# blocks subdomain/origin hijack. ``__Host-`` cookies are rejected over
+# plain HTTP, so local development keeps the legacy name with Secure off —
+# every other environment is Secure + Strict unconditionally.
+LEGACY_REFRESH_COOKIE_NAME = "refresh_token"
+
+
+def _refresh_cookie_name() -> str:
+    """Return the refresh cookie name for the current environment."""
+    if settings.ENVIRONMENT == EnvironmentOption.LOCAL:
+        return LEGACY_REFRESH_COOKIE_NAME
+    return "__Host-refresh_token"
+
+
+def get_refresh_cookie(request: Request) -> str | None:
+    """Read the refresh token, accepting the legacy name for continuity.
+
+    After an environment upgrade, existing sessions still carry the legacy
+    cookie; accepting it (and re-issuing under the new name on refresh)
+    avoids forcing a global re-login.
+    """
+    return request.cookies.get(_refresh_cookie_name()) or request.cookies.get(LEGACY_REFRESH_COOKIE_NAME)
+
+
+def clear_refresh_cookies(response: Response) -> None:
+    """Delete both current and legacy refresh cookie names."""
+    is_local = settings.ENVIRONMENT == EnvironmentOption.LOCAL
+    # __Host- cookies require Secure + Path=/ + no Domain — browsers reject
+    # a deletion Set-Cookie without Secure, so mirror set_refresh_cookie attrs.
+    response.delete_cookie(key=_refresh_cookie_name(), secure=not is_local, samesite="strict", httponly=True)  # type: ignore[call-arg]
+    if _refresh_cookie_name() != LEGACY_REFRESH_COOKIE_NAME:
+        response.delete_cookie(key=LEGACY_REFRESH_COOKIE_NAME, secure=not is_local, samesite="strict", httponly=True)  # type: ignore[call-arg]
+
+
 def set_refresh_cookie(response: Response, refresh_token: str) -> None:
-    """Set refresh token as httpOnly cookie with standard security settings.
+    """Set refresh token as httpOnly cookie with hardened security settings.
+
+    R0-05: ``Secure`` and ``SameSite=strict`` in every environment except
+    plain-HTTP local dev (Secure cookies are not sent over http); staging
+    and production use the ``__Host-`` prefix.
 
     Args:
         response: FastAPI response object.
         refresh_token: The refresh token to set in the cookie.
     """
     max_age = settings.REFRESH_TOKEN_EXPIRE_DAYS * 24 * 60 * 60
-    is_production = settings.ENVIRONMENT == EnvironmentOption.PRODUCTION
+    is_local = settings.ENVIRONMENT == EnvironmentOption.LOCAL
 
     response.set_cookie(
-        key="refresh_token",
+        key=_refresh_cookie_name(),
         value=refresh_token,
         httponly=True,
-        secure=is_production,
-        samesite="strict" if is_production else "lax",
+        secure=not is_local,
+        samesite="strict",
         max_age=max_age,
     )
 
@@ -81,11 +122,7 @@ async def register_login_session(
 
         client_ip = get_client_ip(request) if request else "Unknown"
 
-        user_agent = (
-            request.headers.get("user-agent", "Unknown")
-            if request
-            else (device_label or "Unknown")
-        )
+        user_agent = request.headers.get("user-agent", "Unknown") if request else (device_label or "Unknown")
 
         device_info_data = {
             "user_agent": user_agent,
@@ -119,6 +156,4 @@ def _enforce_session_registration_fail_mode() -> None:
     if settings.auth.SESSION_REGISTRATION_FAIL_MODE == "fail_closed":
         from fastapi import HTTPException
 
-        raise HTTPException(
-            status_code=503, detail="Authentication service temporarily unavailable"
-        )
+        raise HTTPException(status_code=503, detail="Authentication service temporarily unavailable")

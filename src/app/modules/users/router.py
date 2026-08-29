@@ -191,18 +191,20 @@ async def erase_user(
     return UserDeleteResponse(message=result.get("message", "User deleted successfully"))
 
 
-@router.delete("/db/{user_id}", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
+@router.delete("/db/{user_id}", response_model=UserDeleteResponse, dependencies=[Depends(get_current_superuser)])
 async def erase_db_user(
     request: Request,
     user_id: str,
     service: UserService = Depends(_get_user_service),
     token: str = Depends(oauth2_scheme),
-) -> dict[str, str]:
+) -> UserDeleteResponse:
     """Permanently delete a user from database (superuser only).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    return await service.hard_delete(user_id, token)
+    # R1-15: typed DTO instead of dict[str, str] so the response contract is
+    # explicit in the OpenAPI schema.
+    return UserDeleteResponse(**await service.hard_delete(user_id, token))
 
 
 @router.get("/{user_id}/rate-limits", response_model=dict[str, Any], dependencies=[Depends(get_current_superuser)])
@@ -246,12 +248,13 @@ async def read_user_tier(
     )
 
 
-@router.patch("/{user_id}/tier", response_model=dict[str, str], dependencies=[Depends(get_current_superuser)])
+@router.patch("/{user_id}/tier", response_model=UserUpdateResponse, dependencies=[Depends(get_current_superuser)])
 async def patch_user_tier(
     request: Request, user_id: str, values: UserTierUpdate, service: UserService = Depends(_get_user_service)
-) -> dict[str, str]:
+) -> UserUpdateResponse:
     """Update user's tier (superuser only).
 
     Supports both integer user IDs and username strings for backward compatibility.
     """
-    return await service.update_tier(user_id, values)
+    # R1-15: typed DTO instead of dict[str, str].
+    return UserUpdateResponse(**await service.update_tier(user_id, values))

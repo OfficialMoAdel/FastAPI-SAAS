@@ -11,7 +11,7 @@ if TYPE_CHECKING:
     async_engine: AsyncEngine
     local_session: async_sessionmaker[AsyncSession]
     async_session_maker: async_sessionmaker[AsyncSession]
-from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass, declared_attr
+from sqlalchemy.orm import DeclarativeBase, MappedAsDataclass
 from sqlalchemy.pool import NullPool
 
 from src.app.core.config import settings
@@ -27,16 +27,16 @@ logger = get_logger(__name__)
 class Base(DeclarativeBase, MappedAsDataclass):
     """Base class for all SQLAlchemy models.
 
-    Includes extend_existing=True to prevent duplicate table registration
-    errors during alembic migrations when models are imported from multiple paths.
+    R0-06: ``extend_existing=True`` was removed from the declarative base.
+    It masked duplicate table registration (the same ``__tablename__``
+    defined or imported via two different module paths) instead of failing
+    fast. If a genuine duplicate appears, fix the import path rather than
+    re-enabling the flag.
 
-    Subclasses can override __table_args__ with tuples containing Index/Constraint
-    objects plus dict, e.g.: (Index(...), {"extend_existing": True})
+    Subclasses may define their own ``__table_args__`` as tuples containing
+    Index/Constraint objects plus an optional dict, e.g.:
+    ``(Index(...), {"extend_existing": True})`` — per-table only, with cause.
     """
-
-    @declared_attr.directive
-    def __table_args__(cls) -> dict[str, Any] | tuple[Any, ...]:  # type: ignore[override]
-        return {"extend_existing": True}
 
 
 from datetime import UTC, datetime

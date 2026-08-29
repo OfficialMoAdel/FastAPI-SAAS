@@ -72,10 +72,30 @@ def upgrade() -> None:
         sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], name=op.f("fk_user_tenant_id"), ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["tier_id"], ["tier.id"], name=op.f("fk_user_tier_id"), ondelete="SET NULL"),
     )
-    op.create_index("ix_user_username", "users", ["username"], unique=True)
-    op.create_index("ix_user_email", "users", ["email"], unique=False)
+    # Tenant-scoped PARTIAL unique indexes, exactly as declared in
+    # users/models.py __table_args__. Partial (WHERE is_deleted = false) so a
+    # soft-deleted row does not block re-registration of the same
+    # email/username within a tenant. (Previously this file created a global
+    # UNIQUE ix_user_username and a non-unique ix_user_email, which drifted
+    # from the ORM and broke IntegrityError-name matching; the fix was folded
+    # in here during development instead of a separate migration.)
+    op.create_index(
+        "uq_user_email_tenant",
+        "users",
+        ["email", "tenant_id"],
+        unique=True,
+        postgresql_where=sa.text("is_deleted = false"),
+    )
+    op.create_index(
+        "uq_user_username_tenant",
+        "users",
+        ["username", "tenant_id"],
+        unique=True,
+        postgresql_where=sa.text("is_deleted = false"),
+    )
     op.create_index("ix_user_uuid", "users", ["uuid"], unique=True)
     op.create_index("idx_users_tenant_email", "users", ["tenant_id", "email"])
+    op.create_index("idx_users_tenant_username", "users", ["tenant_id", "username"])
     op.create_index("idx_users_tenant_deleted", "users", ["tenant_id", "is_deleted"])
     # Functional indexes for case-insensitive lookups (auth queries use lower(col) = param)
     op.create_index("idx_users_tenant_lower_email", "users", ["tenant_id", sa.text("lower(email)")])

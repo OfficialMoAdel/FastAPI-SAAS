@@ -495,9 +495,16 @@ class SSOService:
 
             # Generate a secure random password that satisfies complexity requirements
             # so that even if the process crashes before the sentinel is set, the account is safe.
+            # Ensure at least one of each required character type to pass validation.
+            lower = secrets.choice(string.ascii_lowercase)
+            upper = secrets.choice(string.ascii_uppercase)
+            digit = secrets.choice(string.digits)
+            special = secrets.choice("!@#$%^&*")
             chars = string.ascii_letters + string.digits + "!@#$%^&*"
-            secure_temp_password = "".join(secrets.choice(chars) for _ in range(32))
-
+            remaining = [secrets.choice(chars) for _ in range(28)]
+            password_chars = [lower, upper, digit, special] + remaining
+            secrets.SystemRandom().shuffle(password_chars)
+            secure_temp_password = "".join(password_chars)
             user_in = UserCreate(
                 email=user_info.email,
                 username=username,

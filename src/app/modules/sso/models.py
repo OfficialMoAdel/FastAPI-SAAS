@@ -99,5 +99,5 @@ class UserSSOConnection(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship(init=False)
-    tenant: Mapped["Tenant"] = relationship(init=False)
+    user: Mapped["User"] = relationship(init=False, lazy="selectin")
+    tenant: Mapped["Tenant"] = relationship(init=False, lazy="selectin")

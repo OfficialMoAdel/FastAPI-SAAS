@@ -295,9 +295,9 @@ class APIKeyService(BaseService[APIKey]):
         if redis_client is None or not tenant_id:
             return None
         try:
-            from src.app.modules.tenants.service import _get_cache_key
+            from src.app.modules.tenants.service import get_tenant_cache_key
 
-            raw = await redis_client.get(_get_cache_key(tenant_id))
+            raw = await redis_client.get(get_tenant_cache_key(tenant_id))
             if raw is None:
                 return None
             data = json_loads(raw)

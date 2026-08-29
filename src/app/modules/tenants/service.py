@@ -41,7 +41,7 @@ def _tenant_to_dict(tenant: Tenant) -> dict[str, Any]:
     }
 
 
-def _get_cache_key(tenant_id: UUID | str) -> str:
+def get_tenant_cache_key(tenant_id: UUID | str) -> str:
     """Generate Redis cache key for tenant."""
     return f"tenant:{tenant_id}"
 
@@ -77,7 +77,7 @@ class TenantService(BaseService[Tenant]):
 
         try:
             tenant_data = _tenant_to_dict(tenant)
-            cache_key = _get_cache_key(tenant.id)
+            cache_key = get_tenant_cache_key(tenant.id)
             await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
             # Also cache by slug for slug-based lookups - store full dict, not just UUID
@@ -97,7 +97,7 @@ class TenantService(BaseService[Tenant]):
             return
 
         try:
-            cache_key = _get_cache_key(tenant_id)
+            cache_key = get_tenant_cache_key(tenant_id)
             await redis_client.set(cache_key, json_dumps(tenant_data, as_str=True), ex=TENANT_CACHE_TTL)
 
             if "slug" in tenant_data and tenant_data["slug"]:
@@ -119,7 +119,7 @@ class TenantService(BaseService[Tenant]):
             return
 
         try:
-            await redis_client.delete(_get_cache_key(tenant_id))
+            await redis_client.delete(get_tenant_cache_key(tenant_id))
             if slug:
                 await redis_client.delete(_get_slug_cache_key(slug))
         except Exception as e:
@@ -141,7 +141,7 @@ class TenantService(BaseService[Tenant]):
             return None
 
         try:
-            cached = await redis_client.get(_get_cache_key(tenant_id))
+            cached = await redis_client.get(get_tenant_cache_key(tenant_id))
             if cached:
                 result: dict[str, Any] = json_loads(cached)
                 return result
@@ -169,7 +169,7 @@ class TenantService(BaseService[Tenant]):
                     pass
 
                 # Fallback for old cache entries (UUID string)
-                cached_full = await redis_client.get(_get_cache_key(str(cached)))
+                cached_full = await redis_client.get(get_tenant_cache_key(str(cached)))
                 if cached_full:
                     result_fallback: dict[str, Any] = json_loads(cached_full)
                     return result_fallback

@@ -125,7 +125,7 @@ class StorageSettings(Base):
     )
 
     # Relationship
-    tenant: Mapped[Tenant] = relationship(back_populates="storage_settings", init=False)
+    tenant: Mapped[Tenant] = relationship(back_populates="storage_settings", init=False, lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<StorageSettings(tenant_id={self.tenant_id}, provider={self.provider})>"

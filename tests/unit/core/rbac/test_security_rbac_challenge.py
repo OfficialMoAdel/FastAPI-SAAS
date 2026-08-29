@@ -89,19 +89,21 @@ async def test_rbac_exempt_path_enforces_tenant_isolation(mock_db):
         ),
     ):
 
-        class DummyUser:
-            def __init__(self):
-                self.id = 1
-                self.is_superuser = False
-                self.tenant_id = tenant_a_id
+        # R1-14: construct the real typed AuthContext (isinstance check).
+        from src.app.api.deps.auth import AuthContext, AuthenticatedUser
 
-        class DummyAuthContext:
-            def __init__(self):
-                self.is_dependency_override = False
-                self.tenant = None
-                self.user = DummyUser()
-
-        mock_auth_context = DummyAuthContext()
+        mock_auth_context = AuthContext(
+            user=AuthenticatedUser(
+                id=1,
+                email="test@example.com",
+                username="testuser",
+                is_superuser=False,
+                tenant_id=tenant_a_id,
+            ),
+            token_data=None,
+            tenant=None,
+            is_dependency_override=False,
+        )
 
         # Should raise ForbiddenException due to tenant mismatch
         with pytest.raises(ForbiddenException) as exc_info:

@@ -2,7 +2,7 @@
 
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Cookie, Depends, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -11,6 +11,7 @@ from src.app.api.deps import get_current_user
 from src.app.core.db.database import async_get_db
 from src.app.core.exceptions.http_exceptions import RateLimitException
 from src.app.core.security import oauth2_scheme
+from src.app.core.security.login_helpers import get_refresh_cookie
 from src.app.core.security.session_manager import SessionManager
 from src.app.core.utils.cache import async_get_redis
 from src.app.core.utils.rate_limit import rate_limiter
@@ -110,7 +111,7 @@ async def refresh_access_token(
     auth_service: AuthService = Depends(_get_auth_service),
 ) -> dict[str, str]:
     """Refresh access token using refresh token from cookie."""
-    refresh_token = request.cookies.get("refresh_token")
+    refresh_token = get_refresh_cookie(request)
     if not refresh_token:
         from fastapi import HTTPException, status
 
@@ -128,11 +129,11 @@ async def logout(
     response: Response,
     request: Request,
     access_token: str | None = Depends(oauth2_scheme),
-    refresh_token: str | None = Cookie(None, alias="refresh_token"),
     db: AsyncSession = Depends(async_get_db),
     auth_service: AuthService = Depends(_get_auth_service),
 ) -> Any:
     """Logout user by blacklisting tokens."""
+    refresh_token = get_refresh_cookie(request)
     return await auth_service.logout(access_token, refresh_token, response, request, db)
 
 

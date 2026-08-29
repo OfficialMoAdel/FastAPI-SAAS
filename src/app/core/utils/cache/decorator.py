@@ -485,6 +485,15 @@ def cache(  # noqa: C901
 
                         deleted = await _invalidate_by_pattern(scoped_pattern)
                         if not deleted:
+                            # R1-03: the SCAN fallback is O(N) over the whole
+                            # keyspace. It must not be silent — a recurring
+                            # fallback means the GET endpoint is missing
+                            # `invalidation_patterns` and every write pays an
+                            # O(N) scan. Log it so the gap gets fixed.
+                            _state.stampede_logger.warning(
+                                "cache_invalidation_scan_fallback",
+                                extra={"pattern": scoped_pattern},
+                            )
                             await _delete_keys_by_pattern(scoped_pattern)
 
             return result

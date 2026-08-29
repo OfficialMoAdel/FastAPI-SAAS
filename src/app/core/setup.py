@@ -18,7 +18,10 @@ from src.app.core.config import (
     Settings,
 )
 from src.app.core.db.database import Base, get_async_engine
+from src.app.core.logger import get_logger
 from src.app.core.utils import cache, queue
+
+logger = get_logger(__name__)
 
 # Import all models to register them with SQLAlchemy's Base.metadata
 # This ensures create_all() creates all tables
@@ -186,8 +189,10 @@ def lifespan_factory(
             try:
                 engine = db_module.get_async_engine()
                 await engine.dispose()
-            except Exception:
-                pass  # Engine may not have been created if startup failed
+            except Exception as exc:  # noqa: BLE001
+                # R1-17: engine may not exist if startup failed — but a real
+                # dispose failure must be visible, not swallowed.
+                logger.warning("engine_dispose_failed", error=str(exc))
             db_module._async_engine = None
 
             if redis_cache_enabled:

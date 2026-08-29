@@ -112,4 +112,4 @@ class UserPreferences(Base):
     )
 
     # Relationships
-    user: Mapped["User"] = relationship(init=False)
+    user: Mapped["User"] = relationship(init=False, lazy="selectin")

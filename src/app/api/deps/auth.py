@@ -119,6 +119,12 @@ async def get_auth_context(
             _, _, token = auth_header.partition(" ")
         else:
             token = ""
+    # R4-02: length check at ingress (before blacklist/DB verify) -> 431
+    # Prevents DoS where large tokens are decoded without verification.
+    if token and len(token) > 4096:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=431, detail="Request header field too large")
 
     # H4 residual FIX: the manual app.dependency_overrides inspection was
     # removed — it re-implemented (per request, in production) what FastAPI
@@ -323,7 +329,12 @@ async def _verify_optional_bearer_token(
     else:
         try:
             token_data = await verify_token(token_value, TokenType.ACCESS, db)
-        except Exception:
+        except Exception as e:  # noqa: BLE001
+            # R1-18: verify_token returns None for invalid tokens and only
+            # raises on infra errors (DB/Redis). This is the OPTIONAL auth
+            # path, so degrading to anonymous is correct — but it must not be
+            # silent, or an outage reads as "everyone is logged out".
+            logger.warning("optional_token_verify_failed_degrading_to_anonymous", error=str(e))
             return None
         if token_data is None:
             return None
@@ -385,10 +396,19 @@ async def get_optional_auth_context(
     if token_type_val.lower() != "bearer" or not token_value:
         return None
 
+    # R4-02: length check at ingress (before blacklist/DB verify) -> 431
+    if len(token_value) > 4096:
+        from fastapi import HTTPException
+
+        raise HTTPException(status_code=431, detail="Request header field too large")
+
     try:
         return await _verify_optional_bearer_token(token_value, db, request, current_tenant)
-    except Exception as e:
-        logger.error(f"Error in get_optional_auth_context token verification: {e}")
+    except Exception as e:  # noqa: BLE001
+        # R1-18: safety net for the OPTIONAL auth path. Degrading to anonymous
+        # is correct here, but log it so an outage is visible rather than
+        # silently reading as "everyone is logged out".
+        logger.warning("optional_auth_context_verify_failed_degrading_to_anonymous", error=str(e))
         return None
 
 

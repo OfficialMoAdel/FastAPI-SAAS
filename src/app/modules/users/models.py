@@ -85,7 +85,7 @@ class User(Base, kw_only=True):
     tier_id: Mapped[int | None] = mapped_column(ForeignKey("tier.id"), index=True, default=None, init=False)
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False)
+    tenant: Mapped["Tenant"] = relationship(back_populates="users", init=False, lazy="selectin")
     roles: Mapped[list["Role"]] = relationship(
         secondary="user_roles",
         back_populates="users",
@@ -116,7 +116,7 @@ class User(Base, kw_only=True):
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"
     )
     ai_settings: Mapped["AISettings | None"] = relationship(
-        back_populates="user", uselist=False, init=False, cascade="all, delete-orphan"
+        back_populates="user", uselist=False, init=False, cascade="all, delete-orphan", lazy="selectin"
     )
     ai_token_usage: Mapped[list["AITokenUsage"]] = relationship(
         back_populates="user", init=False, cascade="all, delete-orphan", lazy="noload"

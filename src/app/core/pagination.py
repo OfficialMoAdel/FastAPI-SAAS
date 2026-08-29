@@ -26,8 +26,13 @@ DEFAULT_PER_PAGE: int = settings.PAGINATION_DEFAULT_PER_PAGE
 MAX_PER_PAGE: int = settings.PAGINATION_MAX_PER_PAGE
 
 
-# Overflow guard: prevent page/per_page combos that produce >1M offset
-_MAX_OFFSET = 1_000_000
+# R1-02: deep OFFSET scans are O(offset) in PostgreSQL — the DB must read and
+# discard every skipped row. The previous 1_000_000 cap allowed page=50000 with
+# per_page=20 (OFFSET 999980), a full-table scan per request. Cap at 100_000
+# (page 1000 x per_page 100) which still covers any realistic UI pagination
+# while bounding worst-case scan cost. True cursor/keyset pagination for
+# unbounded traversal is tracked separately (P2/P3).
+_MAX_OFFSET = 100_000
 
 
 @dataclass

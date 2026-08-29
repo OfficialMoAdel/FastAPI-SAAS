@@ -70,13 +70,9 @@ class AuditLogService:
         """
         self.db = db
 
-
-
     async def list_actions(self, tenant_id) -> list[str]:
         """A13: unique action types for a tenant (was inline in router)."""
-        result = await self.db.execute(
-            select(AuditLog.action).where(AuditLog.tenant_id == tenant_id).distinct()
-        )
+        result = await self.db.execute(select(AuditLog.action).where(AuditLog.tenant_id == tenant_id).distinct())
         return sorted(result.scalars().all())
 
     async def export_count(self, tenant_id, f: _AuditFilter) -> int:
@@ -196,7 +192,7 @@ class AuditLogService:
         result = await self.db.execute(query)
         return list(result.unique().scalars().all())
 
-    async def count_logs(
+    async def query_logs_with_total(
         self,
         tenant_id: UUID,
         user_id: int | None = None,
@@ -205,10 +201,25 @@ class AuditLogService:
         entity_id: str | None = None,
         start_date: datetime | None = None,
         end_date: datetime | None = None,
-    ) -> int:
-        from sqlalchemy import func
+        limit: int = 100,
+        offset: int = 0,
+    ) -> tuple[list[AuditLog], int]:
+        """R1-04: fetch a page of logs and the total count in ONE query.
 
-        query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == tenant_id)
+        ``COUNT(*) OVER ()`` is evaluated over the filtered set before
+        LIMIT/OFFSET, so the page and the total come back in a single
+        round-trip. This replaces the previous count_logs + query_logs pair;
+        running those concurrently via asyncio.gather on one AsyncSession is
+        not safe, so the window function is the correct consolidation.
+        """
+        total_col = func.count().over().label("total")
+        query = (
+            select(AuditLog, total_col)
+            .options(
+                joinedload(AuditLog.user),  # type: ignore[arg-type]
+            )
+            .where(AuditLog.tenant_id == tenant_id)
+        )
 
         if user_id:
             query = query.where(AuditLog.user_id == user_id)
@@ -223,8 +234,34 @@ class AuditLogService:
         if end_date:
             query = query.where(AuditLog.created_at <= end_date)
 
+        query = query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+
         result = await self.db.execute(query)
-        return result.scalar_one()
+        rows = result.unique().all()
+        if rows:
+            total = int(rows[0][1])
+            logs = [row[0] for row in rows]
+            return logs, total
+        if offset == 0:
+            return [], 0
+        # Out-of-range page: window function yields no rows, so total is
+        # unavailable. Fall back to a cheap COUNT so pagination metadata stays
+        # truthful (total must reflect the filtered set even when the page is empty).
+        count_query = select(func.count()).select_from(AuditLog).where(AuditLog.tenant_id == tenant_id)
+        if user_id:
+            count_query = count_query.where(AuditLog.user_id == user_id)
+        if action:
+            count_query = count_query.where(AuditLog.action == action)
+        if entity_type:
+            count_query = count_query.where(AuditLog.entity_type == entity_type)
+        if entity_id:
+            count_query = count_query.where(AuditLog.entity_id == entity_id)
+        if start_date:
+            count_query = count_query.where(AuditLog.created_at >= start_date)
+        if end_date:
+            count_query = count_query.where(AuditLog.created_at <= end_date)
+        count_result = await self.db.execute(count_query)
+        return [], count_result.scalar_one()
 
     async def get_audit_logs_for_tenant_async(
         self,

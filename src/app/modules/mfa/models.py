@@ -36,4 +36,4 @@ class MFAMethod(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), insert_default=func.now(), init=False)
 
     # Relationships (init=False)
-    user: Mapped["User"] = relationship(back_populates="mfa_methods", init=False)
+    user: Mapped["User"] = relationship(back_populates="mfa_methods", init=False, lazy="selectin")

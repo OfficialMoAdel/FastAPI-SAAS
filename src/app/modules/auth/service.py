@@ -454,7 +454,9 @@ class AuthService:
                     pass  # Token expired or invalid, proceed with logout anyway
 
             await blacklist_tokens(access_token=access_token, refresh_token=refresh_token, db=db)
-            response.delete_cookie(key="refresh_token")
+            from src.app.core.security.login_helpers import clear_refresh_cookies
+
+            clear_refresh_cookies(response)
 
             # Try to invalidate the specific session to decrement active sessions
             db_user = None

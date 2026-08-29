@@ -15,7 +15,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import insert, select
+from sqlalchemy import insert, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -30,6 +30,7 @@ from src.app.modules.webhooks.models import (
     WebhookDeliveryStatus,
     WebhookEndpoint,
 )
+from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload
 
 logger = get_logger(__name__)
 
@@ -55,6 +56,24 @@ def _glob_match(text: str, pattern: str) -> bool:
                 del _FN_REGEX_CACHE[old_key]
         _FN_REGEX_CACHE[pattern] = pat
     return bool(pat.match(text))
+
+
+async def _release_delivery_lock(redis_client: Any, lock_key: str, lock_held: bool, delivery_id: UUID) -> None:
+    """Release the webhook delivery lock, logging failures (R1-17).
+
+    A failed delete is not swallowed silently: the lock carries a 60s TTL, so
+    the worst case is a delayed redelivery, but operators should see the error.
+    """
+    if not (lock_held and redis_client is not None):
+        return
+    try:
+        await redis_client.delete(lock_key)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(
+            "webhook_delivery_lock_release_failed",
+            delivery_id=str(delivery_id),
+            error=str(exc),
+        )
 
 
 # Retry schedule in seconds: 1m, 5m, 15m, 30m, 1h (5 retries over 1 hour)
@@ -253,15 +272,32 @@ class WebhookService:
         return deliveries, total
 
     async def get_active_endpoints(self, tenant_id: UUID, event_type: str) -> list[WebhookEndpoint]:
-        """Get active endpoints for an event type with glob matching support."""
+        """Get active endpoints for an event type with glob matching support.
+
+        R1-05: previously loaded EVERY active endpoint for the tenant and
+        glob-filtered in Python. The endpoint's ``event_type`` is either an
+        exact event name or a glob pattern (``user.*``). Exact matches and
+        wildcard candidates are now selected in SQL; only wildcard patterns
+        (a small minority) are evaluated with fnmatch in Python, which remains
+        the authoritative matcher so glob semantics are unchanged.
+        """
         stmt = select(WebhookEndpoint).where(
             WebhookEndpoint.tenant_id == tenant_id,
             WebhookEndpoint.is_active.is_(True),
+            # Exact match, or a pattern that could contain a glob wildcard.
+            # Endpoints with a literal, non-matching event_type are excluded
+            # here instead of being fetched and discarded in Python.
+            or_(
+                WebhookEndpoint.event_type == event_type,
+                WebhookEndpoint.event_type.like("%*%"),
+                WebhookEndpoint.event_type.like("%?%"),
+                WebhookEndpoint.event_type.like("%[%"),
+            ),
         )
         result = await self.db.execute(stmt)
-        all_endpoints = list(result.scalars().all())
+        candidates = list(result.scalars().all())
 
-        return [ep for ep in all_endpoints if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
+        return [ep for ep in candidates if ep.event_type == event_type or _glob_match(event_type, ep.event_type)]
 
     async def trigger_webhooks(
         self,
@@ -510,7 +546,6 @@ class WebhookService:
         CRITICAL: Uses content= instead of json= to prevent httpx double serialization.
         The payload is serialized ONCE with sort_keys=True to match the HMAC signature.
         """
-        import json
 
         # P2.17 FIX: serialize delivery by id to prevent double delivery when the
         # same delivery_id is enqueued twice (e.g. a retry scheduled while the
@@ -540,11 +575,7 @@ class WebhookService:
         result = await self.db.execute(stmt)
         delivery = result.unique().scalar_one_or_none()
         if not delivery:
-            if _lock_held and _redis is not None:
-                try:
-                    await _redis.delete(_lock_key)
-                except Exception:  # noqa: BLE001
-                    pass
+            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
             raise ModelNotFoundError("WebhookDelivery", delivery_id)
 
         # Access eagerly loaded endpoint
@@ -586,11 +617,7 @@ class WebhookService:
                 )
             except RuntimeError:
                 logger.warning("webhook_circuit_skip_reenqueue_failed", delivery_id=str(delivery_id))
-            if _lock_held and _redis is not None:
-                try:
-                    await _redis.delete(_lock_key)
-                except Exception:  # noqa: BLE001
-                    pass
+            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
             return delivery
 
         # W1+W2+S-4 FIX: serialize and sign AT SEND TIME, per attempt.
@@ -607,14 +634,10 @@ class WebhookService:
         import time as _time
 
         send_timestamp = int(_time.time())
-        payload_bytes = json.dumps(delivery.payload, sort_keys=True).encode("utf-8")
-
-        def _sign_with_secret(secret: str) -> str:
-            signed = f"{send_timestamp}.".encode() + payload_bytes
-            digest = hmac.new(secret.encode("utf-8"), signed, hashlib.sha256).hexdigest()
-            return f"t={send_timestamp},v1={digest}"
-
-        signature_header = _sign_with_secret(decrypt_data(endpoint.secret))
+        # R3-01: canonical bytes owned by signer; reused for HTTP content so
+        # transmitted bytes == signed bytes (json.dumps sort_keys contract).
+        payload_bytes = canonical_payload_bytes(delivery.payload)
+        signature_header = sign_payload(delivery.payload, decrypt_data(endpoint.secret), send_timestamp)
         if (
             endpoint.old_signing_secret
             and endpoint.old_secret_expires_at
@@ -625,7 +648,9 @@ class WebhookService:
                 expires_at = expires_at.replace(tzinfo=UTC)
             if expires_at > datetime.now(UTC):
                 try:
-                    signature_header += f",{_sign_with_secret(decrypt_data(endpoint.old_signing_secret))}"
+                    signature_header += (
+                        f",{sign_payload(delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp)}"
+                    )
                 except Exception as old_sig_err:
                     logger.error(
                         "webhook_old_signing_secret_decryption_failed",
@@ -679,11 +704,7 @@ class WebhookService:
             delivery.response_body = f"SSRF protection: {e}"
             await self.db.commit()
             await self.db.refresh(delivery)
-            if _lock_held and _redis is not None:
-                try:
-                    await _redis.delete(_lock_key)
-                except Exception:  # noqa: BLE001
-                    pass
+            await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
             return delivery
 
         # Extract data needed for HTTP call before releasing DB connection
@@ -766,11 +787,7 @@ class WebhookService:
 
         await self.db.commit()
         await self.db.refresh(delivery)
-        if _lock_held and _redis is not None:
-            try:
-                await _redis.delete(_lock_key)
-            except Exception:  # noqa: BLE001
-                pass
+        await _release_delivery_lock(_redis, _lock_key, _lock_held, delivery_id)
         return delivery
 
     async def _handle_delivery_failure(self, delivery: WebhookDelivery, override_delay: float | None = None) -> None:
@@ -1072,7 +1089,15 @@ async def webhook_event_adapter(data: dict[str, Any]) -> None:
     # W9 FIX: internal publish metadata (sequence, event ids, tenant record
     # info) must never be forwarded as part of the externally signed webhook
     # payload.
-    external_payload = {k: v for k, v in data.items() if k != "_event_meta"}
+    # R4-04: strip internal publish metadata and tenant-internal data.
+    # Only _event_meta, tenant/tenant_id are dropped; the rest is business
+    # payload. An explicit allowlist per event type would be stricter — this
+    # denylist is the safe incremental fix.
+    external_payload = {
+        k: v
+        for k, v in data.items()
+        if k not in ("_event_meta", "tenant_id", "tenant") and not k.startswith("_")
+    }
     if tenant_id:
         await handle_webhook_trigger_event(
             {"tenant_id": str(tenant_id), "event_type": event_type, "payload": external_payload}

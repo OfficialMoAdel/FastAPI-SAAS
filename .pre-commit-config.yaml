@@ -17,6 +17,12 @@ repos:
       - id: detect-private-key
       - id: check-merge-conflict
 
+  # R0-01: secret scanning — blocks commits containing leaked keys/passwords
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
   - repo: https://github.com/asottile/pyupgrade
     rev: v3.15.0
     hooks:

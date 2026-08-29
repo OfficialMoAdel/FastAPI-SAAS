@@ -6,6 +6,7 @@ Handles token generation, email queueing, and token verification.
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING, Annotated, Any
 
 from fastapi import Depends
@@ -79,6 +80,10 @@ class MagicLinkService:
         user = await self._get_user_by_email(email)
 
         if user is None:
+            # R4-03: constant-time padding — prevent email-enumeration timing
+            # oracle. Real path does DB active-check + Redis token create;
+            # pad the early return so attacker can't distinguish.
+            await asyncio.sleep(0.15)
             # Return success to prevent email enumeration
             logger.debug(
                 "Magic link requested for non-existent email",
@@ -94,6 +99,7 @@ class MagicLinkService:
         # verify_magic_link (which checks both) caused tokens to be created and emails
         # sent for inactive users, which would then be rejected on verification.
         if user.get("is_deleted", False) or not user.get("is_active", False):
+            await asyncio.sleep(0.15)
             logger.debug(
                 "Magic link requested for deleted/inactive user",
                 extra={"operation": "send_magic_link", "user_id": user["id"]},

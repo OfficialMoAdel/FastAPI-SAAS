@@ -33,7 +33,6 @@ class TestAuditLogsRouter:
     @patch("src.app.modules.audit_logs.router.AuditLogService")
     async def test_list_audit_logs(self, mock_service_cls, client, mock_tenant, mock_user):
         mock_service = MagicMock()
-        mock_service.count_logs = AsyncMock(return_value=1)
 
         # Create a mock log dict or object that model_validate can use
         mock_log = {
@@ -48,7 +47,7 @@ class TestAuditLogsRouter:
             "user_agent": "test",
             "created_at": datetime.now(UTC),
         }
-        mock_service.query_logs = AsyncMock(return_value=[mock_log])
+        mock_service.query_logs_with_total = AsyncMock(return_value=([mock_log], 1))
         mock_service_cls.return_value = mock_service
 
         from src.app.api.deps import get_current_user, tenant_dependency
@@ -82,7 +81,6 @@ from src.app.modules.audit_logs.router import (
 @patch("src.app.modules.audit_logs.router.AuditLogService")
 async def test_list_audit_logs_direct(mock_service_cls, mock_db, mock_tenant, mock_user):
     mock_service = MagicMock()
-    mock_service.count_logs = AsyncMock(return_value=1)
 
     mock_log = MagicMock()
     mock_log.id = uuid4()
@@ -96,8 +94,10 @@ async def test_list_audit_logs_direct(mock_service_cls, mock_db, mock_tenant, mo
     mock_log.user_agent = "agent"
     mock_log.created_at = datetime.now(UTC)
 
-    mock_service.query_logs = AsyncMock(return_value=[mock_log])
+    mock_service.query_logs_with_total = AsyncMock(return_value=([mock_log], 1))
     mock_service_cls.return_value = mock_service
+
+    from src.app.core.pagination import PaginationParams
 
     result = await list_audit_logs(
         action=None,
@@ -105,8 +105,7 @@ async def test_list_audit_logs_direct(mock_service_cls, mock_db, mock_tenant, mo
         entity_type=None,
         start_date=None,
         end_date=None,
-        page=1,
-        per_page=10,
+        pagination=PaginationParams(page=1, per_page=10),
         db=mock_db,
         current_tenant=mock_tenant,
         current_user=mock_user,

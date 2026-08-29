@@ -16,6 +16,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from src.app.modules.users.session_invalidation import InvalidationReason
+
 
 def _create_mock_tenant() -> MagicMock:
     """Create a mock tenant for tenant context."""
@@ -194,9 +196,13 @@ class TestUserCacheInvalidation:
                 mock_pipe = MockPipeline()
                 mock_client.pipeline = MagicMock(return_value=mock_pipe)
                 mock_client.delete = AsyncMock()
-
-                await user_service._invalidate_user_cache(user_data)
-
+                # The test exercises cache-key wiring; PROFILE_EDIT keeps
+                # the bump contract at False (no token_version change) which
+                # is what this test asserted implicitly under the old
+                # signature that defaulted ``bump_token_version`` to False.
+                await user_service._invalidate_user_cache(
+                    user_data, bump_token_version=False, reason=InvalidationReason.PROFILE_EDIT
+                )
                 # Verify profile cache keys were deleted (5 keys total)
                 mock_client.delete.assert_called_once()
                 call_args = mock_client.delete.call_args[0]

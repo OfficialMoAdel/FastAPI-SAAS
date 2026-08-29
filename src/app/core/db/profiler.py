@@ -9,7 +9,6 @@ Provides:
 """
 
 import re
-import threading
 import time
 from collections import defaultdict
 from contextvars import ContextVar
@@ -26,8 +25,14 @@ logger = get_logger(__name__)
 
 # Track repeated queries for N+1 detection (global across all requests)
 _query_tracker: dict[str, dict[str, Any]] = {}
-_query_tracker_lock = threading.RLock()
 
+
+# R4-18: threading.RLock blocks the event loop in async context.
+# The global tracker is dev-only and races are acceptable; per-request
+# tracking already uses ContextVar for async safety. Use a no-op lock.
+from contextlib import nullcontext
+
+_query_tracker_lock = nullcontext()
 # Per-request query tracking using ContextVar for async safety
 _request_queries: ContextVar[dict[str, int] | None] = ContextVar("request_queries", default=None)
 

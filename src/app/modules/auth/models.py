@@ -97,10 +97,7 @@ class PasswordResetToken(Base):
     )
 
     # Relationship
-    user: Mapped["User"] = relationship(
-        "User",
-        init=False,
-    )
+    user: Mapped["User"] = relationship("User", init=False, lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<PasswordResetToken(id={self.id}, user_id={self.user_id})>"
@@ -180,10 +177,7 @@ class EmailVerificationToken(Base):
     )
 
     # Relationship
-    user: Mapped["User"] = relationship(
-        "User",
-        init=False,
-    )
+    user: Mapped["User"] = relationship("User", init=False, lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<EmailVerificationToken(id={self.id}, user_id={self.user_id})>"

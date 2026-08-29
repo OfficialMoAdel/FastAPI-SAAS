@@ -102,10 +102,7 @@ class FeatureFlag(Base, kw_only=True):
 
     # Relationships
     tenant_overrides: Mapped[list["FeatureFlagOverride"]] = relationship(
-        "FeatureFlagOverride",
-        back_populates="feature_flag",
-        cascade="all, delete-orphan",
-        init=False,
+        "FeatureFlagOverride", back_populates="feature_flag", cascade="all, delete-orphan", init=False, lazy="noload"
     )
 
     # Indexes
@@ -189,14 +186,10 @@ class FeatureFlagOverride(Base, kw_only=True):
 
     # Relationships
     tenant: Mapped["Tenant"] = relationship(  # type: ignore
-        "Tenant",
-        back_populates="feature_flag_overrides",
-        init=False,
+        "Tenant", back_populates="feature_flag_overrides", init=False, lazy="selectin"
     )
     feature_flag: Mapped["FeatureFlag"] = relationship(
-        "FeatureFlag",
-        back_populates="tenant_overrides",
-        init=False,
+        "FeatureFlag", back_populates="tenant_overrides", init=False, lazy="selectin"
     )
 
     # Constraints

@@ -96,10 +96,11 @@ class UserUpdateInternal(BaseUpdate):
         if v and v.isdigit():
             raise ValueError("Username cannot consist entirely of numbers")
         return v
+
     profile_image_url: Annotated[
         str | None,
         Field(
-            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
+            pattern=r"^https://[^\s/$.?#].[^\s]*$",
             examples=["https://www.profileimageurl.com"],
             default=None,
         ),
@@ -150,7 +151,7 @@ class UserCreate(UserBase, BaseCreate):
         str,
         Field(
             min_length=8,
-            max_length=128,
+            max_length=72,
             examples=["Str1ngst!"],
             description="Must contain at least one lowercase, uppercase, digit, and special character",
         ),
@@ -196,11 +197,10 @@ class UserUpdate(BaseUpdate):
     ]
     email: Annotated[EmailStr | None, Field(examples=["user.userberg@example.com"], default=None)]
 
-
     profile_image_url: Annotated[
         str | None,
         Field(
-            pattern=r"^(https?|ftp)://[^\s/$.?#].[^\s]*$",
+            pattern=r"^https://[^\s/$.?#].[^\s]*$",
             examples=["https://www.profileimageurl.com"],
             default=None,
         ),

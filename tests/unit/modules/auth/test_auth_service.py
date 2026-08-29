@@ -351,10 +351,10 @@ class TestAuthServiceTokenRefresh:
             # 2. New refresh token created
             mock_create_refresh.assert_called_once()
 
-            # 3. New cookie set
+            # 3. New cookie set (R0-05: non-local env uses __Host- prefix + Secure)
             mock_response.set_cookie.assert_called_once()
             call_kwargs = mock_response.set_cookie.call_args[1]
-            assert call_kwargs["key"] == "refresh_token"
+            assert call_kwargs["key"] == "__Host-refresh_token"
             assert call_kwargs["value"] == "new_refresh_token"
             assert call_kwargs["httponly"] is True
             assert call_kwargs["secure"] is True
@@ -384,7 +384,10 @@ class TestAuthServiceLogout:
             mock_blacklist.assert_called_once_with(
                 access_token="access_token", refresh_token="refresh_token", db=mock_db
             )
-            mock_response.delete_cookie.assert_called_once_with(key="refresh_token")
+            # clear_refresh_cookies mirrors set_refresh_cookie attrs so __Host- deletions are honored
+            mock_response.delete_cookie.assert_called_once_with(
+                key="refresh_token", secure=False, samesite="strict", httponly=True
+            )
             assert result["message"] == "Logged out successfully"
 
     @pytest.mark.asyncio

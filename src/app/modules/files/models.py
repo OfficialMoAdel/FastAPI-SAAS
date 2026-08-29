@@ -131,8 +131,8 @@ class File(Base):
     )
 
     # Relationships
-    tenant: Mapped[Tenant] = relationship(back_populates="files", init=False)
-    user: Mapped[User | None] = relationship(back_populates="files", init=False)
+    tenant: Mapped[Tenant] = relationship(back_populates="files", init=False, lazy="selectin")
+    user: Mapped[User | None] = relationship(back_populates="files", init=False, lazy="selectin")
 
     def __repr__(self) -> str:
         return f"<File(id={self.id}, name={self.original_name}, tenant_id={self.tenant_id})>"

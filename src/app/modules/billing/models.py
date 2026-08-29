@@ -48,7 +48,7 @@ class StripeSettings(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="stripe_settings", init=False)
+    tenant: Mapped["Tenant"] = relationship(back_populates="stripe_settings", init=False, lazy="selectin")
 
 
 class SubscriptionPlan(Base, kw_only=True):
@@ -86,9 +86,9 @@ class SubscriptionPlan(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False)
+    tenant: Mapped["Tenant"] = relationship(back_populates="subscription_plans", init=False, lazy="selectin")
     user_subscriptions: Mapped[list["UserSubscription"]] = relationship(
-        back_populates="subscription_plan", init=False, lazy="selectin"
+        back_populates="subscription_plan", init=False, lazy="noload"
     )
 
 
@@ -117,7 +117,7 @@ class Product(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(back_populates="products", init=False)
+    tenant: Mapped["Tenant"] = relationship(back_populates="products", init=False, lazy="selectin")
     pricing_tiers: Mapped[list["Pricing"]] = relationship(
         back_populates="product", init=False, cascade="all, delete-orphan", lazy="selectin"
     )
@@ -155,8 +155,8 @@ class Pricing(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(init=False)
-    product: Mapped["Product"] = relationship(back_populates="pricing_tiers", init=False)
+    tenant: Mapped["Tenant"] = relationship(init=False, lazy="selectin")
+    product: Mapped["Product"] = relationship(back_populates="pricing_tiers", init=False, lazy="selectin")
 
 
 class UserSubscription(Base, kw_only=True):
@@ -203,11 +203,13 @@ class UserSubscription(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(init=False)
-    user: Mapped["User"] = relationship(back_populates="user_subscriptions", init=False)
-    subscription_plan: Mapped["SubscriptionPlan"] = relationship(back_populates="user_subscriptions", init=False)
+    tenant: Mapped["Tenant"] = relationship(init=False, lazy="selectin")
+    user: Mapped["User"] = relationship(back_populates="user_subscriptions", init=False, lazy="selectin")
+    subscription_plan: Mapped["SubscriptionPlan"] = relationship(
+        back_populates="user_subscriptions", init=False, lazy="selectin"
+    )
     billing_records: Mapped[list["BillingRecord"]] = relationship(
-        back_populates="user_subscription", init=False, cascade="all, delete-orphan", lazy="selectin"
+        back_populates="user_subscription", init=False, cascade="all, delete-orphan", lazy="noload"
     )
 
 
@@ -244,9 +246,11 @@ class BillingRecord(Base, kw_only=True):
     )
 
     # Relationships
-    tenant: Mapped["Tenant"] = relationship(init=False)
-    user: Mapped["User"] = relationship(back_populates="billing_records", init=False)
-    user_subscription: Mapped["UserSubscription | None"] = relationship(back_populates="billing_records", init=False)
+    tenant: Mapped["Tenant"] = relationship(init=False, lazy="selectin")
+    user: Mapped["User"] = relationship(back_populates="billing_records", init=False, lazy="selectin")
+    user_subscription: Mapped["UserSubscription | None"] = relationship(
+        back_populates="billing_records", init=False, lazy="selectin"
+    )
 
 
 class WebhookEvent(Base, kw_only=True):

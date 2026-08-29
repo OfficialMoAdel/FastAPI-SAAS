@@ -13,6 +13,8 @@ import asyncio
 import time
 from dataclasses import dataclass
 
+from cachetools import TTLCache
+
 from src.app.core.config import settings
 from src.app.core.logger import get_logger
 from src.app.core.redis_provider import get_redis
@@ -24,6 +26,23 @@ logger = get_logger(__name__)
 VIOLATIONS_KEY_PREFIX = "security:violations:{ip}"
 BAN_KEY_PREFIX = "security:ban:{ip}"
 BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
+
+# R1-01: negative cache for ban lookups. get_ban_info is the one unconditional
+# per-request Redis GET in the rate-limit middleware (tier policy and token
+# blacklist already have their own L1/negative caches). Caching "not banned"
+# for a short TTL removes that GET for repeat requests from clean IPs.
+#
+# Tradeoff (same as token_blacklist_cache): a freshly-banned IP can slip through
+# for up to _BAN_NEGATIVE_TTL seconds, and the cache is per-process so a ban set
+# by another worker is not seen until expiry. ban_ip/unban_ip evict the local
+# entry so same-process bans/unbans take effect immediately. Bounded and
+# acceptable for a rate-limiting defense (not a primary security boundary).
+_BAN_NEGATIVE_TTL = 5  # seconds
+_ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGATIVE_TTL)
+
+
+def _ban_cache_key(client_ip: str) -> str:
+    return f"ban:{client_ip}"
 
 
 # TTL for violations counter - configurable via settings
@@ -131,6 +150,13 @@ async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
     if not redis_client:
         return BanInfo(is_banned=False)
 
+    # R1-01: short-TTL negative cache for the per-request hot path. Only the
+    # status-only lookup (include_count=False) is cached; ban_ip's
+    # include_count=True path always reads fresh for correct escalation.
+    cache_key = _ban_cache_key(client_ip)
+    if not include_count and _ban_negative_cache.get(cache_key):
+        return BanInfo(is_banned=False)
+
     ban_key = BAN_KEY_PREFIX.format(ip=client_ip)
     count_key = BAN_COUNT_KEY_PREFIX.format(ip=client_ip)
 
@@ -138,6 +164,7 @@ async def get_ban_info(client_ip: str, include_count: bool = False) -> BanInfo:
         ban_data = await redis_client.get(ban_key)
 
         if not ban_data and not include_count:
+            _ban_negative_cache[cache_key] = True
             return BanInfo(is_banned=False)
 
         ttl, ban_count_str = await asyncio.gather(
@@ -217,6 +244,10 @@ async def ban_ip(
             logger.debug("IP %s already banned by concurrent request", client_ip)
             return False
 
+        # R1-01: evict the negative cache so this ban is enforced immediately
+        # in this process (the 5s TTL would otherwise let it slip through).
+        _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
+
         # H4: add 30d TTL to ban_count to bound memory (was indefinite -> OOM).
         # Keep escalating within 30d, then naturally decay — avoids unbounded key growth.
         ban_count = await redis_client.incr(count_key)
@@ -272,6 +303,10 @@ async def unban_ip(client_ip: str) -> bool:
 
     try:
         result = await redis_client.delete(ban_key)
+
+        # R1-01: evict the negative cache so the unban is reflected on the
+        # next lookup instead of waiting out the 5s TTL.
+        _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
 
         if result > 0:
             logger.info("IP unbanned | ip=%s", client_ip)

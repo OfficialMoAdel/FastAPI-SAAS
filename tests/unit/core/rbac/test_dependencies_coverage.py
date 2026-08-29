@@ -11,21 +11,29 @@ from src.app.core.rbac.permissions import Permission
 from src.app.core.tenancy.context import TenantContext
 
 TENANT_ID = uuid4()
+# R1-14: requires_permission now does a positive isinstance(AuthContext) check,
+# so tests must construct the real typed contract instead of duck-typed fakes.
+from src.app.api.deps.auth import AuthContext, AuthenticatedUser
 from src.app.core.utils import cache as cache_module
 
 
-class _User:
-    def __init__(self, *, is_superuser=False, user_id=1, tenant_id=TENANT_ID):
-        self.is_superuser = is_superuser
-        self.id = user_id
-        self.tenant_id = tenant_id
+def _User(*, is_superuser=False, user_id=1, tenant_id=TENANT_ID) -> AuthenticatedUser:
+    return AuthenticatedUser(
+        id=user_id,
+        email="test@example.com",
+        username="testuser",
+        is_superuser=is_superuser,
+        tenant_id=tenant_id,
+    )
 
 
-class _AuthContext:
-    def __init__(self, user, tenant, is_dependency_override=False):
-        self.user = user
-        self.tenant = tenant
-        self.is_dependency_override = is_dependency_override
+def _AuthContext(user, tenant, is_dependency_override=False) -> AuthContext:
+    return AuthContext(
+        user=user,
+        token_data=None,
+        tenant=tenant,
+        is_dependency_override=is_dependency_override,
+    )
 
 
 @pytest.fixture
@@ -79,7 +87,12 @@ async def test_tenant_context_required(mock_db):
 
 
 async def test_user_id_required(tenant_ctx, mock_db):
-    user = _User(user_id=None)
+    # R1-14: AuthenticatedUser.id is a required int, so the defensive
+    # "User ID is required" branch is only reachable via an unvalidated
+    # instance. model_construct bypasses validation to exercise it.
+    user = AuthenticatedUser.model_construct(
+        id=None, email="test@example.com", username="testuser", is_superuser=False, tenant_id=TENANT_ID
+    )
     ctx = _AuthContext(user, tenant_ctx)
     dep = rbac_deps.requires_permission(Permission.USERS_READ)
     with pytest.raises(Exception):

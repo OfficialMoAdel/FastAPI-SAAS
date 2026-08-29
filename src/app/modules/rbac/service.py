@@ -29,13 +29,14 @@ from src.app.core.tenancy.context import TenantContext, get_current_tenant
 from src.app.modules._base.exceptions import DuplicateError, ForbiddenError, ModelNotFoundError
 from src.app.modules.rbac.models import Permission, Role, RolePermission, UserRole
 from src.app.modules.rbac.schemas import RoleCreate, RoleUpdate
+from src.app.modules.users.session_invalidation import InvalidationReason
 
 if TYPE_CHECKING:
     from redis.asyncio import Redis
-logger = structlog.get_logger(__name__)
 
 import asyncio
 
+logger = structlog.get_logger(__name__)
 # L1 In-Memory Cache for RBAC permissions (R2-HYBRID MED-2)
 # - maxsize: 500 role-permission sets (covers most deployments)
 # - ttl: 30 seconds (balance between freshness and performance)
@@ -172,10 +173,18 @@ class RoleService:
         await self._invalidate_role_cache(role_id)
 
         # BUG FIX: Also invalidate permission caches and bump token_version for all affected users
+        users_records: list[Any] = []
         if affected_user_ids:
             from sqlalchemy import update as sa_update
 
             from src.app.modules.users.models import User
+
+            # Project rows BEFORE the bump so the batch can write old+1 == new DB value.
+            users_stmt = select(
+                User.id, User.email, User.username, User.tenant_id, User.token_version
+            ).where(and_(User.id.in_(affected_user_ids), User.tenant_id == self.tenant_id))
+            users_result = await self.db.execute(users_stmt)
+            users_records = list(users_result.all())
 
             await self.db.execute(
                 sa_update(User)
@@ -188,6 +197,15 @@ class RoleService:
 
         for user_id in affected_user_ids:
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
+
+        # Sync token_version cache (bump=True → old+1 == new DB value; CREDENTIAL_CHANGE per policy).
+        if users_records:
+            from src.app.modules.users.service import UserService
+            from src.app.modules.users.session_invalidation import InvalidationReason
+
+            await UserService(self.db)._invalidate_user_cache_batch(
+                users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            )
 
     async def get_all_permissions(self) -> Sequence[Permission]:
         """Get all available permissions in the system.
@@ -516,10 +534,11 @@ class RoleService:
             await self.db.commit()
 
             from src.app.modules.users.service import UserService
+            from src.app.modules.users.session_invalidation import InvalidationReason
 
-            await UserService(self.db)._invalidate_user_cache_batch(users_records)
-
-        if affected_user_ids:
+            await UserService(self.db)._invalidate_user_cache_batch(
+                users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            )
             await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
 
     async def remove_permission_from_role(self, role_id: int, permission_slug: str) -> None:
@@ -582,8 +601,11 @@ class RoleService:
                 await self.db.commit()
 
                 from src.app.modules.users.service import UserService
+                from src.app.modules.users.session_invalidation import InvalidationReason
 
-                await UserService(self.db)._invalidate_user_cache_batch(users_records)
+                await UserService(self.db)._invalidate_user_cache_batch(
+                    users_records, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+                )
 
             if affected_user_ids:
                 await invalidate_users_permissions_cache_batch(affected_user_ids, self.tenant_id)
@@ -637,9 +659,15 @@ class RoleService:
             return  # Already assigned concurrently, idempotent
 
         # Invalidate user cache and user permissions cache
+        # Role grant changes the user's effective permission set, which
+        # CREDENTIAL_CHANGE in spirit (JWT-embedded roles / permission
+        # bitmask become stale). Bump token_version so cached permissions
+        # are recomputed on the next request.
         from src.app.modules.users.service import UserService
 
-        await UserService(self.db)._invalidate_user_cache(user_record)
+        await UserService(self.db)._invalidate_user_cache(
+            user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+        )
         await invalidate_user_permissions_cache(user_id, self.tenant_id)
 
     async def remove_role_from_user(self, user_id: int, role_id: int) -> None:
@@ -677,13 +705,15 @@ class RoleService:
                 sa_update(User).where(User.id == user_id).values(token_version=User.token_version + 1)
             )
             await self.db.commit()
-
-            # Invalidate user cache and user permissions cache
+            # Role removal changes the user's effective permission set, so
+            # bump token_version (CREDENTIAL_CHANGE) to invalidate sessions
+            # that were issued under the old role grant.
             from src.app.modules.users.service import UserService
 
-            await UserService(self.db)._invalidate_user_cache(user_record)
+            await UserService(self.db)._invalidate_user_cache(
+                user_record, bump_token_version=True, reason=InvalidationReason.CREDENTIAL_CHANGE
+            )
             await invalidate_user_permissions_cache(user_id, self.tenant_id)
-
     async def get_user_roles(self, user_id: int) -> Sequence[Role]:
         """Get all roles for a user within the current tenant."""
         stmt = (
