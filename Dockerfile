@@ -1,5 +1,5 @@
 # --------- Builder Stage ---------
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS builder
+FROM ghcr.io/astral-sh/uv:python3.12-bookworm-slim AS builder
 
 # Set environment variables for uv
 ENV UV_COMPILE_BYTECODE=1

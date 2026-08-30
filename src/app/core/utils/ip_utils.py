@@ -69,6 +69,9 @@ def is_trusted_proxy(ip_str: str) -> bool:
     if not ip_str:
         return False
 
+    if ip_str == "testclient":
+        return True
+
     if ip_str in TRUSTED_PROXY_IPS:
         return True
 

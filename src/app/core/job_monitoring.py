@@ -40,7 +40,7 @@ class JobMonitoringService:
         # hgetall here raised WRONGTYPE -> 500. Read the string and parse JSON.
         from src.app.core.json_utils import json_loads
 
-        blob = await client.get(key)  # type: ignore
+        blob = await client.get(key)  # type: ignore[misc]
         if not blob:
             return {"status": "not_found", "job_id": job_id}
 
@@ -75,7 +75,7 @@ class JobMonitoringService:
             # Set start time in a temporary key or update the job key if we manage it
             # For simplicity in this service, we update the global stats mostly.
 
-            await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore[misc]
 
     async def record_job_success(self, job_id: str, function_name: str, duration: float) -> None:
         """
@@ -93,7 +93,7 @@ class JobMonitoringService:
             # Better approach: store total duration and count, calculate avg on read
             pipe.hincrbyfloat(key, "total_duration", duration)
 
-            await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore[misc]
 
     async def record_job_failure(self, job_id: str, function_name: str, error: str) -> None:
         """
@@ -118,7 +118,7 @@ class JobMonitoringService:
             # Trim DLQ to prevent infinite growth (e.g., keep last 1000)
             pipe.ltrim(DLQ_KEY, 0, 999)
 
-            await pipe.execute()  # type: ignore
+            await pipe.execute()  # type: ignore[misc]
 
     async def get_job_metrics(self) -> dict[str, dict[str, Any]]:
         """
@@ -133,12 +133,12 @@ class JobMonitoringService:
         stats = {}
 
         while True:
-            cursor, keys = await client.scan(cursor, match=f"{JOB_STATS_PREFIX}*", count=100)  # type: ignore
+            cursor, keys = await client.scan(cursor, match=f"{JOB_STATS_PREFIX}*", count=100)  # type: ignore[no-any-return]
             for key in keys:
                 key_str = key.decode("utf-8") if isinstance(key, bytes) else key
                 func_name = key_str.replace(JOB_STATS_PREFIX, "")
 
-                data = await client.hgetall(key)  # type: ignore
+                data = await client.hgetall(key)  # type: ignore[misc]
                 if data:
                     stats[func_name] = self._parse_metrics(data)
 
@@ -184,7 +184,7 @@ class JobMonitoringService:
         import json
 
         # LRANGE is 0-based inclusive
-        items = await client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore
+        items = await client.lrange(DLQ_KEY, offset, offset + limit - 1)  # type: ignore[misc]
         parsed_items = []
 
         for item in items:
@@ -231,7 +231,7 @@ class JobMonitoringService:
         client = get_redis()
         if not client:
             return 0
-        return await client.llen(DLQ_KEY)  # type: ignore
+        return await client.llen(DLQ_KEY)  # type: ignore[misc, no-any-return]
 
     async def clear_dlq(self) -> bool:
         """
@@ -240,7 +240,7 @@ class JobMonitoringService:
         client = get_redis()
         if not client:
             return False
-        await client.delete(DLQ_KEY)  # type: ignore
+        await client.delete(DLQ_KEY)  # type: ignore[no-any-return]
         return True
 
     async def get_summary(self) -> dict[str, Any]:

@@ -163,19 +163,33 @@ class EnvironmentValidator:
                         )
                     )
                 else:
-                    # Use sync client to avoid asyncio.run() issues when called from async context
-                    try:
-                        response = httpx.get(f"{ollama_base_url}/api/tags", timeout=5.0)
-                        is_reachable = response.status_code == 200
-                        if not is_reachable:
-                            results.append(
-                                ValidationResult(
-                                    key="OLLAMA_BASE_URL",
-                                    severity=ValidationSeverity.WARNING,
-                                    message=f"Ollama at {ollama_base_url} is not reachable",
-                                )
+                    # P2-8: run the blocking sync httpx.get off the event loop
+                    # (validate_and_log is invoked from inside FastAPI's
+                    # async lifespan, where this would otherwise stall the
+                    # loop up to 5s). asyncio.to_thread would require a
+                    # running loop; ThreadPoolExecutor works from any sync
+                    # caller.
+                    from concurrent.futures import ThreadPoolExecutor
+
+                    with ThreadPoolExecutor(max_workers=1) as _pool:
+                        try:
+                            response = _pool.submit(
+                                lambda: httpx.get(f"{ollama_base_url}/api/tags", timeout=5.0)
+                            ).result(timeout=5.5)
+                        except Exception:
+                            response = None
+                            is_reachable = False
+                        else:
+                            is_reachable = response is not None and response.status_code == 200
+                    if response is not None and not is_reachable:
+                        results.append(
+                            ValidationResult(
+                                key="OLLAMA_BASE_URL",
+                                severity=ValidationSeverity.WARNING,
+                                message=f"Ollama at {ollama_base_url} is not reachable",
                             )
-                    except Exception:
+                        )
+                    elif response is None:
                         results.append(
                             ValidationResult(
                                 key="OLLAMA_BASE_URL",
@@ -183,7 +197,6 @@ class EnvironmentValidator:
                                 message=f"Could not verify Ollama connectivity at {ollama_base_url}",
                             )
                         )
-
         return results
 
     @classmethod

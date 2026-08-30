@@ -434,14 +434,25 @@ class PricingService(BaseService[Pricing]):
         return pricing
 
     async def get_product_pricing(self, product_id: int) -> dict[str, Any]:
-        """Get all pricing tiers for a product (tenant-scoped via parent product)."""
+        """Get all pricing tiers for a product (tenant-scoped via parent product).
+
+        P0-7: bounded by ``PAGINATION_MAX_PER_PAGE`` (default 100) so a product
+        with hundreds of tiers cannot be used as a full-table-scan DoS vector.
+        """
         tenant = get_current_tenant()
         if tenant is None:
             raise ModelNotFoundError("Product", product_id)
         product = await crud_products.get(db=self.db, id=product_id, tenant_id=tenant.id)
         if product is None:
             raise ModelNotFoundError("Product", product_id)
-        return await crud_pricing.get_multi(db=self.db, product_id=product_id, schema_to_select=PricingRead)
+        from src.app.core.pagination import MAX_PER_PAGE
+
+        return await crud_pricing.get_multi(
+            db=self.db,
+            product_id=product_id,
+            limit=MAX_PER_PAGE,
+            schema_to_select=PricingRead,
+        )
 
     async def list_prices(
         self,

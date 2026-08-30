@@ -202,6 +202,77 @@ def _build_cache_key(
         base_key = f"user:{user_id}:{base_key}"
     return _state.build_tenant_key(base_key, tenant_id)
 
+async def _try_get_cached(
+    client: Any,
+    cache_key: str,
+    request: Request,
+    expiration: int,
+) -> bytes | str | None:
+    """P3-2: read-through cache path extracted from cache().inner.
+
+    Tries the Lua script first (1 RT), falls back to two GET+TTL calls
+    on failure, then evaluates the probabilistic refresh-ahead and the
+    response_model re-filter. Returns the bytes to send in a Response,
+    or None to indicate a cache miss.
+    """
+    try:
+        lua_mgr = _state.get_lua_manager()
+        result = await lua_mgr.execute(
+            client,
+            "xfetch_get_with_ttl",
+            keys=[cache_key],
+            args=[],
+        )
+        cached_data = result[0]
+        remaining_ttl = int(result[1]) if result[1] is not None else -2
+        if cached_data is not None and isinstance(cached_data, bytes):
+            cached_data = cached_data.decode("utf-8")
+    except Exception:
+        cached_data = await client.get(cache_key)
+        remaining_ttl = await client.ttl(cache_key) if cached_data else -2
+
+    if not cached_data:
+        return None
+
+    if remaining_ttl > 0:
+        delta = expiration - remaining_ttl
+        if delta > 0:
+            probability = min((delta / expiration) ** 2, 1.0)
+            if _state.random.random() < probability:
+                lock_key = f"{cache_key}:refresh_lock"
+                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
+                if lock_acquired:
+                    request.state.cache_refresh_lock_key = lock_key
+                    return None  # cache miss — let the handler refresh
+
+    # H2 FIX: re-apply route response_model on cache hit so exclude/alias are not bypassed
+    try:
+        route = request.scope.get("route")  # type: ignore[attr-defined]
+        response_model = getattr(route, "response_model", None) if route else None
+        if response_model is not None:
+            raw = _state.json_loads(cached_data)
+            if hasattr(response_model, "model_validate"):
+                validated = response_model.model_validate(raw)
+                filtered = validated.model_dump(mode="json", by_alias=True)
+            elif hasattr(response_model, "parse_obj"):
+                validated = response_model.parse_obj(raw)
+                filtered = validated.dict(by_alias=True)
+            else:
+                filtered = None
+            if filtered is not None:
+                cached_data = _state.json_dumps(filtered, as_str=True)
+    except Exception as e:
+        # Never return an unfiltered cached payload on validation failure:
+        # fall through to a fresh handler call (treat as cache miss).
+        _state.stampede_logger.warning(
+            "Cached response re-validation failed; forcing fresh handler call",
+            error=str(e),
+            cache_key=cache_key,
+        )
+        return None
+
+    return cached_data  # type: ignore[no-any-return]
+
 
 def cache(  # noqa: C901
     key_prefix: str,
@@ -330,74 +401,12 @@ def cache(  # noqa: C901
                 if to_invalidate_extra is not None or pattern_to_invalidate_extra is not None:
                     raise InvalidRequestError
 
-                # Use Lua script for atomic GET+TTL (1 RT instead of 2)
-                try:
-                    lua_mgr = _state.get_lua_manager()
-                    result = await lua_mgr.execute(
-                        client,
-                        "xfetch_get_with_ttl",
-                        keys=[cache_key],
-                        args=[],
-                    )
-                    cached_data = result[0]
-                    remaining_ttl = int(result[1]) if result[1] is not None else -2
-                    # Handle bytes → string
-                    if cached_data is not None and isinstance(cached_data, bytes):
-                        cached_data = cached_data.decode("utf-8")
-                except Exception:
-                    # Fallback: 2 separate calls
-                    cached_data = await client.get(cache_key)
-                    remaining_ttl = await client.ttl(cache_key) if cached_data else -2
+                # P3-2: read-through path extracted to _try_get_cached.
+                cached_data = await _try_get_cached(client, cache_key, request, expiration)
+                if cached_data is not None:
+                    # P6: Skip re-parse - return raw JSON bytes directly
+                    return Response(content=cached_data, media_type="application/json")
 
-                if cached_data:
-                    if remaining_ttl > 0:
-                        delta = expiration - remaining_ttl
-                        if delta > 0:
-                            probability = min((delta / expiration) ** 2, 1.0)
-                            if _state.random.random() < probability:
-                                lock_key = f"{cache_key}:refresh_lock"
-                                lock_acquired = await client.set(lock_key, "1", nx=True, ex=5)
-                                if lock_acquired:
-                                    # We got the lock. Act as if cache miss to force synchronous refresh.
-                                    cached_data = None
-                                    request.state.cache_refresh_lock_key = lock_key
-
-                    if cached_data is not None:
-                        # H2 FIX: re-apply route response_model on cache hit so exclude/alias are not bypassed
-                        try:
-                            route = request.scope.get("route")  # type: ignore[attr-defined]
-                            response_model = getattr(route, "response_model", None) if route else None
-
-                            # P5 FAST PATH: no response_model => nothing to
-                            # filter; return cached bytes verbatim (zero-copy).
-                            # This is the common case for raw dict endpoints and
-                            # saves parse+validate+dump (~0.5-2ms) per hit.
-                            if response_model is not None:
-                                raw = _state.json_loads(cached_data)
-                                if hasattr(response_model, "model_validate"):
-                                    validated = response_model.model_validate(raw)
-                                    filtered = validated.model_dump(mode="json", by_alias=True)
-                                elif hasattr(response_model, "parse_obj"):
-                                    validated = response_model.parse_obj(raw)
-                                    filtered = validated.dict(by_alias=True)
-                                else:
-                                    # Non-Pydantic response_model: nothing to filter.
-                                    filtered = None
-                                if filtered is not None:
-                                    cached_data = _state.json_dumps(filtered, as_str=True)
-                        except Exception as e:
-                            # Never return an unfiltered cached payload on validation failure:
-                            # fall through to a fresh handler call (treat as cache miss).
-                            _state.stampede_logger.warning(
-                                "Cached response re-validation failed; forcing fresh handler call",
-                                error=str(e),
-                                cache_key=cache_key,
-                            )
-                            cached_data = None
-
-                        if cached_data is not None:
-                            # P6: Skip re-parse - return raw JSON bytes directly
-                            return Response(content=cached_data, media_type="application/json")
 
             result = await func(request, *args, **kwargs)
 

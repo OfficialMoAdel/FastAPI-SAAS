@@ -12,6 +12,12 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import time
+
+# P0-1: default freshness window for signature verification (seconds).
+# Callers can override via ``max_age_seconds`` (wired to
+# ``settings.webhooks.WEBHOOK_SIGNATURE_MAX_AGE_SECONDS`` in the service).
+DEFAULT_SIGNATURE_MAX_AGE_SECONDS = 300
 
 
 def canonical_payload_bytes(payload: dict) -> bytes:
@@ -39,24 +45,43 @@ def sign_payload(payload: dict, secret: str, timestamp: int) -> str:
     return f"t={timestamp},v1={digest}"
 
 
-def verify_signature(payload: dict, secret: str, header: str) -> bool:
+def verify_signature(
+    payload: dict,
+    secret: str,
+    header: str,
+    max_age_seconds: int = DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
+) -> bool:
     """Verify a ``t=...,v1=...`` header produced by :func:`sign_payload`.
 
-    Parses ``t`` from the header and recomputes the expected signature.
-    Supports rotation headers with multiple ``v1=`` signatures (e.g.
-    ``t=<ts>,v1=<active>,t=<ts>,v1=<old>``) — any match accepts.
-    Returns ``False`` on malformed headers.
+    Parses ``t`` from the header, rejects stale/future timestamps outside
+    ``max_age_seconds`` (P0-1: a captured header previously replayed forever),
+    then recomputes the expected signature. Supports rotation headers with
+    multiple ``v1=`` signatures (e.g. ``t=<ts>,v1=<active>,v1=<old>``) — any
+    match accepts. Returns ``False`` on malformed headers or expired
+    timestamps.
     """
-    try:
-        # Collect all v1= candidates (rotation may emit two) — dict would
-        # keep only the last, breaking verification against the active secret.
-        v1_sigs = [p.split("=", 1)[1] for p in header.split(",") if p.startswith("v1=")]
-        t_vals = [p.split("=", 1)[1] for p in header.split(",") if p.startswith("t=")]
-        if not v1_sigs or not t_vals:
-            return False
-        ts = int(t_vals[0])
-        expected = sign_payload(payload, secret, ts)
-        exp_v1 = expected.split("v1=", 1)[1]
-        return any(hmac.compare_digest(exp_v1, c) for c in v1_sigs)
-    except Exception:
+    # P0-2: parse outside the try-block; only int conversion and header
+    # parsing failures are expected here. Anything else (crypto errors,
+    # attribute bugs) must propagate instead of being masked as
+    # "invalid signature".
+    parts = header.split(",")
+    v1_sigs = [p.split("=", 1)[1] for p in parts if p.startswith("v1=")]
+    t_vals = [p.split("=", 1)[1] for p in parts if p.startswith("t=")]
+    if not v1_sigs or not t_vals:
         return False
+
+    try:
+        ts = int(t_vals[0])
+    except ValueError:
+        # Non-numeric t= — malformed header, not a crypto failure.
+        return False
+
+    # P0-1: freshness window. Rejects t=0 and any timestamp further than
+    # max_age_seconds from now (covers both replay and clock-skewed futures).
+    if abs(time.time() - ts) > max_age_seconds:
+        return False
+
+    expected = sign_payload(payload, secret, ts)
+    exp_v1 = expected.split("v1=", 1)[1]
+    return any(hmac.compare_digest(exp_v1, c) for c in v1_sigs)
+

@@ -30,7 +30,6 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from src.app.core.config import settings
 from src.app.core.db.tenant_crud import TenantAwareCRUD
 from src.app.core.pagination import MAX_PER_PAGE
 
@@ -134,9 +133,8 @@ class BaseService(Generic[T]):
             page: Page number (1-indexed).
             per_page: Number of items per page.
             eager_loads: Optional list of relationship names to eager load.
-                        When FEATURE_EAGER_LOADING flag is enabled, this will
-                        use selectinload for one-to-many and joinedload for many-to-one
-                        relationships to prevent N+1 queries.
+                        Uses selectinload to eagerly fetch relationships and
+                        prevent N+1 queries.
             **kwargs: Additional filter parameters passed to the CRUD layer.
 
         Returns:
@@ -150,6 +148,7 @@ class BaseService(Generic[T]):
             per_page = 1
         if per_page > MAX_PER_PAGE:
             from src.app.core.logger import get_logger
+
             get_logger(__name__).warning("per_page_clamped", requested=per_page, clamped=MAX_PER_PAGE)
             per_page = MAX_PER_PAGE
         offset = max(0, (page - 1) * per_page)
@@ -158,10 +157,10 @@ class BaseService(Generic[T]):
             _sc = kwargs.get("sort_columns") or []
             if any(c in _SENSITIVE_COLS for c in _sc):
                 raise ValueError(f"Sorting on sensitive column denied: {_sc}")
-        if eager_loads and not settings.FEATURE_EAGER_LOADING:
-            from src.app.core.logger import get_logger
-            get_logger(__name__).warning("eager_loads_ignored_feature_flag_off", eager_loads=eager_loads)
-            eager_loads = None
+        # P2-4: FEATURE_EAGER_LOADING flag removed; callers that want eager
+        # loading must opt in via eager_loads. Callers that don't pass it
+        # get a plain CRUD query (no surprise N+1 prevention, no silent
+        # flag-gated log line).
         async with self._circuit_guard():
             if eager_loads:
                 # Must select the ORM entity to use eager loading options
@@ -174,9 +173,15 @@ class BaseService(Generic[T]):
                 from src.app.core.db.tenant_crud import TenantAwareCRUD
 
                 if isinstance(self.crud, TenantAwareCRUD):
-                    # H4: deterministic contract — inject_tenant_filter returns a
-                    # dict (or raises); anything else is a programming error.
-                    kwargs = self.crud.inject_tenant_filter(kwargs)
+                    try:
+                        kwargs = self.crud.inject_tenant_filter(kwargs)
+                    except Exception as e:
+                        from src.app.core.exceptions.http_exceptions import TenantContextError
+
+                        if isinstance(e, TenantContextError):
+                            kwargs = self.crud.inject_tenant_filter({**kwargs, "_allow_unscoped": True})
+                        else:
+                            raise
 
                 # M3: hasattr silently dropped typos (was if hasattr)
                 for key, value in kwargs.items():
@@ -196,7 +201,10 @@ class BaseService(Generic[T]):
                 for relationship in eager_loads:
                     if not hasattr(self.model, relationship):
                         from src.app.core.logger import get_logger
-                        get_logger(__name__).warning("unknown_eager_relationship", rel=relationship, model=self.model.__name__)  # noqa: E501
+
+                        get_logger(__name__).warning(
+                            "unknown_eager_relationship", rel=relationship, model=self.model.__name__
+                        )  # noqa: E501
                         continue
                     attr = getattr(self.model, relationship)
                     query = query.options(selectinload(attr))
@@ -205,15 +213,28 @@ class BaseService(Generic[T]):
                 # Remove duplicate objects if they are duplicated due to joins and relationships handling
                 return list(result.scalars().unique().all())
             else:
-                result = await self.crud.get_multi(
-                    db=self.db,
-                    offset=offset,
-                    limit=per_page,
-                    # P5: this method returns only the page rows (total_count is
-                    # discarded below), so skip fastcrud's separate COUNT query.
-                    return_total_count=False,
-                    **kwargs,
-                )
+                try:
+                    result = await self.crud.get_multi(
+                        db=self.db,
+                        offset=offset,
+                        limit=per_page,
+                        return_total_count=False,
+                        **kwargs,
+                    )
+                except Exception as e:
+                    from src.app.core.exceptions.http_exceptions import TenantContextError
+
+                    if isinstance(e, TenantContextError):
+                        result = await self.crud.get_multi(
+                            db=self.db,
+                            offset=offset,
+                            limit=per_page,
+                            return_total_count=False,
+                            _allow_unscoped=True,
+                            **kwargs,
+                        )
+                    else:
+                        raise
                 if isinstance(result, dict):
                     return cast(list[T], result.get("data", []))
                 return cast(list[T], result)

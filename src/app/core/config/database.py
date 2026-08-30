@@ -43,6 +43,44 @@ class DatabaseConfigMixin(BaseModel):
             )
         return v
 
+    @field_validator("DB_POOL_SIZE", mode="after")
+    @classmethod
+    def _warn_cross_process_headroom(cls, v: int, info: ValidationInfo) -> int:
+        # P3-4: cross-process connection budget. The per-process validator
+        # above already prevents over-allocation per process, but ``n
+        # workers × (pool + overflow) + ARQ × ARQ_MAX_JOBS`` can still
+        # exceed POSTGRES_MAX_CONNECTIONS once every worker is up. Warn
+        # when the aggregate is within 10% of the limit so operators see
+        # the squeeze before it bites.
+        workers = info.data.get("DB_WORKERS", 1)
+        max_overflow = info.data.get("DB_MAX_OVERFLOW", 10)
+        max_conn = info.data.get("POSTGRES_MAX_CONNECTIONS", 100)
+        try:
+            from src.app.core.config.integrations import ArqSettings
+
+            arq = ArqSettings()  # model_validate is fine; settings are env-driven
+            arq_conns = arq.ARQ_WORKERS * arq.ARQ_MAX_JOBS
+        except Exception:
+            # ArqSettings construction can fail in tests without env vars;
+            # do not fail the database config because of it.
+            arq_conns = 0
+        aggregate = workers * (v + max_overflow) + arq_conns
+        if aggregate >= int(0.9 * max_conn):
+            import logging
+
+            logging.getLogger("app.core.config").warning(
+                "Connection budget tight: workers*pool(=%d) + ARQ(=%d) = %d, "
+                "POSTGRES_MAX_CONNECTIONS=%d (>=90%% used). Either reduce "
+                "DB_POOL_SIZE / DB_WORKERS / ARQ_MAX_JOBS, or raise "
+                "PostgreSQL max_connections.",
+                workers * (v + max_overflow),
+                arq_conns,
+                aggregate,
+                max_conn,
+            )
+        return v
+
+
     @computed_field  # type: ignore[prop-decorator]
     @property
     def EFFECTIVE_POOL_SIZE(self) -> int:

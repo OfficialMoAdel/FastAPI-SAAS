@@ -91,8 +91,7 @@ class PerformanceSettings(BaseSettings):
     FEATURE_STREAMING_UPLOADS: bool = True
     """Use streaming multipart uploads for S3 storage (P0-3)."""
 
-    FEATURE_EAGER_LOADING: bool = False
-    """Use eager loading for relationships in base service (P0-4)."""
+
 
     FEATURE_REMOVE_WASTED_CONNECTION: bool = True
     """Remove wasted DB connection in tenant middleware (P0-1)."""

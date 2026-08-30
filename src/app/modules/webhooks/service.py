@@ -648,14 +648,21 @@ class WebhookService:
                 expires_at = expires_at.replace(tzinfo=UTC)
             if expires_at > datetime.now(UTC):
                 try:
-                    signature_header += (
-                        f",{sign_payload(delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp)}"
+                    # P0-5: Stripe rotation format is ONE timestamp with
+                    # multiple signatures: t=<ts>,v1=<active>,v1=<old>.
+                    # Appending a full second `t=...,v1=...` pair produced
+                    # `t=A,v1=X,t=A,v1=Y`, which third-party Stripe-compatible
+                    # verifiers reject. The in-repo verifier accepts both
+                    # forms (it collects every v1= segment).
+                    old_digest = sign_payload(
+                        delivery.payload, decrypt_data(endpoint.old_signing_secret), send_timestamp
                     )
+                    signature_header = f"{signature_header},{old_digest.split('v1=', 1)[1]}"
                 except Exception as old_sig_err:
                     logger.error(
                         "webhook_old_signing_secret_decryption_failed",
                         endpoint_id=str(endpoint.id),
-                        error=str(old_sig_err),
+                        error=old_sig_err,
                     )
 
         # Prepare request headers

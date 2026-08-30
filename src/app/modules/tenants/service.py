@@ -126,11 +126,11 @@ class TenantService(BaseService[Tenant]):
             logger.debug("Failed to invalidate tenant cache", error=str(e))
 
         try:
-            from src.app.middleware.tenant import _publish_tenant_l1_invalidation, invalidate_tenant_l1
+            from src.app.core.tenancy.cache import invalidate_tenant_l1, publish_tenant_l1_invalidation
 
             # Local process first (publish may not be echoed to self), then fan out.
             invalidate_tenant_l1(slug)
-            await _publish_tenant_l1_invalidation(slug)
+            await publish_tenant_l1_invalidation(slug)
         except Exception as e:
             logger.debug("Failed to propagate tenant L1 invalidation", error=str(e))
 

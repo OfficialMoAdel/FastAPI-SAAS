@@ -124,6 +124,15 @@ def lifespan_factory(
     async def lifespan(app: FastAPI) -> AsyncGenerator:
         from asyncio import Event
 
+        # P3-5: ``initialization_complete`` signals "startup teardown is
+        # allowed", not "caches are warm". The cache warmers run as a
+        # background task (line 176) and complete asynchronously. Anything
+        # that gates on this event expecting a warm cache is a bug — the
+        # DB and Redis pools ARE ready at this point, but the warmer
+        # results are not. The runtime dependency at api/deps/core.py:31
+        # uses this for a different reason: rate_limiter_dependency waits
+        # so concurrent requests don't all try to seed tier limits
+        # simultaneously during burst startup.
         initialization_complete = Event()
         app.state.initialization_complete = initialization_complete
 

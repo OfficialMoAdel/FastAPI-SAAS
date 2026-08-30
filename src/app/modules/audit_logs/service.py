@@ -187,7 +187,8 @@ class AuditLogService:
         if end_date:
             query = query.where(AuditLog.created_at <= end_date)
 
-        query = query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+        # P2-5: tie-breaker on id so equal created_at values order deterministically
+        query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
 
         result = await self.db.execute(query)
         return list(result.unique().scalars().all())
@@ -234,7 +235,8 @@ class AuditLogService:
         if end_date:
             query = query.where(AuditLog.created_at <= end_date)
 
-        query = query.order_by(AuditLog.created_at.desc()).limit(limit).offset(offset)
+        # P2-5: tie-breaker on id so equal created_at values order deterministically
+        query = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).offset(offset)
 
         result = await self.db.execute(query)
         rows = result.unique().all()

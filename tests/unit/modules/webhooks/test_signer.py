@@ -9,8 +9,14 @@ contract explicit.
 import hashlib
 import hmac
 import json
+import time
 
-from src.app.modules.webhooks.signer import canonical_payload_bytes, sign_payload, verify_signature
+from src.app.modules.webhooks.signer import (
+    DEFAULT_SIGNATURE_MAX_AGE_SECONDS,
+    canonical_payload_bytes,
+    sign_payload,
+    verify_signature,
+)
 
 
 def test_canonical_bytes_are_sort_keys_deterministic():
@@ -37,15 +43,46 @@ def test_sign_payload_golden_vector():
 
 
 def test_verify_signature_round_trip():
+    # P0-1: must use a fresh ts (the window is 300s by default).
     payload = {"a": 1}
     secret = "s3cr3t"
-    ts = 1234567890
+    ts = int(time.time())
     header = sign_payload(payload, secret, ts)
     assert verify_signature(payload, secret, header) is True
     assert verify_signature(payload, "wrong", header) is False
     assert verify_signature({"a": 2}, secret, header) is False
 
 
-def test_verify_rejects_malformed_header():
-    assert verify_signature({"a": 1}, "s", "not-a-header") is False
-    assert verify_signature({"a": 1}, "s", "t=abc,v1=xyz") is False
+def test_verify_signature_rejects_stale_timestamp():
+    # P0-1: a captured header from outside the freshness window must fail.
+    payload = {"a": 1}
+    secret = "s3cr3t"
+    stale_ts = int(time.time()) - (DEFAULT_SIGNATURE_MAX_AGE_SECONDS + 60)
+    header = sign_payload(payload, secret, stale_ts)
+    assert verify_signature(payload, secret, header) is False
+
+
+def test_verify_signature_rejects_future_timestamp():
+    # P0-1: a future-dated header (clock-skew attack) must fail.
+    payload = {"a": 1}
+    secret = "s3cr3t"
+    future_ts = int(time.time()) + (DEFAULT_SIGNATURE_MAX_AGE_SECONDS + 60)
+    header = sign_payload(payload, secret, future_ts)
+    assert verify_signature(payload, secret, header) is False
+
+
+def test_verify_signature_rejects_t_zero():
+    # P0-1: t=0 is the trivial replay case — must be rejected.
+    payload = {"a": 1}
+    assert verify_signature(payload, "s", "t=0,v1=deadbeef") is False
+
+
+def test_verify_signature_custom_window():
+    # P0-1: callers can pass a custom window; a 5-minute-old header passes
+    # only when max_age_seconds=600.
+    payload = {"a": 1}
+    secret = "s3cr3t"
+    ts = int(time.time()) - 350
+    header = sign_payload(payload, secret, ts)
+    assert verify_signature(payload, secret, header, max_age_seconds=300) is False
+    assert verify_signature(payload, secret, header, max_age_seconds=600) is True

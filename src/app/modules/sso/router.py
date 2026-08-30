@@ -13,6 +13,7 @@ from src.app.core.config import settings
 from src.app.core.db.database import async_get_db
 from src.app.core.json_utils import json_loads
 from src.app.core.tenancy.context import get_current_tenant
+from src.app.modules.auth.router import check_auth_rate_limit
 from src.app.modules.auth.schemas import AuthTokenResponse
 from src.app.modules.sso.crud import crud_user_sso_connections
 from src.app.modules.sso.schemas import SSOProvider, SSOProviderRead, SSOProvidersResponse
@@ -108,7 +109,7 @@ async def list_providers(
     return SSOProvidersResponse(providers=provider_reads)
 
 
-@router.get("/{provider}/authorize")
+@router.get("/{provider}/authorize", dependencies=[Depends(check_auth_rate_limit)])
 async def initiate_sso(
     request: Request,
     provider: SSOProvider,
@@ -140,7 +141,7 @@ async def initiate_sso(
 
 
 # Alias for backward compatibility with old frontend
-@router.get("/{provider}")
+@router.get("/{provider}", dependencies=[Depends(check_auth_rate_limit)])
 async def initiate_sso_alias(
     request: Request,
     provider: SSOProvider,
@@ -152,8 +153,7 @@ async def initiate_sso_alias(
     _validate_redirect_uri(redirect_uri)
     return await initiate_sso(request, provider, db, sso_service, redirect_uri)
 
-
-@router.get("/{provider}/callback")
+@router.get("/{provider}/callback", dependencies=[Depends(check_auth_rate_limit)])
 async def handle_callback(
     request: Request,
     response: Response,
@@ -209,7 +209,7 @@ async def handle_callback(
         response.delete_cookie("sso_state")
 
 
-@router.post("/{provider}/callback")
+@router.post("/{provider}/callback", dependencies=[Depends(check_auth_rate_limit)])
 async def handle_post_callback(
     request: Request,
     response: Response,
@@ -277,7 +277,7 @@ async def handle_post_callback(
         response.delete_cookie("sso_state")
 
 
-@router.post("/{provider}/connect")
+@router.post("/{provider}/connect", dependencies=[Depends(check_auth_rate_limit)])
 async def connect_provider(
     request: Request,
     provider: SSOProvider,

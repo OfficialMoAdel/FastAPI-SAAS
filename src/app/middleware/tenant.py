@@ -142,26 +142,23 @@ async def _get_tenant_lock(slug: str) -> AsyncGenerator[asyncio.Lock, None]:
             _TENANT_LOCKS.pop(slug, None)
 
 
-TENANT_EXEMPT_PATHS: frozenset[str] = frozenset(
-    [
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        "/api/v1/health",
-        "/api/v1/ready",
-        "/api/v1/app_configuration",
-        "/api/v1/billing/webhook",
-    ]
-)
+# P2-7: use the shared common set; tenant adds /api/v1/app_configuration
+# which is intentionally tenant-less.
+from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
+from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
+
+_TENANT_EXTRA_EXEMPT: frozenset[str] = frozenset({"/api/v1/app_configuration"})
+TENANT_EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _TENANT_EXTRA_EXEMPT
 
 TENANT_EXEMPT_PREFIXES: tuple[str, ...] = ("/api/v1/tenants",)
 
 TENANT_HEADER = "X-Tenant-ID"
 
 
+
 def is_path_exempt(path: str) -> bool:
     """Check if the request path is exempt from tenant validation."""
-    if path in TENANT_EXEMPT_PATHS:
+    if _shared_is_path_exempt(path, additional=_TENANT_EXTRA_EXEMPT):
         return True
     for prefix in TENANT_EXEMPT_PREFIXES:
         if path == prefix or path.startswith(f"{prefix}/"):

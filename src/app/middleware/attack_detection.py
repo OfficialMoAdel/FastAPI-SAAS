@@ -46,23 +46,17 @@ class AttackType(str, Enum):
     SSRF = "ssrf"
 
 
-# Paths exempt from attack detection (health checks, metrics, etc.)
-EXEMPT_PATHS: frozenset[str] = frozenset(
-    [
-        "/health",
-        "/health/live",
-        "/health/ready",
-        "/metrics",
-        "/docs",
-        "/redoc",
-        "/openapi.json",
-        # S8 FIX: Webhook endpoints receive third-party payloads
-        # that may contain SQL-like strings (invoice descriptions, etc.)
-        # These endpoints verify signatures independently (e.g. Stripe HMAC).
-        "/api/v1/billing/webhook",
-        "/api/v1/webhooks/stripe",
-    ]
-)
+# P2-7: import the shared common set; the few attack-detection-specific
+# exemptions stay here. ``is_path_exempt`` is called per-request so we
+# precompute the union once.
+from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
+from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
+
+_ATTACK_DETECTION_EXTRA_EXEMPT: frozenset[str] = frozenset()
+_ATTACK_DETECTION_EXEMPT: frozenset[str] = COMMON_EXEMPT_PATHS | _ATTACK_DETECTION_EXTRA_EXEMPT
+
+EXEMPT_PATHS: frozenset[str] = _ATTACK_DETECTION_EXEMPT  # backward-compat re-export
+
 
 # Named group → (pattern_name, AttackType) mapping for combined regex matches
 _GROUP_TO_ATTACK: dict[str, tuple[str, AttackType]] = {
@@ -158,10 +152,11 @@ class AttackDetectionMiddleware(BaseHTTPMiddleware):
         """
         import posixpath
         normalized_path = posixpath.normpath(path)
-
-        if normalized_path in EXEMPT_PATHS:
-            return True
-        return any(normalized_path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
+        # P2-7: delegate to the shared helper, which checks the common
+        # exempt set first and any per-middleware extras via the
+        # additional= kwarg. The path normalization stays here because
+        # the startwith check must run on the normalized form.
+        return _shared_is_path_exempt(normalized_path, additional=_ATTACK_DETECTION_EXTRA_EXEMPT)
 
     @staticmethod
     def _sanitize_input(content: bytes) -> bytes:

@@ -208,5 +208,5 @@ graphify-out
 src/.env.local
 *live-baseline.json
 .codegraph
-*.json
+codegraph.json
 docs/adr/*

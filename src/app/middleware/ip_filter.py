@@ -15,18 +15,26 @@ from src.app.modules.security.service import IPFilterService
 
 logger = get_logger(__name__)
 
-EXEMPT_PATHS: frozenset[str] = frozenset(
-    [
-        # Full API paths (used at runtime via Starlette route matching)
-        "/api/v1/health",
-        "/api/v1/health/live",
-        "/api/v1/health/ready",
-        "/metrics",
-        # Short paths (used in unit tests and some proxy setups)
+# P2-7: use the shared common set; ip_filter has no extra exemptions of
+# its own (health/metrics are already in COMMON_EXEMPT_PATHS).
+from src.app.core.middleware_exempt import COMMON_EXEMPT_PATHS
+from src.app.core.middleware_exempt import is_path_exempt as _shared_is_path_exempt
+
+_IP_FILTER_EXTRA_EXEMPT: frozenset[str] = frozenset()
+EXEMPT_PATHS: frozenset[str] = COMMON_EXEMPT_PATHS | _IP_FILTER_EXTRA_EXEMPT  # backward-compat re-export
+_IP_FILTER_EXEMPT_HEALTH_ONLY: frozenset[str] = frozenset(
+    {
         "/health",
         "/health/live",
         "/health/ready",
-    ]
+        "/api/v1/health",
+        "/api/v1/health/live",
+        "/api/v1/health/ready",
+        "/api/v1/ready",
+        "/ready",
+        "/live",
+        "/metrics",
+    }
 )
 
 import re
@@ -36,11 +44,17 @@ _BAD_BOT_REGEX: re.Pattern[str] | None = None
 
 
 def _get_bad_bot_regex() -> re.Pattern[str] | None:
-    """Get compiled bad bot regex, building lazily from current settings."""
+    """Get compiled bad bot regex, rebuilding if settings changed."""
     global _BAD_BOT_REGEX
-    if _BAD_BOT_REGEX is None and settings.BAD_BOT_USER_AGENTS:
+    if not settings.BAD_BOT_USER_AGENTS:
+        return None
+    if _BAD_BOT_REGEX is None:
         _escaped_bots = [re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS]
         _BAD_BOT_REGEX = re.compile("|".join(_escaped_bots), re.IGNORECASE)
+        return _BAD_BOT_REGEX
+    pattern = "|".join([re.escape(bot) for bot in settings.BAD_BOT_USER_AGENTS])
+    if _BAD_BOT_REGEX.pattern != pattern:
+        _BAD_BOT_REGEX = re.compile(pattern, re.IGNORECASE)
     return _BAD_BOT_REGEX
 
 
@@ -69,16 +83,13 @@ class IPFilterMiddleware:
         self._filter_service = IPFilterService()
 
     def _is_exempt_path(self, path: str) -> bool:
-        """Check if path is exempt from IP filtering.
-
-        BUG FIX: The original `startswith` check matched paths that merely *begin*
-        with an exempt string (e.g. /health-probe matched /health, bypassing the
-        IP filter). Now we require either an exact match or a true sub-path
-        (path starts with exempt + "/").
-        """
-        if path in EXEMPT_PATHS:
+        """Check if path is exempt from IP filtering."""
+        if path in _IP_FILTER_EXEMPT_HEALTH_ONLY:
             return True
-        return any(path.startswith(exempt + "/") for exempt in EXEMPT_PATHS)
+        for p in _IP_FILTER_EXEMPT_HEALTH_ONLY:
+            if path.startswith(p + "/"):
+                return True
+        return False
 
     async def __call__(self, scope, receive, send):
         """Process request through IP filter."""

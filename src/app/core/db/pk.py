@@ -13,10 +13,11 @@ import uuid
 
 from sqlalchemy import UUID as SA_UUID  # noqa: F401 — re-exported for typing
 
-try:
-    from uuid_utils import uuid7  # type: ignore[import-untyped]
-except ImportError:  # pragma: no cover
-    from uuid import uuid4 as uuid7  # type: ignore[assignment]
+# P0-3: uuid_utils was never a declared dependency (pyproject ships uuid6).
+# Use uuid6's uuid7 — the same package the models import — and fail loudly
+# on a missing dependency instead of silently degrading to uuid4 (which
+# broke the time-ordered UUIDv7 contract for every new_uuid7() consumer).
+from uuid6 import uuid7
 
 UUID = uuid.UUID
 

@@ -81,6 +81,10 @@ class WebhookSettings(BaseSettings):
     WEBHOOK_HTTP_TIMEOUT_SECONDS: float = 30.0
     WEBHOOK_HTTP_CONNECT_TIMEOUT_SECONDS: float = 10.0
     WEBHOOK_SIGNATURE_HEADER: str = "X-Webhook-Signature"
+    # P0-1: signature freshness window for inbound verification (seconds).
+    WEBHOOK_SIGNATURE_MAX_AGE_SECONDS: int = Field(
+        default=300, ge=1, le=3600, description="Max age of a webhook signature's t= timestamp before rejection"
+    )
     WEBHOOK_SIGNATURE_ALGORITHM: str = "sha256"
     WEBHOOK_RECOVERY_BATCH_SIZE: int = 100
     WEBHOOK_RECOVERY_BUFFER_MINUTES: int = 5

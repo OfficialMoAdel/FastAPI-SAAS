@@ -8,6 +8,7 @@ from typing import Any
 from fastapi import FastAPI
 from fastapi.openapi.utils import get_openapi
 from fastapi.responses import ORJSONResponse
+from redis.exceptions import RedisError  # P1-4
 
 from src.app.admin.initialize import create_admin_interface
 from src.app.api import get_router
@@ -31,6 +32,14 @@ logger = get_logger(__name__)
 
 async def _warm_token_blacklist_cache() -> None:
     """Warm the token blacklist Redis cache from database on startup."""
+    from redis.exceptions import RedisError
+
+    # P1-4: narrow excepts to actual infra failure types so a bug in the
+    # warmer surfaces immediately. The blacklist is auth-critical, so a
+    # warmup failure in production must fail-closed (raised) rather than
+    # silently leave the app serving with a cold cache.
+    from sqlalchemy.exc import SQLAlchemyError
+
     from src.app.core.db.crud_token_blacklist import crud_token_blacklist
     from src.app.core.db.database import async_session_maker
     from src.app.core.security.token_blacklist_cache import warm_cache_from_db
@@ -41,8 +50,11 @@ async def _warm_token_blacklist_cache() -> None:
             if tokens:
                 count = await warm_cache_from_db(tokens)
                 logger.info("Token blacklist cache warmed", count=count)
-    except Exception as e:
-        logger.warning("Failed to warm token blacklist cache", error=str(e))
+    except (RedisError, SQLAlchemyError) as e:
+        logger.error("Failed to warm token blacklist cache", error=str(e))
+        if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+            raise
+        logger.warning("Continuing with cold blacklist cache (non-production)")
 
 
 async def _warm_application_caches() -> None:
@@ -75,9 +87,9 @@ async def _warm_application_caches() -> None:
     except Exception as e:
         logger.error("Failed to warm application caches", error=str(e))
 
-
 @asynccontextmanager
-async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
+async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:  # noqa: C901 - one-time startup orchestration; intentional monolithic lifespan
+
     """Custom lifespan that includes admin initialization and cache warming."""
     from src.app.core.logger import setup_logging
 
@@ -142,13 +154,18 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         if redis_client:
             init_gcra_rate_limiter(redis_client)
             logger.info("GCRA rate limiter initialized")
-
             try:
                 loaded_scripts = await get_lua_manager().preload_scripts(redis_client)
                 logger.info("Lua scripts preloaded", count=len(loaded_scripts))
-            except Exception as e:
-                logger.warning("Failed to preload Lua scripts", error=str(e))
+            except RedisError as e:
+                logger.error("Failed to preload Lua scripts", error=str(e))
+                if settings.ENVIRONMENT == EnvironmentOption.PRODUCTION:
+                    raise
+            # P1-6: start the cross-worker ban L1 invalidation listener
+            # alongside the existing tenant L1 listener.
+            from src.app.core.security.auto_ban import _start_ban_l1_invalidation_listener
 
+            _start_ban_l1_invalidation_listener()
         # Warm application caches
         logger.info("Loading security runtime config...")
         from src.app.core.utils.config_store import get_runtime_config
@@ -174,7 +191,16 @@ async def lifespan_with_admin(app: FastAPI) -> AsyncGenerator[None, None]:
         logger.info("Starting application cache warming...")
         # A-7: the two warmers are independent (each opens its own session and
         # catches its own errors), so run them concurrently instead of serially.
-        await asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches())
+        # P1-4: cap the warm gather at 15s so a hung dependency cannot stall
+        # boot forever; the warmers catch their own errors, so a timeout
+        # here just means we yield faster with whatever finished.
+        try:
+            await asyncio.wait_for(
+                asyncio.gather(_warm_token_blacklist_cache(), _warm_application_caches()),
+                timeout=15.0,
+            )
+        except TimeoutError:
+            logger.warning("Cache warming exceeded 15s timeout; continuing boot with partial state")
 
         # R1-06: the fixed post-warming sleep was removed. Cache warming is
         # already awaited above; sleeping before yield only delayed worker

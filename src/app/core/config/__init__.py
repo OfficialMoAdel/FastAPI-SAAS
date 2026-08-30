@@ -131,21 +131,19 @@ class Settings(BaseSettings):
                 "Specify explicit origins for production."
             )
 
-        # S-6: localhost origins in production/staging are almost always a
-        # misconfiguration (leftover dev defaults). Warn, don't block.
+        # P1-7: localhost origins in production/staging are almost always a
+        # misconfiguration (leftover dev defaults). Promote the prior
+        # warning to a hard fail so operators can't ship dev origins to prod
+        # by accident. Mirrors the wildcard-`*` behavior at lines 127-132.
         if env in ("production", "staging"):
             localhost_markers = ("localhost", "127.0.0.1", "0.0.0.0", "::1")
             localhost_origins = [
                 origin for origin in self.cors.CORS_ORIGINS if any(marker in origin for marker in localhost_markers)
             ]
             if localhost_origins:
-                import logging
-
-                logging.getLogger(__name__).warning(
-                    "SECURITY WARNING (S-6): CORS_ORIGINS contains localhost origins in %s: %s. "
-                    "Restrict CORS_ORIGINS to your real deployment origins.",
-                    env,
-                    localhost_origins,
+                raise ValueError(
+                    f"SECURITY ERROR (S-6): CORS_ORIGINS contains localhost origins in {env}: {localhost_origins}. "
+                    "Restrict CORS_ORIGINS to your real deployment origins."
                 )
 
         return self
@@ -214,6 +212,27 @@ class Settings(BaseSettings):
         target_component = self._delegation_map.get(name)
         if target_component:
             component = super().__getattribute__(target_component)
+            # P2-2: warn on first access through the dynamic delegation map.
+            # The plan is to codemod call sites to ``settings.<component>.<name>``
+            # and delete this fallback. Until that lands, every use of the
+            # legacy flat accessor is a hint to migrate.
+            # P2-2: warn once per field (not per access) — otherwise the
+            # hot path spams stderr and PowerShell treats every warning line
+            # as a NativeCommandError when 2>&1 is used.
+            _warned: set[str] = getattr(self, "_flat_accessor_warned", set())
+            if name not in _warned:
+                _warned.add(name)
+                try:
+                    object.__setattr__(self, "_flat_accessor_warned", _warned)
+                except Exception:
+                    pass
+                import logging
+
+                logging.getLogger(__name__).debug(
+                    "config_legacy_flat_accessor_used field=%s component=%s",
+                    name,
+                    target_component,
+                )
             return getattr(component, name)
 
         raise AttributeError(f"'{self.__class__.__name__}' object has no attribute '{name}'")

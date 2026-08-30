@@ -30,6 +30,8 @@ _query_tracker: dict[str, dict[str, Any]] = {}
 # R4-18: threading.RLock blocks the event loop in async context.
 # The global tracker is dev-only and races are acceptable; per-request
 # tracking already uses ContextVar for async safety. Use a no-op lock.
+# P3-3: deliberate trade-off — dev-only profiler, do not "fix" the lock
+# back into an event-loop-blocking RLock.
 from contextlib import nullcontext
 
 _query_tracker_lock = nullcontext()

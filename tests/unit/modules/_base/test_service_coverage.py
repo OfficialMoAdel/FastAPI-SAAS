@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, create_autospec
 
-from src.app.core.config import settings
 from src.app.modules._base.service import BaseService, get_base_service
 from src.app.modules.passkey.models import PasskeyCredential
 
@@ -42,36 +41,26 @@ async def test_get_multi_list_response() -> None:
 
 async def test_get_multi_eager_loading_disabled() -> None:
     service, _ = _make_service()
-    original = settings.FEATURE_EAGER_LOADING
-    settings.FEATURE_EAGER_LOADING = False
-    try:
-        service.crud.get_multi.return_value = {"data": []}
-        result = await service.get_multi(eager_loads=["user"])
-        assert result == []
-    finally:
-        settings.FEATURE_EAGER_LOADING = original
+    service.crud.get_multi.return_value = {"data": []}
+    result = await service.get_multi(eager_loads=None)
+    assert result == []
 
 
 async def test_get_multi_eager_loading_enabled() -> None:
     service, db = _make_service()
-    original = settings.FEATURE_EAGER_LOADING
-    settings.FEATURE_EAGER_LOADING = True
-    try:
-        service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
-        service.crud._filter_processor = MagicMock()
-        service.crud._filter_processor.parse_filters.return_value = []
-        service.crud._query_builder = MagicMock()
-        service.crud._query_builder.apply_sorting.side_effect = lambda q, c, o: q
-        db.execute.return_value = MagicMock()
-        db.execute.return_value.scalars.return_value.unique.return_value.all.return_value = [
-            create_autospec(PasskeyCredential, instance=True)
-        ]
-        result = await service.get_multi(
-            page=1, per_page=20, eager_loads=["user"], sort_columns=["id"], sort_orders=["asc"]
-        )
-        assert isinstance(result, list)
-    finally:
-        settings.FEATURE_EAGER_LOADING = original
+    service.crud.inject_tenant_filter = MagicMock(side_effect=lambda k: k)
+    service.crud._filter_processor = MagicMock()
+    service.crud._filter_processor.parse_filters.return_value = []
+    service.crud._query_builder = MagicMock()
+    service.crud._query_builder.apply_sorting.side_effect = lambda q, c, o: q
+    db.execute.return_value = MagicMock()
+    db.execute.return_value.scalars.return_value.unique.return_value.all.return_value = [
+        create_autospec(PasskeyCredential, instance=True)
+    ]
+    result = await service.get_multi(
+        page=1, per_page=20, eager_loads=["user"], sort_columns=["id"], sort_orders=["asc"]
+    )
+    assert isinstance(result, list)
 
 
 async def test_get_multi_joined_dict() -> None:

@@ -11,6 +11,21 @@ that triggers mapper configuration.
 FIX: Import all models here so every mapper is registered before any test runs.
 """
 
+import os
+
+os.environ.setdefault("ENVIRONMENT", "local")
+os.environ.setdefault("SECRET_KEY", "0123456789abcdef0123456789abcdef0123456789abcdef12")
+os.environ.setdefault("ADMIN_PASSWORD", "TestAdmin123!@#456")
+os.environ.setdefault("POSTGRES_USER", "postgres")
+os.environ.setdefault("POSTGRES_PASSWORD", "postgres")
+os.environ.setdefault("POSTGRES_DB", "test_db")
+os.environ.setdefault("POSTGRES_SERVER", "localhost")
+os.environ.setdefault("POSTGRES_PORT", "5432")
+os.environ.setdefault("REDIS_QUEUE_HOST", "localhost")
+os.environ.setdefault("REDIS_QUEUE_PORT", "6379")
+os.environ.setdefault("REDIS_CACHE_HOST", "localhost")
+os.environ.setdefault("REDIS_CACHE_PORT", "6379")
+
 # ruff: noqa: F401
 # fmt: off
 

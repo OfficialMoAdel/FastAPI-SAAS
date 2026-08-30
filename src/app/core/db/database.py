@@ -54,10 +54,16 @@ def get_database_url() -> str:
     return f"{settings.POSTGRES_ASYNC_PREFIX}{settings.POSTGRES_URI}"
 
 
-# Internal state for lazy initialization
+# P1-1: lock for the check-then-act race on first engine / session
+# creation under burst startup.  Used as a synchronous mutex (the
+# initialization is itself synchronous — it doesn't await), so a
+# ``threading.Lock`` is the correct primitive (an ``asyncio.Lock`` here
+# would deadlock because callers may not be in an async context).
+import threading
+
+_init_lock = threading.RLock()
 _async_engine = None
 _local_session = None
-
 
 def _create_engine() -> AsyncEngine:
     """Internal helper to create the SQLAlchemy engine with proper settings."""
@@ -114,20 +120,35 @@ def _create_engine() -> AsyncEngine:
 
 
 def get_async_engine() -> AsyncEngine:
-    """Get or create the async engine."""
+    """Get or create the async engine.
+
+    P1-1: double-checked under ``_init_lock`` so a burst-startup race can
+    never build two engines (the second assignment would orphan the first
+    pool for the process lifetime).
+    """
     global _async_engine
-    if _async_engine is None:
-        _async_engine = _create_engine()
+    if _async_engine is not None:
+        return _async_engine
+    with _init_lock:
+        if _async_engine is None:
+            _async_engine = _create_engine()
     return _async_engine
 
 
 def _get_local_session() -> async_sessionmaker[AsyncSession]:
-    """Internal helper to get or create the local session maker."""
+    """Internal helper to get or create the local session maker.
+
+    P1-1: same double-checked lock as ``get_async_engine`` for the
+    sessionmaker singleton.
+    """
     global _local_session
-    if _local_session is None:
-        # Ensure engine is created first
-        engine = get_async_engine()
-        _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
+    if _local_session is not None:
+        return _local_session
+    with _init_lock:
+        if _local_session is None:
+            # Ensure engine is created first
+            engine = get_async_engine()
+            _local_session = async_sessionmaker(bind=engine, class_=AsyncSession, expire_on_commit=False)
     return _local_session
 
 

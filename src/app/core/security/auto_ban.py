@@ -37,8 +37,76 @@ BAN_COUNT_KEY_PREFIX = "security:ban_count:{ip}"
 # by another worker is not seen until expiry. ban_ip/unban_ip evict the local
 # entry so same-process bans/unbans take effect immediately. Bounded and
 # acceptable for a rate-limiting defense (not a primary security boundary).
-_BAN_NEGATIVE_TTL = 5  # seconds
+_BAN_NEGATIVE_TTL = 5  # P1-6: was already 5; now also fenced by pub/sub invalidation channel
 _ban_negative_cache: TTLCache[str, bool] = TTLCache(maxsize=10000, ttl=_BAN_NEGATIVE_TTL)
+# P1-6: cross-worker L1 invalidation channel. ban_ip/unban_ip publish here
+# so every web process drops its in-process TTLCache entry immediately
+# instead of serving stale "not banned" for up to _BAN_NEGATIVE_TTL (5s).
+# Mirrors the tenant L1 pattern at middleware/tenant.py:45-72.
+_BAN_L1_INVALIDATION_CHANNEL = "ban:l1_invalidate"
+_ban_l1_invalidation_task: asyncio.Task | None = None
+
+
+def invalidate_ban_negative_cache(client_ip: str | None = None) -> None:
+    """Drop one (or all) entries from this process's ban negative cache."""
+    if client_ip is None:
+        _ban_negative_cache.clear()
+    else:
+        _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
+
+
+async def _publish_ban_l1_invalidation(client_ip: str) -> None:
+    """Publish an L1 invalidation so other workers drop their cached entry."""
+    redis_client = get_redis()
+    if redis_client is None:
+        return
+    try:
+        await redis_client.publish(_BAN_L1_INVALIDATION_CHANNEL, client_ip)
+    except Exception as e:  # noqa: BLE001 - invalidation must never break requests
+        logger.warning("Failed to publish ban L1 invalidation: %s", e)
+
+
+def _start_ban_l1_invalidation_listener() -> None:
+    """Start (once per event loop) a background subscriber applying ban invalidations."""
+    global _ban_l1_invalidation_task
+    redis_client = get_redis()
+    if redis_client is None:
+        return
+    if _ban_l1_invalidation_task is not None and not _ban_l1_invalidation_task.done():
+        return
+
+    async def _listen() -> None:
+        pubsub = redis_client.pubsub()
+        try:
+            await pubsub.subscribe(_BAN_L1_INVALIDATION_CHANNEL)
+            async for msg in pubsub.listen():
+                if not isinstance(msg, dict) or msg.get("type") != "message":
+                    continue
+                ip = msg.get("data")
+                if isinstance(ip, bytes):
+                    ip = ip.decode("utf-8", errors="ignore")
+                if ip:
+                    invalidate_ban_negative_cache(ip)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.warning("ban_l1_listener_error: %s", e)
+        finally:
+            try:
+                await pubsub.unsubscribe(_BAN_L1_INVALIDATION_CHANNEL)
+                await pubsub.close()
+            except Exception:
+                pass
+
+    _ban_l1_invalidation_task = asyncio.create_task(_listen())
+
+
+def stop_ban_l1_invalidation_listener() -> None:
+    """Cancel the background subscriber (idempotent)."""
+    global _ban_l1_invalidation_task
+    if _ban_l1_invalidation_task is not None and not _ban_l1_invalidation_task.done():
+        _ban_l1_invalidation_task.cancel()
+    _ban_l1_invalidation_task = None
 
 
 def _ban_cache_key(client_ip: str) -> str:
@@ -244,10 +312,12 @@ async def ban_ip(
             logger.debug("IP %s already banned by concurrent request", client_ip)
             return False
 
-        # R1-01: evict the negative cache so this ban is enforced immediately
-        # in this process (the 5s TTL would otherwise let it slip through).
+        # R1-01: evict the negative cache so the unban is reflected on the
+        # next lookup instead of waiting out the 5s TTL.
         _ban_negative_cache.pop(_ban_cache_key(client_ip), None)
-
+        # P1-6: cross-worker fan-out (best-effort — never fail the unban
+        # on a publish error).
+        await _publish_ban_l1_invalidation(client_ip)
         # H4: add 30d TTL to ban_count to bound memory (was indefinite -> OOM).
         # Keep escalating within 30d, then naturally decay — avoids unbounded key growth.
         ban_count = await redis_client.incr(count_key)

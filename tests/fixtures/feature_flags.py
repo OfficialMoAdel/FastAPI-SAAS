@@ -89,7 +89,6 @@ def all_flags_enabled():
         "FEATURE_REMOVE_WASTED_CONNECTION",
         "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
-        "FEATURE_EAGER_LOADING",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
 
@@ -123,7 +122,6 @@ def all_flags_disabled():
         "FEATURE_REMOVE_WASTED_CONNECTION",
         "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
-        "FEATURE_EAGER_LOADING",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
 
@@ -159,7 +157,6 @@ def snapshot_flags():
         "FEATURE_REMOVE_WASTED_CONNECTION",
         "FEATURE_STREAMING_UPLOADS",
         "FEATURE_CONTEXTVAR_OPTIMIZATION",
-        "FEATURE_EAGER_LOADING",
         "FEATURE_AUDIT_FLUSH_LIMIT",
     ]
 
@@ -190,7 +187,6 @@ def flag_state_logger(caplog):
             "FEATURE_REMOVE_WASTED_CONNECTION",
             "FEATURE_STREAMING_UPLOADS",
             "FEATURE_CONTEXTVAR_OPTIMIZATION",
-            "FEATURE_EAGER_LOADING",
             "FEATURE_AUDIT_FLUSH_LIMIT",
         ]
 
@@ -226,7 +222,6 @@ def parametrize_flags():
                     "FEATURE_REMOVE_WASTED_CONNECTION",
                     "FEATURE_STREAMING_UPLOADS",
                     "FEATURE_CONTEXTVAR_OPTIMIZATION",
-                    "FEATURE_EAGER_LOADING",
                     "FEATURE_AUDIT_FLUSH_LIMIT",
                 ],
                 True,
@@ -239,7 +234,6 @@ def parametrize_flags():
                     "FEATURE_REMOVE_WASTED_CONNECTION",
                     "FEATURE_STREAMING_UPLOADS",
                     "FEATURE_CONTEXTVAR_OPTIMIZATION",
-                    "FEATURE_EAGER_LOADING",
                     "FEATURE_AUDIT_FLUSH_LIMIT",
                 ],
                 False,
@@ -251,7 +245,6 @@ def parametrize_flags():
                 "FEATURE_STREAMING_UPLOADS": True,
                 "FEATURE_REMOVE_WASTED_CONNECTION": False,
                 "FEATURE_CONTEXTVAR_OPTIMIZATION": False,
-                "FEATURE_EAGER_LOADING": False,
                 "FEATURE_AUDIT_FLUSH_LIMIT": False,
             },
         },
@@ -261,7 +254,6 @@ def parametrize_flags():
                 "FEATURE_STREAMING_UPLOADS": False,
                 "FEATURE_REMOVE_WASTED_CONNECTION": False,
                 "FEATURE_CONTEXTVAR_OPTIMIZATION": True,
-                "FEATURE_EAGER_LOADING": False,
                 "FEATURE_AUDIT_FLUSH_LIMIT": False,
             },
         },
